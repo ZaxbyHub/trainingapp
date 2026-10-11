@@ -149,7 +149,7 @@ strip environment from background jobs):
 
 ```bash
 # 1. start a real backend with staged weights (Windows paths, repo cwd):
-RAG_DB_PATH=.agents/tmp/eval-weighted-db RAG_GGUF_PATH=models/lfm2.5-vl-450m/model.gguf API_PORT=8123 python api_server.py
+RAG_DB_PATH=.agents/tmp/eval-weighted-db RAG_GGUF_PATH=models/lfm2.5-2.6b/model.gguf API_PORT=8123 python api_server.py
 
 # 2. ingest the tier-0 corpus (multipart upload of every corpus doc; os.path.basename
 #    keeps the upload filename = the doc id on every OS):

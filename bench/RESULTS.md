@@ -129,6 +129,10 @@ cells are appended per recorded run.
 | devstation | gemma-4-e2b-it | Q4_K_M | 4 | 64 | 0.61 | 9860.1 | 2818 | node-llama-cpp | pass |
 | devstation | lfm2.5-vl-450m | Q4_K_M | 8 | 64 | 37.12 | 969.2 | 619 | node-llama-cpp | pass |
 | devstation | lfm2.5-vl-450m | Q4_K_M | 4 | 64 | 22.72 | 1343.1 | 617 | node-llama-cpp | pass |
+| devstation | lfm2-1.2b-rag | Q4_K_M | 4 | 64 | 8.26 | 4044.7 | 1413 | node-llama-cpp | pass |
+| devstation | lfm2-1.2b-rag | Q4_K_M | 8 | 64 | 14.16 | 2630.5 | 1412 | node-llama-cpp | pass |
+| devstation | lfm2.5-2.6b | Q4_K_M | 4 | 64 | 3.87 | 9587.4 | 3069 | node-llama-cpp | pass |
+| devstation | lfm2.5-2.6b | Q4_K_M | 8 | 64 | 6.17 | 6353.7 | 3070 | node-llama-cpp | pass |
 
 ## Vulkan attempt
 
@@ -189,12 +193,12 @@ see the provenance rule 4 above) on the real staged tree, machine-tagged:
 |---|---|---|---|
 | devstation | models/embedding (bge-small-en-v1.5 fp32) | 134,098,874 | desktop embedder contract (embedder.ts); ADR-0001 q8 re-pin out of scope |
 | devstation | models/reranker (ettin-reranker-32m-v1 q8 + root tokenizers) | 39,611,408 | rerank-worker dtype q8; AutoTokenizer loads from the model ROOT |
-| devstation | models/llm-quality (gemma-4-e2b-it Q4_K_M + mmproj) | 3,606,025,056 | ADR-0002; mmproj has no native consumer at E1 |
-| devstation | models/llm-fast (lfm2.5-vl-450m Q4_K_M + mmproj) | 332,128,736 | ADR-0002 |
+| devstation | models/llm-quality (lfm2.5-2.6b Q4_K_M, single GGUF) | 1,674,455,040 | ADR-0002 as amended by #156; computed from the staged GGUF's on-disk size (operator-acquired weights, git-excluded), real-weights staging re-measure PENDING |
+| devstation | models/llm-fast (lfm2-1.2b-rag Q4_K_M, single GGUF) | 730,894,048 | ADR-0002 as amended by #156; computed from the staged GGUF's on-disk size, re-measure PENDING (mmproj retired — no projector is staged at all) |
 | devstation | backend packages EXCLUDED from the installer: @node-llama-cpp/win-x64-cuda (170,658,131) + win-x64-cuda-ext (362,957,501) | 533,615,632 | issue #155: unreachable - the probe passes `exclude: ['cuda']`. Measured `du -sb desktop/node_modules/@node-llama-cpp/win-x64-cuda{,-ext}`, i.e. 508.90 MiB / 533.6 MB decimal. The "~510 MB" quoted in `desktop/electron-builder.yml` is the MiB figure. PR #159 review PRR-037 |
 | devstation | packs (bundled-docs + training fixtures) | 1,695 | contracts/fixtures/packs layout fixtures |
-| devstation | docs (licenses.md) | 6,240 | the first-run licensing seam |
-| devstation | staged resources total | 4,111,872,009 | 3.83 GiB (17 model files after the review round added the reranker root tokenizers) |
+| devstation | docs (licenses.md + licenses/LFM-OPEN-LICENSE-v1.0.txt) | 16,814 | the first-run licensing seam; the staged LFM full-text file is #156 |
+| devstation | staged resources total | 2,579,077,879 | 2.40 GiB (#156 computed: pre-#156 measured 4,111,872,009 − retired LLM dirs 3,938,153,792 + new LLM dirs 2,405,349,088 + staged license file 10,574; re-measure PENDING) |
 | devstation | **TOTAL (measured installed footprint win-unpacked, the README figure)** | **≈ 6.4 GB (6,378,451,601 B)** | held: 6.38 GB <= 7 GiB (7,516,192,768 B) budget; measured by python os.walk byte-sum over win-unpacked (cross-checked `du -sb`) |
 | devstation | packaged resources dir (win-unpacked/resources incl. app+renderer+natives) | 5,993,150,933 | post-exclusion double-ship guard clean; still <= 7 GiB; measured by python os.walk byte-sum (cross-checked `du -sb`) |
 | devstation | startup integrity gate latency (streaming sha256 of the full staged tree) | 2,377 ms | packaged-mode pass, 0 failures, 2026-09-23 |
@@ -244,8 +248,11 @@ surface that experimental override to users, deliberately.
 embed the real-weights payload.** `makensis.exe` aborts with `File: failed
 creating mmap of …-x64.nsis.7z` because the app archive is 4,177,827,908
 bytes and NSIS's 32-bit installer format caps embedded files (and single
-files generally) at 2 GB — the gemma Q4_K_M GGUF alone is 2,620,370,976
-bytes, so no single-file NSIS exe can contain the ADR-0002 quality model.
+files generally) at 2 GB. #156 update: the quality GGUF alone is now
+1,674,455,040 bytes (lfm2.5-2.6b) — under the 2 GB cap, so the retired
+gemma model-alone claim no longer holds — but the full real-weights payload
+(~2.4 GB of LLM GGUFs alone, before packs and runtime) still exceeds it, so
+no single-file NSIS exe can contain the ADR-0002 lineup either.
 The verified real-weights artifact form is the `win-unpacked` directory
 target (full layout inspected: resources-root `manifest.json`, four model
 groups, packs, docs, renderer weights excluded, double-ship guard clean);

@@ -51,7 +51,7 @@ Set environment variables before running the application or in your system's env
 
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
-| `RAG_GGUF_PATH` | Path to GGUF model file | Bundled Gemma 4 E2B | No |
+| `RAG_GGUF_PATH` | Path to GGUF model file | Bundled legacy-harness Gemma 4 E2B (the desktop app bundles the LFM lineup instead) | No |
 | `RAG_FAST_PROFILE_PATH` | Optional smaller fallback GGUF loaded when the primary model fails the RAM gate | None (fallback disabled) | No |
 
 ### Performance Variables
@@ -134,16 +134,21 @@ openssl rand -base64 32
 
 **Recommended Path**:
 ```
-C:\Models\gemma-4-e2b-it\model.gguf
+C:\Models\lfm2.5-2.6b\model.gguf
 ```
 
 **File Requirements**:
 - Must start with "GGUF" magic bytes
 - Size: 1-4 GB for 2B-8B models
-- Format: Q4_K_M (the quant packaged by ADR-0002 / issue #84; ~2.9 GB nominal per PACKAGING.md; 2,620,370,976 bytes (~2.6 GB) measured per bench/RESULTS.md)
+- Format: Q4_K_M (the quant packaged by ADR-0002 / issue #84; the desktop LFM quality
+  model is 1,674,455,040 bytes (~1.7 GB))
 
 **Bundled Model**:
-The application uses `gemma-4-e2b-it/model.gguf` (Q4_K_M, ADR-0002) staged under `models/`. This model is automatically detected on first run if no custom model is configured.
+The desktop app uses `lfm2.5-2.6b/model.gguf` (LFM2.5-2.6B, Q4_K_M, ADR-0002 as amended
+by #156) staged under `models/`, with `lfm2-1.2b-rag/model.gguf` (LFM2-1.2B-RAG, Q4_K_M)
+as the Fast tier; this model is automatically detected on first run if no custom model is
+configured. The legacy Python harness keeps its own default Gemma 4 E2B artifact, which
+#156 leaves out of scope.
 
 **Troubleshooting**:
 ```
@@ -659,8 +664,9 @@ n_threads=min(os.cpu_count() or 4, 8) # CPU threads (all CPUs up to 8; 4 if cpu_
 
 **Model Load RAM Gate**:
 Before loading a GGUF model the app estimates the free RAM requirement as
-`model file size + ~1 GB KV cache + ~1 GB runtime overhead` (about 5-6 GB for
-the bundled ~2.9 GB (nominal) Gemma 4 E2B model). If the estimate exceeds available
+`model file size + ~1 GB KV cache + ~1 GB runtime overhead` (about 4.5-5 GB for the
+legacy harness's default ~2.6 GB Gemma 4 E2B artifact, or ~3.7 GB for the
+1,674,455,040-byte (~1.7 GB) desktop LFM quality model). If the estimate exceeds available
 RAM the load is refused with a diagnostic naming the model, the required and
 available memory. The `RAG_FAST_PROFILE_PATH` fallback fires only when the
 primary model is refused by this RAM gate AND the fast-profile file exists
@@ -670,7 +676,8 @@ diagnostic directly) — through the GUI error message and the API 503
 `detail`.
 
 **Model Selection**:
-- Gemma 4 2B (2GB, recommended - bundled)
+- LFM2.5-2.6B (1.7GB, recommended — the desktop bundled quality model, ADR-0002 #156)
+- LFM2-1.2B-RAG (0.73GB, the desktop bundled fast model)
 - Qwen2.5-1.5B (1.5GB)
 - Qwen2.5-7B (7GB, better quality)
 - Llama3-8B (4.8GB, general purpose)
@@ -872,7 +879,7 @@ max_context_length=2000  # characters
 **Example**:
 ```json
 {
-  "gguf_path": "C:\\Models\\gemma-4-e2b-it\\model.gguf",
+  "gguf_path": "C:\\Models\\lfm2.5-2.6b\\model.gguf",
   "chunk_size": 512,
   "n_results": 3,
   "max_tokens": 1024,
@@ -918,7 +925,7 @@ python main.py [OPTIONS]
 **Example**:
 ```bash
 python main.py \
-  --gguf-path "C:\Models\gemma-4-e2b-it\model.gguf" \
+  --gguf-path "C:\Models\lfm2.5-2.6b\model.gguf" \
   --chunk-size 512 \
   --n-results 5 \
   --max-tokens 1024 \
@@ -939,9 +946,10 @@ python main.py \
 **Solutions**:
 ```powershell
 # Verify GGUF model
-dir C:\path\to\gemma-4-e2b-it\model.gguf
+dir C:\path\to\lfm2.5-2.6b\model.gguf
 
-# Check file size (should be ~2.9 GB nominal / 2,620,370,976 bytes (~2.6 GB) measured per bench/RESULTS.md for Q4_K_M)
+# Check file size (should be 1,674,455,040 bytes (~1.7 GB) for the Q4_K_M LFM2.5-2.6B;
+# the legacy harness's own Gemma 4 E2B default artifact is unchanged by #156)
 
 # If using custom model, set RAG_GGUF_PATH
 set RAG_GGUF_PATH=C:\Models\your-model.gguf

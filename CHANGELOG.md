@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+- **Desktop LLM tiers swap to the LFM lineup (issue #156)**: both desktop inference
+  profiles change — Quality is now `lfm2.5-2.6b` (LFM2.5-2.6B, Q4_K_M,
+  1,674,455,040 bytes) and Fast is now `lfm2-1.2b-rag` (LFM2-1.2B-RAG, Q4_K_M,
+  730,894,048 bytes); the gemma-4-e2b-it and lfm2.5-vl-450m models are retired from
+  every shipped surface (the legacy Python harness keeps its own Gemma 4 E2B
+  artifact, out of #156's scope). **User-visible: image input is removed** — the
+  multimodal projector (mmproj) artifacts no longer ship anywhere (node-llama-cpp has
+  no image support), and chat is text-only on every surface. **User-visible: the
+  browser LLM changes** — the web app (wllama) now runs the text-only `lfm2-1.2b-rag`
+  instead of the desktop Quality model. Quality answers keep reasoning suppressed
+  (responsePrefix + zero thought budget, with an echo-strip for think-tag remnants).
+  A decline filter strips the trained-in "did you forget to include the document?"
+  sentences the LFM 1.2B models append when declining (decline-shaped answers only;
+  answerable answers pass through byte-identical). On the desktop, the repeat penalty is retired (desktop sampling no longer applies it; the browser preset system keeps its own repeat-penalty default, and the browser LLM is now the same lfm2-1.2b-rag model — parity is a tracked follow-up).
+  On CPU-only machines the `auto` profile now selects the Fast tier (Quality CPU-only
+  first answers run ~83 s at 5 chunks per the issue benchmark). The fast tier keeps
+  5 retrieval chunks (deviation D1, recorded in ADR-0002's #156 amendment). License
+  updates: both tiers ship under the LFM Open License v1.0 — the $10,000,000 revenue
+  threshold binds both tiers — and the full license text now ships at
+  `docs/licenses/LFM-OPEN-LICENSE-v1.0.txt`, staged into packaged builds alongside
+  `docs/licenses.md`. ADR-0002 is amended by #156 (Decision, License review outcome,
+  Consequences); ADR-0003's quoted lineup carries a supersession note.
+
 - **Vendor-neutral GPU acceleration with a first-run probe and CPU fallback (issue #155)**: the
   desktop backend is no longer hard-disabled to the CPU. A new out-of-process probe
   (`desktop/main/backend/inference/gpu-probe.ts` + `gpu-probe-child.ts`) asks node-llama-cpp for
@@ -30,7 +53,15 @@
   KV cache needs no mitigation here: the library's KV-cache type already defaults to F16). No
   integrated-GPU host was available, so the floor-spec Iris Xe row is PENDING.
 
-- **Desktop local inference (trace #154)**: the engine now pins `Gemma4ChatWrapper({reasoning: false})` for the shipped gemma-4 quality model, whose auto-resolved wrapper defaults `reasoning=true` and was spending answer-token budget on thought segments that never reach `responseText`. The pin is gated on the GGUFs own architecture, not the profile name, so a non-gemma model at the quality path keeps the library default wrapper resolution. The desktop-local system prompt gained the same groundedness rule the external endpoint already used, and each request now emits one `console.info` line carrying profile, threads, elapsed ms, answer tokens and outcome.
+- **Desktop local inference (trace #154)**: the engine pins `Gemma4ChatWrapper({reasoning: false})`
+  for the gemma-4 quality model this trace shipped (that model was superseded by the #156 LFM
+  swap above); the pin was gated on the GGUF's own architecture, not the profile name, so a
+  non-gemma model at the quality path kept the library default wrapper resolution — which is
+  how the LFM models load today. The wrapper pin addressed gemma-4's auto-resolved wrapper
+  defaulting `reasoning=true`, which was spending answer-token budget on thought segments
+  that never reach `responseText`. The desktop-local system prompt gained the same
+  groundedness rule the external endpoint already used, and each request now emits one
+  `console.info` line carrying profile, threads, elapsed ms, answer tokens and outcome.
 
 
 ### Added — Knowledge Packs and training courses in the browser app (trace browser-training-parity)

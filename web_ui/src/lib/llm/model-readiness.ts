@@ -14,7 +14,7 @@
 
 import { getMemoryBudget } from '../embeddings/memory-aware';
 import { WebLLMService, WEBLLM_DEFAULT_MODEL_ID } from './web-llm-service';
-import { LLM_GGUF_URL, LLM_MMPROJ_URL } from '../models/model-manifest';
+import { LLM_GGUF_URL } from '../models/model-manifest';
 import { probeAsset } from '../models/probe';
 import type { BrowserEngine } from '../../types/llm';
 
@@ -69,12 +69,13 @@ export interface ReadinessResult {
 const MODEL_REQUIRED_BYTES: Record<string, number> = {
   // Llama-3.2-3B (WebLLM): ~1.9 GB weights + ~300 MB working ≈ 2.3 GB.
   'Llama-3.2-3B-Instruct-q4f16_1-MLC': 2_300_000_000,
-  // Gemma 4 E2B-it Q4_K_M (wllama): ~2.9 GB GGUF + ~940 MB mmproj (F16) +
-  // KV cache (~0.8-1.2 GB at 8192 ctx f16) + WASM working memory. ~2.3B
-  // effective params (~5.1B total w/ PLE), 128K context. Peak (without download-
-  // blob retention) ~4.7-5.1 GB; budgeted at 4 GB conservatively (the gate is
-  // moot on the 8 GB target box but should not false-pass on low-RAM boxes).
-  'gemma-4-e2b-it': 4_000_000_000,
+  // LiquidAI LFM2-1.2B-RAG Q4_K_M (wllama): the GGUF itself is ~0.73 GB, but
+  // running it costs more than the file — WASM heap + wllama runtime overhead,
+  // KV cache at 8192 ctx, and the in-memory CacheManager copy of the downloaded
+  // blob. Budgeted at 1.2 GB (roughly 1.6x the file) so the gate does not
+  // false-pass on low-RAM boxes while comfortably fitting the 8 GB target
+  // hardware. Issue #156: text-only model, no mmproj projector to account for.
+  'lfm2-1.2b-rag': 1_200_000_000,
 };
 
 /**
@@ -110,16 +111,13 @@ function getMemoryTier(availableMB: number): MemoryTier {
  */
 async function isModelAvailable(modelId: string, engine: BrowserEngine): Promise<boolean> {
   if (engine === 'wllama') {
-    // wllama loads the packaged GGUF + mmproj projector lazily; "available"
-    // requires BOTH present. The mmproj must be checked too, otherwise the
-    // multimodal (image) path is gated ready while the projector is missing.
+    // wllama loads the packaged GGUF lazily; "available" means the GGUF is
+    // present in the build (same-origin), probed without downloading it.
+    // Issue #156: the browser LLM is text-only LFM2-1.2B-RAG — there is no
+    // mmproj projector to probe, so GGUF presence alone decides availability.
     // `probeAsset` rejects the SPA-fallback HTML 200 (see src/lib/models/probe.ts);
     // a bare `fetch(...).ok` would falsely report present under vite dev/preview.
-    const [gguf, mmproj] = await Promise.all([
-      probeAsset(LLM_GGUF_URL),
-      probeAsset(LLM_MMPROJ_URL),
-    ]);
-    return gguf && mmproj;
+    return probeAsset(LLM_GGUF_URL);
   }
   // webllm: present in the browser's Cache Storage (web-llm's default
   // cacheType 'cache' stores weights in `caches.open('webllm/model')`). Probe

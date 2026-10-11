@@ -42,18 +42,36 @@ export interface ProfileRecommendation {
 
 /**
  * Auto-select the first-run profile: quality iff its model fits in free RAM
- * under the A3 estimate; otherwise fast with an explicit downgrade warning
- * that names the numbers (never a generic message — the defect class this
- * wizard exists to close). An explicit operator choice always wins; this only
- * computes the DEFAULT selection.
+ * under the A3 estimate AND the machine is not CPU-only (PRR-105: quality is
+ * a GPU tier — a probed CPU-only verdict forces fast regardless of RAM, the
+ * same rule effectiveProfile() applies at runtime); otherwise fast with an
+ * explicit downgrade warning that names the numbers (never a generic
+ * message — the defect class this wizard exists to close). An explicit
+ * operator choice always wins; this only computes the DEFAULT selection.
  */
 export function autoSelectProfile(options: {
   freeBytes: number;
   nCtx: number;
   qualityFileBytes?: number;
   fastFileBytes?: number;
+  /** The GPU probe's verdict, when one exists. `backend === 'cpu'` forces
+   *  fast — the same effectiveProfile() rule, applied at first run so the
+   *  wizard's recommendation cannot contradict it. */
+  gpuVerdict?: { backend: 'vulkan' | 'cpu'; ok: boolean } | null;
 }): ProfileRecommendation {
-  const { freeBytes, nCtx, qualityFileBytes, fastFileBytes } = options;
+  const { freeBytes, nCtx, qualityFileBytes, fastFileBytes, gpuVerdict } = options;
+  if (gpuVerdict !== null && gpuVerdict !== undefined && gpuVerdict.backend === 'cpu') {
+    return {
+      profile: 'fast',
+      warning: {
+        detail:
+          'No working GPU was detected (the Vulkan probe fell back to CPU), and the quality ' +
+          'model is a GPU tier — defaulting to the fast profile for responsive answers.',
+        requiredBytes: qualityFileBytes !== undefined ? estimateRequiredMemory(qualityFileBytes, nCtx) : 0,
+        freeBytes,
+      },
+    };
+  }
   if (qualityFileBytes !== undefined) {
     const requiredBytes = estimateRequiredMemory(qualityFileBytes, nCtx);
     if (freeBytes >= requiredBytes) return { profile: 'quality' };

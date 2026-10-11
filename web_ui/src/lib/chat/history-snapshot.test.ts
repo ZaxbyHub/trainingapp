@@ -93,10 +93,11 @@ describe('buildHistorySnapshot (Issue #40 RC1)', () => {
     // When the MAX_HISTORY_TURNS cap splits mid-conversation on an odd-length
     // alternating history, slice(-N) lands on an assistant-first window
     // (e.g. [u,a,u,a,u,a,u].slice(-6) = [a,u,a,u,a,u]). A leading assistant
-    // turn is orphaned context (no preceding user turn in the window) and,
-    // under the Gemma 4 chat-template override, mis-targets loop.first so a
-    // system_prefix kwarg would be silently dropped. The fix drops the
-    // leading assistant turn so the window always opens user-first.
+    // turn is orphaned context (no preceding user turn in the window). (The
+    // former Gemma-era template-override caveat about a mis-targeted
+    // loop.first went with the override, retired by issue #156's LFM2 swap.)
+    // The fix drops the leading assistant turn so the window always opens
+    // user-first.
     //
     // 7 prior alternating turns (odd length) + current user + placeholder:
     //   [u0, a0, u1, a1, u2, a2, u3] + [current, placeholder]

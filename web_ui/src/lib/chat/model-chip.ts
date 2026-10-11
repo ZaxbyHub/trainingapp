@@ -212,7 +212,7 @@ export function describeChatModel(input: DescribeChatModelInput): ChatModelDescr
 /** Suffix appended to the chip text while the built-in model is missing or not loaded. */
 export const NOT_READY_SUFFIX = ' — not ready';
 
-/** Visible chip text, e.g. "Local · Gemma 4 E2B-it" or "Local · Gemma 4 E2B-it — not ready". */
+/** Visible chip text, e.g. "Local · LiquidAI LFM2-1.2B-RAG" or "Local · LiquidAI LFM2-1.2B-RAG — not ready". */
 export function chatModelText(d: ChatModelDescription): string {
   const base = d.model ? `${d.source} · ${d.model}` : d.source;
   return d.notReady ? `${base}${NOT_READY_SUFFIX}` : base;

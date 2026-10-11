@@ -1,6 +1,10 @@
 /**
  * Tests for WllamaService — the wllama (WASM/CPU) LLM engine.
  * The @wllama/wllama module is mocked so no real WASM/model is needed.
+ *
+ * Issue #156: the packaged model is LiquidAI LFM2-1.2B-RAG (text-only). The
+ * Gemma-era mmproj/template-override surface is gone — see
+ * __tests__/t156-browser-llm.test.ts for the swap-level pins.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -9,7 +13,6 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 const loadModelFromUrl = vi.fn(async () => undefined);
 const exit = vi.fn(async () => undefined);
 const isModelLoaded = vi.fn(() => true);
-const supportInputModality = vi.fn(() => true);
 const setCompat = vi.fn();
 
 // createChatCompletion is overloaded: stream:true -> async iterable of chunks,
@@ -37,7 +40,6 @@ vi.mock('@wllama/wllama', () => ({
     createChatCompletion = createChatCompletion;
     exit = exit;
     isModelLoaded = isModelLoaded;
-    supportInputModality = supportInputModality;
     setCompat = setCompat;
   },
   CacheManager: class {
@@ -51,7 +53,7 @@ describe('WllamaService', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     vi.resetModules();
-    // Model presence probe (HEAD) — default: GGUF + mmproj are packaged. The
+    // Model presence probe (HEAD) — default: the GGUF is packaged. The
     // hardened probe (src/lib/models/probe.ts) reads Content-Type to reject the
     // SPA-fallback HTML response, so the mock must supply a non-HTML type.
     vi.stubGlobal(
@@ -74,7 +76,7 @@ describe('WllamaService', () => {
     expect(WllamaService.getInstance().getInferenceMode()).toBe('wasm');
   });
 
-  it('initializes offline (allowOffline) and loads the model + mmproj', async () => {
+  it('initializes offline (allowOffline) and loads the packaged LFM2 GGUF', async () => {
     const svc = WllamaService.getInstance();
     await svc.initialize();
 
@@ -84,14 +86,21 @@ describe('WllamaService', () => {
       { default: '/models/wllama/wasm/wllama.wasm' },
       expect.objectContaining({ allowOffline: true })
     );
-    // Loaded GGUF + mmproj from same-origin /models/llm paths.
-    expect(loadModelFromUrl).toHaveBeenCalledWith(
-      expect.objectContaining({
-        url: '/models/llm/gemma-4-e2b-it/model.gguf',
-        mmprojUrl: '/models/llm/gemma-4-e2b-it/mmproj.gguf',
-      }),
+    // Loaded the GGUF from the same-origin /models/llm path — ModelSource is
+    // { url } ONLY (issue #156: no mmprojUrl, the model is text-only), and no
+    // Gemma-era chat-template override is injected (LFM2's embedded template
+    // is used as-is).
+    expect(loadModelFromUrl).toHaveBeenCalledTimes(1);
+    const [modelSource, loadParams] = loadModelFromUrl.mock.calls[0] as unknown as [
+      Record<string, unknown>,
+      Record<string, unknown>,
+    ];
+    expect(modelSource).toEqual({ url: '/models/llm/lfm2-1.2b-rag/model.gguf' });
+    expect(loadParams).toEqual(
       expect.objectContaining({ useCache: true })
     );
+    expect(loadParams).not.toHaveProperty('chat_template');
+    expect(loadParams).not.toHaveProperty('jinja');
   });
 
   it('points the offline compat runtime at LOCAL assets, not the CDN', async () => {
@@ -105,7 +114,7 @@ describe('WllamaService', () => {
   });
 
   it('fails fast with a clear message when the model is not packaged', async () => {
-    // GGUF/mmproj HEAD probes return 404.
+    // GGUF HEAD probe returns 404.
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false }) as Response));
     const svc = WllamaService.getInstance();
     await expect(svc.initialize()).rejects.toThrow(/not packaged|PACKAGING/);
@@ -122,36 +131,39 @@ describe('WllamaService', () => {
     for await (const t of svc.generate([{ role: 'user', content: 'hi' }], { maxTokens: 16 })) {
       tokens.push(t);
     }
-    expect(tokens).toEqual(['Hello', ', ', 'world']);
+    // 4.5 discipline: emission is batched to decided sentence boundaries, and
+    // 'Hello, world' has no terminator, so the terminal flush emits it whole.
+    // The joined stream is what the consumer renders — it must be lossless.
+    expect(tokens.join('')).toBe('Hello, world');
     expect(createChatCompletion).toHaveBeenCalledWith(
       expect.objectContaining({ stream: true, max_tokens: 16 })
     );
   });
 
-  it('passes multimodal (text + image) content through to wllama', async () => {
+  it('passes system messages through unchanged (LFM2 embedded template)', async () => {
+    // Issue #156: with the Gemma-era template override removed, there is no
+    // system-message extraction/kwarg machinery — messages reach wllama in the
+    // order and shape the caller sent them.
     const svc = WllamaService.getInstance();
     await svc.initialize();
 
-    const imgData = new ArrayBuffer(16);
-    const messages = [
-      {
-        role: 'user' as const,
-        content: [
-          { type: 'text' as const, text: 'What is in this image?' },
-          { type: 'image' as const, data: imgData },
-        ],
-      },
-    ];
-    // Drain the stream.
-    for await (const _ of svc.generate(messages)) { /* consume */ }
-
-    const passed = createChatCompletion.mock.calls.at(-1)?.[0] as
-      | { messages: Array<{ content: unknown }> }
-      | undefined;
-    expect(passed!.messages[0].content).toEqual([
-      { type: 'text', text: 'What is in this image?' },
-      { type: 'image', data: imgData },
+    await svc.generateComplete([
+      { role: 'system', content: 'You are a helpful assistant.' },
+      { role: 'user', content: 'hi' },
     ]);
+
+    expect(createChatCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          { role: 'system', content: 'You are a helpful assistant.' },
+          { role: 'user', content: 'hi' },
+        ],
+      })
+    );
+    const lastCall = createChatCompletion.mock.calls.at(-1)?.[0] as {
+      chat_template_kwargs?: unknown;
+    };
+    expect(lastCall.chat_template_kwargs).toBeUndefined();
   });
 
   it('generateComplete returns the full message content', async () => {
@@ -223,14 +235,6 @@ describe('WllamaService', () => {
     );
   });
 
-  it('supportsImages reflects the model modality', async () => {
-    const svc = WllamaService.getInstance();
-    await svc.initialize();
-    expect(svc.supportsImages()).toBe(true);
-    supportInputModality.mockReturnValueOnce(false);
-    expect(svc.supportsImages()).toBe(false);
-  });
-
   it('dispose() exits wllama and resets readiness', async () => {
     const svc = WllamaService.getInstance();
     await svc.initialize();
@@ -287,153 +291,136 @@ describe('WllamaService', () => {
     expect(await backend.getSize('test-key')).toBe(-1);
   });
 
-  // --- Gemma 4 chat-template override regression tests ----------------------
+  // --- Issue #156 decline-filter application ---------------------------------
   //
-  // Regression: the gemma-4-e2b-it GGUF embeds an 18 KB Jinja chat template
-  // that uses macros (format_parameters, format_argument, etc.) wllama 3.5.1's
-  // Jinja subset cannot evaluate. The macros render to empty strings, producing
-  // a BLANK prompt — the model emits <eos> immediately, createChatCompletion's
-  // stream yields zero content chunks, and the assistant bubble stays empty
-  // despite retrieval + citations working. The fix injects a macro-free
-  // override template via LoadModelParams.chat_template + jinja: true. These
-  // tests pin the override so the empty-output regression cannot recur.
+  // The LFM 1.2B models append trained-in "did you (perhaps) forget to include/
+  // attach the document?" sentences when declining a not-in-sources question.
+  // WllamaService applies filterDeclineSentences (./decline-filter.ts, the
+  // browser twin of desktop llama-engine.ts's filter) to the completion result:
+  // the streaming path filters the ACCUMULATED text and only ever emits a
+  // growing prefix (a sentence split across chunks is still caught); the
+  // non-streaming path filters the final answer. Answerable text passes
+  // through byte-identical.
 
-  it('Gemma 4 chat-template override: injects chat_template + jinja at load time', async () => {
-    // The default model id is gemma-4-e2b-it (LLM_MODEL_DIR), so the override
-    // must be applied on the default initialize() path.
+  const DECLINE_ANSWER =
+    'The provided context does not contain information regarding the maximum permitted annual leave carryover for contractors in the EU. Did you perhaps forget to include the document containing this information? Once you provide the relevant document, I will be able to accurately determine and share the answer.';
+  const DECLINE_FILTERED =
+    'The provided context does not contain information regarding the maximum permitted annual leave carryover for contractors in the EU. ';
+
+  it('#156: generateComplete filters the decline artefact sentences', async () => {
+    createChatCompletion.mockImplementationOnce(async () => ({
+      choices: [{ message: { content: DECLINE_ANSWER } }],
+    }));
     const svc = WllamaService.getInstance();
     await svc.initialize();
+    const out = await svc.generateComplete([{ role: 'user', content: 'hi' }]);
+    expect(out).toBe(DECLINE_FILTERED);
+  });
 
-    expect(loadModelFromUrl).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        chat_template: expect.stringContaining('<|turn>') as string,
-        jinja: true,
-      })
-    );
-    // The override template uses the Gemma 4 turn markers verbatim and folds
-    // the system role into the first user turn via the system_prefix kwarg.
-    // Assert each marker via withCalledWith so we don't index into the mock's
-    // calls tuple (the mock fn is typed as () => undefined, so calls[n][1] is
-    // not statically known to exist).
-    expect(loadModelFromUrl).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ chat_template: expect.stringContaining('<|turn>user') })
-    );
-    expect(loadModelFromUrl).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ chat_template: expect.stringContaining('<|turn>model') })
-    );
-    expect(loadModelFromUrl).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ chat_template: expect.stringContaining('<turn|>') })
-    );
-    expect(loadModelFromUrl).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ chat_template: expect.stringContaining('system_prefix') })
+  it('#156: generateComplete leaves answerable answers byte-identical', async () => {
+    const answerable = 'The expense portal closes on the 15th of each month.';
+    createChatCompletion.mockImplementationOnce(async () => ({
+      choices: [{ message: { content: answerable } }],
+    }));
+    const svc = WllamaService.getInstance();
+    await svc.initialize();
+    const out = await svc.generateComplete([{ role: 'user', content: 'hi' }]);
+    expect(out).toBe(answerable);
+  });
+
+  it('#156: streaming filters a decline sentence split across chunks', async () => {
+    // The decline marker arrives in chunk 1, the artefact sentence in chunk 2
+    // (itself internally batched by the runtime). The filter runs over the
+    // ACCUMULATED text — not per-chunk — so the complete artefact sentence is
+    // removed once its terminator lands. (Tradeoff, identical to the desktop
+    // engine: emitted text only ever GROWS, so a fragment of the artefact
+    // emitted before its sentence terminator cannot be retracted mid-stream.)
+    createChatCompletion.mockImplementationOnce(async () => {
+      async function* gen() {
+        const pieces = [
+          'The provided context does not contain information regarding X. ',
+          'Did you perhaps forget to include ',
+          'the document containing this information?',
+        ];
+        for (const piece of pieces) {
+          yield { choices: [{ delta: { content: piece } }] };
+        }
+      }
+      return gen();
+    });
+    const svc = WllamaService.getInstance();
+    await svc.initialize();
+    let joined = '';
+    for await (const t of svc.generate([{ role: 'user', content: 'hi' }])) {
+      joined += t;
+    }
+    // 4.5 review finding 1 (browser twin): the sentence-boundary emission
+    // discipline REPLACED the emitted-only-grows tradeoff — the artefact
+    // sentence is only emitted once decided (removed here), so no fragment
+    // ever surfaces, and the joined stream is the filtered projection.
+    expect(joined).not.toMatch(/did you perhaps forget/i);
+    expect(joined).toBe('The provided context does not contain information regarding X. ');
+  });
+
+  it('#156 STREAMING DISCIPLINE (4.5): word-level chunks never surface an artefact word, never splice', async () => {
+    const raw =
+      'The provided context does not contain information regarding X. ' +
+      'Did you perhaps forget to include the document containing this information? ' +
+      'Once you provide the relevant document, I will be able to help.';
+    createChatCompletion.mockImplementationOnce(async () => {
+      async function* gen() {
+        for (const word of raw.split(/(\s+)/)) {
+          if (word.length > 0) yield { choices: [{ delta: { content: word } }] };
+        }
+      }
+      return gen();
+    });
+    const svc = WllamaService.getInstance();
+    await svc.initialize();
+    let joined = '';
+    for await (const t of svc.generate([{ role: 'user', content: 'hi' }])) {
+      joined += t;
+    }
+    expect(joined).not.toContain('Did you');
+    expect(joined).not.toContain('Once you provide');
+    // Joined emissions == filter(full raw answer): no skipped words, no splice.
+    expect(joined).toBe(
+      'The provided context does not contain information regarding X. '
     );
   });
 
-  it('Gemma 4 chat-template override: threads system message via chat_template_kwargs.system_prefix', async () => {
-    // When the override is active, the system message is extracted from the
-    // messages array and threaded via chat_template_kwargs.system_prefix (the
-    // override template folds it into the first user turn). Without this, the
-    // override template has no system role handling and the system prompt
-    // would be silently dropped.
+  it('#156: streaming fully suppresses a decline sentence that arrives within one chunk', async () => {
+    createChatCompletion.mockImplementationOnce(async () => {
+      async function* gen() {
+        yield {
+          choices: [
+            {
+              delta: {
+                content:
+                  'The provided context does not contain information regarding X. Did you perhaps forget to include the document containing this information?',
+              },
+            },
+          ],
+        };
+      }
+      return gen();
+    });
     const svc = WllamaService.getInstance();
     await svc.initialize();
-
-    await svc.generateComplete([
-      { role: 'system', content: 'You are a helpful assistant.' },
-      { role: 'user', content: 'hi' },
-    ]);
-
-    expect(createChatCompletion).toHaveBeenCalledWith(
-      expect.objectContaining({
-        chat_template_kwargs: { system_prefix: 'You are a helpful assistant.' },
-        // The system message must be STRIPPED from the messages array so the
-        // override template (which has no system branch) never sees it.
-        messages: [{ role: 'user', content: 'hi' }],
-      })
-    );
+    let joined = '';
+    for await (const t of svc.generate([{ role: 'user', content: 'hi' }])) {
+      joined += t;
+    }
+    expect(joined).toBe('The provided context does not contain information regarding X. ');
   });
 
-  it('Gemma 4 chat-template override: streaming still yields tokens end-to-end', async () => {
-    // The override must not break the streaming protocol. The model generates
-    // (GPU active) but tokens never reached the UI in the bug — this test
-    // pins the full generate() → createChatCompletion → yield path.
+  it('#156: streaming leaves answerable text lossless (sentence-batch discipline, no loss)', async () => {
     const svc = WllamaService.getInstance();
     await svc.initialize();
-
     const tokens: string[] = [];
     for await (const t of svc.generate([{ role: 'user', content: 'hi' }])) {
       tokens.push(t);
     }
-    expect(tokens).toEqual(['Hello', ', ', 'world']);
-    // No system message → no chat_template_kwargs should be threaded.
-    expect(createChatCompletion).toHaveBeenCalledWith(
-      expect.objectContaining({ stream: true })
-    );
-    const lastCall = createChatCompletion.mock.calls.at(-1)?.[0] as {
-      chat_template_kwargs?: unknown;
-    };
-    expect(lastCall.chat_template_kwargs).toBeUndefined();
-  });
-
-  it('PRR-008: streaming generate() also threads system message via chat_template_kwargs.system_prefix', async () => {
-    // The streaming path (generate) is the default UI chat path
-    // (streamTokens ?? true in rag-orchestrator.ts). The shared buildChatArgs
-    // helper is tested via generateComplete above, but generate() has its OWN
-    // chat_template_kwargs spread at the call site (mirrored line). This test
-    // pins that the streaming spread is present, mirroring the Issue #40 RC2
-    // penalty-streaming test pattern. If the streaming-path spread were
-    // dropped, the system prompt would be stripped (by buildChatArgs) but
-    // never threaded → silently lost in the default UI path.
-    const svc = WllamaService.getInstance();
-    await svc.initialize();
-
-    const tokens: string[] = [];
-    for await (const t of svc.generate([
-      { role: 'system', content: 'You are a helpful assistant.' },
-      { role: 'user', content: 'hi' },
-    ])) {
-      tokens.push(t);
-    }
-    expect(tokens).toEqual(['Hello', ', ', 'world']);
-    expect(createChatCompletion).toHaveBeenCalledWith(
-      expect.objectContaining({
-        stream: true,
-        chat_template_kwargs: { system_prefix: 'You are a helpful assistant.' },
-        // The system message must be STRIPPED from the messages array so the
-        // override template (which has no system branch) never sees it.
-        messages: [{ role: 'user', content: 'hi' }],
-      })
-    );
-  });
-
-  it('PRR-007: non-Gemma model id does NOT get the chat-template override', async () => {
-    // isGemma4Model gates the override on modelId.startsWith('gemma-4'). The
-    // negative branch (override NOT applied) is currently unreachable in
-    // production (LLM_MODEL_DIR is gemma-4-e2b-it and WebLLM uses a separate
-    // service), but a non-Gemma model id must NOT receive chat_template/jinja
-    // keys — those would force a Gemma-specific template onto a different
-    // architecture. This test is cheap insurance for the next model swap.
-    const svc = WllamaService.getInstance();
-    await svc.initialize('lfm2.5-vl-450m');
-
-    expect(loadModelFromUrl).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.not.objectContaining({ chat_template: expect.anything() })
-    );
-    expect(loadModelFromUrl).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.not.objectContaining({ jinja: true })
-    );
-    // The default sampling/context params are still present (the override
-    // absence is a pure removal of chat_template/jinja, not a different load).
-    expect(loadModelFromUrl).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ useCache: true })
-    );
+    expect(tokens.join('')).toBe('Hello, world');
   });
 });

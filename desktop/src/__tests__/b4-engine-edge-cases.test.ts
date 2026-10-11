@@ -218,14 +218,11 @@ describe('b4-engine-edge-cases', () => {
   it('buildGenerationParams pins the sampler shape that reaches session.prompt (PRR-011)', () => {
     expect(buildGenerationParams('quality')).toEqual({ maxTokens: 1024, temperature: 0.2, topP: 0.9 });
     expect(buildGenerationParams('fast')).toEqual({ maxTokens: 384, temperature: 0.3, topP: 0.9 });
-    const penalties = { penalty: 1.1, lastTokens: 8192, frequencyPenalty: 0, presencePenalty: 0 };
-    expect(buildGenerationParams('fast', penalties)).toEqual({
-      maxTokens: 384,
-      temperature: 0.3,
-      topP: 0.9,
-      repeatPenalty: penalties,
-    });
+    // #156: repeat penalty RETIRED — no penalty object is accepted on the
+    // overrides seam and none is emitted in the sampler shape.
     expect(buildGenerationParams('fast', {})).not.toHaveProperty('repeatPenalty');
+    expect(buildGenerationParams('quality', { maxTokens: 512 })).toEqual({ maxTokens: 512, temperature: 0.2, topP: 0.9 });
+    expect(buildGenerationParams('quality', { maxTokens: 512 })).not.toHaveProperty('repeatPenalty');
   });
 
   it('historyToChatHistory keeps only the last 12 valid turns (PRR-005 overflow cap)', () => {

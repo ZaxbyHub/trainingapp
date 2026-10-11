@@ -124,14 +124,14 @@ describe('Skeleton / EmptyState / KeyValueList / Kbd', () => {
     const { container } = render(
       <KeyValueList
         items={[
-          { label: 'Model', value: 'gemma-4-e2b-it' },
+          { label: 'Model', value: 'lfm2-1.2b-rag' },
           { label: 'Engine', value: 'wllama' },
         ]}
       />
     );
     expect(container.querySelectorAll('dt')).toHaveLength(2);
     expect(container.querySelectorAll('dd')).toHaveLength(2);
-    expect(screen.getByText('Model').nextElementSibling).toHaveTextContent('gemma-4-e2b-it');
+    expect(screen.getByText('Model').nextElementSibling).toHaveTextContent('lfm2-1.2b-rag');
   });
 
   it('Kbd renders a kbd element', () => {

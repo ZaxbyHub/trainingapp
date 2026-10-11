@@ -23,7 +23,7 @@ const base: DescribeChatModelInput = {
   residentProfile: null,
   externalConfig: null,
   browserEngine: 'wllama',
-  wllamaModelId: 'gemma-4-e2b-it',
+  wllamaModelId: 'lfm2-1.2b-rag',
   webllmModelId: 'Llama-3.2-3B-Instruct-q4f16_1-MLC',
 };
 
@@ -57,7 +57,7 @@ describe('describeChatModel', () => {
   it('browser local, wllama: the packaged model label from the manifest', () => {
     const d = describeChatModel(base);
     expect(d.kind).toBe('local');
-    expect(chatModelText(d)).toBe('Local · Google Gemma 4 E2B-it');
+    expect(chatModelText(d)).toBe('Local · LiquidAI LFM2-1.2B-RAG');
   });
 
   it('browser local, wllama with an unlisted model id: shows the raw id (no invented name)', () => {
@@ -169,7 +169,7 @@ describe('describeChatModel', () => {
 
 describe('packagedModelLabel', () => {
   it('drops the parenthetical from the manifest label', () => {
-    expect(packagedModelLabel('gemma-4-e2b-it')).toBe('Google Gemma 4 E2B-it');
+    expect(packagedModelLabel('lfm2-1.2b-rag')).toBe('LiquidAI LFM2-1.2B-RAG');
   });
   it('returns the id for unknown models', () => {
     expect(packagedModelLabel('nope')).toBe('nope');
@@ -194,10 +194,10 @@ describe('port display and readiness (review L4 / nit)', () => {
   it('browser local: not ready only when the model gate flag is explicitly false', () => {
     const notReady = describeChatModel({ ...base, modelReady: false });
     expect(notReady.notReady).toBe(true);
-    expect(chatModelText(notReady)).toBe('Local · Google Gemma 4 E2B-it — not ready');
+    expect(chatModelText(notReady)).toBe('Local · LiquidAI LFM2-1.2B-RAG — not ready');
     expect(notReady.detail).toContain('not loaded yet');
     expect(describeChatModel({ ...base, modelReady: true }).notReady).toBe(false);
-    expect(chatModelText(describeChatModel({ ...base, modelReady: true }))).toBe('Local · Google Gemma 4 E2B-it');
+    expect(chatModelText(describeChatModel({ ...base, modelReady: true }))).toBe('Local · LiquidAI LFM2-1.2B-RAG');
     expect(describeChatModel(base).notReady).toBe(false);
   });
 

@@ -94,7 +94,6 @@ vi.mock('../lib/llm/llm-factory', () => ({
     isReady: () => false,
     getModelInfo: () => null,
     getInferenceMode: () => 'wasm' as const,
-    supportsImages: () => false,
     interrupt: () => undefined,
   }),
   disposeBrowserEngine: () => undefined,
@@ -176,7 +175,7 @@ describe('ChatPage — model-blocked overlay (F-AC7)', () => {
 
   it('renders the alertdialog with the wllama-specific failure headline and the real failure/recommendation text', () => {
     currentReadinessResult = makeReadinessResult({
-      failures: ['This build does not include the packaged model weights (gemma-4-e2b-it).'],
+      failures: ['This build does not include the packaged model weights (lfm2-1.2b-rag).'],
       recommendations: ['Rebuild the app with the model bundled, or contact your administrator.'],
     });
 
@@ -194,7 +193,7 @@ describe('ChatPage — model-blocked overlay (F-AC7)', () => {
 
     // The actual failure/recommendation text is surfaced, not a generic message.
     expect(
-      screen.getByText('This build does not include the packaged model weights (gemma-4-e2b-it).')
+      screen.getByText('This build does not include the packaged model weights (lfm2-1.2b-rag).')
     ).toBeInTheDocument();
     expect(
       screen.getByText('Rebuild the app with the model bundled, or contact your administrator.')

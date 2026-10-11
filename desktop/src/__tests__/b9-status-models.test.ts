@@ -93,7 +93,7 @@ describe('b9-status-models: LlamaEngine presence reflects the disk, not residenc
   it('reports present with the resolved path only when the GGUF is staged', async () => {
     const modelDir = mkdtempSync(path.join(os.tmpdir(), 'b9-status-models-'));
     // Stage ONLY the fast GGUF: quality stays absent, fast present.
-    const fastDir = path.join(modelDir, 'lfm2.5-vl-450m');
+    const fastDir = path.join(modelDir, 'lfm2-1.2b-rag');
     mkdirSync(fastDir);
     writeFileSync(path.join(fastDir, 'model.gguf'), 'gguf-bytes');
 
@@ -103,7 +103,7 @@ describe('b9-status-models: LlamaEngine presence reflects the disk, not residenc
     expect(status.models.quality.present).toBe(false);
     expect(status.models.quality.path).toBeUndefined();
     expect(status.models.fast.present).toBe(true);
-    expect(status.models.fast.path).toContain(path.join('lfm2.5-vl-450m', 'model.gguf'));
+    expect(status.models.fast.path).toContain(path.join('lfm2-1.2b-rag', 'model.gguf'));
 
     // The staged profile must also PASS the readiness check the /ask route
     // runs — presence here must mean "an ask for that profile will not 503".

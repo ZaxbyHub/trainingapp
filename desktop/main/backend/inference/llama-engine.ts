@@ -41,7 +41,7 @@ import type {
   ModelStatus,
   RetrievalSurface,
 } from '../types.js';
-import { buildPenalties, PENALTY_FULL_CONTEXT_TOKENS, type PenaltyOptions } from './penalties.js';
+import { filterDeclineSentences } from './decline-filter.js';
 import { activeGpuVerdict, setActiveGpuVerdict, writeGpuProbeVerdict, type GpuProbeVerdict } from './gpu-probe.js';
 import {
   EXTERNAL_SETTING_KEYS,
@@ -62,10 +62,10 @@ import {
   type ProfileSetting,
 } from './profile-select.js';
 
-/** Quality-profile GGUF, relative to the model dir (assumption A2, per ADR-0002 #56 pending). */
-export const QUALITY_MODEL_SUBPATH = 'gemma-4-e2b-it/model.gguf';
-/** Fast-profile GGUF, relative to the model dir (assumption A2, per ADR-0002 #56 pending). */
-export const FAST_MODEL_SUBPATH = 'lfm2.5-vl-450m/model.gguf';
+/** Quality-profile GGUF, relative to the model dir (ADR-0002 as amended by #156). */
+export const QUALITY_MODEL_SUBPATH = 'lfm2.5-2.6b/model.gguf';
+/** Fast-profile GGUF, relative to the model dir (ADR-0002 as amended by #156). */
+export const FAST_MODEL_SUBPATH = 'lfm2-1.2b-rag/model.gguf';
 
 // The error class itself lives in ../types.js (the EngineSurface contract
 // module) so the transport never depends on a concrete engine; re-exported
@@ -170,12 +170,52 @@ const GIB = 1024 ** 3;
 /** #133: quality->fast auto-downgrade margin below the threshold (GiB). */
 const AUTO_PROFILE_HYSTERESIS_GB = 2;
 
+/**
+ * #156: the per-tier generation policy — the single record a profile switch
+ * carries so the model AND its chat settings change together (issue #156
+ * integration note 1). Chunk counts are deliberately NOT here: they live in
+ * the user-visible "Response quality" presets (rag-presets.ts), and duplicating
+ * them would create two fighting sources (D1 keeps fast at 5 chunks there).
+ */
+export interface ReasoningPolicy {
+  /**
+   * Closes the open <think> block node-llama-cpp renders for reasoning-capable
+   * LFM templates, and the zero thought budget stops thinking from starting.
+   * BOTH halves are required: prefix-only still thinks inside the answer, and
+   * budget-only degenerates (measured on the shipped engine, 2026-10-11).
+   */
+  responsePrefix: string;
+  budgets: { thoughtTokens: number };
+}
+
+export interface TierPolicy {
+  modelSubpath: string;
+  generation: { maxTokens: number; temperature: number };
+  reasoningPolicy: ReasoningPolicy | null;
+}
+
+export const INFERENCE_TIER_POLICY: Record<InferenceProfileName, TierPolicy> = {
+  quality: {
+    modelSubpath: 'lfm2.5-2.6b/model.gguf',
+    generation: { maxTokens: 1024, temperature: 0.2 },
+    reasoningPolicy: { responsePrefix: '\n</think>\n\n', budgets: { thoughtTokens: 0 } },
+  },
+  fast: {
+    modelSubpath: 'lfm2-1.2b-rag/model.gguf',
+    generation: { maxTokens: 384, temperature: 0.3 },
+    reasoningPolicy: null,
+  },
+};
+
 const PROFILE_GENERATION: Record<InferenceProfileName, { maxTokens: number; temperature: number }> = {
-  quality: { maxTokens: 1024, temperature: 0.2 },
-  fast: { maxTokens: 384, temperature: 0.3 },
+  quality: INFERENCE_TIER_POLICY.quality.generation,
+  fast: INFERENCE_TIER_POLICY.fast.generation,
 };
 const SAMPLER_TOP_P = 0.9;
-const SAMPLER_REPEAT_PENALTY = 1.1;
+// #156: repeat penalty RETIRED. The benchmark that selected both LFM tiers ran
+// with repeat penalty off, and #158's bounded window existed to stop gemma-4
+// repeating itself; no gemma tier remains, and penalising the LFM tiers would
+// diverge from the measured configuration the ADR now records.
 export const CONTEXT_SIZE = 8192; // DEFAULT_N_CTX parity (web_ui/src/lib/llm/wllama-service.ts:39)
 // Exported for the E2 first-run wizard's RAM gate (first-run/ram-gate.ts), which must
 // estimate with the SAME context size the engine will actually create — one source of truth.
@@ -239,14 +279,14 @@ export function profileGeneration(profile: InferenceProfileName): { maxTokens: n
 
 /**
  * Prompt sampler options for a profile (PRR-011): the single place the
- * PROFILE_GENERATION/topP/penalties mapping is derived, exported so tests can
+ * PROFILE_GENERATION/topP mapping is derived, exported so tests can
  * pin the shape that reaches session.prompt(). settings-wiring-honesty: an
  * explicitly set rag_max_tokens/rag_temperature (overrides) wins over the
- * profile value; an omitted override keeps the profile default.
+ * profile value; an omitted override keeps the profile default. Repeat
+ * penalty is retired (#156) — see INFERENCE_TIER_POLICY.
  */
 export function buildGenerationParams(
   profile: InferenceProfileName,
-  penalties: object = {},
   overrides: { maxTokens?: number; temperature?: number } = {},
 ): Record<string, unknown> {
   const generation = PROFILE_GENERATION[profile];
@@ -254,7 +294,6 @@ export function buildGenerationParams(
     maxTokens: overrides.maxTokens ?? generation.maxTokens,
     temperature: overrides.temperature ?? generation.temperature,
     topP: SAMPLER_TOP_P,
-    ...(Object.keys(penalties).length > 0 ? { repeatPenalty: penalties } : {}),
   };
 }
 
@@ -354,8 +393,82 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
         logMetrics('cancelled');
         return { answer: '', cancelled: true };
       }
-      const penalties = buildPenalties({ repeatPenalty: SAMPLER_REPEAT_PENALTY } satisfies PenaltyOptions, PENALTY_FULL_CONTEXT_TOKENS);
       const abort = new AbortController();
+      // #156: reasoning policy for this tier. The responsePrefix is echoed
+      // back as the first response chunk(s) — a mechanical prefill artefact,
+      // NOT generated output — so the same length is counted down and sliced
+      // out of the stream and off the returned answer (the benchmark harness
+      // did this at run.mjs:238-251; the app must do it itself).
+      const tierPolicy = INFERENCE_TIER_POLICY[opts.profile];
+      const reasoning = tierPolicy.reasoningPolicy;
+      let echoLeft = reasoning ? reasoning.responsePrefix.length : 0;
+      // #156 decline filter: the 1.2B models append trained-in "did you forget
+      // to include the document?" sentences when declining. The filter is
+      // scoped to decline-shaped answers (a marker sentence must already be
+      // present), so answerable answers pass through byte-identical.
+      //
+      // Emission discipline (4.5 review finding): node-llama-cpp flushes
+      // onTextChunk per TOKEN, not per sentence, so an artefact sentence's
+      // pre-terminator words stream through before the filter can decide, and
+      // slicing a re-filtered string at the previous length splices words
+      // mid-token. Emission therefore happens only through the last DECIDED
+      // sentence terminator (removal decisions are sentence-local and stable
+      // once a sentence completes), and the remainder is flushed after
+      // generation ends. Invariant: the joined emissions equal
+      // filterDeclineSentences(full raw answer) whenever the decline marker
+      // precedes the artefact (the only ordering observed in captured
+      // output). PRR-102: when the ordering inverts, the filtered candidate
+      // SHRINKS below what was already streamed — a length check would splice
+      // mid-answer — so emission is guarded by CONTENT (candidate must be a
+      // prefix-extension of what was emitted). On divergence the stream stops
+      // emitting and the terminal flush emits the full filtered answer after
+      // a separator, so the user always ends with the complete correct text.
+      let accumulated = '';
+      let emitted = '';
+      let diverged = false;
+      const emitThrough = (candidate: string): void => {
+        if (diverged) return;
+        if (!candidate.startsWith(emitted)) {
+          diverged = true;
+          return;
+        }
+        if (candidate.length > emitted.length) {
+          genOpts.streamCallback?.(candidate.slice(emitted.length));
+          emitted = candidate;
+        }
+      };
+      const surface = (chunk: string): void => {
+        let text = chunk;
+        if (echoLeft > 0) {
+          const take = Math.min(echoLeft, text.length);
+          echoLeft -= take;
+          text = text.slice(take);
+          if (text.length === 0) return;
+        }
+        accumulated += text;
+        const settled = /[.!?](?=[^.!?\n]*$)/.exec(accumulated);
+        if (settled === null) return;
+        emitThrough(filterDeclineSentences(accumulated.slice(0, settled.index + 1)));
+      };
+      const flushSurface = (): void => {
+        const finalText = filterDeclineSentences(accumulated);
+        // The content guard applies at the flush too (review round 2): if
+        // divergence is only detectable HERE — e.g. the stream ended with the
+        // marker sentence unterminated, so no in-loop candidate ever revealed
+        // it — the already-emitted prefix is stale and must not be extended by
+        // length. Deliver the complete filtered answer after a separator
+        // (plainly when nothing was emitted yet); corrections cannot retract.
+        const divergedNow = diverged || !finalText.startsWith(emitted);
+        if (divergedNow) {
+          if (finalText.length > 0) {
+            genOpts.streamCallback?.((emitted.length > 0 ? '\n\n' : '') + finalText);
+          }
+          diverged = true;
+          emitted = finalText;
+          return;
+        }
+        emitThrough(finalText);
+      };
       // Cancel bridge: the CancellationFlag polls at 20ms and aborts the
       // library prompt (stopOnAbortSignal) — emission stops far inside 200ms.
       const poll = setInterval(() => {
@@ -379,9 +492,9 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
         });
         const seededHistory = historyToChatHistory(genOpts.history);
         if (seededHistory.length > 0) session.setChatHistory(seededHistory);
-        const answer = await session.prompt(question, {
+        const rawAnswer = await session.prompt(question, {
           onTextChunk(chunk: string) {
-            genOpts.streamCallback?.(chunk);
+            surface(chunk);
           },
           // The library delivers batched arrays; accept a scalar too so the
           // count stays a token count under either calling convention.
@@ -390,18 +503,36 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
           },
           signal: abort.signal,
           stopOnAbortSignal: true,
-          ...buildGenerationParams(opts.profile, penalties, {
+          ...(reasoning
+            ? { responsePrefix: reasoning.responsePrefix, budgets: reasoning.budgets }
+            : {}),
+          ...buildGenerationParams(opts.profile, {
             maxTokens: genOpts.maxTokens,
             temperature: genOpts.temperature,
           }),
         });
         outcome = genOpts.cancellationEvent?.isSet() ? 'cancelled' : 'ok';
+        let answer = rawAnswer;
+        if (reasoning && answer.startsWith(reasoning.responsePrefix)) {
+          answer = answer.slice(reasoning.responsePrefix.length);
+        }
+        answer = filterDeclineSentences(answer);
+        // Complete the stream invariant: everything decided-but-unsettled at
+        // generation end (the final sentence, typically without a trailing
+        // terminator) is emitted now, so joined emissions == the filtered
+        // answer's stream projection.
+        flushSurface();
         return { answer, cancelled: genOpts.cancellationEvent?.isSet() ?? false };
       } catch (err) {
         // The library THROWS rather than returning when an abort lands
         // before any token (LlamaChat.js:2245-2247), so a user cancellation
         // during prefill arrives here. Distinguish it from a real failure.
         outcome = genOpts.cancellationEvent?.isSet() ? 'cancelled' : 'error';
+        // PRR-108: a mid-generation error must still deliver whatever the
+        // engine generated after the last settled sentence — pre-#156 every
+        // token streamed through, so dropping the tail here would be a
+        // streaming regression.
+        flushSurface();
         throw err;
       } finally {
         clearInterval(poll);
@@ -605,6 +736,17 @@ export class LlamaEngine implements EngineSurface {
   effectiveProfile(): InferenceProfileName {
     if (this.profileOverride !== null) return this.profileOverride;
     if (this.profileSetting !== 'auto') return this.profileSetting;
+    // #156: quality is a GPU tier (it takes ~2x the 1.2B models' time on CPU,
+    // per the benchmark recorded in ADR-0002). When the out-of-process GPU
+    // probe has RUN and concluded the only usable backend is CPU, auto never
+    // selects quality. A null verdict means "never probed" — the RAM rule
+    // applies unchanged, so an unprobed host behaves exactly as before. An
+    // explicit `quality` setting is unaffected: the operator decides.
+    const verdict = this.gpuVerdictFn();
+    if (verdict !== null && verdict.backend === 'cpu') {
+      this.stickyAuto = 'fast';
+      return 'fast';
+    }
     const free = this.freeMemBytes();
     const hi = this.thresholdGb * GIB;
     const lo = Math.max(0, this.thresholdGb - AUTO_PROFILE_HYSTERESIS_GB) * GIB;

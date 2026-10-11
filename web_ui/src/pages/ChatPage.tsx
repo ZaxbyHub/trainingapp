@@ -3,7 +3,7 @@
  * Displays messages, renders markdown, and supports streaming responses.
  */
 
-import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import type { ChatMessage, TrainingTarget, CitationRef } from '../types/chat';
 import type { SearchResult } from '../types/search';
 import type { ModelStatus } from '../lib/api/types';
@@ -32,7 +32,6 @@ import { WEBLLM_DEFAULT_MODEL_ID } from '../lib/llm/web-llm-service';
 import { LLM_MODEL_DIR } from '../lib/models/model-manifest';
 import { citationsToRefs } from '../lib/api/citations';
 import type { Citation } from '../lib/api/types';
-import type { AttachedImage } from '../lib/processing/image-input';
 import { presetOptions } from '../lib/rag/rag-presets';
 import { downloadConversation } from '../lib/export/conversation-export';
 import { messagesForRegenerate } from '../lib/chat/message-ops';
@@ -244,8 +243,9 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   const tokenStreamManagerRef = useRef<TokenStreamManager | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const clearTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Last sent turn (text + raw image bytes) so Regenerate can re-run it.
-  const lastTurnRef = useRef<{ text: string; images?: AttachedImage[] } | null>(null);
+  // Last sent turn text so Regenerate can re-run it. (Issue #156: images no
+  // longer ride turns — the browser LLM is text-only.)
+  const lastTurnRef = useRef<{ text: string } | null>(null);
   // Current input draft, mirrored from ChatInput so the Ctrl+Enter shortcut can
   // send it without ChatPage owning the textarea state.
   const draftRef = useRef('');
@@ -356,21 +356,8 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // The local browser model gates input only when it is the generator.
   const isModelBlocked = isBrowserMode && !isModelReady && !browserExternal && !desktopExternal;
   const isInputDisabled = isLoading || isModelBlocked || isModelLoading;
-  // U8c: image upload requires the multimodal wllama engine AND the loaded
-  // model's actual image-modality support. The previous check only verified
-  // engine name + readiness, so a wllama build with a packaged GGUF but a
-  // missing/broken mmproj would allow image attach then fail at generate().
-  // supportsImages() consults wllama's supportInputModality('image'). Guarded
-  // with try/catch because the service singleton may not be initialized yet.
-  const engineSupportsImages = useMemo(() => {
-    if (!isBrowserMode || browserExternal || desktopExternal || browserEngine !== 'wllama' || !isModelReady) return false;
-    try {
-      const svc = getLLMService(browserEngine);
-      return typeof svc.supportsImages === 'function' ? svc.supportsImages() : false;
-    }
-    catch { return false; }
-  }, [isBrowserMode, browserExternal, desktopExternal, browserEngine, isModelReady]);
-  const canAttachImages = engineSupportsImages;
+  // (Issue #156: no image-attachment capability — the packaged browser LLM,
+  // LFM2-1.2B-RAG, is text-only; the multimodal mmproj surface is gone.)
 
   // Abort any in-flight generation on a genuine engine switch — NOT on unmount.
   // Disposal of the OLD engine singleton itself now lives in
@@ -517,8 +504,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   }, []);
 
   // Run a query for an existing assistant placeholder message. Shared by send +
-  // regenerate. `images` carry the raw bytes (not stored on ChatMessage), so
-  // regenerate captures them via lastTurnRef.
+  // regenerate.
   //
   // S1 fix: `owningConversationId` + `owningMessages` are captured at send
   // time and threaded through so onDone/onError read from the SNAPSHOT, never
@@ -527,7 +513,6 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // conversation with the switched-TO conversation's messages.
   const runGeneration = useCallback((
     text: string,
-    images: AttachedImage[] | undefined,
     assistantMessageId: string,
     _owningConversationId: string | undefined,
     owningMessages: ChatMessage[]
@@ -807,7 +792,6 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
           for await (const event of orchestrator.query(text, {
             ...presetOptions(ragPreset),
             signal: abortController.signal,
-            images: images?.map((img) => ({ data: img.data, mimeType: img.mimeType })),
             // Issue #40 RC1: thread prior conversation turns for multi-turn
             // memory + retrieval contextualization (RC3).
             history: buildHistorySnapshot(owningMessages),
@@ -883,7 +867,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     }
   }, [mode, desktopSession, desktopModels, browserEngine, ragPreset, onSaveConversation, setModelLoadingProgress, currentConversationId, setMessages]);
 
-  const handleSend = useCallback(async (text: string, attachedImages?: AttachedImage[]) => {
+  const handleSend = useCallback(async (text: string) => {
     // Prevent overlapping streams
     if (tokenStreamManagerRef.current) return;
 
@@ -891,20 +875,14 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     // /ask would 503 — the informative overlay is shown instead.
     if (desktopModelBlocked) return;
 
-    // Capture the turn so Regenerate can re-run it (images carry raw bytes).
-    lastTurnRef.current = { text, images: attachedImages };
+    // Capture the turn so Regenerate can re-run it.
+    lastTurnRef.current = { text };
 
     const userMessage: ChatMessage = {
       id: generateId(),
       role: 'user',
       content: text,
       timestamp: Date.now(),
-      images: attachedImages?.map((img) => ({
-        id: img.id,
-        dataUrl: img.dataUrl,
-        mimeType: img.mimeType,
-        fileName: img.fileName,
-      })),
     };
 
     const assistantMessageId = generateId();
@@ -967,7 +945,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       setCurrentConversationId(resolvedOwningId);
     }
 
-    runGeneration(text, attachedImages, assistantMessageId, resolvedOwningId, appended);
+    runGeneration(text, assistantMessageId, resolvedOwningId, appended);
   }, [runGeneration, onSaveConversation, mode, browserEngine, currentConversationId, setCurrentConversationId, desktopModelBlocked]);
 
   // Re-run the most recent user turn, replacing the last assistant response.
@@ -991,7 +969,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     // F1: regenerate re-uses the current conversation; set the owning ref so
     // runGeneration's saves target it.
     owningConversationIdRef.current = currentConversationId;
-    runGeneration(last.text, last.images, assistantMessageId, currentConversationId, regenerated);
+    runGeneration(last.text, assistantMessageId, currentConversationId, regenerated);
   }, [runGeneration, currentConversationId]);
 
   const handleCancel = useCallback(() => {
@@ -1200,7 +1178,6 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         onCancel={handleCancel}
         disabled={isInputDisabled}
         disabledReasonId={isModelLoading ? 'chat-model-loading-note' : undefined}
-        imageUploadEnabled={canAttachImages}
         onDraftChange={(text) => { draftRef.current = text; }}
         status={
           /* Lumen phase 5 (design-language.md section 5): every chat status lives

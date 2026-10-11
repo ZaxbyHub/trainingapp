@@ -14,7 +14,6 @@ import type {
   LLMInferenceMode,
   LLMService,
 } from '@/types/llm';
-import { messageContentToText } from '@/types/llm';
 import { WebGPUWatchdog, createRecoveryHandler } from './webgpu-watchdog';
 import { IS_AIRGAP } from './airgap';
 
@@ -370,7 +369,7 @@ export class WebLLMService implements LLMService {
 
     try {
       const completion = await this._engine.chat.completions.create({
-        messages: messages.map((m) => ({ role: m.role, content: messageContentToText(m.content) })),
+        messages: messages.map((m) => ({ role: m.role, content: m.content })),
         stream: true,
         max_tokens: options?.maxTokens,
         temperature: options?.temperature,
@@ -421,7 +420,7 @@ export class WebLLMService implements LLMService {
     }
 
     const completion = await this._engine.chat.completions.create({
-      messages: messages.map((m) => ({ role: m.role, content: messageContentToText(m.content) })),
+      messages: messages.map((m) => ({ role: m.role, content: m.content })),
       stream: false,
       max_tokens: options?.maxTokens,
       temperature: options?.temperature,

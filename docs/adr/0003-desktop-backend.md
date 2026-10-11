@@ -10,6 +10,12 @@ The v1 plan assumed a "Node backend, no compatibility constraint" without packag
 
 Both slices load the A6-selected models (Quality `gemma-4-e2b-it` Q4_K_M, Fast `lfm2.5-vl-450m` Q4_K_M — ADR-0002) and the A5 embedding model (`bge-small-en-v1.5`, 384 dims) and answer the single frozen `POST /ask/stream` endpoint (contract v2.6.0, #51): SSE with CRLF separation, `{"token"}` frames, exactly one terminal event, `cancelled: true` on client disconnect, required `grounding`.
 
+> **Supersession note (2026-10-11):** the model lineup quoted in this paragraph is
+> historical. The ADR-0002 amendment by #156 replaced it — the desktop tiers are now
+> Quality `lfm2.5-2.6b` / Fast `lfm2-1.2b-rag` (both LFM Open License v1.0, text-only,
+> no mmproj). The backend-architecture decision itself (Node main-process server) is
+> unaffected by that swap.
+
 ## Options considered
 
 1. **Node main-process server** — in-process loopback HTTP server inside the Electron main process; `node-llama-cpp` for GGUF inference; `@huggingface/transformers` (onnxruntime-node) for embeddings; `better-sqlite3` + `sqlite-vec` for the store. Packaged as `spike/node-backend/` (NSIS, per-user).

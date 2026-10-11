@@ -9,9 +9,10 @@
 //      default — enumerate the requirement-bearing site (backend/index.ts)
 //      and check the co-occurring markers per site.
 //   2. wllama's sampler field names (penalty_repeat / penalty_freq /
-//      penalty_present / penalty_last_n) may appear ONLY inside
-//      inference/penalties.ts (as the documented parity reference) —
-//      anywhere else in desktop/main is a portability leak.
+//      penalty_present / penalty_last_n) may appear NOWHERE under desktop/main
+//      — anywhere there is a portability leak. (The retired #156 penalties
+//      module was the one sanctioned home; it is deleted, so the scan now
+//      admits no matches at all.)
 // The scanner itself ships with a positive control (a synthetic violation
 // built by string concatenation so this file's own source never matches) and
 // only ever reads desktop/main/**, never test files (anti-self-match).
@@ -58,13 +59,13 @@ describe('b4-default-engine guardrail (Phase 4.2)', () => {
     expect(scanFor(content, /new\s+StubEngine\s*\(/)).toBe(false);
   });
 
-  it('wllama sampler field names appear ONLY in inference/penalties.ts under desktop/main', () => {
+  it('wllama sampler field names appear nowhere under desktop/main (#156 retired the penalties module)', () => {
     const samplerPattern = /penalty_repeat|penalty_freq|penalty_present|penalty_last_n/;
     const violations: string[] = [];
     for (const file of listTsFiles(MAIN_DIR)) {
       if (!samplerPattern.test(fs.readFileSync(file, 'utf8'))) continue;
       const normalized = path.relative(MAIN_DIR, file).split(path.sep).join('/');
-      if (normalized !== 'backend/inference/penalties.ts') violations.push(normalized);
+      violations.push(normalized);
     }
     expect(violations, `sampler field names leaked into: ${violations.join(', ')}`).toEqual([]);
   });

@@ -209,18 +209,18 @@ describe('ModelReadinessGate', () => {
       expect(result.requiredBytes).toBe(2_000_000_000);
     });
 
-    test('uses modelId to determine required bytes (gemma-4-e2b-it)', () => {
-      // Gemma 4 E2B-it Q4_K_M (wllama): ~2.9 GB GGUF + ~940 MB mmproj + KV cache.
-      // MODEL_REQUIRED_BYTES budgets conservatively at 4 GB.
+    test('uses modelId to determine required bytes (lfm2-1.2b-rag)', () => {
+      // LiquidAI LFM2-1.2B-RAG Q4_K_M (wllama): ~0.73 GB GGUF; MODEL_REQUIRED_BYTES
+      // budgets 1.2 GB for runtime overhead (WASM heap, KV cache, cached blob copy).
       mockGetMemoryBudget.mockReturnValue({
         totalMB: 8192,
         availableMB: 5_000_000_000 / (1024 * 1024), // ~4768MB
         browserOverheadMB: 1024,
       });
 
-      const result = gate.checkMemory('gemma-4-e2b-it');
+      const result = gate.checkMemory('lfm2-1.2b-rag');
 
-      expect(result.requiredBytes).toBe(4_000_000_000);
+      expect(result.requiredBytes).toBe(1_200_000_000);
     });
 
     test('uses default 2GB for unknown modelId', () => {
@@ -472,8 +472,8 @@ describe('ModelReadinessGate', () => {
     // failures[] with an admin-oriented message, and `ready` is false.
     test('wllama engine not-cached is a readiness FAILURE with admin message (Issue #37 P6)', async () => {
       mockGpu = undefined; // wllama doesn't need WebGPU.
-      // wllama availability is probed via probeAsset on the packaged GGUF/mmproj.
-      // Mock both as missing to simulate an air-gapped build without the weights.
+      // wllama availability is probed via probeAsset on the packaged GGUF.
+      // Mock it as missing to simulate an air-gapped build without the weights.
       vi.mocked(probeAssetMock).mockResolvedValue(false);
 
       const result = await gate.checkReadiness('SmolLM3-3B-Q4_K_M', 'wllama');

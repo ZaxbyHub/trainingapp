@@ -15,7 +15,7 @@ describe('probeAsset', () => {
       status: 200,
       contentType: 'application/octet-stream',
     });
-    expect(await probeAsset('/models/llm/gemma-4-e2b-it/model.gguf', fetcher)).toBe(true);
+    expect(await probeAsset('/models/llm/lfm2-1.2b-rag/model.gguf', fetcher)).toBe(true);
   });
 
   it('reports present for a JSON model config (200 + application/json)', async () => {
@@ -43,7 +43,7 @@ describe('probeAsset', () => {
       status: 200,
       contentType: 'text/html; charset=utf-8',
     });
-    expect(await probeAsset('/models/llm/gemma-4-e2b-it/model.gguf', fetcher)).toBe(false);
+    expect(await probeAsset('/models/llm/lfm2-1.2b-rag/model.gguf', fetcher)).toBe(false);
   });
 
   it('reports NOT present for XHTML SPA fallback', async () => {

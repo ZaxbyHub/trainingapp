@@ -121,10 +121,11 @@ choice is recorded as an assumption, confirmed by ADR-0003), with Quality/Fast
 profile auto-selection.
 
 - **Profiles**: `auto` (default) picks Quality when free RAM >=
-  `inference.profileThresholdGb` (default 6 GiB, inclusive), else Fast.
-  Quality model: `gemma-4-e2b-it/model.gguf`; Fast model:
-  `lfm2.5-vl-450m/model.gguf` — both relative to the model dir (assumption A2
-  pending ADR-0002 #56). Embeddings remain the stub until B5 (#63).
+  `inference.profileThresholdGb` (default 6 GiB, inclusive) and the GPU probe finds a
+  working device; CPU-only machines select Fast (#156). Quality model:
+  `lfm2.5-2.6b/model.gguf`; Fast model: `lfm2-1.2b-rag/model.gguf` — both relative to
+  the model dir (ADR-0002 as amended by #156; the original "A2 pending ADR-0002"
+  deferral is resolved). Embeddings remain the stub until B5 (#63).
 - **Threads**: `min(cores, 8)` by default — explicitly NOT the browser WASM
   4-cap (`web_ui/src/lib/llm/wllama-service.ts`).
 - **Compute backend**: `inference.vulkan` takes `'auto'` (the default, follow
@@ -270,10 +271,12 @@ verified. Key facts for operators and reviewers:
   `desktop:build` before electron-builder): assembles
   `installer-resources/` as `models/{embedding,reranker,llm-quality,
   llm-fast}/<id>/…`, `packs/{bundled-docs,training}/<packId>-<version>/`,
-  and `docs/licenses.md` from EXPLICIT allow-lists. The staged models are
-  exactly what the packaged desktop runtime loads today (bge-small-en-v1.5
-  fp32 embedder, ettin-reranker-32m-v1 q8 reranker, the ADR-0002 GGUF
-  pairs); swapping any of those is a model-selection decision (A5/A6),
+  and `docs/licenses.md` + `docs/licenses/LFM-OPEN-LICENSE-v1.0.txt` from EXPLICIT
+  allow-lists. The staged models are exactly what the packaged desktop runtime loads
+  today (bge-small-en-v1.5 fp32 embedder, ettin-reranker-32m-v1 q8 reranker, the
+  ADR-0002 LLM GGUFs — Quality `lfm2.5-2.6b`, Fast `lfm2-1.2b-rag`, both Q4_K_M and
+  text-only, no projector artifact); swapping any of those is a model-selection
+  decision (A5/A6),
   not a packaging one. A missing required source file fails the build BY
   NAME — electron-builder silently skips a missing extraResources `from:`,
   so staging must not. `--fixture-models` (CI) substitutes deterministic
@@ -320,8 +323,10 @@ verified. Key facts for operators and reviewers:
   `renderer/` (and skips the double-ship guard). Only `desktop:build` is the
   full packaging chain; run it (not `build`) for installers.
 - **Size budget**: measured component table in `bench/RESULTS.md`
-  (E1 section); staged resources 4,111,872,009 bytes ≈ 3.83 GiB, measured
-  installed footprint 6,378,451,601 bytes ≈ 6.4 GB, vs the ≤7 GiB budget.
+  (E1 section); staged resources ≈ 2,579,067,305 bytes after the #156 LFM swap
+  (LLM bytes 2,405,349,088 vs 3,938,153,792 pre-swap), vs the ≤7 GiB budget. The
+  pre-swap measured installed footprint was 6,378,451,601 bytes ≈ 6.4 GB; the new
+  installed total re-measure is pending real-weights staging (RESULTS.md rule 4).
   The staged allow-lists are pinned by a committed consumer-contract test
   (`e1-manifest-contract.test.ts` imports `STAGED_MODELS`): the reranker's
   ROOT tokenizer files are load-bearing (`AutoTokenizer.from_pretrained`

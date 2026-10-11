@@ -25,7 +25,7 @@ no CI run substitutes for it). Checklist:
    ```
    npm --prefix desktop ci
    npm --prefix desktop run compile
-   # stage models/gemma-4-e2b-it/ and models/lfm2.5-vl-450m/ (both profiles)
+   # stage models/lfm2.5-2.6b/ and models/lfm2-1.2b-rag/ (both profiles)
    ```
 3. The reference laptop idles near ~8-12 GB free; to reach AC1's "~6 GB free"
    condition, close background apps until `os.freemem()` is at/below 6 GiB,

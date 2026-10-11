@@ -3,9 +3,15 @@
  *
  * Why this exists: the target hardware (12th-gen i5 + Iris Xe) frequently lacks
  * usable WebGPU, which the WebLLM engine hard-requires. wllama runs on CPU via
- * WASM SIMD + threads, loads the SAME GGUF family as the desktop app, and — via
- * an mmproj projector — supports multimodal (image) input. It is therefore the
- * primary, most-robust browser engine.
+ * WASM SIMD + threads, loads the SAME GGUF family as the desktop app, and is
+ * therefore the primary, most-robust browser engine.
+ *
+ * Issue #156: the packaged model is LiquidAI LFM2-1.2B-RAG — TEXT-ONLY. The
+ * previous model's mmproj multimodal surface (image attachments,
+ * supportsImages, the mmproj load option) was removed with the model swap;
+ * the browser LLM no longer accepts image input. LFM2's embedded chat
+ * template is used AS-IS (no Gemma-era macro-free override: LFM2's template
+ * renders fine under wllama's Jinja subset).
  *
  * OFFLINE: the wllama WASM runtime and the GGUF weights are served same-origin
  * from /models/ (see PACKAGING.md). `allowOffline: true` tells wllama never to
@@ -29,72 +35,14 @@ import {
   WLLAMA_COMPAT_WASM_URL,
   WLLAMA_COMPAT_WORKER_URL,
   LLM_GGUF_URL,
-  LLM_MMPROJ_URL,
   LLM_MODEL_DIR,
 } from '../models/model-manifest';
 import { probeAsset } from '../models/probe';
+import { filterDeclineSentences } from './decline-filter';
 
-/** Context window. Gemma 4 E2B-it supports up to 128K; 8192 is a safe default
+/** Context window. LFM2-1.2B-RAG supports up to 32K; 8192 is a safe default
  *  that leaves ample RAM for weights + KV cache on 8 GB target boxes. */
 export const DEFAULT_N_CTX = 8192;
-
-/**
- * Macro-free Gemma 4 chat template, injected as `LoadModelParams.chat_template`
- * with `jinja: true` to override the broken template embedded in the GGUF.
- *
- * Why this is required: the `gemma-4-e2b-it` GGUF ships an 18 KB Jinja chat
- * template that uses 5 macros (format_parameters, format_function_declaration,
- * format_argument, strip_thinking, format_tool_response_block) plus custom
- * `<|"|>` escape tokens. wllama 3.5.1's Jinja subset cannot evaluate those
- * macros — they render to empty strings, producing a BLANK prompt, so the
- * model emits <eos> immediately and the assistant bubble stays empty despite
- * retrieval + citations working. This is a known class of bug across the
- * llama.cpp ecosystem (goose#9110, LLamaSharp#1375, lmstudio#2012, and
- * llama.cpp#22786 all describe Gemma 4 "loads but produces nothing").
- *
- * This override is the macro-free equivalent of the embedded template's actual
- * message-rendering loop (extracted byte-for-byte from tokenizer.chat_template
- * in the GGUF). It uses the SAME turn markers the model was trained on —
- * `<|turn>{role}\n` to open a turn and `<turn|>` to close it (the closing
- * marker has no trailing newline; the next line's `{%-` strip handles
- * whitespace separation, and `<turn|>` tokenizes as a single special token
- * that absorbs surrounding whitespace). System messages are folded into the
- * first user turn via the `system_prefix` kwarg — Gemma 4 has no standalone
- * system role, matching Google's documented prompt structure
- * (https://ai.google.dev/gemma/docs/core/prompt-structure) and the embedded
- * template's own behavior.
- *
- * Multimodal note: image content parts flow through createChatCompletion
- * unchanged; wllama inserts `<|image|>` tokens at the projector boundary.
- *
- * TODO: remove this override once wllama ships a Jinja runtime that supports
- * the macros Gemma 4's embedded template requires.
- */
-const GEMMA4_CHAT_TEMPLATE = `{%- for message in messages -%}
-{%- if message.role == "system" -%}
-{# Gemma 4 has no standalone system turn; fold into first user turn via system_prefix kwarg #}
-{%- elif message.role == "user" -%}
-<|turn>user
-{{ system_prefix if system_prefix and loop.first else "" }}{{ message.content }}<turn|>
-{%- elif message.role == "assistant" -%}
-<|turn>model
-{{ message.content }}<turn|>
-{%- endif -%}
-{%- endfor -%}
-{%- if add_generation_prompt -%}
-<|turn>model
-{%- endif -%}`;
-
-/**
- * Detect whether a model id refers to a Gemma 4 variant whose embedded chat
- * template requires the macro-free override above. Keyed off the model id
- * (the directory name under /models/llm/) rather than runtime architecture
- * introspection, because the override must be injected at LOAD time before
- * the model metadata is available.
- */
-function isGemma4Model(modelId: string | undefined): boolean {
-  return !!modelId && modelId.startsWith('gemma-4');
-}
 
 function threadCount(): number {
   return navigator.hardwareConcurrency ? Math.min(navigator.hardwareConcurrency, 4) : 2;
@@ -105,30 +53,14 @@ function errMessage(e: unknown): string {
 }
 
 /**
- * Our LLMMessage content (string | {type:'text'|'image', ...} parts) matches
- * wllama's chat-message content shape at runtime. Cast at this single boundary
- * because our union types `system` content more widely than wllama's.
+ * Our LLMMessage shape (string content) is passed through to wllama's
+ * chat-message shape at runtime. Cast at this single boundary because our
+ * `system` role union is wider than wllama's own message typing.
  */
 function toWllamaMessages(
   messages: LLMMessage[]
 ): Parameters<Wllama['createChatCompletion']>[0]['messages'] {
   return messages as unknown as Parameters<Wllama['createChatCompletion']>[0]['messages'];
-}
-
-/**
- * Extract the text of a system message (flattening content parts to text) if
- * one is present at the head of the messages array. Returns null when there
- * is no system message.
- */
-function extractSystemText(messages: LLMMessage[]): string | null {
-  if (messages.length === 0 || messages[0].role !== 'system') return null;
-  const content = messages[0].content;
-  if (typeof content === 'string') return content;
-  // Flatten content parts to text, dropping image parts (system prompts are
-  // text-only by construction in the orchestrator's buildMessages).
-  return content
-    .map((part) => (part.type === 'text' ? part.text : ''))
-    .join('');
 }
 
 /**
@@ -186,7 +118,7 @@ function isPresent(url: string): Promise<boolean> {
  * File System via FileSystemSyncAccessHandle. On systems with limited OPFS
  * quota, this fails with "No space available for this operation" — even with
  * cacheManager.clear() called first, because the write happens AFTER the clear
- * and the quota is genuinely too small for the 219MB GGUF.
+ * and the quota is genuinely too small for the GGUF.
  *
  * This backend stores the downloaded blobs in a Map in memory. The tradeoff:
  * no cross-session persistence (the model re-fetches each page load), but the
@@ -249,13 +181,6 @@ export class WllamaService implements LLMService {
   private initPromise: Promise<void> | null = null;
   private disposed = false;
   private modelInfo: LLMModelInfo | null = null;
-  /**
-   * True when the loaded model's chat template was overridden at load time
-   * (currently: Gemma 4 variants whose embedded macro template wllama can't
-   * render). When true, system messages must be threaded via
-   * chat_template_kwargs.system_prefix instead of as a separate message.
-   */
-  private chatTemplateOverridden = false;
   /** Tracks the in-flight generation so interrupt() can cancel it. */
   private activeAbort: AbortController | null = null;
 
@@ -290,16 +215,10 @@ export class WllamaService implements LLMService {
       // Fail fast with a clear, actionable message if the weights were never
       // packaged (build done without prepare-models / model not included),
       // instead of a cryptic load error deep inside wllama.
-      const [ggufOk, mmprojOk] = await Promise.all([
-        isPresent(LLM_GGUF_URL),
-        isPresent(LLM_MMPROJ_URL),
-      ]);
-      if (!ggufOk || !mmprojOk) {
-        const missing = [!ggufOk && LLM_GGUF_URL, !mmprojOk && LLM_MMPROJ_URL]
-          .filter(Boolean)
-          .join(', ');
+      const ggufOk = await isPresent(LLM_GGUF_URL);
+      if (!ggufOk) {
         throw new Error(
-          `Browser LLM not packaged — missing: ${missing}. ` +
+          `Browser LLM not packaged — missing: ${LLM_GGUF_URL}. ` +
             'Run `npm run prepare-models` with the model present, or use the desktop app or an external model server (Settings → Model & connection). See PACKAGING.md.'
         );
       }
@@ -322,25 +241,17 @@ export class WllamaService implements LLMService {
       // them from jsdelivr and breaks the offline guarantee.
       this.wllama.setCompat({ worker: WLLAMA_COMPAT_WORKER_URL, wasm: WLLAMA_COMPAT_WASM_URL });
 
-      // Gemma 4 chat-template override: the GGUF's embedded template uses Jinja
-      // macros wllama can't evaluate, which silently produces an empty prompt
-      // (see GEMMA4_CHAT_TEMPLATE doc comment). When the staged model is a
-      // Gemma 4 variant, inject a macro-free override + enable the Jinja
-      // interpreter so wllama renders messages correctly. Track the override
-      // so the generation path knows to thread system messages via kwargs.
-      const needsTemplateOverride = isGemma4Model(modelId);
-      this.chatTemplateOverridden = needsTemplateOverride;
-
+      // LFM2-1.2B-RAG (issue #156): the model is loaded with its EMBEDDED
+      // chat template as-is — no chat_template override, no jinja flag. (The
+      // previous Gemma 4 needed a macro-free override because wllama's Jinja
+      // subset could not evaluate its embedded template's macros; LFM2's
+      // template renders correctly without help.)
       await this.wllama.loadModelFromUrl(
-        // mmprojUrl loads the vision projector so the model can accept images.
-        { url: LLM_GGUF_URL, mmprojUrl: LLM_MMPROJ_URL },
+        { url: LLM_GGUF_URL },
         {
           n_ctx: DEFAULT_N_CTX,
           n_threads: threadCount(),
           useCache: true,
-          ...(needsTemplateOverride
-            ? { chat_template: GEMMA4_CHAT_TEMPLATE, jinja: true }
-            : {}),
           progressCallback: ({ loaded, total }) => {
             if (onProgress && total > 0) {
               onProgress({
@@ -401,34 +312,6 @@ export class WllamaService implements LLMService {
     };
   }
 
-  /**
-   * Build the `messages` + optional `chat_template_kwargs` for a
-   * createChatCompletion call. When the chat-template override is active
-   * (Gemma 4), the system message is extracted from the messages array and
-   * threaded via `chat_template_kwargs.system_prefix` (the override template
-   * folds it into the first user turn). Without the override, messages pass
-   * through unchanged so non-Gemma models keep their native system handling.
-   */
-  private buildChatArgs(messages: LLMMessage[]): {
-    messages: Parameters<Wllama['createChatCompletion']>[0]['messages'];
-    chatTemplateKwargs?: Record<string, unknown>;
-  } {
-    if (!this.chatTemplateOverridden) {
-      return { messages: toWllamaMessages(messages) };
-    }
-    const systemText = extractSystemText(messages);
-    if (systemText === null) {
-      // No system message to fold — pass messages through unchanged.
-      return { messages: toWllamaMessages(messages) };
-    }
-    // Strip the leading system message; thread its text as the kwarg the
-    // override template prepends to the first user turn.
-    return {
-      messages: toWllamaMessages(messages.slice(1)),
-      chatTemplateKwargs: { system_prefix: systemText },
-    };
-  }
-
   async *generate(
     messages: LLMMessage[],
     options?: LLMGenerateOptions & { signal?: AbortSignal }
@@ -438,15 +321,13 @@ export class WllamaService implements LLMService {
     }
     const { signal, cleanup } = this.beginGeneration(options?.signal);
     try {
-      const { messages: wllamaMessages, chatTemplateKwargs } = this.buildChatArgs(messages);
       const stream = await this.wllama.createChatCompletion({
-        messages: wllamaMessages,
+        messages: toWllamaMessages(messages),
         stream: true,
         abortSignal: signal,
         max_tokens: options?.maxTokens,
         temp: options?.temperature,
         top_p: options?.topP,
-        ...(chatTemplateKwargs ? { chat_template_kwargs: chatTemplateKwargs } : {}),
         // Issue #40 RC2: anti-repetition sampling params. wllama's chat path
         // (createChatCompletion) accepts the SamplingParams names (penalty_*),
         // NOT the OpenAI-style repeat_penalty/frequency_penalty — using the
@@ -456,9 +337,60 @@ export class WllamaService implements LLMService {
         // pass no penalties get unchanged default behavior.
         ...buildWllamaPenalties(options),
       });
+      // #156 decline filter (browser twin of desktop llama-engine.ts): the
+      // LFM 1.2B models append trained-in "did you forget to include/attach
+      // the document?" sentences when declining. The filter is scoped to
+      // decline-shaped answers (a marker sentence must already be present),
+      // so answerable answers pass through byte-identical.
+      //
+      // Emission discipline (4.5 review finding, twin of the desktop fix):
+      // wllama streams per token, so emission happens only through the last
+      // DECIDED sentence terminator (removal decisions are sentence-local and
+      // stable once a sentence completes) and the remainder is flushed when
+      // the stream ends — no artefact word ever surfaces, no offset splice.
+      // Ordering condition: holds because the decline marker precedes the
+      // artefact in every observed decline (artefact-before-marker is a
+      // bounded, pre-existing scope assumption of the filter).
+      let accumulated = '';
+      let emitted = '';
+      let diverged = false;
+      // PRR-102 (desktop twin parity): the emission guard is CONTENT-based —
+      // a candidate that shrinks below already-emitted text (decline marker
+      // appearing after an artefact sentence) must not splice mid-answer.
+      // On divergence, stop streaming; the terminal flush delivers the full
+      // filtered answer after a separator so the user ends with correct text.
+      function* emitThrough(candidate: string): Generator<string> {
+        if (diverged) return;
+        if (!candidate.startsWith(emitted)) {
+          diverged = true;
+          return;
+        }
+        if (candidate.length > emitted.length) {
+          yield candidate.slice(emitted.length);
+          emitted = candidate;
+        }
+      }
       for await (const chunk of stream) {
         const content = chunk.choices?.[0]?.delta?.content;
-        if (content) yield content;
+        if (!content) continue;
+        accumulated += content;
+        const settled = /[.!?](?=[^.!?\n]*$)/.exec(accumulated);
+        if (settled === null) continue;
+        yield* emitThrough(filterDeclineSentences(accumulated.slice(0, settled.index + 1)));
+      }
+      const finalVisible = filterDeclineSentences(accumulated);
+      // PRR-102 flush guard (desktop twin parity): the content check applies
+      // at the flush too — divergence can be first detectable HERE when the
+      // stream ends with the marker sentence unterminated. Never extend the
+      // emitted prefix by length; deliver the full filtered answer after a
+      // separator (plainly when nothing was emitted yet).
+      const divergedNow = diverged || !finalVisible.startsWith(emitted);
+      if (divergedNow) {
+        if (finalVisible.length > 0) {
+          yield (emitted.length > 0 ? '\n\n' : '') + finalVisible;
+        }
+      } else if (finalVisible.length > emitted.length) {
+        yield finalVisible.slice(emitted.length);
       }
     } finally {
       cleanup();
@@ -474,19 +406,19 @@ export class WllamaService implements LLMService {
     }
     const { signal, cleanup } = this.beginGeneration(options?.signal);
     try {
-      const { messages: wllamaMessages, chatTemplateKwargs } = this.buildChatArgs(messages);
       const response = await this.wllama.createChatCompletion({
-        messages: wllamaMessages,
+        messages: toWllamaMessages(messages),
         stream: false,
         abortSignal: signal,
         max_tokens: options?.maxTokens,
         temp: options?.temperature,
         top_p: options?.topP,
-        ...(chatTemplateKwargs ? { chat_template_kwargs: chatTemplateKwargs } : {}),
         // Issue #40 RC2: see generate() above.
         ...buildWllamaPenalties(options),
       });
-      return response.choices?.[0]?.message?.content ?? '';
+      // #156 decline filter (see generate() above): applied to the completed
+      // answer text, mirroring the desktop engine's non-streaming path.
+      return filterDeclineSentences(response.choices?.[0]?.message?.content ?? '');
     } finally {
       cleanup();
     }
@@ -502,18 +434,6 @@ export class WllamaService implements LLMService {
 
   isReady(): boolean {
     return this.ready && this.wllama !== null;
-  }
-
-  /**
-   * Whether the loaded model can accept image input (Phase 4 image upload).
-   * False until a model with an mmproj projector is loaded.
-   */
-  supportsImages(): boolean {
-    try {
-      return this.isReady() && this.wllama!.supportInputModality('image');
-    } catch {
-      return false;
-    }
   }
 
   interrupt(): void {
@@ -539,7 +459,6 @@ export class WllamaService implements LLMService {
     this.ready = false;
     this.initPromise = null;
     this.modelInfo = null;
-    this.chatTemplateOverridden = false;
     WllamaService.instance = null;
   }
 }

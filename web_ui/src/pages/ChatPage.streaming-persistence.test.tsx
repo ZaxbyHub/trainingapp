@@ -59,7 +59,6 @@ vi.mock('../lib/llm/llm-factory', () => ({
   getLLMService: vi.fn().mockImplementation(() => ({
     initialize: vi.fn().mockResolvedValue(undefined),
     interrupt: vi.fn(),
-    supportsImages: vi.fn().mockReturnValue(false),
   })),
   DEFAULT_BROWSER_ENGINE: 'wllama',
   disposeBrowserEngine: vi.fn(),
@@ -373,7 +372,6 @@ describe('ChatPage F1: first-turn fast-complete does not create a duplicate conv
     vi.mocked(llmFactoryModule.getLLMService).mockImplementation(() => ({
       initialize: vi.fn().mockResolvedValue(undefined),
       interrupt: vi.fn(),
-      supportsImages: vi.fn().mockReturnValue(false),
     }) as unknown as ReturnType<typeof llmFactoryModule.getLLMService>);
 
     vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
@@ -677,7 +675,6 @@ describe('ChatPage PRR-001: switch mid-stream PERSISTS the partial turn to the o
     vi.mocked(llmFactoryModule.getLLMService).mockImplementation(() => ({
       initialize: vi.fn().mockResolvedValue(undefined),
       interrupt: vi.fn(),
-      supportsImages: vi.fn().mockReturnValue(false),
     }) as unknown as ReturnType<typeof llmFactoryModule.getLLMService>);
     vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
       mode: 'browser-local',
@@ -856,7 +853,6 @@ describe('ChatPage PRR-005: handleCancel preserves cancel-flushed tail tokens', 
     vi.mocked(llmFactoryModule.getLLMService).mockImplementation(() => ({
       initialize: vi.fn().mockResolvedValue(undefined),
       interrupt: vi.fn(),
-      supportsImages: vi.fn().mockReturnValue(false),
     }) as unknown as ReturnType<typeof llmFactoryModule.getLLMService>);
     vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
       mode: 'browser-local',
@@ -1020,7 +1016,6 @@ describe('ChatPage PRR-006a: unmount mid-stream PERSISTS the finalized partial t
     vi.mocked(llmFactoryModule.getLLMService).mockImplementation(() => ({
       initialize: vi.fn().mockResolvedValue(undefined),
       interrupt: vi.fn(),
-      supportsImages: vi.fn().mockReturnValue(false),
     }) as unknown as ReturnType<typeof llmFactoryModule.getLLMService>);
     vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
       mode: 'browser-local',
@@ -1148,7 +1143,6 @@ describe('ChatPage PRR-006b: engine switch mid-stream PERSISTS the finalized par
     vi.mocked(llmFactoryModule.getLLMService).mockImplementation(() => ({
       initialize: vi.fn().mockResolvedValue(undefined),
       interrupt: vi.fn(),
-      supportsImages: vi.fn().mockReturnValue(false),
     }) as unknown as ReturnType<typeof llmFactoryModule.getLLMService>);
     vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
       mode: 'browser-local',

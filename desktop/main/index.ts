@@ -22,6 +22,7 @@ import {
 } from './backend/index.js';
 import { CONTEXT_SIZE } from './backend/inference/llama-engine.js';
 import { autoSelectProfile, resolveFreeRamBytes } from './first-run/ram-gate.js';
+import { readGpuProbeVerdict } from './backend/inference/gpu-probe.js';
 import {
   containedJoin,
   loadManifest,
@@ -724,10 +725,15 @@ export function bootstrap(): void {
         fastFileBytes:
           fastBytes?.bytes ?? (wm.manifest !== null ? manifestGroupBytes(wm.manifest, 'llm-fast') : undefined),
       };
+      // PRR-105: the wizard's recommendation must not contradict the
+      // runtime's CPU-only rule — a probed CPU-only verdict forces fast here
+      // exactly as effectiveProfile() does at query time.
+      const gpuVerdict = readGpuProbeVerdict(path.dirname(storePath));
       const recommendation = autoSelectProfile({
         freeBytes,
         nCtx: CONTEXT_SIZE,
         ...gateSizes,
+        gpuVerdict,
       });
       const failures: ManifestFailure[] =
         wm.loadError !== null

@@ -46,7 +46,9 @@ const ALLOWLIST: Record<string, [number, string]> = {
   // F-008 residual (`.href =`): the one anchor assignment in production code.
   'lib/export/conversation-export.ts': [1, 'a.href = blob: object URL (URL.createObjectURL of locally built export text) on a download anchor; no network, revoked after the click'],
   // F-008 additions (JSX src): local-only sources, recorded so a new one is reviewed.
-  'components/ChatInput.tsx': [1, '<img src> of a user-attached image read locally as a data: URL (no network)'],
+  // (Issue #156: the ChatInput <img src> entry is gone — the composer's image
+  // preview was removed with the text-only LFM2 model swap. The bubble below
+  // still renders images attached in conversations persisted before the swap.)
   'components/ChatMessageBubble.tsx': [1, '<img src> of a stored attached image data: URL (no network)'],
   'components/TrainingPlayer.tsx': [
     2,

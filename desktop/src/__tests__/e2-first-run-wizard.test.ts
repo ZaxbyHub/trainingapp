@@ -73,18 +73,18 @@ function stageWorkspace(options: { fileBytes: string }): {
   manifest: ResourcesManifest;
 } {
   const root = makeTempDir('e2-wizard-');
-  const filePath = path.join(root, 'llm', 'gemma-4-e2b-it', 'model.gguf');
+  const filePath = path.join(root, 'llm', 'lfm2.5-2.6b', 'model.gguf');
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, options.fileBytes);
   const manifest: ResourcesManifest = {
     version: '1',
     models: [
       {
-        id: 'gemma-4-e2b-it',
+        id: 'lfm2.5-2.6b',
         label: 'Quality LLM',
         kind: 'llm',
         group: 'llm-quality',
-        files: [{ path: path.join('llm', 'gemma-4-e2b-it', 'model.gguf'), required: true, sha256: sha256(options.fileBytes), sizeBytes: Buffer.byteLength(options.fileBytes) }],
+        files: [{ path: path.join('llm', 'lfm2.5-2.6b', 'model.gguf'), required: true, sha256: sha256(options.fileBytes), sizeBytes: Buffer.byteLength(options.fileBytes) }],
       },
     ],
   };
@@ -108,7 +108,7 @@ describe('C3: verify-manifest blocks on a deleted required file and names it', (
     expect(result.failures).toHaveLength(1);
     const failure = result.failures[0];
     expect(failure?.reason).toBe('missing');
-    expect(failure?.path).toBe(path.join('llm', 'gemma-4-e2b-it', 'model.gguf'));
+    expect(failure?.path).toBe(path.join('llm', 'lfm2.5-2.6b', 'model.gguf'));
     expect(failure?.expected).toContain(sha256('quality-model-bytes-v1'));
     expect(failure?.actual).toBe('missing');
     // The defect class this wizard closes: no free-text generic message.
@@ -186,7 +186,7 @@ describe('C7: firstRun keys persist atomically and round-trip', () => {
         selectedProfile: 'quality',
         completedAt: '2026-09-17T12:00:00.000Z',
         acknowledgedLicenses: true,
-        manifestDigests: { 'llm/gemma-4-e2b-it/model.gguf': 'abc'.padEnd(64, '0') },
+        manifestDigests: { 'llm/lfm2.5-2.6b/model.gguf': 'abc'.padEnd(64, '0') },
       },
     });
 
@@ -195,7 +195,7 @@ describe('C7: firstRun keys persist atomically and round-trip', () => {
     expect(after.firstRun.selectedProfile).toBe('quality');
     expect(after.firstRun.completedAt).toBe('2026-09-17T12:00:00.000Z');
     expect(after.firstRun.acknowledgedLicenses).toBe(true);
-    expect(after.firstRun.manifestDigests['llm/gemma-4-e2b-it/model.gguf']).toBeDefined();
+    expect(after.firstRun.manifestDigests['llm/lfm2.5-2.6b/model.gguf']).toBeDefined();
     // The sidecar lives beside the store (profile dir), named first-run.json.
     expect(firstRunStatePathFor(storePath)).toBe(path.join(root, 'first-run.json'));
     // No tmp residue after a successful atomic save.
@@ -220,35 +220,39 @@ describe('C2 backing: RAM-gate math and auto-selection', () => {
     expect(kvEstimate(8192)).toBe(KV_CACHE_ESTIMATE_BYTES);
     expect(KV_CACHE_ESTIMATE_BYTES).toBe(1024 ** 3);
     expect(GGUF_LOAD_OVERHEAD_BYTES).toBe(1024 ** 3);
-    const qualityBytes = Math.round(3.85 * 1024 ** 3);
+    // #156: the quality GGUF is the staged lfm2.5-2.6b Q4_K_M weight.
+    const qualityBytes = 1_674_455_040;
     const required = estimateRequiredMemory(qualityBytes, 8192);
     expect(required).toBe(qualityBytes + KV_CACHE_ESTIMATE_BYTES + GGUF_LOAD_OVERHEAD_BYTES);
-    // The A3 acceptance bound: the ~5.85 GiB requirement fits 8 GiB free.
+    // The A3 acceptance bound: the ~3.56 GiB requirement fits 8 GiB free.
     expect(required).toBeLessThan(8 * 1024 ** 3);
   });
 
   it('autoSelectProfile keeps quality when it fits, downgrades to fast with numbers otherwise', () => {
-    const qualityBytes = Math.round(3.85 * 1024 ** 3);
+    const qualityBytes = 1_674_455_040;
+    const fastFileBytes = 730_894_048;
     const fits = autoSelectProfile({
       freeBytes: 16 * 1024 ** 3,
       nCtx: 8192,
       qualityFileBytes: qualityBytes,
-      fastFileBytes: Math.round(0.7 * 1024 ** 3),
+      fastFileBytes,
     });
     expect(fits.profile).toBe('quality');
     expect(fits.warning).toBeUndefined();
 
+    // Below the quality requirement (~3.56 GiB): downgrade to fast with the
+    // numbers in the warning.
     const lowRam = autoSelectProfile({
-      freeBytes: 4 * 1024 ** 3,
+      freeBytes: 3 * 1024 ** 3,
       nCtx: 8192,
       qualityFileBytes: qualityBytes,
-      fastFileBytes: Math.round(0.7 * 1024 ** 3),
+      fastFileBytes,
     });
     expect(lowRam.profile).toBe('fast');
     expect(lowRam.warning).toBeDefined();
     expect(lowRam.warning?.detail).toContain(String(estimateRequiredMemory(qualityBytes, 8192)));
-    expect(lowRam.warning?.detail).toContain(String(4 * 1024 ** 3));
-    expect(lowRam.warning?.requiredBytes).toBeGreaterThan(4 * 1024 ** 3);
+    expect(lowRam.warning?.detail).toContain(String(3 * 1024 ** 3));
+    expect(lowRam.warning?.requiredBytes).toBeGreaterThan(3 * 1024 ** 3);
   });
 
   it('resolveFreeRamBytes honors the documented dev/test seam', () => {
@@ -256,6 +260,36 @@ describe('C2 backing: RAM-gate math and auto-selection', () => {
     // Junk falls back to os.freemem (positive, sane).
     const fallback = resolveFreeRamBytes({ TRAININGAPP_DESKTOP_FREE_RAM_BYTES: 'not-a-number' });
     expect(fallback).toBeGreaterThan(0);
+  });
+
+  it('PRR-105: a probed CPU-only verdict forces fast at first run even when quality fits RAM', () => {
+    const qualityBytes = 1_674_455_040;
+    const fits = autoSelectProfile({
+      freeBytes: 16 * 1024 ** 3,
+      nCtx: 8192,
+      qualityFileBytes: qualityBytes,
+      gpuVerdict: { backend: 'cpu', ok: false },
+    });
+    expect(fits.profile).toBe('fast');
+    expect(fits.warning?.detail).toContain('CPU');
+
+    // A vulkan-ok verdict leaves the RAM rule in charge (quality fits).
+    const withGpu = autoSelectProfile({
+      freeBytes: 16 * 1024 ** 3,
+      nCtx: 8192,
+      qualityFileBytes: qualityBytes,
+      gpuVerdict: { backend: 'vulkan', ok: true },
+    });
+    expect(withGpu.profile).toBe('quality');
+
+    // No verdict (never probed): RAM rule unchanged.
+    const unprobed = autoSelectProfile({
+      freeBytes: 16 * 1024 ** 3,
+      nCtx: 8192,
+      qualityFileBytes: qualityBytes,
+      gpuVerdict: null,
+    });
+    expect(unprobed.profile).toBe('quality');
   });
 });
 

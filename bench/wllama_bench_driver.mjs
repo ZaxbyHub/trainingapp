@@ -36,7 +36,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const WLLAMA_VERSION = '3.5.1';
 const CDN_BASE = `https://cdn.jsdelivr.net/npm/@wllama/wllama@${WLLAMA_VERSION}/esm`;
 const LOCAL_ESM = path.join(REPO_ROOT, 'web_ui', 'node_modules', '@wllama', 'wllama', 'esm');
-const RUN_BUDGET_MS = 190_000;
+const RUN_BUDGET_MS = Number(process.env.WLLAMA_BENCH_BUDGET_MS) || 190_000;
 
 const MODES = [
   { mode: 'threaded', coop_coep: true, threads: Math.min(os.availableParallelism?.() || os.cpus().length, 4) },
@@ -210,6 +210,7 @@ async function run() {
   const promptTokens = parseInt(q.get('promptTokens') || '256', 10);
   const maxTokens = parseInt(q.get('maxTokens') || '16', 10);
   const mode = q.get('mode') || 'single';
+  const chat = q.get('chat') === '1';
   const machine = q.get('machine') || 'devstation';
   const row = {
     surface: 'wllama',
@@ -250,22 +251,59 @@ async function run() {
     let firstTokenAt = null;
     let nTokens = 0;
     let lastAt = null;
+    let chatText = null;
     const tGen = performance.now();
-    // v3 createCompletion takes OAI-compatible params: max_tokens + stream/onData
-    // (NOT nPredict/onNewToken — those names are silently ignored).
-    await wllama.createCompletion({
-      prompt,
-      max_tokens: maxTokens,
-      temperature: 0.0,
-      stream: true,
-      onData: (chunk) => {
-        const now = performance.now();
-        if (firstTokenAt === null) firstTokenAt = now;
-        nTokens += 1;
-        lastAt = now;
-        void chunk;
-      },
-    });
+    if (chat) {
+      // #156 AC15 substitute evidence: exercise the CHAT path (the embedded
+      // template) the way wllama-service does, not raw completion. A grounded
+      // exchange must produce non-empty text with no leaked think markers.
+      // NOTE (PRR-107): this leg is DIAGNOSTIC ONLY — its rows carry no real
+      // decode/first-token measurements and must NOT be appended to
+      // bench/RESULTS.md (append_results has no chat discriminator).
+      // Escapes: this block lives inside the page's outer template literal,
+      // so doubled backslashes here emit single backslash escapes into the
+      // inner script, and the apostrophe is emitted pre-escaped. A bare
+      // newline or raw apostrophe inside a quoted inner-JS string is a
+      // SyntaxError that kills the WHOLE page (both legs) — the exact
+      // failure PRR-107 recorded.
+      const context =
+        '[1] The expense report portal closes on the 15th of each month.\\n\\n' +
+        '[2] Receipts are required for any claim above 25 GBP.';
+      const result = await wllama.createChatCompletion({
+        messages: [
+          { role: 'system', content: 'Answer the user\\'s question directly and concisely using only the provided context; say when it does not contain the answer.' },
+          { role: 'user', content: 'Context:\\n' + context + '\\n\\nQuestion: When does the expense portal close?' },
+        ],
+        max_tokens: maxTokens,
+        temperature: 0.2,
+      });
+      chatText = (result && typeof result === 'object' && 'choices' in result
+        ? String(result.choices?.[0]?.message?.content ?? '')
+        : String(result ?? ''));
+      // No synthetic throughput: chat rows must not be mistaken for measured
+      // completion rows (decode/first-token stay null; only chat_* fields).
+      nTokens = chatText.length > 0 ? 1 : 0;
+      row.chat_mode = true;
+      row.chat_nonempty = chatText.trim().length > 0;
+      row.chat_think_leak = chatText.includes('<think>') || chatText.includes('</think>');
+      row.chat_text_head = chatText.slice(0, 120);
+    } else {
+      // v3 createCompletion takes OAI-compatible params: max_tokens + stream/onData
+      // (NOT nPredict/onNewToken — those names are silently ignored).
+      await wllama.createCompletion({
+        prompt,
+        max_tokens: maxTokens,
+        temperature: 0.0,
+        stream: true,
+        onData: (chunk) => {
+          const now = performance.now();
+          if (firstTokenAt === null) firstTokenAt = now;
+          nTokens += 1;
+          lastAt = now;
+          void chunk;
+        },
+      });
+    }
 
     const decodeS = firstTokenAt !== null && lastAt !== null && lastAt > firstTokenAt && nTokens > 1
       ? (lastAt - firstTokenAt) / 1000
@@ -274,7 +312,7 @@ async function run() {
     row.first_token_ms = firstTokenAt !== null ? Math.round((firstTokenAt - tGen) * 10) / 10 : null;
     row.tokens_generated = nTokens;
     row.decode_tokens_per_second = decodeS > 0 ? Math.round(((nTokens - 1) / decodeS) * 100) / 100 : null;
-    row.outcome = nTokens > 0 ? 'pass' : 'fail';
+    row.outcome = chat ? (row.chat_nonempty && !row.chat_think_leak ? 'pass' : 'fail') : (nTokens > 0 ? 'pass' : 'fail');
     try { await wllama.exit(); } catch { /* already gone */ }
     window.__benchResult = row;
     setStage('done');
@@ -379,7 +417,7 @@ function killBrowser(child) {
   });
 }
 
-async function runLeg({ browserExe, modelPath, coopCoep, nThreads, promptTokens, maxTokens, mode }) {
+async function runLeg({ browserExe, modelPath, coopCoep, nThreads, promptTokens, maxTokens, mode, chat }) {
   const localEsm = fs.existsSync(path.join(LOCAL_ESM, 'index.js')) ? LOCAL_ESM : null;
   const indexUrl = localEsm ? '/wllama/index.js' : `${CDN_BASE}/index.js`;
   const wasmUrl = localEsm ? '/wllama/wasm/wllama.wasm' : `${CDN_BASE}/wasm/wllama.wasm`;
@@ -397,6 +435,7 @@ async function runLeg({ browserExe, modelPath, coopCoep, nThreads, promptTokens,
       maxTokens: String(maxTokens),
       mode,
       machine: machineTag(),
+      ...(chat ? { chat: '1' } : {}),
     }).toString();
     log(`mode=${mode} COOP/COEP=${coopCoep} port=${port} threads=${nThreads} index=${indexUrl}`);
     const { child, wsUrl } = await launchBrowser(browserExe, tmpDir);
@@ -454,6 +493,7 @@ async function runBothModes(opts) {
         promptTokens: opts.promptTokens,
         maxTokens: opts.maxTokens,
         mode: m.mode,
+        chat: opts.chat === true,
       });
     } catch (err) {
       // Isolate per-leg failures so one broken mode cannot discard the
@@ -494,6 +534,7 @@ function main() {
       browser,
       promptTokens: parseInt(args['prompt-tokens'] || '256', 10),
       maxTokens: parseInt(args['max-tokens'] || '16', 10),
+      chat: args.chat === true,
     };
     const budget = setTimeout(() => {
       log(`exceeded the ${RUN_BUDGET_MS / 1000}s budget; exiting`);
@@ -515,7 +556,7 @@ function main() {
       });
     return undefined;
   }
-  process.stdout.write('usage: wllama_bench_driver.mjs --list-modes | --run --model <gguf> --browser <exe> [--prompt-tokens N] [--max-tokens N] [--json]\n');
+  process.stdout.write('usage: wllama_bench_driver.mjs --list-modes | --run --model <gguf> --browser <exe> [--prompt-tokens N] [--max-tokens N] [--chat (diagnostic only; rows are NOT for bench/RESULTS.md)] [--json]\n');
   return 2;
 }
 

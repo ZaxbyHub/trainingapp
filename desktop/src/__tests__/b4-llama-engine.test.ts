@@ -118,8 +118,8 @@ function makeEngine(overrides: Partial<LlamaEngineOptions> = {}): EngineHarness 
 
 describe('b4-llama-engine Group A (mocked backend): resident model + cancellation', () => {
   it('pins the model subpath constants the profile table resolves against', () => {
-    expect(QUALITY_MODEL_SUBPATH).toBe('gemma-4-e2b-it/model.gguf');
-    expect(FAST_MODEL_SUBPATH).toBe('lfm2.5-vl-450m/model.gguf');
+    expect(QUALITY_MODEL_SUBPATH).toBe('lfm2.5-2.6b/model.gguf');
+    expect(FAST_MODEL_SUBPATH).toBe('lfm2-1.2b-rag/model.gguf');
   });
 
   it('AC5 resident: two SEQUENTIAL queries construct the backend exactly once and the second still streams', async () => {
@@ -337,7 +337,7 @@ describe('b4-llama-engine Group A (mocked backend): resident model + cancellatio
     // The diagnostic names the resolved path (dir + FAST_MODEL_SUBPATH) and
     // says how to fix it.
     expect(failure.detail).toContain(emptyDir);
-    expect(failure.detail).toContain('lfm2.5-vl-450m');
+    expect(failure.detail).toContain('lfm2-1.2b-rag');
     expect(failure.detail).toContain('model.gguf');
     expect(constructions).toBe(0);
   });
@@ -441,7 +441,7 @@ function findRepoRoot(): string {
 }
 
 const REPO_ROOT = findRepoRoot();
-const REAL_FAST_MODEL = path.join(REPO_ROOT, 'models', 'lfm2.5-vl-450m', 'model.gguf');
+const REAL_FAST_MODEL = path.join(REPO_ROOT, 'models', 'lfm2-1.2b-rag', 'model.gguf');
 if (!fs.existsSync(REAL_FAST_MODEL)) {
   // Inline guard naming the EXACT missing artifact — never a blanket skip.
   console.warn(

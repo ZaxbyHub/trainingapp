@@ -22,8 +22,8 @@ import { probeAsset } from './probe';
  * default per `vite.config.ts`) into an ABSOLUTE same-origin pathname prefix.
  *
  * Why absolute, not relative: Transformers.js sets `env.localModelPath` to this
- * value and `fetch`es against it, and wllama's GGUF/mmproj URLs are derived from
- * it. A relative value like `./models` would resolve against the CURRENT client
+ * value and `fetch`es against it, and wllama's GGUF URL is derived from it. A
+ * relative value like `./models` would resolve against the CURRENT client
  * route (e.g. under `/app/chat/` it would fetch `/app/chat/models/...` — wrong).
  * Resolving against `document.baseURI` yields the HTML document's deploy root, so
  * `/docqa/` deployments produce `/docqa/models` while origin-root stays
@@ -113,18 +113,19 @@ export const WLLAMA_COMPAT_WORKER_URL = `${WLLAMA_COMPAT_BASE}wllama.js`;
 /** Base directory for packaged GGUF LLM weights (wllama). */
 export const LLM_MODELS_BASE = `${MODELS_BASE}/llm`;
 
-/** Packaged browser LLM: Google Gemma 4 E2B-it (multimodal vision-language) for wllama. */
-export const LLM_MODEL_DIR = 'gemma-4-e2b-it';
+/** Packaged browser LLM: LiquidAI LFM2-1.2B-RAG (text-only) for wllama.
+ *  Issue #156: replaced the previous multimodal Gemma model. LFM2-1.2B-RAG
+ *  has no vision projector — the browser LLM is text-only, and no mmproj is
+ *  packaged. */
+export const LLM_MODEL_DIR = 'lfm2-1.2b-rag';
 /**
- * GGUF weights URL passed to wllama `loadModelFromUrl`. Gemma 4 E2B-it Q4_K_M is
- * ~2.9 GB. NOTE: this EXCEEDS the historical ~2 GB/file WASM ArrayBuffer ceiling;
- * wllama v3+ streams via HTTP range requests (not a single ArrayBuffer), so the
- * practical limit is browser RAM, not the 2 GB ceiling. Validate on target
- * hardware before packaging. ~2.3B effective params (~5.1B total w/ PLE), 128K ctx.
+ * GGUF weights URL passed to wllama `loadModelFromUrl`. LFM2-1.2B-RAG Q4_K_M is
+ * ~0.73 GB — well under both the historical ~2 GB/file WASM ArrayBuffer ceiling
+ * and typical browser RAM, which is what made it viable as the issue #156
+ * fallback for 8 GB target boxes. 1.2B params, 32K ctx (the service caps
+ * n_ctx at 8192 to leave RAM for weights + KV cache).
  */
 export const LLM_GGUF_URL = `${LLM_MODELS_BASE}/${LLM_MODEL_DIR}/model.gguf`;
-/** Multimodal projector (mmproj) URL, passed via wllama ModelSource.mmprojUrl. */
-export const LLM_MMPROJ_URL = `${LLM_MODELS_BASE}/${LLM_MODEL_DIR}/mmproj.gguf`;
 
 /**
  * Category of a packaged model, used to group readiness reporting in the UI.

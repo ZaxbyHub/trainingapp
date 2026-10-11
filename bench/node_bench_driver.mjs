@@ -30,6 +30,7 @@ function parseArgs(argv) {
       case '--max-tokens': args['max-tokens'] = Number.parseInt(argv[++i], 10); break;
       case '--prompt-tokens': args['prompt-tokens'] = Number.parseInt(argv[++i], 10); break;
       case '--json': args.json = argv[++i]; break;
+      case '--profile': args.profile = argv[++i]; break;
       default: throw new Error(`unknown argument: ${argv[i]}`);
     }
   }
@@ -44,8 +45,19 @@ async function main() {
   const { LlamaEngine } = await import(
     pathToFileURL(path.join(repoRoot, 'desktop', 'dist', 'main', 'backend', 'inference', 'llama-engine.js')).href
   );
+  // PRR-115: reject unknown profile values instead of silently fast-falling —
+  // a typo would otherwise record a different configuration into the same
+  // registered identity cell.
+  if (args.profile !== undefined && args.profile !== 'quality' && args.profile !== 'fast') {
+    throw new Error(`--profile must be 'quality' or 'fast' (got: ${args.profile})`);
+  }
   const engine = new LlamaEngine({
-    profile: 'fast',
+    // #156: the profile carries the tier's chat policy (the quality tier's
+    // reasoning suppression is part of its shipping configuration), so a row
+    // measured for the quality model must run under the quality profile.
+    // The measured policy is recorded on stdout as profile=... in the engine
+    // metrics line; append_results has no profile column (disclosed).
+    profile: args.profile === 'quality' ? 'quality' : 'fast',
     models: {
       fast: path.resolve(repoRoot, args.gguf),
       quality: path.resolve(repoRoot, args.gguf),

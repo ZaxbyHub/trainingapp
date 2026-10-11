@@ -16,16 +16,23 @@ repos:
     hooks:
       - id: black
         language_version: python3
+        # issue #156: the four frozen acceptance-spec files are byte-locked by
+        # the issue-tracer checkpoint anchor; formatters must not rewrite them
+        # (their content is E501-exempted in flake8 for the same reason).
+        exclude: '^tests/test_issue156_(llm_swap|docs|adr|licenses)\.py$'
 
   - repo: https://github.com/pycqa/isort
     rev: 5.13.2
     hooks:
       - id: isort
         args: ["--profile", "black"]
+        exclude: '^tests/test_issue156_(llm_swap|docs|adr|licenses)\.py$'
 
   - repo: https://github.com/pycqa/flake8
     rev: 7.0.0
     hooks:
       - id: flake8
         args: ['--max-line-length=100', '--extend-ignore=E203,W503',
-               '--per-file-ignores=tests/test_low_end_hardware.py:F401,F811,F841,E501,F541 tests/test_rag_pipeline_edge_cases.py:F401,F811,F841 tests/test_vector_store.py:F401,F841,E501 tests/test_rag_performance.py:F401,F841 tests/test_full_council_adversarial.py:F401,F841,E501,E302,E712 tests/test_app_gui_message_queue_validation.py:F401 tests/test_app_gui_streaming_callback.py:E501 tests/test_app_gui_streaming_logging_fix.py:E402,F541,E501 tests/test_keyboard_shortcuts_styling.py:F401']
+               '--per-file-ignores=tests/test_low_end_hardware.py:F401,F811,F841,E501,F541 tests/test_rag_pipeline_edge_cases.py:F401,F811,F841 tests/test_vector_store.py:F401,F841,E501 tests/test_rag_performance.py:F401,F841 tests/test_full_council_adversarial.py:F401,F841,E501,E302,E712 tests/test_app_gui_message_queue_validation.py:F401 tests/test_app_gui_streaming_callback.py:E501 tests/test_app_gui_streaming_logging_fix.py:E402,F541,E501 tests/test_keyboard_shortcuts_styling.py:F401
+               tests/test_issue156_llm_swap.py:E501 tests/test_issue156_adr.py:E501
+               tests/test_issue156_docs.py:E501 tests/test_issue156_licenses.py:E501']

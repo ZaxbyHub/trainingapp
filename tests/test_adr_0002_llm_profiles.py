@@ -62,13 +62,14 @@ UNMEASURED_SLUGS = ("lfm2.5-1.2b-instruct", "gemma-3-1b-it")
 LICENSE_BY_MODEL_PREFIX = (
     ("gemma-4", re.compile(r"apache", re.I)),
     ("lfm2.5", re.compile(r"lfm open license|lfm1\.0", re.I)),
+    ("lfm2", re.compile(r"lfm open license|lfm1\.0", re.I)),
 )
 # The ADR-0002 decision itself: which model each profile pins. This is the
 # regression pin — a re-decision requires a deliberate update here (with the
 # ADR revision), never a silent document edit.
 EXPECTED_PROFILE_MODELS = {
-    "quality": "gemma-4-e2b-it",
-    "fast": "lfm2.5-vl-450m",
+    "quality": "lfm2.5-2.6b",
+    "fast": "lfm2-1.2b-rag",
 }
 MODEL_SLUG_RE = re.compile(r"[a-z0-9]+(?:[.\-][a-z0-9]+)+")
 QUANT_RE = re.compile(r"Q[0-9]_K_[MS]")
@@ -470,16 +471,16 @@ def _mutated(text: str, old: str, new: str, count: int = 1) -> str:
 
 def test_validator_rejects_tampered_citation_number():
     adr = _load(ADR_REL)
-    tampered = _mutated(adr, "| 3.65 tok/s", "| 3.66 tok/s")
+    tampered = _mutated(adr, "| 3.87 tok/s", "| 3.88 tok/s")
     v = validate_documents(tampered, _load(LICENSES_REL), _load(RESULTS_REL))
-    assert any("cites tok/s=3.66" in x for x in v), v
+    assert any("cites tok/s=3.88" in x for x in v), v
 
 
 def test_validator_rejects_tampered_secondary_toks_figure():
     """PRR-001: EVERY tok/s figure in a multi-number cell is validated, not just
     the first — corrupting the Quality row's secondary citation (a realistic
     copy-paste drift between recorded rows) must be rejected."""
-    adr = _mutated(_load(ADR_REL), "2.12 tok/s @8", "9.99 tok/s @8")
+    adr = _mutated(_load(ADR_REL), "6.17 tok/s @8", "9.99 tok/s @8")
     v = validate_documents(adr, _load(LICENSES_REL), _load(RESULTS_REL))
     assert any("cites tok/s=9.99" in x for x in v), v
 
@@ -488,7 +489,7 @@ def test_validator_rejects_first_token_ms_quoted_as_toks():
     """The column-aware check that the frozen acceptance checks lack: the row's
     first_token_ms value must NOT satisfy the tok/s citation."""
     adr = _load(ADR_REL)
-    tampered = _mutated(adr, "| 3.65 tok/s @4 threads", "| 36813 tok/s @4 threads")
+    tampered = _mutated(adr, "| 3.87 tok/s @4 threads", "| 36813 tok/s @4 threads")
     v = validate_documents(tampered, _load(LICENSES_REL), _load(RESULTS_REL))
     assert any("cites tok/s=36813" in x for x in v), v
 
@@ -523,8 +524,7 @@ def test_validator_rejects_missing_fast_row():
 def test_validator_rejects_missing_outcome_statement():
     adr = _load(ADR_REL)
     tampered = _mutated(adr, "bundling is not blocked", "bundling is blocked", count=2)
-    tampered = _mutated(tampered, "fallback was not needed", "fallback was needed")
-    tampered = _mutated(tampered, "clause is NOT triggered", "clause is triggered")
+    tampered = _mutated(tampered, "no fallback was needed", "a fallback was needed")
     v = validate_documents(tampered, _load(LICENSES_REL), _load(RESULTS_REL))
     assert any("outcome statement missing" in x for x in v), v
 
@@ -547,11 +547,12 @@ def test_validator_rejects_missing_adr0001_crossref():
 
 
 def test_validator_rejects_fast_section_without_threshold_language():
-    lic = _mutated(
-        _load(LICENSES_REL),
-        "10 million\n  United States dollars ($10,000,000) or more",
-        "the license's revenue threshold",
-    )
+    lic = _load(LICENSES_REL)
+    m = re.search(r"^## .*[Ff]ast.*$(.*?)(?=^## |\Z)", lic, re.M | re.S)
+    assert m, "fast section heading not found in licenses.md"
+    stripped = re.sub(r"\$10,000,000|10 million", "the revenue cap", m.group(0))
+    assert stripped != m.group(0), "no threshold language found to strip"
+    lic = lic[: m.start()] + stripped + lic[m.end() :]
     v = validate_documents(_load(ADR_REL), lic, _load(RESULTS_REL))
     assert any("threshold language" in x for x in v), v
 
@@ -578,13 +579,13 @@ def _swap_quality_model(adr: str, new_model: str, new_toks: str) -> str:
 def test_validator_rejects_same_model_for_both_profiles():
     """Implementation-review Round 1 variant 1: pointing the Quality row at the
     Fast model (citing a real lfm bench row) must be rejected."""
-    adr = _swap_quality_model(_load(ADR_REL), "lfm2.5-vl-450m", "95.97")
+    adr = _swap_quality_model(_load(ADR_REL), "lfm2-1.2b-rag", "8.26")
     v = validate_documents(adr, _load(LICENSES_REL), _load(RESULTS_REL))
     assert any("same model" in x for x in v), v
 
 
 def test_validator_rejects_unmeasured_model_in_quality_row():
-    adr = _swap_quality_model(_load(ADR_REL), "gemma-3-1b-it", "95.97")
+    adr = _swap_quality_model(_load(ADR_REL), "gemma-3-1b-it", "8.26")
     v = validate_documents(adr, _load(LICENSES_REL), _load(RESULTS_REL))
     assert any(
         "quality row names an unmeasured candidate gemma-3-1b-it" in x for x in v
@@ -596,12 +597,12 @@ def test_validator_rejects_license_model_mismatch():
     license for an Apache-2.0 gemma-4 model must be rejected."""
     adr = _mutated(
         _load(ADR_REL),
-        "| Apache-2.0 (Gemma 4 license) |",
         "| LFM Open License v1.0 (non-OSI) |",
+        "| Apache-2.0 (stock) |",
     )
     v = validate_documents(adr, _load(LICENSES_REL), _load(RESULTS_REL))
     assert any(
-        "quality row license cell does not match gemma-4 licensing" in x for x in v
+        "quality row license cell does not match lfm2.5 licensing" in x for x in v
     ), v
 
 
@@ -612,15 +613,15 @@ def test_validator_rejects_decision_prose_model_swap():
     tail = adr[dm.end() :]
     nxt = re.search(r"^## ", tail, re.M)
     body = tail[: nxt.start()] if nxt else tail
-    assert "gemma-4-e2b-it" in body, "mutation anchor missing in Decision prose"
+    assert "lfm2.5-2.6b" in body, "mutation anchor missing in Decision prose"
     swapped = (
         adr[: dm.end()]
-        + body.replace("gemma-4-e2b-it", "gemma-3-1b-it")
+        + body.replace("lfm2.5-2.6b", "gemma-3-1b-it")
         + adr[dm.end() + len(body) :]
     )
     v = validate_documents(swapped, _load(LICENSES_REL), _load(RESULTS_REL))
     assert any(
-        "Decision section does not name the quality-profile model gemma-4-e2b-it" in x
+        "Decision prose does not bind the quality profile to lfm2.5-2.6b" in x
         for x in v
     ), v
 
@@ -637,14 +638,14 @@ def test_validator_rejects_full_tier_cross_swap():
     li = next(i for i, h in enumerate(header_cells) if _norm(h) == "license")
     swaps = {
         "quality": (
-            "lfm2.5-vl-450m",
-            "95.97 tok/s @4 threads, 1024-token prompt (machine devstation)",
+            "lfm2-1.2b-rag",
+            "8.26 tok/s @4 threads, 64-token prompt (machine devstation)",
             "LFM Open License v1.0 (non-OSI)",
         ),
         "fast": (
-            "gemma-4-e2b-it",
-            "3.65 tok/s @4 threads, 1024-token prompt (machine devstation)",
-            "Apache-2.0 (Gemma 4 license)",
+            "lfm2.5-2.6b",
+            "3.87 tok/s @4 threads, 64-token prompt (machine devstation)",
+            "LFM Open License v1.0 (non-OSI)",
         ),
     }
     lines = adr.splitlines()
@@ -671,11 +672,10 @@ def test_validator_rejects_full_tier_cross_swap():
     swapped = "\n".join(out)
     v = validate_documents(swapped, _load(LICENSES_REL), _load(RESULTS_REL))
     assert any(
-        "quality row names lfm2.5-vl-450m but ADR-0002 pins gemma-4-e2b-it" in x
-        for x in v
+        "quality row names lfm2-1.2b-rag but ADR-0002 pins lfm2.5-2.6b" in x for x in v
     ), v
     assert any(
-        "fast row names gemma-4-e2b-it but ADR-0002 pins lfm2.5-vl-450m" in x for x in v
+        "fast row names lfm2.5-2.6b but ADR-0002 pins lfm2-1.2b-rag" in x for x in v
     ), v
     # And a cross-swapped NARRATIVE must fail the prose binding too.
     dm = re.search(r"^## Decision\s*$", swapped, re.M)
@@ -683,9 +683,9 @@ def test_validator_rejects_full_tier_cross_swap():
     nxt = re.search(r"^## ", tail, re.M)
     body = tail[: nxt.start()] if nxt else tail
     prose = (
-        body.replace("`gemma-4-e2b-it`", "@@SWAP-Q@@")
-        .replace("`lfm2.5-vl-450m`", "`gemma-4-e2b-it`")
-        .replace("@@SWAP-Q@@", "`lfm2.5-vl-450m`")
+        body.replace("`lfm2.5-2.6b`", "@@SWAP-Q@@")
+        .replace("`lfm2-1.2b-rag`", "`lfm2.5-2.6b`")
+        .replace("@@SWAP-Q@@", "`lfm2-1.2b-rag`")
     )
     fully_swapped = swapped[: dm.end()] + prose + swapped[dm.end() + len(body) :]
     v2 = validate_documents(fully_swapped, _load(LICENSES_REL), _load(RESULTS_REL))
