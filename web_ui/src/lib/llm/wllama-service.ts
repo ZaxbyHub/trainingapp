@@ -341,21 +341,30 @@ export class WllamaService implements LLMService {
       // LFM 1.2B models append trained-in "did you forget to include/attach
       // the document?" sentences when declining. The filter is scoped to
       // decline-shaped answers (a marker sentence must already be present),
-      // so answerable answers pass through byte-identical. Applied over the
-      // ACCUMULATED stream text so a sentence split across chunks is still
-      // caught; emitted text only ever grows (the marker precedes the
-      // artefact in every observed decline).
+      // so answerable answers pass through byte-identical.
+      //
+      // Emission discipline (4.5 review finding, twin of the desktop fix):
+      // wllama streams per token, so emission happens only through the last
+      // DECIDED sentence terminator (removal decisions are sentence-local and
+      // stable once a sentence completes) and the remainder is flushed when
+      // the stream ends — no artefact word ever surfaces, no offset splice.
       let accumulated = '';
       let emitted = '';
       for await (const chunk of stream) {
         const content = chunk.choices?.[0]?.delta?.content;
         if (!content) continue;
         accumulated += content;
-        const visible = filterDeclineSentences(accumulated);
-        if (visible.length > emitted.length) {
-          yield visible.slice(emitted.length);
-          emitted = visible;
+        const settled = /[.!?](?=[^.!?\n]*$)/.exec(accumulated);
+        if (settled === null) continue;
+        const candidate = filterDeclineSentences(accumulated.slice(0, settled.index + 1));
+        if (candidate.length > emitted.length) {
+          yield candidate.slice(emitted.length);
+          emitted = candidate;
         }
+      }
+      const finalVisible = filterDeclineSentences(accumulated);
+      if (finalVisible.length > emitted.length) {
+        yield finalVisible.slice(emitted.length);
       }
     } finally {
       cleanup();

@@ -113,6 +113,16 @@ describe('#156 filterDeclineSentences: answerable answers are untouched', () => 
     expect(filterDeclineSentences(ANSWERABLE_MENTIONS_DOCUMENTS)).toBe(ANSWERABLE_MENTIONS_DOCUMENTS);
   });
 
+  it('SCOPE GUARD: artefact-SHAPED text with no decline marker is byte-identical (the filter must not fire marker-less)', () => {
+    // 4.5 review finding 2: the desktop half of the scope-guard pair was
+    // unpinned (only the web twin pinned it). Artefact sentence shapes
+    // without a preceding decline marker must pass through untouched.
+    const artefactShaped =
+      'To reset your password, first open Settings. Did you forget to include the document upload step? ' +
+      'Once you provide the completed form the administrator approves it.';
+    expect(filterDeclineSentences(artefactShaped)).toBe(artefactShaped);
+  });
+
   it('the empty string is a byte-identical passthrough', () => {
     expect(filterDeclineSentences('')).toBe('');
   });
@@ -120,9 +130,9 @@ describe('#156 filterDeclineSentences: answerable answers are untouched', () => 
 
 describe('#156 generate() wiring: streamed declines never surface the artefact', () => {
   it('a streamed decline (marker first, artefact in a later chunk) hides the artefact from the stream AND the answer', async () => {
-    // Split exactly where production splits: the marker sentence streams
-    // first, the artefact sentences arrive in the next chunk — so the filter
-    // must work on the ACCUMULATED text, not per chunk.
+    // Two-chunk split (marker sentence, then the artefact sentences): the
+    // filter must work on the ACCUMULATED text, not per chunk. The
+    // word-by-word case below is the production-faithful one.
     NLC.script = [CAPTURED_DECLINE_FILTERED, CAPTURED_DECLINE.slice(CAPTURED_DECLINE_FILTERED.length)];
     NLC.answer = CAPTURED_DECLINE;
     const streamed: string[] = [];
@@ -136,6 +146,30 @@ describe('#156 generate() wiring: streamed declines never surface the artefact',
     expect(joined).not.toContain('Once you provide');
     expect(result.answer).toBe(CAPTURED_DECLINE_FILTERED);
     expect(result.answer).not.toContain('Did you');
+  });
+
+  it('STREAMING DISCIPLINE: token-level chunking never surfaces an artefact word, never splices, and the joined stream equals the filtered projection', async () => {
+    // 4.5 review finding 1: node-llama-cpp flushes onTextChunk per TOKEN. The
+    // emission discipline (decided-sentence boundaries + terminal flush) must
+    // hold at word granularity — no partial artefact sentence leaks before
+    // its terminator, no offset-spliced words appear.
+    const words = CAPTURED_DECLINE.split(/(\s+)/); // keep the separators
+    NLC.script = words.filter((w) => w.length > 0);
+    NLC.answer = CAPTURED_DECLINE;
+    const streamed: string[] = [];
+    const result = await makeFastEngine().query('what is the carryover?', {
+      streamCallback: (chunk: string) => streamed.push(chunk),
+    });
+    const joined = streamed.join('');
+    expect(joined).toContain('does not contain information regarding');
+    expect(joined).not.toContain('Did you');
+    expect(joined).not.toContain('forget to include');
+    expect(joined).not.toContain('Once you provide');
+    // No mid-word splice: every emission must start at a whitespace-or-start
+    // boundary of the filtered projection, and the joined stream must be
+    // exactly the filter applied to the full raw answer.
+    expect(joined).toBe(CAPTURED_DECLINE_FILTERED);
+    expect(result.answer).toBe(CAPTURED_DECLINE_FILTERED);
   });
 
   it('a streamed ANSWERABLE answer is byte-identical through the same wiring', async () => {

@@ -131,7 +131,10 @@ describe('WllamaService', () => {
     for await (const t of svc.generate([{ role: 'user', content: 'hi' }], { maxTokens: 16 })) {
       tokens.push(t);
     }
-    expect(tokens).toEqual(['Hello', ', ', 'world']);
+    // 4.5 discipline: emission is batched to decided sentence boundaries, and
+    // 'Hello, world' has no terminator, so the terminal flush emits it whole.
+    // The joined stream is what the consumer renders — it must be lossless.
+    expect(tokens.join('')).toBe('Hello, world');
     expect(createChatCompletion).toHaveBeenCalledWith(
       expect.objectContaining({ stream: true, max_tokens: 16 })
     );
@@ -351,11 +354,39 @@ describe('WllamaService', () => {
     for await (const t of svc.generate([{ role: 'user', content: 'hi' }])) {
       joined += t;
     }
-    // The trailing partial fragment ('Did you perhaps forget to include ')
-    // stays visible per the emitted-only-grows tradeoff above; the completed
-    // artefact is never fully shown.
-    expect(joined).not.toMatch(/did you perhaps forget to include the document/i);
-    expect(joined.startsWith('The provided context does not contain information regarding X.')).toBe(true);
+    // 4.5 review finding 1 (browser twin): the sentence-boundary emission
+    // discipline REPLACED the emitted-only-grows tradeoff — the artefact
+    // sentence is only emitted once decided (removed here), so no fragment
+    // ever surfaces, and the joined stream is the filtered projection.
+    expect(joined).not.toMatch(/did you perhaps forget/i);
+    expect(joined).toBe('The provided context does not contain information regarding X. ');
+  });
+
+  it('#156 STREAMING DISCIPLINE (4.5): word-level chunks never surface an artefact word, never splice', async () => {
+    const raw =
+      'The provided context does not contain information regarding X. ' +
+      'Did you perhaps forget to include the document containing this information? ' +
+      'Once you provide the relevant document, I will be able to help.';
+    createChatCompletion.mockImplementationOnce(async () => {
+      async function* gen() {
+        for (const word of raw.split(/(\s+)/)) {
+          if (word.length > 0) yield { choices: [{ delta: { content: word } }] };
+        }
+      }
+      return gen();
+    });
+    const svc = WllamaService.getInstance();
+    await svc.initialize();
+    let joined = '';
+    for await (const t of svc.generate([{ role: 'user', content: 'hi' }])) {
+      joined += t;
+    }
+    expect(joined).not.toContain('Did you');
+    expect(joined).not.toContain('Once you provide');
+    // Joined emissions == filter(full raw answer): no skipped words, no splice.
+    expect(joined).toBe(
+      'The provided context does not contain information regarding X. '
+    );
   });
 
   it('#156: streaming fully suppresses a decline sentence that arrives within one chunk', async () => {
@@ -383,13 +414,13 @@ describe('WllamaService', () => {
     expect(joined).toBe('The provided context does not contain information regarding X. ');
   });
 
-  it('#156: streaming leaves answerable chunks untouched (no filter-induced lag or loss)', async () => {
+  it('#156: streaming leaves answerable text lossless (sentence-batch discipline, no loss)', async () => {
     const svc = WllamaService.getInstance();
     await svc.initialize();
     const tokens: string[] = [];
     for await (const t of svc.generate([{ role: 'user', content: 'hi' }])) {
       tokens.push(t);
     }
-    expect(tokens).toEqual(['Hello', ', ', 'world']);
+    expect(tokens.join('')).toBe('Hello, world');
   });
 });

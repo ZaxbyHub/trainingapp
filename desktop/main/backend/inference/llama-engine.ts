@@ -405,12 +405,26 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
       // #156 decline filter: the 1.2B models append trained-in "did you forget
       // to include the document?" sentences when declining. The filter is
       // scoped to decline-shaped answers (a marker sentence must already be
-      // present), so answerable answers pass through byte-identical. Applied
-      // over the accumulated stream text so a sentence split across chunks is
-      // still caught; emitted text only ever grows (the marker precedes the
-      // artefact in every observed decline).
+      // present), so answerable answers pass through byte-identical.
+      //
+      // Emission discipline (4.5 review finding): node-llama-cpp flushes
+      // onTextChunk per TOKEN, not per sentence, so an artefact sentence's
+      // pre-terminator words stream through before the filter can decide, and
+      // slicing a re-filtered string at the previous length splices words
+      // mid-token. Emission therefore happens only through the last DECIDED
+      // sentence terminator (removal decisions are sentence-local and stable
+      // once a sentence completes), and the remainder is flushed after
+      // generation ends. Invariant: the joined emissions equal
+      // filterDeclineSentences(full raw answer) — no artefact word ever
+      // surfaces, no splice, at token-level chunking.
       let accumulated = '';
       let emitted = '';
+      const emitThrough = (candidate: string): void => {
+        if (candidate.length > emitted.length) {
+          genOpts.streamCallback?.(candidate.slice(emitted.length));
+          emitted = candidate;
+        }
+      };
       const surface = (chunk: string): void => {
         let text = chunk;
         if (echoLeft > 0) {
@@ -420,11 +434,12 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
           if (text.length === 0) return;
         }
         accumulated += text;
-        const visible = filterDeclineSentences(accumulated);
-        if (visible.length > emitted.length) {
-          genOpts.streamCallback?.(visible.slice(emitted.length));
-          emitted = visible;
-        }
+        const settled = /[.!?](?=[^.!?\n]*$)/.exec(accumulated);
+        if (settled === null) return;
+        emitThrough(filterDeclineSentences(accumulated.slice(0, settled.index + 1)));
+      };
+      const flushSurface = (): void => {
+        emitThrough(filterDeclineSentences(accumulated));
       };
       // Cancel bridge: the CancellationFlag polls at 20ms and aborts the
       // library prompt (stopOnAbortSignal) — emission stops far inside 200ms.
@@ -474,6 +489,11 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
           answer = answer.slice(reasoning.responsePrefix.length);
         }
         answer = filterDeclineSentences(answer);
+        // Complete the stream invariant: everything decided-but-unsettled at
+        // generation end (the final sentence, typically without a trailing
+        // terminator) is emitted now, so joined emissions == the filtered
+        // answer's stream projection.
+        flushSurface();
         return { answer, cancelled: genOpts.cancellationEvent?.isSet() ?? false };
       } catch (err) {
         // The library THROWS rather than returning when an abort lands
