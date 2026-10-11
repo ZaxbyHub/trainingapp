@@ -416,7 +416,11 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
       // once a sentence completes), and the remainder is flushed after
       // generation ends. Invariant: the joined emissions equal
       // filterDeclineSentences(full raw answer) — no artefact word ever
-      // surfaces, no splice, at token-level chunking.
+      // surfaces, no splice, at token-level chunking. Ordering condition:
+      // this holds because the decline marker precedes the artefact in every
+      // observed decline; artefact-BEFORE-marker ordering is a bounded,
+      // pre-existing scope assumption of the filter (the final-answer filter
+      // shares the same assumption).
       let accumulated = '';
       let emitted = '';
       const emitThrough = (candidate: string): void => {
