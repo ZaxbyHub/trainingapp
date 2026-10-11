@@ -18,8 +18,8 @@ Plain pytest only: pathlib reads relative to this file, no network, no
 imports of application code.
 """
 
-import re
 from pathlib import Path
+import re
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -44,7 +44,7 @@ def _quality_section(licenses_text: str) -> str:
         "docs/licenses.md has no quality-tier section heading to pin the "
         "revenue threshold against"
     )
-    rest = licenses_text[heading.end() :]
+    rest = licenses_text[heading.end():]
     nxt = re.search(r"^## ", rest, re.MULTILINE)
     return rest[: nxt.start()] if nxt else rest
 
@@ -64,12 +64,12 @@ def test_licenses_md_records_lfm_open_license_for_both_tiers():
     ISSUE156-SWAP-NOT-LANDED sentinel so the base failure line is stable.
     """
     licenses_md = _read(LICENSES_MD)
-    assert (
-        QUALITY_ID in licenses_md
-    ), "ISSUE156-SWAP-NOT-LANDED: docs/licenses.md does not record the quality tier lfm2.5-2.6b"
-    assert (
-        FAST_ID in licenses_md
-    ), f"docs/licenses.md does not record the fast tier {FAST_ID}"
+    assert QUALITY_ID in licenses_md, (
+        "ISSUE156-SWAP-NOT-LANDED: docs/licenses.md does not record the quality tier lfm2.5-2.6b"
+    )
+    assert FAST_ID in licenses_md, (
+        f"docs/licenses.md does not record the fast tier {FAST_ID}"
+    )
     tier_mentions = licenses_md.count(LICENSE_NAME)
     assert tier_mentions >= 2, (
         f"docs/licenses.md mentions {LICENSE_NAME} {tier_mentions} time(s); the "
@@ -91,9 +91,9 @@ def test_full_license_text_file_ships():
         "docs/licenses/LFM-OPEN-LICENSE-v1.0.txt does not exist; the full LFM "
         "Open License v1.0 text must ship alongside the weights"
     )
-    assert (
-        LICENSE_TEXT.stat().st_size > 0
-    ), "docs/licenses/LFM-OPEN-LICENSE-v1.0.txt is empty"
+    assert LICENSE_TEXT.stat().st_size > 0, (
+        "docs/licenses/LFM-OPEN-LICENSE-v1.0.txt is empty"
+    )
 
 
 def test_stage_docs_stages_the_license_text():

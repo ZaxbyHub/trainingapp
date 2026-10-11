@@ -25,8 +25,8 @@ Plain pytest only: pathlib reads relative to this file, no network, no
 imports of application code.
 """
 
-import re
 from pathlib import Path
+import re
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -66,9 +66,7 @@ def _install_gguf_section(install_text: str) -> str:
     the next heading of the same or shallower level.
     """
     heading = None
-    for level, text in re.findall(
-        r"^(#{1,6})[ \t]+([^\n]+)$", install_text, re.MULTILINE
-    ):
+    for level, text in re.findall(r"^(#{1,6})[ \t]+([^\n]+)$", install_text, re.MULTILINE):
         if "GGUF" in text:
             heading = re.search(
                 r"^(#{1,6})[ \t]+" + re.escape(text.strip()) + r"[ \t]*$",
@@ -78,7 +76,7 @@ def _install_gguf_section(install_text: str) -> str:
             level_num = len(level)
             break
     assert heading is not None, "INSTALL.md has no GGUF-details heading to pin"
-    rest = install_text[heading.end() :]
+    rest = install_text[heading.end():]
     nxt = re.search(r"^#{1,%d}[ \t]+" % level_num, rest, re.MULTILINE)
     return rest[: nxt.start()] if nxt else rest
 
@@ -100,23 +98,24 @@ def test_retired_ids_absent_from_current_product_docs():
 
 def test_root_readme_names_both_new_ids():
     readme = _read(ROOT_README)
-    assert (
-        QUALITY_ID in readme
-    ), f"README.md does not name the new quality model id {QUALITY_ID}"
-    assert FAST_ID in readme, f"README.md does not name the new fast model id {FAST_ID}"
+    assert QUALITY_ID in readme, (
+        f"README.md does not name the new quality model id {QUALITY_ID}"
+    )
+    assert FAST_ID in readme, (
+        f"README.md does not name the new fast model id {FAST_ID}"
+    )
 
 
 def test_install_gguf_section_pins_both_directions():
     section = _install_gguf_section(_read(INSTALL_MD))
-    assert (
-        QUALITY_ID in section
-    ), f"INSTALL.md GGUF-details section does not name the desktop quality id {QUALITY_ID}"
-    assert (
-        FAST_ID in section
-    ), f"INSTALL.md GGUF-details section does not name the desktop fast id {FAST_ID}"
+    assert QUALITY_ID in section, (
+        f"INSTALL.md GGUF-details section does not name the desktop quality id {QUALITY_ID}"
+    )
+    assert FAST_ID in section, (
+        f"INSTALL.md GGUF-details section does not name the desktop fast id {FAST_ID}"
+    )
     legacy_lines = [
-        line
-        for line in section.splitlines()
+        line for line in section.splitlines()
         if "gemma 4" in line.casefold()
         and any(marker in line.casefold() for marker in ("legacy", "harness", "python"))
     ]

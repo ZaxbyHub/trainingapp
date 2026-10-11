@@ -20,8 +20,8 @@ Plain pytest only: pathlib reads relative to this file, no network, no
 imports of application code.
 """
 
-import re
 from pathlib import Path
+import re
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ADR_0002 = REPO_ROOT / "docs" / "adr" / "0002-llm-profiles.md"
@@ -48,10 +48,8 @@ def _read(path: Path) -> str:
 
 def _md_section(text: str, heading_pattern: str, what: str) -> str:
     heading = re.search(heading_pattern, text, re.MULTILINE)
-    assert (
-        heading is not None
-    ), f"ADR-0002 heading not found for {what}: {heading_pattern!r}"
-    rest = text[heading.end() :]
+    assert heading is not None, f"ADR-0002 heading not found for {what}: {heading_pattern!r}"
+    rest = text[heading.end():]
     nxt = re.search(r"^## ", rest, re.MULTILINE)
     return rest[: nxt.start()] if nxt else rest
 
@@ -63,51 +61,47 @@ def test_decision_prose_binds_both_new_ids():
     ISSUE156-SWAP-NOT-LANDED sentinel so the base failure line is stable.
     """
     decision = _md_section(_read(ADR_0002), r"^## Decision[ \t]*$", "Decision prose")
-    assert (
-        QUALITY_ID in decision
-    ), "ISSUE156-SWAP-NOT-LANDED: ADR-0002 Decision prose does not bind the new quality id lfm2.5-2.6b"
-    assert (
-        FAST_ID in decision
-    ), f"ADR-0002 Decision prose does not bind the new fast id {FAST_ID}"
+    assert QUALITY_ID in decision, (
+        "ISSUE156-SWAP-NOT-LANDED: ADR-0002 Decision prose does not bind the new quality id lfm2.5-2.6b"
+    )
+    assert FAST_ID in decision, (
+        f"ADR-0002 Decision prose does not bind the new fast id {FAST_ID}"
+    )
 
 
 def test_decision_table_rows_name_new_ids():
     table = _md_section(_read(ADR_0002), r"^## Decision table[ \t]*$", "Decision table")
-    assert (
-        QUALITY_ID in table
-    ), f"ADR-0002 Decision table rows do not name the quality id {QUALITY_ID}"
-    assert (
-        FAST_ID in table
-    ), f"ADR-0002 Decision table rows do not name the fast id {FAST_ID}"
+    assert QUALITY_ID in table, (
+        f"ADR-0002 Decision table rows do not name the quality id {QUALITY_ID}"
+    )
+    assert FAST_ID in table, (
+        f"ADR-0002 Decision table rows do not name the fast id {FAST_ID}"
+    )
 
 
 def test_license_review_outcome_covers_both_tiers():
     outcome = _md_section(
         _read(ADR_0002), r"^## License review outcome[^\n]*$", "License review outcome"
     )
-    assert (
-        QUALITY_ID in outcome
-    ), f"ADR-0002 license-review outcome does not record the quality tier ({QUALITY_ID})"
-    assert (
-        FAST_ID in outcome
-    ), f"ADR-0002 license-review outcome does not record the fast tier ({FAST_ID})"
-    assert (
-        LICENSE_NAME in outcome
-    ), f"ADR-0002 license-review outcome does not record {LICENSE_NAME}"
+    assert QUALITY_ID in outcome, (
+        f"ADR-0002 license-review outcome does not record the quality tier ({QUALITY_ID})"
+    )
+    assert FAST_ID in outcome, (
+        f"ADR-0002 license-review outcome does not record the fast tier ({FAST_ID})"
+    )
+    assert LICENSE_NAME in outcome, (
+        f"ADR-0002 license-review outcome does not record {LICENSE_NAME}"
+    )
 
 
 def test_fast_tier_keeps_five_chunks_with_d1_deviation_noted():
     adr = _read(ADR_0002)
     five_chunk_matches = list(re.finditer(r"(?i)\b5[\s-]+chunks?\b", adr))
-    assert (
-        five_chunk_matches
-    ), "ADR-0002 does not record the fast tier's chunk count (5 chunks)"
+    assert five_chunk_matches, (
+        "ADR-0002 does not record the fast tier's chunk count (5 chunks)"
+    )
     adjacent = any(
-        "D1"
-        in adr[
-            max(0, m.start() - ADJACENCY_WINDOW_CHARS) : m.end()
-            + ADJACENCY_WINDOW_CHARS
-        ]
+        "D1" in adr[max(0, m.start() - ADJACENCY_WINDOW_CHARS): m.end() + ADJACENCY_WINDOW_CHARS]
         for m in five_chunk_matches
     )
     assert adjacent, (

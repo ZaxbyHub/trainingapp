@@ -24,8 +24,8 @@ Plain pytest only: pathlib reads relative to this file (tests/ sits at the
 repo root), no network, no imports of application code.
 """
 
-import re
 from pathlib import Path
+import re
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -53,10 +53,8 @@ def _staged_models_entries(stager_text: str):
     brace scan is exact regardless of key order inside an entry.
     """
     block_match = re.search(r"export const STAGED_MODELS\s*=\s*\[", stager_text)
-    assert (
-        block_match
-    ), "STAGED_MODELS export not found in stage-installer-resources.mjs"
-    rest = stager_text[block_match.end() :]
+    assert block_match, "STAGED_MODELS export not found in stage-installer-resources.mjs"
+    rest = stager_text[block_match.end():]
     close = rest.find("];")
     assert close != -1, "STAGED_MODELS array is not terminated by ];"
     block = rest[:close]
@@ -65,12 +63,10 @@ def _staged_models_entries(stager_text: str):
         group = re.search(r"group\s*:\s*'([^']+)'", raw)
         model_id = re.search(r"id\s*:\s*'([^']+)'", raw)
         files_match = re.search(r"files\s*:\s*\[([^\]]*)\]", raw)
-        assert (
-            group and model_id and files_match
-        ), f"STAGED_MODELS entry is not parseable (group/id/files keys): {raw[:80]!r}"
-        files = [
-            f.strip().strip("'\"") for f in files_match.group(1).split(",") if f.strip()
-        ]
+        assert group and model_id and files_match, (
+            f"STAGED_MODELS entry is not parseable (group/id/files keys): {raw[:80]!r}"
+        )
+        files = [f.strip().strip("'\"") for f in files_match.group(1).split(",") if f.strip()]
         entries.append((group.group(1), model_id.group(1), files))
     assert entries, "STAGED_MODELS exported an empty array"
     return entries
@@ -79,18 +75,16 @@ def _staged_models_entries(stager_text: str):
 def _renderer_excluded_declaration(stager_text: str) -> str:
     """The RENDERER_EXCLUDED_MODEL_IDS declaration statement, up to its ';'."""
     decl = re.search(r"RENDERER_EXCLUDED_MODEL_IDS\s*=", stager_text)
-    assert (
-        decl
-    ), "RENDERER_EXCLUDED_MODEL_IDS declaration not found in stage-installer-resources.mjs"
+    assert decl, "RENDERER_EXCLUDED_MODEL_IDS declaration not found in stage-installer-resources.mjs"
     end = stager_text.find(";", decl.end())
     assert end != -1, "RENDERER_EXCLUDED_MODEL_IDS declaration is not terminated by ';'"
-    return stager_text[decl.start() : end]
+    return stager_text[decl.start():end]
 
 
 def _md_section(text: str, heading_pattern: str):
     heading = re.search(heading_pattern, text, re.MULTILINE)
     assert heading is not None, f"heading not found: {heading_pattern!r}"
-    rest = text[heading.end() :]
+    rest = text[heading.end():]
     nxt = re.search(r"^## ", rest, re.MULTILINE)
     return rest[: nxt.start()] if nxt else rest
 
@@ -102,20 +96,20 @@ def test_engine_declares_lfm_tier_subpaths():
     ISSUE156-SWAP-NOT-LANDED sentinel so the base failure line is stable.
     """
     engine = _read(ENGINE_TS)
-    assert (
-        QUALITY_SUBPATH in engine
-    ), "ISSUE156-SWAP-NOT-LANDED: llama-engine.ts does not declare the quality tier subpath lfm2.5-2.6b/model.gguf"
-    assert (
-        FAST_SUBPATH in engine
-    ), f"llama-engine.ts does not declare the fast tier subpath {FAST_SUBPATH}"
+    assert QUALITY_SUBPATH in engine, (
+        "ISSUE156-SWAP-NOT-LANDED: llama-engine.ts does not declare the quality tier subpath lfm2.5-2.6b/model.gguf"
+    )
+    assert FAST_SUBPATH in engine, (
+        f"llama-engine.ts does not declare the fast tier subpath {FAST_SUBPATH}"
+    )
 
 
 def test_engine_retired_subpaths_removed():
     engine = _read(ENGINE_TS)
     for retired in RETIRED_SUBPATHS:
-        assert (
-            retired not in engine
-        ), f"llama-engine.ts still declares retired subpath {retired}"
+        assert retired not in engine, (
+            f"llama-engine.ts still declares retired subpath {retired}"
+        )
 
 
 def test_staged_models_llm_groups_carry_new_ids():
@@ -123,12 +117,12 @@ def test_staged_models_llm_groups_carry_new_ids():
     by_group = {}
     for group, model_id, _files in entries:
         by_group.setdefault(group, []).append(model_id)
-    assert by_group.get("llm-quality") == [
-        QUALITY_ID
-    ], f"STAGED_MODELS llm-quality group must be exactly [{QUALITY_ID!r}], got {by_group.get('llm-quality')}"
-    assert by_group.get("llm-fast") == [
-        FAST_ID
-    ], f"STAGED_MODELS llm-fast group must be exactly [{FAST_ID!r}], got {by_group.get('llm-fast')}"
+    assert by_group.get("llm-quality") == [QUALITY_ID], (
+        f"STAGED_MODELS llm-quality group must be exactly [{QUALITY_ID!r}], got {by_group.get('llm-quality')}"
+    )
+    assert by_group.get("llm-fast") == [FAST_ID], (
+        f"STAGED_MODELS llm-fast group must be exactly [{FAST_ID!r}], got {by_group.get('llm-fast')}"
+    )
 
 
 def test_staged_models_drop_mmproj_from_llm_groups():
@@ -153,12 +147,12 @@ def test_renderer_exclusion_still_pins_gemma_after_decoupling():
 
 def test_adr_decision_rows_name_new_ids():
     table = _md_section(_read(ADR_0002), r"^## Decision table[ \t]*$")
-    assert (
-        QUALITY_ID in table
-    ), f"ADR-0002 Decision table rows do not name the quality id {QUALITY_ID}"
-    assert (
-        FAST_ID in table
-    ), f"ADR-0002 Decision table rows do not name the fast id {FAST_ID}"
+    assert QUALITY_ID in table, (
+        f"ADR-0002 Decision table rows do not name the quality id {QUALITY_ID}"
+    )
+    assert FAST_ID in table, (
+        f"ADR-0002 Decision table rows do not name the fast id {FAST_ID}"
+    )
 
 
 def test_bench_results_have_devstation_q4_rows_for_both_new_models():

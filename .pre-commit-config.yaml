@@ -16,12 +16,17 @@ repos:
     hooks:
       - id: black
         language_version: python3
+        # issue #156: the four frozen acceptance-spec files are byte-locked by
+        # the issue-tracer checkpoint anchor; formatters must not rewrite them
+        # (their content is E501-exempted in flake8 for the same reason).
+        exclude: '^tests/test_issue156_(llm_swap|docs|adr|licenses)\.py$'
 
   - repo: https://github.com/pycqa/isort
     rev: 5.13.2
     hooks:
       - id: isort
         args: ["--profile", "black"]
+        exclude: '^tests/test_issue156_(llm_swap|docs|adr|licenses)\.py$'
 
   - repo: https://github.com/pycqa/flake8
     rev: 7.0.0
