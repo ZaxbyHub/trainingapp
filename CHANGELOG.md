@@ -13,8 +13,9 @@
   browser LLM changes** — the web app (wllama) now runs the text-only `lfm2-1.2b-rag`
   instead of the desktop Quality model. Quality answers keep reasoning suppressed
   (responsePrefix + zero thought budget, with an echo-strip for think-tag remnants).
-  A decline filter refuses harmful/off-topic prompts with a named decline instead of
-  a fabricated answer. The repeat penalty is retired (sampling no longer applies it).
+  A decline filter strips the trained-in "did you forget to include the document?"
+  sentences the LFM 1.2B models append when declining (decline-shaped answers only;
+  answerable answers pass through byte-identical). The repeat penalty is retired (sampling no longer applies it).
   On CPU-only machines the `auto` profile now selects the Fast tier (Quality CPU-only
   first answers run ~83 s at 5 chunks per the issue benchmark). The fast tier keeps
   5 retrieval chunks (deviation D1, recorded in ADR-0002's #156 amendment). License

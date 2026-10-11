@@ -262,8 +262,12 @@ added by #156.
      serving with responsePrefix `'\n</think>\n\n'` and a zero thought budget, and any
      echoed think-tag remnants are stripped from the streamed answer.
    - **Decline filter:** a decline filter
-     (`desktop/main/backend/inference/decline-filter.ts`) refuses harmful/off-topic
-     prompts with a named, non-fabricated decline instead of an answer.
+     (`desktop/main/backend/inference/decline-filter.ts`, with a browser twin in
+     `web_ui/src/lib/llm/decline-filter.ts`) strips the trained-in "did you forget
+     to include/attach the document?" sentences the LFM 1.2B models append when
+     declining, from decline-shaped answers only — answerable answers pass through
+     byte-identical. (Prompt refusal on absent evidence remains the pre-existing
+     retrieval abstention gate's job, not this filter's.)
    - **Penalty retirement:** the repeat penalty (and its window bookkeeping,
      `penalties.ts`) is retired with the LFM lineup; sampling no longer applies it.
    - **CPU-only auto gate:** on machines where the GPU probe finds no working device,
