@@ -55,6 +55,14 @@ jobs:
           npm --prefix packtool ci --no-audit --no-fund
           npm --prefix packtool run build
 
+      # issue #155 review PRR-006: the GPU probe's child module is a COMPILED
+      # artifact (a spawned node cannot load the .ts source), so its contract
+      # tests need dist/. Without this the child had ZERO coverage in any CI job:
+      # `dist/` is git-excluded, so the probe-child tests skipped and every
+      # behaviour in gpu-probe-child.ts could be deleted with CI green.
+      - name: Compile the desktop main process
+        run: npm --prefix desktop run compile
+
       - name: Acceptance tests (vitest, stubbed electron)
         run: npm --prefix desktop test
 

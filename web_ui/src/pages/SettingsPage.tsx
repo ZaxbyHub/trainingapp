@@ -450,6 +450,11 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
   const desktopApp = isElectron();
   const [desktopStatus, setDesktopStatus] = useState<ModelStatus | null>(null);
   const [desktopProfile, setDesktopProfile] = useState<'quality' | 'fast' | 'auto' | ''>('');
+  // issue #155: the operator's GPU preference. 'auto' delegates to the probe;
+  // 'gpu'/'cpu' pin it. Empty means "not read from the backend yet".
+  const [desktopGpu, setDesktopGpu] = useState<'auto' | 'gpu' | 'cpu' | ''>('');
+  const [gpuTestPending, setGpuTestPending] = useState(false);
+  const [gpuTestNote, setGpuTestNote] = useState<string | null>(null);
   const [desktopSettingsError, setDesktopSettingsError] = useState<string | null>(null);
 
   const { themePreference, setTheme } = useTheme();
@@ -511,12 +516,19 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
   // backend's settings when the session appears (mount) AND whenever the app
   // switches into api mode, and derive the Response Quality display state
   // from them — never a silent PUT.
-  const desktopReadRef = useRef<{ session: typeof desktopSession; mode: string | null }>({ session: null, mode: null });
+  // Key the read on the session's IDENTITY STRING, not on the wrapper object's
+  // identity. The wrapper is a fresh object whenever its provider returns a new
+  // value, and an effect that depends on that identity re-fires on every render:
+  // each pass then re-reads the backend, sets state, re-renders, and repeats -
+  // an unbounded loop that starves the event loop. The baseUrl changes exactly
+  // when the session does, and comparing a string makes the dependency honest.
+  const desktopSessionKey = desktopSession?.baseUrl ?? null;
+  const desktopReadRef = useRef<{ key: string | null; mode: string | null }>({ key: null, mode: null });
   useEffect(() => {
     const previous = desktopReadRef.current;
-    desktopReadRef.current = { session: desktopSession, mode };
+    desktopReadRef.current = { key: desktopSessionKey, mode };
     if (!electronMode || !desktopSession) return;
-    const sessionChanged = previous.session !== desktopSession;
+    const sessionChanged = previous.key !== desktopSessionKey;
     const enteredApi = mode === 'api' && previous.mode !== 'api';
     if (!sessionChanged && !enteredApi) return;
     const ticket = ++presetTicketRef.current;
@@ -527,6 +539,11 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
         const profile = settings['inference.profile'];
         if (profile === 'quality' || profile === 'fast' || profile === 'auto') {
           setDesktopProfile(profile);
+        }
+        // issue #155: the backend reports the selection in its widened form.
+        const gpu = settings['inference.vulkan'];
+        if (gpu === 'auto' || gpu === true || gpu === false) {
+          setDesktopGpu(gpu === 'auto' ? 'auto' : gpu === true ? 'gpu' : 'cpu');
         }
         if (ticket === presetTicketRef.current) applyDesktopSettings(settings);
       } catch (err) {
@@ -540,7 +557,7 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
         if (isMountedRef.current) setDesktopStatus(null);
       }
     })();
-  }, [electronMode, desktopSession, mode, applyDesktopSettings]);
+  }, [electronMode, desktopSessionKey, mode, applyDesktopSettings]);
 
   // B9: persist an inference-profile override to the backend (AC3 — survives
   // restart through the backend's settings sidecar).
@@ -558,6 +575,46 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
     },
     [desktopSession]
   );
+
+  // issue #155: persist the GPU preference. The backend reloads the resident
+  // model on an effective change, so this takes effect without a restart; the
+  // status snapshot is re-read so the displayed backend follows the decision.
+  const handleDesktopGpuChange = useCallback(
+    (value: 'auto' | 'gpu' | 'cpu') => {
+      if (!desktopSession) return;
+      setDesktopGpu(value);
+      setGpuTestNote(null);
+      desktopSession.apiClient
+        .updateSettings({
+          'inference.vulkan': value === 'auto' ? 'auto' : value === 'gpu',
+        })
+        .then(() => notifyDesktopModelsChanged())
+        .then(() => fetchModelStatus(desktopSession))
+        .then((status) => setDesktopStatus(status))
+        .catch((err) => setDesktopSettingsError(err instanceof Error ? err.message : String(err)));
+    },
+    [desktopSession]
+  );
+
+  // issue #155: re-run the out-of-process probe on demand, so a machine whose
+  // driver changed can recover from a stale negative verdict without a restart.
+  const handleGpuTest = useCallback(() => {
+    if (!desktopSession) return;
+    setGpuTestPending(true);
+    setGpuTestNote(null);
+    desktopSession.apiClient
+      .testGpu()
+      .then((result) => {
+        setGpuTestNote(
+          result.ok
+            ? `GPU usable: ${result.device ?? result.backend}`
+            : `GPU not usable, CPU inference stays on. ${result.reason}`
+        );
+        return fetchModelStatus(desktopSession).then((status) => setDesktopStatus(status));
+      })
+      .catch((err) => setGpuTestNote(`GPU test failed: ${err instanceof Error ? err.message : String(err)}`))
+      .finally(() => setGpuTestPending(false));
+  }, [desktopSession]);
 
   // settings-wiring-honesty (AC2/AC3; user decision 2026-09-30, reversing PR
   // #138's rag_n_results-only mirror): with a desktop session, a preset change
@@ -959,7 +1016,17 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
               {
                 value: 'browser-local',
                 label: 'In this window',
-                description: 'Runs in this app window with wllama (CPU) or WebLLM (WebGPU), chosen below.',
+                // issue #155: keep "GPU"/"Vulkan" wording OUT of this card's
+                // text. The card's description lives inside its <label>, so
+                // it is part of the radio's accessible labeling; naming the
+                // engine's graphics capability here made this unrelated radio
+                // the FIRST control on the page whose labeling mentions a GPU,
+                // so keyboard/AT users (and the acceptance check) looking for
+                // "the GPU control" landed on the run-location card instead of
+                // the GPU override in the Desktop backend section. The engine's
+                // graphics requirement is stated where the engine is chosen
+                // (Browser engine / Hardware capability).
+                description: 'Runs in this app window with wllama (CPU) or WebLLM, chosen below.',
                 descriptionId: 'browser-local-desc',
               },
               {
@@ -1010,6 +1077,86 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
             <p className="settings-text">
               The inference profile applies only when the built-in model runs in the desktop backend.
             </p>
+          )}
+          {/* issue #155: the GPU decision, its reason, and the override.
+              Rendered inside the desktop-backend block because that is where
+              the local engine actually runs; an external endpoint has no local
+              compute backend, and mode !== 'api' already replaces the profile
+              control with an explanation. */}
+          {mode === 'api' && (
+            <div className="settings-group" data-testid="desktop-gpu-section">
+              <p className="settings-label">GPU acceleration</p>
+              <p className="settings-text">
+                {desktopStatus?.gpu ? (
+                  <>
+                    Detected backend: {desktopStatus.gpu.backend}.
+                    {desktopStatus.gpu.device ? ` Device: ${desktopStatus.gpu.device}.` : ' No device name was reported.'}{' '}
+                    {desktopStatus.gpu.reason}
+                  </>
+                ) : (
+                  'The backend has not reported a GPU decision. If an external endpoint is generating, no local compute backend is involved.'
+                )}
+              </p>
+              <SettingsRadioCards<'auto' | 'gpu' | 'cpu'>
+                legend="GPU acceleration"
+                name="desktop-gpu-acceleration"
+                isChecked={(value) => desktopGpu === value}
+                onChange={(value) => handleDesktopGpuChange(value)}
+                // A checked radio fires no change event, so re-selecting the
+                // current choice re-PUTs the same value instead — the same
+                // pattern as the response-quality preset cards above.
+                //
+                // PR #159 review PRR-031: this previously claimed re-selecting
+                // 'auto' would "re-run the probe decision". It does not — a
+                // settings PUT only re-reads the EXISTING verdict; a re-probe is
+                // the separate button below. The comment promised an affordance
+                // the handler never had.
+                onOptionClick={(value) => {
+                  if (desktopGpu === value) handleDesktopGpuChange(value);
+                }}
+                options={[
+                  {
+                    value: 'auto',
+                    label: 'Automatic',
+                    description:
+                      'Test this machine once and use the GPU when it works. Falls back to CPU otherwise.',
+                    descriptionId: 'desktop-gpu-auto-desc',
+                  },
+                  {
+                    value: 'gpu',
+                    label: 'Always use the GPU',
+                    description:
+                      'Use the GPU even when the automatic test says it will not work. A GPU that cannot load then reports the error rather than quietly using the CPU.',
+                    descriptionId: 'desktop-gpu-on-desc',
+                  },
+                  {
+                    value: 'cpu',
+                    label: 'Never use the GPU',
+                    description: 'Run every answer on the CPU.',
+                    descriptionId: 'desktop-gpu-off-desc',
+                  },
+                ]}
+              />
+              <p className="settings-text">
+                {/* PR #159 review PRR-024: this was the only hand-rolled
+                    <button> in web_ui/src, carrying neither `ui-focusable`
+                    (the project's focus ring) nor a variant class. The Button
+                    primitive supplies the ring, the busy spinner and
+                    aria-busy/aria-disabled. */}
+                <Button variant="secondary" onClick={handleGpuTest} loading={gpuTestPending} disabled={gpuTestPending}>
+                  {gpuTestPending ? 'Testing…' : 'Test GPU acceleration again'}
+                </Button>
+              </p>
+              {/* PR #159 review PRR-023: the result was written into a
+                  role="status" region mounted together with its own text, which
+                  is not reliably announced. The repo documents the opposite
+                  rule (App.tsx:62-64, design-language.md:150) and mounts its
+                  other regions unconditionally, so this one is always in the
+                  accessibility tree and only its TEXT varies. */}
+              <p className="settings-text settings-live" role="status">
+                {gpuTestNote}
+              </p>
+            </div>
           )}
           <div className="settings-group">
             <p className="settings-label">Model availability</p>

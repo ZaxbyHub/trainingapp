@@ -86,7 +86,8 @@ The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, 
 - **Quality profile (default)**: Gemma 4 E2B-it (Q4_K_M GGUF per [ADR-0002](docs/adr/0002-llm-profiles.md); ~2.9 GB nominal per PACKAGING.md; 2,620,370,976 bytes measured per bench/RESULTS.md) — bundled
 - **Fast profile**: lfm2.5-vl-450m (Q4_K_M GGUF per ADR-0002) — bundled
 - Profile selection: automatic free-RAM gate or in-app choice; `TRAININGAPP_DESKTOP_INFERENCE_PROFILE` (`quality` / `fast` / `auto`) is the desktop env override. (`RAG_GGUF_PATH` / `--gguf-path` select a custom GGUF on the legacy Python harness only.)
-- No GPU required
+- No particular GPU required: a working Vulkan device is used when one is found, and
+  CPU inference is the fallback
 - No network access required (unless you turn on the external model or update checks)
 - Measured decode throughput and first-token latency per model/profile: see [bench/RESULTS.md](bench/RESULTS.md) (issue #52 benchmark harness)
 
@@ -94,7 +95,7 @@ The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, 
 #### Minimum (Intel 11th Gen i5, 16GB RAM)
 - Windows 11 (64-bit)
 - Intel Core i5 11th generation or newer (or equivalent AMD Ryzen 5000+)
-- Intel integrated graphics (present on all 11th gen+ Intel CPUs) — no discrete GPU required
+- Intel integrated graphics (present on all 11th gen+ Intel CPUs); a discrete card is not needed
 - 16GB RAM
 - ~6.4 GB free storage for models + app (measured installed footprint 6,378,451,601 bytes; staged model resources 4,111,872,009 bytes; see bench/RESULTS.md)
 - **Performance**: measured numbers per model and quantization are recorded in [bench/RESULTS.md](bench/RESULTS.md)
@@ -109,7 +110,7 @@ The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, 
 #### High-Performance (Intel 13th Gen i9, 64GB RAM)
 - High-end CPU (Intel Core i9 or AMD Ryzen 9)
 - 64GB RAM
-- **Performance**: measured CPU-only GGUF numbers are recorded in [bench/RESULTS.md](bench/RESULTS.md)
+- **Performance**: measured CPU and GPU numbers, and which machine each was measured on, are recorded in [bench/RESULTS.md](bench/RESULTS.md)
 
 > **Pending**: the offline/low-RAM reference-laptop validation matrix (issue #86) —
 > reference-i5 rows are not yet measured; no reference-hardware numbers are claimed here.
@@ -298,7 +299,9 @@ The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, 
    verification of the bundled tree → knowledge-pack activation → license notices →
    complete. Every gate names its failure reason; setup can be re-run from Settings.
 
-No Python, no GPU, and no network access are required (unless you turn on the external model or update checks).
+No Python and no network access are required (unless you turn on the external model or update
+checks). GPU acceleration is used when the machine has one that works; otherwise inference
+runs on the CPU.
 
 ### Building the desktop app from source
 
@@ -679,7 +682,7 @@ Mirrors [ARCHITECTURE.md](ARCHITECTURE.md) (the authoritative map):
 - Cross-encoder rerank (ettin-reranker-32m-v1) with a calibrated relevance floor
 
 **LLM Interface**
-- GGUF via node-llama-cpp (desktop, CPU-only, fully offline)
+- GGUF via node-llama-cpp (desktop; GPU when a probe finds one working, CPU otherwise, fully offline)
 - GGUF via wllama WASM (browser, CPU/SIMD, fully offline)
 
 **RAG Engine**
@@ -1152,4 +1155,4 @@ Legacy Python harness only (CI conformance surface):
 ---
 **Version**: 2.3.0
 **Last Updated**: 2026-09-29 (v3 documentation refresh, issue #89)
-**Hardware**: CPU-only optimized for Intel 11th gen i5 and above (16GB RAM minimum)
+**Hardware**: optimized for Intel 11th gen i5 and above (16GB RAM minimum); GPU acceleration is opportunistic and CPU inference is the floor

@@ -31,7 +31,8 @@ Complete installation guide for the Document Q&A Assistant, including standard P
 - **Python**: 3.11 or higher
 
 ### Optional Components
-- **NVIDIA GPU**: Not required for GGUF backend (CPU-only inference)
+- **NVIDIA GPU**: not required. The GGUF backend uses a working Vulkan device when one is
+  present and falls back to CPU inference otherwise
 
 ## Standard Installation
 
@@ -262,7 +263,8 @@ Not required. Application runs as a standard executable.
 
 ### System Requirements for Power Users
 
-The application runs CPU-only using GGUF models. No GPU or NPU acceleration is required.
+The application runs GGUF models on a GPU when a probe finds a working Vulkan device, and on
+the CPU otherwise. GPU acceleration is optional; no particular GPU or NPU is required.
 
 ## Post-Installation
 

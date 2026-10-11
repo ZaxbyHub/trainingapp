@@ -42,6 +42,7 @@ import type {
   RetrievalSurface,
 } from '../types.js';
 import { buildPenalties, PENALTY_FULL_CONTEXT_TOKENS, type PenaltyOptions } from './penalties.js';
+import { activeGpuVerdict, setActiveGpuVerdict, writeGpuProbeVerdict, type GpuProbeVerdict } from './gpu-probe.js';
 import {
   EXTERNAL_SETTING_KEYS,
   ExternalProviderState,
@@ -91,21 +92,63 @@ export interface LlamaEngineBackend {
 export interface LlamaEngineFactoryOptions {
   modelPath: string;
   threads: number;
-  vulkan: boolean;
+  /** issue #155: the RESOLVED compute backend, not the operator's preference. */
+  backend: GpuBackendName;
+  /** issue #155 (llama.cpp #29277): explicit offload size, never auto-fit. */
+  gpuLayers: 'max' | number;
   /** Effective profile the factory call serves (drives generation params). */
   profile: InferenceProfileName;
 }
+
+/** issue #155: the two compute backends the desktop backend can run. CUDA is
+ *  deliberately absent - the installer does not ship it, so an NVIDIA host
+ *  falls back to Vulkan-or-CPU rather than half-working. */
+export type GpuBackendName = 'vulkan' | 'cpu';
+
+/** issue #155: 'auto' lets the persisted probe verdict decide; true forces the
+ *  GPU even if the probe disagreed; false forces CPU. An ABSENT setting is
+ *  'auto', so an unprobed host behaves exactly as it did before this feature. */
+export type GpuSelection = 'auto' | boolean;
+
+/** Explicit offload: every layer, or none. 'auto' is NOT used - llama.cpp
+ *  #29277 reports a device whose free-memory figure is wrong, and auto-fit
+ *  would silently size the offload from it. */
+const EXPLICIT_GPU_LAYERS = 'max' as const;
 
 export interface LlamaEngineOptions {
   /** Model root directory. Precedence over userDataPath and the headless default. */
   modelDir?: string;
   /** Electron injects app.getPath('userData'); models live under <userData>/models. */
   userDataPath?: string;
+  /** issue #155 review PRR-003: the directory holding `gpu-probe.json`
+   *  (`path.dirname(storePath)`). Supplied so the engine can PERSIST its own
+   *  automatic-path GPU load-failure downgrade. It cannot route that write
+   *  through the backend host, which is constructed after it; without this the
+   *  downgrade existed only in memory and was lost on restart, so an affected
+   *  machine re-paid a failing GPU load on every boot. */
+  gpuVerdictDir?: string;
   profile?: ProfileSetting;
   profileThresholdGb?: number;
   threads?: number;
-  /** Reserved (issue #62): off until A2 shows stability — llama.cpp #17389. */
-  vulkan?: boolean;
+  /**
+   * issue #155: 'auto' (default) follows the GPU probe verdict, `true` forces
+   * Vulkan even when the probe disagreed, `false` forces CPU. Widened from the
+   * old bare boolean, which could not express "let the app decide".
+   */
+  vulkan?: GpuSelection;
+  /**
+   * issue #155: the probe verdict oracle. A SYNC seam, matching the other
+   * injection points (freeMemBytes/cpuCount/llamaFactory): the host runs the
+   * out-of-process probe at start and hands the engine a reader. Returning null
+   * means "never probed", which resolves to CPU.
+   */
+  gpuVerdict?: () => GpuProbeVerdict | null;
+  /**
+   * issue #155: called when an automatic ('auto') GPU load fails, so the host
+   * can downgrade its in-memory verdict and rewrite the sidecar instead of
+   * re-attempting a failing GPU on every subsequent request.
+   */
+  onGpuLoadFailure?: (verdict: GpuProbeVerdict) => void;
   /** Explicit absolute model file overrides, keyed by profile. */
   models?: { quality?: string; fast?: string };
   /** Injectable seams for tests. */
@@ -258,10 +301,26 @@ async function resolveReasoningSuppressedWrapper(
 async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<LlamaEngineBackend> {
   // Dynamic import: native code loads only when a model is actually needed.
   const nlc = await import('node-llama-cpp');
-  // CPU-only by default; the vulkan build is reserved until A2 certifies it
-  // (llama.cpp #17389 — Gemma-3n E2B Vulkan crash on Intel iGPU).
-  const llama = await nlc.getLlama(opts.vulkan ? { gpu: 'vulkan' } : { gpu: false });
-  const model = await llama.loadModel({ modelPath: opts.modelPath });
+  // issue #155: the GPU is no longer hard-disabled. The backend was resolved by
+  // the probe (or pinned by the operator) BEFORE this call, so this site only
+  // has to state the request, not decide it. CUDA is excluded because the
+  // installer does not ship it - an NVIDIA host falls back rather than
+  // half-working (AC12).
+  //
+  // PR #159 review PRR-026: `build: 'never'` is passed for the same reason the
+  // probe child passes it. node-llama-cpp defaults to `'never'` under Electron
+  // but `'auto'` under plain Node, and `backend/dev-server.ts` reaches this same
+  // factory on the vulkan branch - where `'auto'` would attempt a FROM-SOURCE
+  // cmake build if no prebuilt matched. The probe child was already pinned; the
+  // engine that actually loads the model was not.
+  const llama = await nlc.getLlama(
+    opts.backend === 'vulkan'
+      ? { gpu: { type: 'auto', exclude: ['cuda'] }, build: 'never' }
+      : { gpu: false, build: 'never' },
+  );
+  // Explicit gpuLayers (llama.cpp #29277: a device whose free-memory figure is
+  // wrong must not silently size the offload from it).
+  const model = await llama.loadModel({ modelPath: opts.modelPath, gpuLayers: opts.gpuLayers });
   const chatWrapper = await resolveReasoningSuppressedWrapper(nlc, opts.modelPath);
   const context = await model.createContext({ threads: opts.threads, contextSize: CONTEXT_SIZE });
   // ONE resident sequence for the lifetime of the backend: v3 allocates
@@ -392,6 +451,12 @@ export function resolveNodeEngine(
     models?: { quality?: string; fast?: string };
     /** universal-provider-settings-overhaul: SecretStore + airgap flag. */
     externalProvider?: ExternalProviderOptions;
+    /** issue #155: the probe verdict reader the host owns (see LlamaEngineOptions). */
+    gpuVerdict?: () => GpuProbeVerdict | null;
+    /** issue #155: notified when an automatic GPU load fails. */
+    onGpuLoadFailure?: (verdict: GpuProbeVerdict) => void;
+    /** issue #155 review PRR-003: where the engine persists that downgrade. */
+    gpuVerdictDir?: string;
   },
 ): EngineSurface {
   if (env.TRAININGAPP_DESKTOP_ENGINE === 'stub') {
@@ -409,6 +474,9 @@ export function resolveNodeEngine(
     userDataPath: overrides?.userDataPath,
     ...(overrides?.models !== undefined ? { models: overrides.models } : {}),
     ...(overrides?.externalProvider !== undefined ? { externalProvider: overrides.externalProvider } : {}),
+    ...(overrides?.gpuVerdict !== undefined ? { gpuVerdict: overrides.gpuVerdict } : {}),
+    ...(overrides?.onGpuLoadFailure !== undefined ? { onGpuLoadFailure: overrides.onGpuLoadFailure } : {}),
+    ...(overrides?.gpuVerdictDir !== undefined ? { gpuVerdictDir: overrides.gpuVerdictDir } : {}),
     profile,
     ...(threads !== undefined ? { threads } : {}),
   });
@@ -418,6 +486,14 @@ interface ResidentEntry {
   backend: LlamaEngineBackend;
   profile: InferenceProfileName;
   inFlight: number;
+  /**
+   * issue #155: the identity the resident was BUILT with. Before this field
+   * existed, reuse keyed on `profile` alone, so a settings change to the backend
+   * selection (or to threads) updated the field and was reported back by
+   * responseSettings() while the model kept running on the old backend - the
+   * switch moved and nothing changed. The effective backend is part of the key.
+   */
+  backendIdentity: string;
 }
 
 /** LlamaEngine.captureSettingsState() snapshot (PR #140 review FB140-001). */
@@ -426,7 +502,7 @@ export interface LlamaSettingsState {
   readonly profileSetting: ProfileSetting;
   readonly thresholdGb: number;
   readonly threadsSetting: number | undefined;
-  readonly vulkanSetting: boolean | undefined;
+  readonly vulkanSetting: GpuSelection | undefined;
   readonly stickyAuto: InferenceProfileName | null;
   /** PR #142 rebase RB-001: external.* values, the session key and the SecretStore entries. */
   readonly external: ExternalProviderSettingsState;
@@ -440,12 +516,25 @@ export class LlamaEngine implements EngineSurface {
   private readonly llamaFactoryFn: (opts: LlamaEngineFactoryOptions) => Promise<LlamaEngineBackend>;
   private profileSetting: ProfileSetting;
   private thresholdGb: number;
-  private vulkanSetting: boolean | undefined;
+  private vulkanSetting: GpuSelection | undefined;
   private threadsSetting: number | undefined;
+  /** issue #155: the probe verdict reader seam (null = never probed). */
+  private readonly gpuVerdictFn: () => GpuProbeVerdict | null;
+  /** issue #155: notified when an automatic GPU load fails, so the host can
+   *  downgrade its in-memory verdict AND rewrite the sidecar. */
+  private readonly onGpuLoadFailure: ((verdict: GpuProbeVerdict) => void) | undefined;
   private readonly modelDirOption: string | undefined;
   private readonly userDataPath: string | undefined;
   private readonly modelOverrides: { quality?: string; fast?: string };
   private resident: ResidentEntry | null = null;
+  /** issue #155 review PRR-009: set when a GPU load failed after the probe
+   *  reported a working device, cleared when a load succeeds. Distinct from the
+   *  verdict on purpose: the probe's finding is still true (the device works,
+   *  this load did not fit), so the persisted verdict is left alone and only the
+   *  reported status changes. */
+  private gpuLoadFailure: string | null = null;
+  /** issue #155 review PRR-003: where this engine persists its own downgrade. */
+  private readonly gpuVerdictDir: string | undefined;
   private loads = 0;
   private queue: Promise<unknown> = Promise.resolve();
   /**
@@ -489,8 +578,11 @@ export class LlamaEngine implements EngineSurface {
     this.thresholdGb = options.profileThresholdGb ?? 6;
     this.vulkanSetting = options.vulkan;
     this.threadsSetting = options.threads;
+    this.gpuVerdictFn = options.gpuVerdict ?? activeGpuVerdict;
+    this.onGpuLoadFailure = options.onGpuLoadFailure;
     this.modelDirOption = options.modelDir;
     this.userDataPath = options.userDataPath;
+    this.gpuVerdictDir = options.gpuVerdictDir;
     this.modelOverrides = options.models ?? {};
     this.external = new ExternalProviderState(options.externalProvider);
   }
@@ -571,8 +663,122 @@ export class LlamaEngine implements EngineSurface {
     return this.threadsSetting ?? defaultThreadCount(this.cpuCount());
   }
 
-  private effectiveVulkan(): boolean {
-    return this.vulkanSetting ?? false;
+  /**
+   * issue #155: resolve the operator's PREFERENCE against the probe verdict
+   * into the backend that will actually run.
+   *
+   *   true  -> force Vulkan, even when the probe disagreed. A forced GPU that
+   *            cannot load surfaces the error; it never silently degrades.
+   *   false -> force CPU.
+   *   auto  -> follow a GPU-ok verdict; otherwise CPU. An ABSENT verdict
+   *            (never probed) resolves to CPU, so an unprobed host behaves
+   *            exactly as it did before this feature existed.
+   */
+  private effectiveGpuBackend(): GpuBackendName {
+    const selection = this.vulkanSetting ?? 'auto';
+    if (selection === false) return 'cpu';
+    if (selection === true) return 'vulkan';
+    const verdict = this.gpuVerdictFn();
+    return verdict !== null && verdict.ok && verdict.backend === 'vulkan' ? 'vulkan' : 'cpu';
+  }
+
+  /** issue #155: whether the operator pinned the choice rather than delegating
+   *  it. Load-time auto-downgrade is allowed only when they did not. */
+  private gpuIsForced(): boolean {
+    return this.vulkanSetting === true || this.vulkanSetting === false;
+  }
+
+  /** issue #155 review PRR-002 + PRR-009: the backend as the API reports it.
+   *
+   *  The contract (contracts/api.openapi.yaml) documents `backend` as "the
+   *  resolved compute backend ... `backend` is what runs". Reporting the raw
+   *  probe verdict instead made the field contradict the running backend in
+   *  BOTH pin directions: with `inference.vulkan:false` and a GPU-ok verdict
+   *  the app ran CPU while claiming Vulkan, and with `inference.vulkan:true`
+   *  and a CPU verdict it ran Vulkan while claiming failure. `ok` now means
+   *  "a GPU is actually in use AND working", which is what the renderer's copy
+   *  assumes.
+   *
+   *  One deliberate edge, flagged by the PR #159 reviewer: a FORCED GPU whose
+   *  probe verdict was negative reports `ok:false` with "the probe did not find
+   *  a usable GPU device" even after a forced load succeeds and is generating.
+   *  That matches the contract's own wording ("True only when a GPU backend
+   *  loaded AND produced a sane generation" - the probe never produced one), and
+   *  it is the honest answer to "is a verified GPU in use", but it does mean
+   *  `ok` is not a pure "is a GPU resident" flag. A future field, if that
+   *  distinction is ever needed, should carry the residency separately.
+   *
+   *  Absent verdict still reads as a CPU decision with a stated reason rather
+   *  than an absent field, so the renderer never has to guess. */
+  private gpuStatus(): { backend: GpuBackendName; ok: boolean; reason: string; device: string | null } {
+    const resolved = this.effectiveGpuBackend();
+    const verdict = this.gpuVerdictFn();
+
+    // PRR-009: a GPU load that failed AFTER the probe said the device works.
+    // The probe's finding is still true - the device works, this load did not
+    // fit - so the verdict is deliberately left alone and the failure is
+    // reported here instead. Without this, a forced-GPU machine showed
+    // "GPU usable" in Settings while every request 503'd.
+    if (this.gpuLoadFailure !== null && resolved === 'vulkan') {
+      return {
+        backend: 'vulkan',
+        ok: false,
+        reason: this.gpuLoadFailure,
+        device: verdict === null ? null : verdict.device ?? null,
+      };
+    }
+
+    if (resolved === 'cpu') {
+      if (verdict === null) {
+        return {
+          backend: 'cpu',
+          ok: false,
+          reason: 'GPU acceleration has not been tested on this machine yet; CPU inference is in use.',
+          device: null,
+        };
+      }
+      if (verdict.ok && verdict.backend === 'vulkan') {
+        // Only reachable via `inference.vulkan: false`: the probe found a
+        // working GPU and the operator pinned CPU anyway.
+        return {
+          backend: 'cpu',
+          ok: false,
+          reason: 'A working GPU was detected, but CPU inference is pinned in Settings.',
+          device: verdict.device ?? null,
+        };
+      }
+      return { backend: 'cpu', ok: false, reason: verdict.reason, device: verdict.device ?? null };
+    }
+
+    // resolved === 'vulkan'. Either the probe said yes, or the operator forced
+    // it against a non-positive verdict.
+    if (verdict === null || !verdict.ok || verdict.backend !== 'vulkan') {
+      return {
+        backend: 'vulkan',
+        ok: false,
+        reason: 'GPU inference is pinned in Settings, but the probe did not find a usable GPU device on this machine.',
+        device: null,
+      };
+    }
+    return { backend: 'vulkan', ok: true, reason: verdict.reason, device: verdict.device ?? null };
+  }
+
+  /** The resident reuse key for the NEXT load: everything a backend is built
+   *  from that a settings change can alter. Model path included so a profile
+   *  file swap reloads too. */
+  private backendIdentityFor(profile: InferenceProfileName, modelPath: string): string {
+    return this.identityFrom(profile, modelPath, this.effectiveThreads(), this.effectiveGpuBackend());
+  }
+
+  /** The key built from an EXPLICIT set of construction values, so a load can
+   *  record what it really used rather than what live state says now. */
+  private identityFrom(
+    profile: InferenceProfileName,
+    modelPath: string,
+    threads: number,
+    backend: GpuBackendName,
+  ): string {
+    return [profile, modelPath, threads, backend].join('|');
   }
 
   private modelPathFor(profile: InferenceProfileName): string {
@@ -626,17 +832,24 @@ export class LlamaEngine implements EngineSurface {
       profile: this.effectiveProfile(),
       models: { quality: statusFor('quality'), fast: statusFor('fast') },
       resident: external ? { state: 'idle', profile: null, loadStartedAt: null } : this.residentLoadStatus(),
+      // issue #155: the detected backend, whether it works, and WHY - so the
+      // Settings surface can show a reason instead of a silent CPU. Absent on
+      // an external endpoint, where no local backend is involved at all.
+      ...(external ? {} : { gpu: this.gpuStatus() }),
     };
   }
 
   private async ensureResident(profile: InferenceProfileName, modelPath: string): Promise<ResidentEntry> {
-    if (this.resident !== null && this.resident.profile === profile) return this.resident;
+    // issue #155: reuse requires the whole backend identity to match, not just
+    // the profile - so changing the GPU selection (or threads) actually reloads.
+    const identity = this.backendIdentityFor(profile, modelPath);
+    if (this.resident !== null && this.resident.backendIdentity === identity) return this.resident;
     if (this.loadInFlight !== null) {
       // Single-flight: a warmup (or a concurrent query) already loading a
-      // backend — await it, then re-evaluate (it may even be the profile we
+      // backend — await it, then re-evaluate (it may even be the identity we
       // want). The in-flight promise never re-enters this branch.
       const loaded = await this.loadInFlight;
-      if (loaded.profile === profile) return loaded;
+      if (loaded.backendIdentity === identity) return loaded;
     }
     const load = this.loadBackend(profile, modelPath);
     this.loadInFlight = load;
@@ -651,40 +864,132 @@ export class LlamaEngine implements EngineSurface {
     const old = this.resident;
     if (old !== null) {
       this.resident = null;
-      // Profile switch defers to post-request: the per-engine queue means the
+      // A backend switch defers to post-request: the per-engine queue means the
       // caller only reaches this point after prior generations completed, so
-      // the old backend is idle and safe to dispose synchronously.
+      // the old backend is idle and safe to dispose synchronously. Disposing
+      // BEFORE constructing the next one is what keeps exactly one context
+      // alive (issue #155 change 2).
       await old.backend.dispose().catch(() => {});
     }
     const threads = this.effectiveThreads();
+    let backendName = this.effectiveGpuBackend();
     let backend: LlamaEngineBackend;
     this.loadState = 'loading';
     this.loadStartedAt = Date.now();
     this.loadingProfile = profile;
     try {
-      backend = await this.llamaFactoryFn({
-        modelPath,
-        threads,
-        vulkan: this.effectiveVulkan(),
-        profile,
-      });
+      backend = await this.constructBackend(profile, modelPath, threads, backendName);
     } catch (err) {
-      this.loadState = 'idle';
-      this.loadStartedAt = null;
-      this.loadingProfile = null;
-      // Corrupt/unloadable model: wrap into the 503-diagnostic error type,
-      // carrying the underlying failure for the operator.
-      throw new ModelNotConfiguredError(
-        `Failed to load the ${profile} model from ${modelPath}: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      // issue #155: load-time CPU retry, AUTOMATIC PATH ONLY. The probe
+      // validated the DEVICE with the fast model; nothing else proves the
+      // quality GGUF fits on it, so a GPU load failure here is real evidence
+      // and must not leave the user without an answer. An operator-pinned
+      // selection is never retried: "force the GPU" that silently degrades to
+      // CPU is not force, so that failure surfaces.
+      if (backendName === 'vulkan' && !this.gpuIsForced()) {
+        const reason = `GPU load failed, so this machine is now using CPU inference: ${err instanceof Error ? err.message : String(err)}`;
+        console.warn(`[trainingapp-backend] ${reason}`);
+        // Publish the downgrade to the SHARED holder the default `gpuVerdict`
+        // seam reads. This is what makes it work in production: the engine is
+        // constructed by resolveNodeEngine before any host exists, so a
+        // host-supplied callback could never be wired there. Writing it here
+        // means the very next load in this session resolves to cpu instead of
+        // re-attempting a failing GPU on every subsequent request.
+        setActiveGpuVerdict({ backend: 'cpu', ok: false, reason, device: null });
+        // PRR-003: persist it too. The engine is built before any host exists,
+        // so it cannot route this through `adoptGpuVerdict`; without writing the
+        // sidecar here the downgrade was lost on restart and the next boot
+        // re-read the stale GPU-ok verdict, skipped the probe, and re-paid the
+        // same failing GPU load. Best-effort: a write failure must not lose the
+        // in-memory downgrade that was just published.
+        if (this.gpuVerdictDir !== undefined) {
+          writeGpuProbeVerdict(this.gpuVerdictDir, { backend: 'cpu', ok: false, reason, device: null });
+        }
+        // The optional hook remains for a caller that wants to observe it too.
+        this.onGpuLoadFailure?.({ backend: 'cpu', ok: false, reason, device: null });
+        backendName = 'cpu';
+        try {
+          backend = await this.constructBackend(profile, modelPath, threads, 'cpu');
+        } catch (cpuErr) {
+          this.markLoadFailed();
+          throw new ModelNotConfiguredError(
+            `Failed to load the ${profile} model from ${modelPath}: ${cpuErr instanceof Error ? cpuErr.message : String(cpuErr)}`,
+          );
+        }
+      } else {
+        this.markLoadFailed();
+        // PRR-009: a FORCED vulkan load that failed. The persisted verdict
+        // still says the device works, so `/status/models` would otherwise keep
+        // answering "GPU usable" while every request 503s. Record the failure
+        // so gpuStatus() reports the truth; a later successful load clears it.
+        if (backendName === 'vulkan') {
+          this.gpuLoadFailure = `GPU inference is pinned in Settings, but loading the ${profile} model on the GPU failed: ${err instanceof Error ? err.message : String(err)}`;
+        }
+        // Corrupt/unloadable model: wrap into the 503-diagnostic error type,
+        // carrying the underlying failure for the operator.
+        throw new ModelNotConfiguredError(
+          `Failed to load the ${profile} model from ${modelPath}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
     this.loads += 1;
+    // A load that succeeded clears any prior forced-GPU failure: the reported
+    // status must reflect the CURRENT state, not a stale one (PRR-009).
+    this.gpuLoadFailure = null;
+    this.markLoadReady();
+    const entry: ResidentEntry = {
+      backend,
+      profile,
+      inFlight: 0,
+      // Built from the values this load ACTUALLY used - `backendName` captured
+      // before the awaits - not from live state re-read afterwards. A verdict
+      // that lands mid-load would otherwise be folded into the key while the
+      // resident was built from the old one: the next query would compute the
+      // same (post-adoption) key, see a match, and reuse a resident that runs
+      // the previous backend forever, while the status reports the new one.
+      backendIdentity: this.identityFrom(profile, modelPath, threads, backendName),
+    };
+    this.resident = entry;
+    return entry;
+  }
+
+  /** A load that succeeded: report 'ready' with no in-flight window. */
+  private markLoadReady(): void {
     this.loadState = 'ready';
     this.loadStartedAt = null;
     this.loadingProfile = null;
-    const entry: ResidentEntry = { backend, profile, inFlight: 0 };
-    this.resident = entry;
-    return entry;
+  }
+
+  /**
+   * A load that failed: report 'idle', NEVER 'ready' and NEVER a stuck
+   * 'loading' (the #133 round-4 contract: a failed warmup leaves state idle and
+   * the first /ask retries). Called on every throw path.
+   */
+  private markLoadFailed(): void {
+    this.loadState = 'idle';
+    this.loadStartedAt = null;
+    this.loadingProfile = null;
+  }
+
+  /** One construction attempt, wrapped so a failure carries the operator-facing
+   *  detail without losing the load-state reset. */
+  private async constructBackend(
+    profile: InferenceProfileName,
+    modelPath: string,
+    threads: number,
+    backendName: GpuBackendName,
+  ): Promise<LlamaEngineBackend> {
+    try {
+      return await this.llamaFactoryFn({
+        modelPath,
+        threads,
+        backend: backendName,
+        gpuLayers: EXPLICIT_GPU_LAYERS,
+        profile,
+      });
+    } catch (err) {
+      throw err instanceof Error ? err : new Error(String(err));
+    }
   }
 
   async query(question: string, opts: EngineQueryOptions = {}): Promise<EngineQueryResult> {
@@ -919,7 +1224,7 @@ export class LlamaEngine implements EngineSurface {
     let profile: ProfileSetting | undefined;
     let thresholdGb: number | undefined;
     let threads: number | undefined;
-    let vulkan: boolean | undefined;
+    let vulkan: GpuSelection | undefined;
     for (const [key, value] of Object.entries(inferenceSubset)) {
       switch (key) {
         case 'inference.profile':
@@ -949,8 +1254,11 @@ export class LlamaEngine implements EngineSurface {
           }
           break;
         case 'inference.vulkan':
-          if (typeof value !== 'boolean') {
-            errors.push(`${key}: expected a boolean`);
+          // issue #155: widened from a bare boolean so "let the probe decide"
+          // is expressible. 'yes' and 1 stay invalid - a coerced truthy is not
+          // a selection.
+          if (value !== 'auto' && typeof value !== 'boolean') {
+            errors.push(`${key}: expected 'auto', true or false`);
           } else {
             vulkan = value;
           }
@@ -1080,7 +1388,10 @@ export class LlamaEngine implements EngineSurface {
       'inference.profile': this.profileSetting,
       'inference.profileThresholdGb': this.thresholdGb,
       'inference.threads': this.effectiveThreads(),
-      'inference.vulkan': this.effectiveVulkan(),
+      // issue #155: the operator's selection is what the setting round-trips
+      // (so a saved 'auto' stays 'auto'); the resolved backend and the reason
+      // ride on /status/models.
+      'inference.vulkan': this.vulkanSetting ?? 'auto',
       // universal-provider-settings-overhaul: external.* (never the key).
       ...this.external.responseFields(),
     };

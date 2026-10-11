@@ -279,6 +279,24 @@ export interface ModelStatus {
     profile: string | null;
     loadStartedAt: number | null;
   };
+  /** issue #155: the GPU decision the engine made. Absent when an external
+   *  endpoint generates. `reason` is always non-empty so a CPU fallback can be
+   *  explained rather than guessed at. */
+  gpu?: {
+    backend: 'vulkan' | 'cpu';
+    ok: boolean;
+    reason: string;
+    device?: string | null;
+  };
+}
+
+/** issue #155: the result of a GPU capability probe run, the same shape as
+ *  the `gpu` member of ModelStatus. */
+export interface GpuProbeResult {
+  backend: 'vulkan' | 'cpu';
+  ok: boolean;
+  reason: string;
+  device?: string | null;
 }
 
 export interface StatsResponse {

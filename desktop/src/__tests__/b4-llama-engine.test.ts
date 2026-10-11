@@ -70,7 +70,10 @@ class FakeBackend implements LlamaEngineBackend {
 interface FactoryCapture {
   modelPath: string;
   threads: number;
-  vulkan: boolean;
+  /** issue #155: the RESOLVED compute backend the factory is asked to build. */
+  backend: 'vulkan' | 'cpu';
+  /** issue #155: the explicit offload size (never 'auto'). */
+  gpuLayers: 'max' | number;
 }
 
 function makeTmpDir(prefix: string): string {
@@ -103,7 +106,7 @@ function makeEngine(overrides: Partial<LlamaEngineOptions> = {}): EngineHarness 
     cpuCount: () => 8,
     models: { quality: dummy.quality, fast: dummy.fast },
     llamaFactory: async (opts) => {
-      captures.push({ modelPath: opts.modelPath, threads: opts.threads, vulkan: opts.vulkan });
+      captures.push({ modelPath: opts.modelPath, threads: opts.threads, backend: opts.backend, gpuLayers: opts.gpuLayers });
       const backend = new FakeBackend();
       backends.push(backend);
       return backend;
@@ -157,8 +160,12 @@ describe('b4-llama-engine Group A (mocked backend): resident model + cancellatio
 
     await engine.query('quality again');
     expect(engine.getLoadCount()).toBe(2); // no further reconstruction
-  });
-
+    // Per-test budget, not the 5s default: this test performs THREE sequential
+    // queries each of which disposes one backend and constructs another, and it
+    // runs inside the full desktop suite where the machine is saturated. It
+    // passes comfortably in isolation; the default budget made it a load
+    // flake. The assertion, not the budget, is what this test is for.
+  }, 30000);
   it('AC4 cancel: flag set mid-generation resolves cancelled:true and stops streaming <200ms after the flag', async () => {
     const { engine } = makeEngine();
     const flag = { set: false, isSet: () => flag.set };
@@ -191,11 +198,51 @@ describe('b4-llama-engine Group A (mocked backend): resident model + cancellatio
     expect(explicit.captures[0].threads).toBe(3);
   });
 
-  it('vulkan defaults to false (reserved) and is forwarded when set', async () => {
+  // issue #155: this test used to be named "vulkan defaults to false
+  // (reserved) and is forwarded when set" but its body only ever asserted the
+  // default - the "forwarded when set" half of the name was never exercised.
+  // It now asserts BOTH halves, and the name says what it does.
+  it('the backend defaults to cpu and each explicit selection is forwarded', async () => {
+    // No selection and no probe verdict: 'auto' with nothing probed resolves to
+    // cpu, so an unprobed host behaves exactly as it did before issue #155.
     const plain = makeEngine();
     await plain.engine.query('q');
-    expect(plain.captures[0].vulkan).toBe(false);
-  });
+    expect(plain.captures[0].backend).toBe('cpu');
+
+    // Explicitly forced GPU -> forwarded as vulkan.
+    const forced = makeEngine({ vulkan: true });
+    await forced.engine.query('q');
+    expect(forced.captures[0].backend).toBe('vulkan');
+
+    // Explicitly forced CPU -> forwarded as cpu.
+    const pinned = makeEngine({ vulkan: false });
+    await pinned.engine.query('q');
+    expect(pinned.captures[0].backend).toBe('cpu');
+
+    // 'auto' plus a GPU-ok probe verdict -> forwarded as vulkan. This is the
+    // half the old test name claimed and never checked.
+    const probed = makeEngine({
+      gpuVerdict: () => ({ backend: 'vulkan', ok: true, reason: 'stub probe: gpu usable', device: 'stub-gpu-0' }),
+    });
+    await probed.engine.query('q');
+    expect(probed.captures[0].backend).toBe('vulkan');
+
+    // 'auto' plus a FAILED probe verdict -> cpu. The fallback direction.
+    const unusable = makeEngine({
+      gpuVerdict: () => ({ backend: 'cpu', ok: false, reason: 'stub probe: no usable gpu', device: null }),
+    });
+    await unusable.engine.query('q');
+    expect(unusable.captures[0].backend).toBe('cpu');
+
+    // Every construction above asked for an explicit offload size, never 'auto'
+    // (llama.cpp #29277: a wrong free-memory report must not size the offload).
+    for (const harness of [plain, forced, pinned, probed, unusable]) {
+      expect(harness.captures[0].gpuLayers).toBe('max');
+    }
+    // Five engine constructions; the default 5s per-test budget is too tight
+    // for them on a loaded machine, and a timeout here would read as a product
+    // failure rather than a harness budget problem.
+  }, 30000);
 
   it('auto profile uses the DEFAULT 6 GiB threshold: exactly 6 GiB -> quality path, one byte under -> fast path', async () => {
     const atThreshold = makeEngine({ profile: 'auto', freeMemBytes: () => 6 * GB });
@@ -227,14 +274,14 @@ describe('b4-llama-engine Group A (mocked backend): resident model + cancellatio
       'inference.profile': 'quality',
       'inference.profileThresholdGb': 8,
       'inference.threads': 4,
-      'inference.vulkan': false,
+      'inference.vulkan': 'auto',
     });
     expect(patch.ok).toBe(true);
     const settings = engine.responseSettings();
     expect(settings['inference.profile']).toBe('quality');
     expect(settings['inference.profileThresholdGb']).toBe(8);
     expect(settings['inference.threads']).toBe(4);
-    expect(settings['inference.vulkan']).toBe(false);
+    expect(settings['inference.vulkan']).toBe('auto');
   });
 
   it('settings patch: unknown keys and wrong-typed/out-of-bounds values are rejected with ok:false', () => {
@@ -252,6 +299,8 @@ describe('b4-llama-engine Group A (mocked backend): resident model + cancellatio
       { 'inference.profileThresholdGb': 'big' },
       { 'inference.vulkan': 'yes' },
       { 'inference.vulkan': 1 },
+      { 'inference.vulkan': 'off' },
+      { 'inference.vulkan': null },
     ];
     for (const patch of badPatches) {
       const result = engine.applySettingsPatch(patch);

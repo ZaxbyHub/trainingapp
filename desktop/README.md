@@ -126,8 +126,14 @@ profile auto-selection.
   `lfm2.5-vl-450m/model.gguf` — both relative to the model dir (assumption A2
   pending ADR-0002 #56). Embeddings remain the stub until B5 (#63).
 - **Threads**: `min(cores, 8)` by default — explicitly NOT the browser WASM
-  4-cap (`web_ui/src/lib/llm/wllama-service.ts`). `inference.vulkan` is
-  reserved, default `false` (llama.cpp #17389).
+  4-cap (`web_ui/src/lib/llm/wllama-service.ts`).
+- **Compute backend**: `inference.vulkan` takes `'auto'` (the default, follow
+  the probe), `true` (force the GPU) or `false` (force CPU). The probe runs in
+  a separate OS process, so a driver fault cannot take the app down; its
+  verdict and a human-readable reason persist in `gpu-probe.json` beside the
+  other profile sidecars and are reported by `GET /status/models`. A GPU load
+  that fails on the automatic path retries once on CPU and records why; an
+  explicitly forced GPU surfaces the error instead of degrading silently.
 - **Model location**: `TRAININGAPP_INFERENCE_MODEL_DIR` env (or dev-server
   `--model-dir`) -> `<userData>/models` (Electron injects the path) ->
   `~/.trainingapp/models` headless fallback. A missing model makes `/ask` and
@@ -138,15 +144,19 @@ profile auto-selection.
   in-flight generation ends); a client disconnect stops emission via a 20ms
   cancellation poll + abort signal — well inside the 200ms budget.
 - **Settings**: `inference.profile` | `inference.profileThresholdGb` |
-  `inference.threads` (1..64) | `inference.vulkan` via PUT /settings; the
+  `inference.threads` (1..64) | `inference.vulkan` ('auto'|true|false) via
+  PUT /settings; the
   rag_* keys still round-trip (owned by the composed stub until B5/B6).
   Headless env equivalents: `TRAININGAPP_DESKTOP_INFERENCE_PROFILE`
   (quality|fast|auto; invalid values fall back to auto) and
   `TRAININGAPP_DESKTOP_INFERENCE_THREADS` (same 1..64 integer gate as the
   settings key; invalid values fall back to the min(cores, 8) default).
-- **Packaged installs**: the installer does NOT yet unpack node-llama-cpp's
-  native addon from the asar archive — packaged inference lands with #84
-  (E1). Dev runs and the headless dev-server are unaffected.
+- **Packaged installs**: `electron-builder.yml` pins
+  `@node-llama-cpp/win-x64-vulkan` and `@node-llama-cpp/win-x64` in
+  `asarUnpack`, so the compute backends are always on disk rather than
+  depending on electron-builder's implicit native-module heuristic. The CUDA
+  backend packages are excluded from the installer and no code path selects
+  them. Dev runs and the headless dev-server are unaffected.
 - **History**: contract-supplied history is capped to the last 12 turns
   before seeding the model, so an oversized array cannot overflow the 8192
   context (the browser client already caps at 6).

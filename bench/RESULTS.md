@@ -63,6 +63,53 @@ different machine.
 | wllama | PENDING |
 | onnxruntime | PENDING |
 
+### reference-amd-igpu
+
+Registered by PR #159 review PRR-038 so the GPU device matrix can name a machine that
+does not exist yet. `bench/append_results.py` refuses any row whose `machine` tag is
+absent from this registry. No AMD host has been measured; every field stays PENDING.
+Fill these in only on that hardware, using the same commands as `devstation` above.
+
+NOTE: each tag needs its OWN `### ` heading. `append_results.py` takes the whole
+heading line as one literal tag, so a combined "a / b / c" heading would register as
+the single string `a / b / c` and leave all three individual tags unregistered.
+
+| field | value |
+|---|---|
+| CPU model | PENDING |
+| RAM | PENDING |
+| OS build | PENDING |
+| GPU + driver | PENDING |
+| node-llama-cpp (the engine issue #155 probes) | PENDING |
+| Backend the probe selects | PENDING |
+
+### reference-amd-dgpu
+
+As `reference-amd-igpu` above, for a discrete AMD GPU.
+
+| field | value |
+|---|---|
+| CPU model | PENDING |
+| RAM | PENDING |
+| OS build | PENDING |
+| GPU + driver | PENDING |
+| node-llama-cpp (the engine issue #155 probes) | PENDING |
+| Backend the probe selects | PENDING |
+
+### reference-nvidia
+
+As `reference-amd-igpu` above, for an NVIDIA GPU. Note the CUDA backend is
+deliberately not shipped, so this host is expected to resolve to Vulkan-or-CPU.
+
+| field | value |
+|---|---|
+| CPU model | PENDING |
+| RAM | PENDING |
+| OS build | PENDING |
+| GPU + driver | PENDING |
+| node-llama-cpp (the engine issue #155 probes) | PENDING |
+| Backend the probe selects | PENDING |
+
 ## Native llama.cpp CPU results
 
 One row per (model x quant x threads x prompt length); decode tok/s over the
@@ -144,6 +191,7 @@ see the provenance rule 4 above) on the real staged tree, machine-tagged:
 | devstation | models/reranker (ettin-reranker-32m-v1 q8 + root tokenizers) | 39,611,408 | rerank-worker dtype q8; AutoTokenizer loads from the model ROOT |
 | devstation | models/llm-quality (gemma-4-e2b-it Q4_K_M + mmproj) | 3,606,025,056 | ADR-0002; mmproj has no native consumer at E1 |
 | devstation | models/llm-fast (lfm2.5-vl-450m Q4_K_M + mmproj) | 332,128,736 | ADR-0002 |
+| devstation | backend packages EXCLUDED from the installer: @node-llama-cpp/win-x64-cuda (170,658,131) + win-x64-cuda-ext (362,957,501) | 533,615,632 | issue #155: unreachable - the probe passes `exclude: ['cuda']`. Measured `du -sb desktop/node_modules/@node-llama-cpp/win-x64-cuda{,-ext}`, i.e. 508.90 MiB / 533.6 MB decimal. The "~510 MB" quoted in `desktop/electron-builder.yml` is the MiB figure. PR #159 review PRR-037 |
 | devstation | packs (bundled-docs + training fixtures) | 1,695 | contracts/fixtures/packs layout fixtures |
 | devstation | docs (licenses.md) | 6,240 | the first-run licensing seam |
 | devstation | staged resources total | 4,111,872,009 | 3.83 GiB (17 model files after the review round added the reranker root tokenizers) |
@@ -151,6 +199,46 @@ see the provenance rule 4 above) on the real staged tree, machine-tagged:
 | devstation | packaged resources dir (win-unpacked/resources incl. app+renderer+natives) | 5,993,150,933 | post-exclusion double-ship guard clean; still <= 7 GiB; measured by python os.walk byte-sum (cross-checked `du -sb`) |
 | devstation | startup integrity gate latency (streaming sha256 of the full staged tree) | 2,377 ms | packaged-mode pass, 0 failures, 2026-09-23 |
 | reference-i5 | all E1 size/latency rows | PENDING | operator runs the same commands (E3/#86 owns the matrix) |
+
+### GPU device matrix (issue #155)
+
+Which compute backend the desktop backend actually selects on each machine. Issue #155 turned
+GPU acceleration from a hard-disabled constant into an out-of-process probe plus a CPU
+fallback, so a row here is a statement about what the probe concludes there.
+
+Recording discipline for this table (the same one the `reference-i5` E1 rows above already
+follow): every row is either a figure measured on the machine it names, or an explicit `PENDING`
+naming what is unmeasured. No tok/s number appears here unless it was measured on the machine
+named. The issue #155 comments carry prefill/decode tok/s figures from an external benchmark
+harness; this table does not restate them as its own evidence, because this revision did not
+re-measure them.
+
+| machine | device | backend selected | GPU offload | notes |
+|---|---|---|---|---|
+| devstation | Intel Arc Pro B50 (discrete), driver 32.0.101.8805 | vulkan | supportsGpuOffloading=true | measured: node-llama-cpp 3.20.0, same process reported gpu=false for the shipped CPU-only option and gpu=vulkan for `{gpu:{type:auto,exclude:[cuda]}}`. Reproduce: `node -e "import('node-llama-cpp').then(n=>n.getLlama({gpu:{type:'auto',exclude:['cuda']},build:'never'}).then(l=>console.log(l.gpu,l.supportsGpuOffloading)))"` |
+| devstation | Intel Arc Pro B50 (discrete), driver 32.0.101.8805 | cpu | gpu=false, supportsGpuOffloading=false | measured: the same host and the same node-llama-cpp 3.20.0 process under the shipped `{gpu:false}` option - the comparison the GPU row above is measured against. Reproduce: `node -e "import('node-llama-cpp').then(n=>n.getLlama({gpu:false,build:'never'}).then(l=>console.log(l.gpu,l.supportsGpuOffloading)))"` |
+| reference-i5 | 12th-gen Core i5 mobile, Intel Iris Xe integrated | PENDING | PENDING | no integrated-GPU host was available; prefill and decode tok/s and the probe's own verdict are unmeasured, and this is the floor-spec machine the speed bar for the quality tier depends on |
+| reference-amd-igpu | AMD integrated, RDNA | PENDING | PENDING | no AMD host was available; backend selection, probe verdict and throughput are unmeasured |
+| reference-amd-dgpu | AMD discrete, RDNA | PENDING | PENDING | no AMD host was available; backend selection, probe verdict and throughput are unmeasured |
+| reference-nvidia | NVIDIA discrete | PENDING | PENDING | no NVIDIA host was available; note the CUDA backend is deliberately not shipped, so this host is expected to resolve to Vulkan-or-CPU rather than CUDA |
+
+PR #159 review PRR-038: the three `reference-amd-*` / `reference-nvidia` tags above are
+not in this file's machine registry, and `bench/append_results.py` raises `SystemExit`
+on any unregistered tag - so a future measured row for them would be rejected. They
+are registered here with the all-PENDING shape the registry already uses for
+`reference-i5` (which likewise has `PENDING` cells), so the tag is usable the day
+that hardware appears.
+
+One upstream llama.cpp defect has no runtime mitigation in the pinned library and is covered
+only by the probe plus its CPU fallback, not fixed here: **#27638** (device loss at
+`ubatch >= 2048`; `ubatch` does not appear anywhere in the installed node-llama-cpp 3.20.0
+`dist/` except one code comment). Verified by searching the installed package, not assumed.
+
+**#29054** (deterministic hang on a q8_0 KV cache) is a different case and is **not** claimed as
+unmitigated: node-llama-cpp 3.20.0 does expose `experimentalKvCacheKeyType` /
+`experimentalKvCacheValueType` on `LlamaContextOptions`, and **both already default to F16**, so
+the f16 mitigation the upstream report asks for is in force by default. The application does not
+surface that experimental override to users, deliberately.
 
 **Known limit (recorded, never hidden): the single-file NSIS target cannot
 embed the real-weights payload.** `makensis.exe` aborts with `File: failed

@@ -26,6 +26,14 @@ import { PackManager } from './store/pack-manager.js';
 import { createPackSurface } from './packs/surface.js';
 import { resolvePacksSecurity } from './packs/pack-extract.js';
 import { loadSettingsSnapshot, saveSettingsSnapshot } from './settings-store.js';
+import {
+  readGpuProbeVerdict,
+  runGpuProbe,
+  setActiveGpuVerdict,
+  terminateProbeChild,
+  writeGpuProbeVerdict,
+  type GpuProbeVerdict,
+} from './inference/gpu-probe.js';
 import { loadExternalSnapshot, replayExternalSnapshot, saveExternalSnapshot } from './external-store.js';
 import { OnnxEmbedder, resolveEmbedder, type EmbeddingSurface } from './ingest/embedder.js';
 import { resolveIngestConfig, resolveIngestLimits } from './ingest/config.js';
@@ -99,6 +107,18 @@ export class NodeBackendHost implements BackendHost {
   /** C3 (#70): pack lifecycle, constructed on start (instance field — the b3
    * duck-type pin reserves host prototypes for start/stop only). */
   private packManager: PackManager | null = null;
+  /**
+   * issue #155: the GPU probe verdict the host owns. The engine reads it
+   * through a SYNC seam (resolveNodeEngine's `gpuVerdict`), because the probe
+   * itself is async and runs out of process; this field is the writable holder
+   * the async probe fills. Null means "never probed", which the engine resolves
+   * to CPU - an unprobed host behaves exactly as it did before issue #155.
+   */
+  private gpuVerdict: GpuProbeVerdict | null = null;
+  /** issue #155: profile dir the gpu-probe.json sidecar lives in, or null when
+   *  the host runs without a store (CI stub) - then the probe still runs but
+   *  nothing is persisted. */
+  private gpuProbeDir: string | null = null;
 
   /** Issue #133: named reason the pack lifecycle is down ('ok' when live);
    *  surfaced to the wizard via getPackLifecycleStatus → packs.unavailableReason. */
@@ -205,6 +225,161 @@ export class NodeBackendHost implements BackendHost {
         detail: 'profile override cleared between generations (recovery sustained)',
       });
     }
+  };
+
+  /**
+   * issue #155: run the GPU probe and adopt its verdict. Own property BY DESIGN
+   * (the b3 duck-type pin requires both host prototypes to expose exactly
+   * start/stop - node-only capabilities must stay off the prototype).
+   *
+   * Never throws: runGpuProbe resolves a CPU verdict for every failure mode,
+   * and this wrapper additionally swallows anything unexpected so a probe
+   * problem can never take host start with it.
+   */
+  /**
+   * issue #155: the probe child currently running, so `stop()` can guarantee
+   * none outlives the backend host. `runGpuProbe` owns its own deadline, but a
+   * probe can legitimately be in flight when the app quits.
+   */
+  private readonly probeChildren = new Set<{ kill: (signal?: NodeJS.Signals) => unknown }>();
+  /**
+   * PER-CHILD, not a host-global latch. A single boolean was consumed by
+   * whichever probe settled first, so with two probes in flight at shutdown the
+   * second one adopted and persisted a SIGTERM kill verdict anyway. Each killed
+   * child is recorded here and its own probe reads only its own entry.
+   */
+  private readonly abandonedChildren = new Set<{ kill: (signal?: NodeJS.Signals) => unknown }>();
+
+  /**
+   * The probe runner, injectable so a test can drive the REAL startGpuProbe
+   * logic (child registration, abandonment, settle pruning) with a child it
+   * controls. Replacing `startGpuProbe` itself would bypass exactly the logic
+   * under test - which is how the first version of the shutdown test ended up
+   * unable to fail.
+   */
+  private probeRun: typeof runGpuProbe = runGpuProbe;
+
+  startGpuProbe = async (): Promise<GpuProbeVerdict> => {
+    // Per-probe state. `abandonedByHost` is captured INSIDE onSettled, which
+    // runs before the reset - reading this flag after the await was the round-3
+    // defect: onSettled reset it first, so the post-await check could never see
+    // it true and the host adopted and persisted its own kill verdict.
+    let child: { kill: (signal?: NodeJS.Signals) => unknown } | null = null;
+    let abandonedByHost = false;
+    try {
+      const modelPath = this.probeModelPath();
+      // A verdict produced WITHOUT running a probe is not evidence about this
+      // machine. On a genuine first run the host starts before models are staged
+      // (wizard/download come later), so this branch fires on exactly the
+      // scenario issue #155 names - and persisting it would pin a perfectly
+      // capable GPU to CPU forever, because a stored verdict skips the next
+      // boot's probe.
+      //
+      // It is returned to the caller (the boot sequence and the /gpu-test
+      // route), held in `this.gpuVerdict` for this session, and is deliberately
+      // NOT written and NOT published to the shared holder the engine reads -
+      // so it neither reaches the sidecar nor arms the boot-skip gate.
+      const probed = modelPath !== null;
+      const verdict =
+        modelPath === null
+          ? { backend: 'cpu' as const, ok: false, reason: 'GPU probe has not run yet: no probe model is staged.', device: null }
+          : await this.probeRun({
+              args: [modelPath],
+              // A SET, not a single field: two probes can overlap (the boot
+              // probe and a /gpu-test), and a single field was clobbered when
+              // the first finished - leaving the second's live child unreapable.
+              onChild: (spawned) => {
+                child = spawned;
+                this.probeChildren.add(spawned);
+              },
+              onSettled: () => {
+                // Decide for THIS child, then prune. The abandonment record is
+                // keyed by the child itself, so overlapping probes cannot
+                // consume each other's flag.
+                abandonedByHost = child !== null && this.abandonedChildren.has(child);
+                if (child !== null) {
+                  this.probeChildren.delete(child);
+                  this.abandonedChildren.delete(child);
+                }
+              },
+            });
+      if (abandonedByHost) {
+        // Our own shutdown killed this probe. The verdict describes the kill,
+        // not the machine, so it is returned but never adopted or persisted.
+        return verdict;
+      }
+      if (!probed) {
+        // Session-scoped only. Deliberately NOT adoptGpuVerdict: that writes the
+        // sidecar, and a written verdict suppresses the next boot's probe.
+        this.gpuVerdict = verdict;
+        return verdict;
+      }
+      this.adoptGpuVerdict(verdict);
+      return verdict;
+    } catch (err) {
+      const verdict: GpuProbeVerdict = {
+        backend: 'cpu',
+        ok: false,
+        reason: `GPU probe failed unexpectedly: ${err instanceof Error ? err.message : String(err)}`,
+        device: null,
+      };
+      this.adoptGpuVerdict(verdict);
+      return verdict;
+    }
+  };
+
+  /**
+   * issue #155: adopt a verdict in memory AND persist it, so a restart does not
+   * re-probe. Called by the automatic probe and by the re-test endpoint. The
+   * engine's load-failure downgrade writes the shared holder itself (see
+   * llama-engine.ts loadBackend) and reaches this hook ONLY when a caller
+   * supplies one - no production construction does today, so cross-restart
+   * persistence of a downgrade is NOT wired; that is recorded, not assumed.
+   */
+  adoptGpuVerdict = (verdict: GpuProbeVerdict): void => {
+    this.gpuVerdict = verdict;
+    // Publish to the shared holder the engine reads, and persist so a restart
+    // reuses this verdict.
+    //
+    // TWO writers, deliberately: the host writes every verdict it adopts, and
+    // the engine writes the automatic-path GPU load-failure downgrade itself
+    // (llama-engine.ts loadBackend). The engine cannot route it through the host
+    // because it is constructed by resolveNodeEngine BEFORE any host exists, so
+    // no host-supplied callback can be wired at construction - it takes the
+    // probe directory directly instead (`gpuVerdictDir`). Both write whole
+    // objects on one thread, so there is no torn read.
+    setActiveGpuVerdict(verdict);
+    if (this.gpuProbeDir !== null) writeGpuProbeVerdict(this.gpuProbeDir, verdict);
+  };
+
+  /**
+   * issue #155: which model the probe loads. The FAST profile's GGUF: the probe
+   * validates the BACKEND, the backend behaves identically for both profiles,
+   * and loading the 2.6 GB quality GGUF to answer a question the 229 MB fast
+   * GGUF answers identically would make first boot needlessly slow.
+   *
+   * PR #159 review PRR-029: this said "332 MB", which is the PROFILE total
+   * (model.gguf 229,313,568 B + mmproj.gguf 102,815,168 B = 332,128,736 B, the
+   * figure bench/RESULTS.md:146 records for `models/llm-fast`). The probe loads
+   * the GGUF ALONE - `process.argv[2]` is a single path - so 229 MB is the
+   * honest figure here, matching the sibling comment in gpu-probe-child.ts.
+   */
+  /**
+   * issue #155: OWN PROPERTY, not a prototype method. TypeScript's `private` is
+   * compile-time only, so a `private` method still shows up on the prototype -
+   * and the b3 duck-type pin (b3-backend-selector.test.ts) requires BOTH host
+   * prototypes to expose exactly start/stop. The other node-only capabilities
+   * are arrow class fields for the same reason (createStoreBackup, above).
+   */
+  private probeModelPath = (): string | null => {
+    // Read through modelStatus(), NOT through a `models` property on the
+    // engine: `BackendHostConfig.engine` is an `EngineSurface`, which has no
+    // such member, so the earlier cast read `undefined` on every boot and the
+    // probe silently skipped itself. `modelStatus().models.fast.path` is the
+    // engine's own resolved fast-profile path - the same one it will load.
+    const path = this.engine.modelStatus?.().models.fast.path;
+    if (typeof path !== 'string' || path === '' || !fs.existsSync(path)) return null;
+    return path;
   };
 
   /**
@@ -382,6 +557,18 @@ export class NodeBackendHost implements BackendHost {
         replayExternalSnapshot(externalSnapshot, (patch) => this.engine.applySettingsPatch(patch));
       }
       persistExternal = (snapshot) => saveExternalSnapshot(storePath, snapshot);
+
+      // issue #155: the profile DIRECTORY is the sidecar home (index.ts:409-412
+      // states the convention; dev-server.ts:119 already uses it). A missing or
+      // corrupt file reads as null and simply means "not probed yet".
+      this.gpuProbeDir = path.dirname(storePath);
+      this.gpuVerdict = readGpuProbeVerdict(this.gpuProbeDir);
+      // Adopt the persisted verdict into the HOLDER the engine actually reads
+      // (LlamaEngine's default `gpuVerdict` seam is activeGpuVerdict). Without
+      // this the sidecar was written but never consulted, so a restart lost
+      // the verdict and re-probed regardless - the opposite of what the
+      // comment below claimed.
+      if (this.gpuVerdict !== null) setActiveGpuVerdict(this.gpuVerdict);
     }
     // #133: the first-run wizard applies the operator's profile choice
     // through the SAME validated seam the settings API uses — live apply +
@@ -430,6 +617,15 @@ export class NodeBackendHost implements BackendHost {
       modelStatus: typeof this.engine.modelStatus === 'function'
         ? () => this.engine.modelStatus!()
         : undefined,
+      // issue #155: the on-demand re-probe. Each call re-reads the sidecar
+      // first so a driver change is what the verdict reflects, then re-runs.
+      gpuTest: async () => {
+        if (this.gpuProbeDir !== null) {
+          const stored = readGpuProbeVerdict(this.gpuProbeDir);
+          if (stored !== null) this.gpuVerdict = stored;
+        }
+        return await this.startGpuProbe();
+      },
       // C7 (issue #74): pack lifecycle surface. Provider shape — the
       // PackManager is constructed lazily with the store (see the recovery
       // path below), so resolve it per request; null -> contract-safe 503.
@@ -445,6 +641,14 @@ export class NodeBackendHost implements BackendHost {
       // gate chat on the real load state instead of a time heuristic. The
       // warmup itself never fails host start; single-flight in the engine
       // merges it with a concurrent first query.
+      // issue #155: kick the GPU probe off in the BACKGROUND, next to warmup,
+      // so neither blocks the listener. It runs out of process (gpu-probe.ts),
+      // so a driver fault cannot take the host down; the verdict that lands here
+      // is picked up by the NEXT model load, never by a load already in flight.
+      // Skipped when a verdict is already persisted and adopted above - that is
+      // what makes the sidecar worth writing. The /gpu-test route forces a
+      // re-probe unconditionally, so a changed driver is still recoverable.
+      if (this.gpuVerdict === null) void this.startGpuProbe();
       void this.engine.warmup?.().catch((err: unknown) => {
         console.error(
           `[trainingapp-backend] model warmup crashed: ${err instanceof Error ? err.message : String(err)}`,
@@ -653,6 +857,17 @@ export class NodeBackendHost implements BackendHost {
       if (process.env.TRAININGAPP_CORS_DEBUG) console.error(`[stop-debug] ${m}`);
     };
     dbg('begin');
+    // issue #155: no probe child may outlive the backend host. A probe can be
+    // mid-GGUF-load when the app quits; runGpuProbe's own deadline would
+    // eventually reap it, but "eventually" is up to DEFAULT_PROBE_TIMEOUT_MS.
+    if (this.probeChildren.size > 0) {
+      dbg(`killing ${this.probeChildren.size} in-flight gpu probe child(ren)`);
+      for (const child of this.probeChildren) {
+        this.abandonedChildren.add(child);
+        terminateProbeChild(child);
+      }
+      this.probeChildren.clear();
+    }
     // B8 (issue #66) governance teardown FIRST: no sampler fires mid-shutdown,
     // the idle controller never fires after dispose, and queued (not yet
     // started) generations fail fast instead of running after close.

@@ -33,7 +33,10 @@ const SRC_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 /** file (relative to web_ui/src, forward slashes) -> [exact count, reason]. */
 const ALLOWLIST: Record<string, [number, string]> = {
   'lib/llm/external-http.ts': [1, 'THE external-endpoint transport: URL policy first, redirect: error, credentials: omit'],
-  'lib/api/client.ts': [15, 'desktop backend loopback API (token-guarded) / same-origin'],
+  // 16, not 15: issue #155 added POST /settings/inference/gpu-test, the
+  // re-probe action behind the Settings "Test GPU acceleration" control. Same
+  // loopback, same token guard, no new host.
+  'lib/api/client.ts': [16, 'desktop backend loopback API (token-guarded) / same-origin; +1 = POST /settings/inference/gpu-test (#155)'],
   'lib/api/auth.ts': [2, 'same-origin auth routes of the app backend'],
   'lib/api/streaming.ts': [1, 'desktop backend /ask/stream SSE (loopback)'],
   'lib/desktop-session.tsx': [1, 'desktop backend GET /status/models (loopback)'],
