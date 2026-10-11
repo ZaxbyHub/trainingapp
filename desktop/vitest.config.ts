@@ -27,12 +27,17 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/__tests__/**/*.test.ts'],
-    // PR #159 review PRR-028: this config previously raised the suite-wide
-    // budget to 30s. That was reverted because the diff ALREADY carries 14
-    // explicit per-test `}, 30_000)` budgets in the two files it touched (the
-    // repo's existing idiom - external-engine.test.ts, d6-learn-host-wiring,
-    // d4-links-ac2-install and others do the same), so the global raise only
-    // bought 6x hang-detection latency across 109 untouched files. Verified:
-    // the whole desktop suite passes at vitest's 5s default.
+    // Suite-wide deadline ceiling. The PR #159 review proposed REMOVING this
+    // (PRR-028) on the grounds that the diff already carried 14 per-test
+    // budgets, and a local run at the 5s default was green. CI disagreed, and
+    // CI is the authority: `c4-recency-pipeline.test.ts` ("attributes the
+    // semver winner when two versions are both active") and
+    // `d6-learn-kernel.test.ts` ("caps results at MAX_LEARN_RESULTS") both
+    // timed out at 5000ms on the runner while running 6.8s and 5.7s. Those
+    // suites are untouched by this change; the ceiling is what they depend on
+    // when the machine is loaded. Restored deliberately, with the earlier
+    // rationale - "several inference tests construct a model per query" -
+    // corrected, because no desktop test constructs a real model.
+    testTimeout: 30_000,
   },
 });
