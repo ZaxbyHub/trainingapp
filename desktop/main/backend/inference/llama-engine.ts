@@ -415,15 +415,23 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
       // sentence terminator (removal decisions are sentence-local and stable
       // once a sentence completes), and the remainder is flushed after
       // generation ends. Invariant: the joined emissions equal
-      // filterDeclineSentences(full raw answer) — no artefact word ever
-      // surfaces, no splice, at token-level chunking. Ordering condition:
-      // this holds because the decline marker precedes the artefact in every
-      // observed decline; artefact-BEFORE-marker ordering is a bounded,
-      // pre-existing scope assumption of the filter (the final-answer filter
-      // shares the same assumption).
+      // filterDeclineSentences(full raw answer) whenever the decline marker
+      // precedes the artefact (the only ordering observed in captured
+      // output). PRR-102: when the ordering inverts, the filtered candidate
+      // SHRINKS below what was already streamed — a length check would splice
+      // mid-answer — so emission is guarded by CONTENT (candidate must be a
+      // prefix-extension of what was emitted). On divergence the stream stops
+      // emitting and the terminal flush emits the full filtered answer after
+      // a separator, so the user always ends with the complete correct text.
       let accumulated = '';
       let emitted = '';
+      let diverged = false;
       const emitThrough = (candidate: string): void => {
+        if (diverged) return;
+        if (!candidate.startsWith(emitted)) {
+          diverged = true;
+          return;
+        }
         if (candidate.length > emitted.length) {
           genOpts.streamCallback?.(candidate.slice(emitted.length));
           emitted = candidate;
@@ -443,7 +451,16 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
         emitThrough(filterDeclineSentences(accumulated.slice(0, settled.index + 1)));
       };
       const flushSurface = (): void => {
-        emitThrough(filterDeclineSentences(accumulated));
+        const finalText = filterDeclineSentences(accumulated);
+        if (diverged) {
+          // Ordering inverted mid-stream: earlier emissions cannot be
+          // retracted, so deliver the complete filtered answer after a
+          // separator instead of leaving the corrupted projection.
+          if (finalText.length > 0) genOpts.streamCallback?.('\n\n' + finalText);
+          emitted = finalText;
+          return;
+        }
+        emitThrough(finalText);
       };
       // Cancel bridge: the CancellationFlag polls at 20ms and aborts the
       // library prompt (stopOnAbortSignal) — emission stops far inside 200ms.
@@ -504,6 +521,11 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
         // before any token (LlamaChat.js:2245-2247), so a user cancellation
         // during prefill arrives here. Distinguish it from a real failure.
         outcome = genOpts.cancellationEvent?.isSet() ? 'cancelled' : 'error';
+        // PRR-108: a mid-generation error must still deliver whatever the
+        // engine generated after the last settled sentence — pre-#156 every
+        // token streamed through, so dropping the tail here would be a
+        // streaming regression.
+        flushSurface();
         throw err;
       } finally {
         clearInterval(poll);

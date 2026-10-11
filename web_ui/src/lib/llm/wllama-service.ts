@@ -353,20 +353,35 @@ export class WllamaService implements LLMService {
       // bounded, pre-existing scope assumption of the filter).
       let accumulated = '';
       let emitted = '';
+      let diverged = false;
+      // PRR-102 (desktop twin parity): the emission guard is CONTENT-based —
+      // a candidate that shrinks below already-emitted text (decline marker
+      // appearing after an artefact sentence) must not splice mid-answer.
+      // On divergence, stop streaming; the terminal flush delivers the full
+      // filtered answer after a separator so the user ends with correct text.
+      function* emitThrough(candidate: string): Generator<string> {
+        if (diverged) return;
+        if (!candidate.startsWith(emitted)) {
+          diverged = true;
+          return;
+        }
+        if (candidate.length > emitted.length) {
+          yield candidate.slice(emitted.length);
+          emitted = candidate;
+        }
+      }
       for await (const chunk of stream) {
         const content = chunk.choices?.[0]?.delta?.content;
         if (!content) continue;
         accumulated += content;
         const settled = /[.!?](?=[^.!?\n]*$)/.exec(accumulated);
         if (settled === null) continue;
-        const candidate = filterDeclineSentences(accumulated.slice(0, settled.index + 1));
-        if (candidate.length > emitted.length) {
-          yield candidate.slice(emitted.length);
-          emitted = candidate;
-        }
+        yield* emitThrough(filterDeclineSentences(accumulated.slice(0, settled.index + 1)));
       }
       const finalVisible = filterDeclineSentences(accumulated);
-      if (finalVisible.length > emitted.length) {
+      if (diverged) {
+        if (finalVisible.length > 0) yield '\n\n' + finalVisible;
+      } else if (finalVisible.length > emitted.length) {
         yield finalVisible.slice(emitted.length);
       }
     } finally {

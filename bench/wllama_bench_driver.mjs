@@ -257,26 +257,35 @@ async function run() {
       // #156 AC15 substitute evidence: exercise the CHAT path (the embedded
       // template) the way wllama-service does, not raw completion. A grounded
       // exchange must produce non-empty text with no leaked think markers.
+      // NOTE (PRR-107): this leg is DIAGNOSTIC ONLY — its rows carry no real
+      // decode/first-token measurements and must NOT be appended to
+      // bench/RESULTS.md (append_results has no chat discriminator).
+      // Escapes: this block lives inside the page's outer template literal,
+      // so doubled backslashes here emit single backslash escapes into the
+      // inner script, and the apostrophe is emitted pre-escaped. A bare
+      // newline or raw apostrophe inside a quoted inner-JS string is a
+      // SyntaxError that kills the WHOLE page (both legs) — the exact
+      // failure PRR-107 recorded.
       const context =
-        '[1] The expense report portal closes on the 15th of each month.
-
-' +
+        '[1] The expense report portal closes on the 15th of each month.\\n\\n' +
         '[2] Receipts are required for any claim above 25 GBP.';
-      const result = await wllama.createChatCompletion([
-        { role: 'system', content: 'Answer the user's question directly and concisely using only the provided context; say when it does not contain the answer.' },
-        { role: 'user', content: 'Context:
-' + context + '
-
-Question: When does the expense portal close?' },
-      ], { nPredict: maxTokens, sampling: { temp: 0.2 } });
+      const result = await wllama.createChatCompletion({
+        messages: [
+          { role: 'system', content: 'Answer the user\\'s question directly and concisely using only the provided context; say when it does not contain the answer.' },
+          { role: 'user', content: 'Context:\\n' + context + '\\n\\nQuestion: When does the expense portal close?' },
+        ],
+        max_tokens: maxTokens,
+        temperature: 0.2,
+      });
       chatText = (result && typeof result === 'object' && 'choices' in result
         ? String(result.choices?.[0]?.message?.content ?? '')
         : String(result ?? ''));
-      nTokens = chatText.length > 0 ? Math.max(1, Math.round(chatText.length / 4)) : 0;
-      if (nTokens > 0) { firstTokenAt = tGen; lastAt = performance.now(); }
+      // No synthetic throughput: chat rows must not be mistaken for measured
+      // completion rows (decode/first-token stay null; only chat_* fields).
+      nTokens = chatText.length > 0 ? 1 : 0;
       row.chat_mode = true;
       row.chat_nonempty = chatText.trim().length > 0;
-      row.chat_think_leak = /<\/?think>/i.test(chatText);
+      row.chat_think_leak = chatText.includes('<think>') || chatText.includes('</think>');
       row.chat_text_head = chatText.slice(0, 120);
     } else {
       // v3 createCompletion takes OAI-compatible params: max_tokens + stream/onData
@@ -547,7 +556,7 @@ function main() {
       });
     return undefined;
   }
-  process.stdout.write('usage: wllama_bench_driver.mjs --list-modes | --run --model <gguf> --browser <exe> [--prompt-tokens N] [--max-tokens N] [--json]\n');
+  process.stdout.write('usage: wllama_bench_driver.mjs --list-modes | --run --model <gguf> --browser <exe> [--prompt-tokens N] [--max-tokens N] [--chat (diagnostic only; rows are NOT for bench/RESULTS.md)] [--json]\n');
   return 2;
 }
 

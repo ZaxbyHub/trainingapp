@@ -15,7 +15,7 @@
   (responsePrefix + zero thought budget, with an echo-strip for think-tag remnants).
   A decline filter strips the trained-in "did you forget to include the document?"
   sentences the LFM 1.2B models append when declining (decline-shaped answers only;
-  answerable answers pass through byte-identical). The repeat penalty is retired (sampling no longer applies it).
+  answerable answers pass through byte-identical). On the desktop, the repeat penalty is retired (desktop sampling no longer applies it; the browser preset system keeps its own repeat-penalty default, and the browser LLM is now the same lfm2-1.2b-rag model — parity is a tracked follow-up).
   On CPU-only machines the `auto` profile now selects the Fast tier (Quality CPU-only
   first answers run ~83 s at 5 chunks per the issue benchmark). The fast tier keeps
   5 retrieval chunks (deviation D1, recorded in ADR-0002's #156 amendment). License

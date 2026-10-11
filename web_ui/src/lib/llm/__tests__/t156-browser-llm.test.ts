@@ -109,20 +109,29 @@ describe('issue #156: model-readiness is gguf-only', () => {
 // --- decline filter (shared fixtures with the desktop suite) -------------------
 
 /**
- * Fixture texts duplicated from the desktop suite
- * desktop/src/__tests__/t156-decline-filter.test.ts (issue #156 AC4: shared
+ * Fixture texts duplicated from the desktop fixture module
+ * desktop/src/__tests__/fixtures/decline-fixtures.ts (issue #156 AC4: shared
  * fixtures on both sides). Source: the captured LFM2-1.2B-RAG decline output
- * in .agents/issue-traces/156-llm-model-swap/02-reproduction.md R6 — keep the
- * strings identical on both sides when either suite changes.
+ * in .agents/issue-traces/156-llm-model-swap/02-reproduction.md R6. PRR-120:
+ * these copies had drifted from the desktop source; they are now byte-aligned
+ * with CAPTURED_DECLINE / CAPTURED_DECLINE_FILTERED / ANSWERABLE_ANSWER —
+ * keep them identical when either side changes.
  */
 const DECLINE_FIXTURE =
-  'The provided context does not contain information regarding the maximum permitted annual leave carryover for contractors in the EU. Did you perhaps forget to include the document containing this information? Once you provide the relevant document, I will be able to assist further.';
-const ANSWERABLE_FIXTURE = 'The expense portal closes on the 15th of each month.';
+  'The provided context does not contain information regarding the maximum permitted annual leave carryover ' +
+  'for contractors in the EU. Did you perhaps forget to include the document containing this information? ' +
+  'Once you provide the relevant document, I will be able to accurately determine and share the answer.';
+const DECLINE_FIXTURE_FILTERED =
+  'The provided context does not contain information regarding the maximum permitted annual leave carryover ' +
+  'for contractors in the EU. ';
+const ANSWERABLE_FIXTURE =
+  'The maximum permitted carryover is 5 days per year, as stated in section 4.2 of the leave policy.';
 
 describe('issue #156: decline-sentence filter (browser twin)', () => {
-  it('strips the trained-in artefact sentences from a decline answer', async () => {
+  it('strips the trained-in artefact sentences from a decline answer (byte-aligned with the desktop fixture)', async () => {
     const { filterDeclineSentences } = await import('../decline-filter');
     const filtered = filterDeclineSentences(DECLINE_FIXTURE);
+    expect(filtered).toBe(DECLINE_FIXTURE_FILTERED);
     expect(filtered).toContain('does not contain information regarding');
     expect(filtered).not.toMatch(/did you perhaps forget/i);
     expect(filtered).not.toMatch(/once you provide the relevant document/i);
@@ -131,6 +140,24 @@ describe('issue #156: decline-sentence filter (browser twin)', () => {
   it('leaves answerable answers byte-identical', async () => {
     const { filterDeclineSentences } = await import('../decline-filter');
     expect(filterDeclineSentences(ANSWERABLE_FIXTURE)).toBe(ANSWERABLE_FIXTURE);
+  });
+
+  it('PRR-103 guard: a marker clause inside an artefact sentence does NOT empty the answer', async () => {
+    const { filterDeclineSentences } = await import('../decline-filter');
+    const text =
+      'Once you provide the relevant document, I will be able to determine whether the context does not contain the answer.';
+    expect(filterDeclineSentences(text)).toBe(text);
+  });
+
+  it('PRR-104 guard: the artefact tail is bounded — real content on the same line survives', async () => {
+    const { filterDeclineSentences } = await import('../decline-filter');
+    const text =
+      'The context does not contain dosage data. Did you forget to include the document: the correct answer is 42 mg/kg daily.';
+    // The lead-in sentence (with the marker) survives; the colon-joined real
+    // answer must NOT be deleted with the artefact sentence.
+    const filtered = filterDeclineSentences(text);
+    expect(filtered).toContain('The context does not contain dosage data.');
+    expect(filtered).toContain('42 mg/kg daily');
   });
 
   it('is byte-identical passthrough for text without a decline marker', async () => {

@@ -126,6 +126,22 @@ describe('#156 filterDeclineSentences: answerable answers are untouched', () => 
   it('the empty string is a byte-identical passthrough', () => {
     expect(filterDeclineSentences('')).toBe('');
   });
+
+  it('PRR-103 guard: a marker clause inside an artefact sentence does NOT empty the answer', () => {
+    // The marker arms the filter; the artefact pattern then consumed the only
+    // sentence, leaving an empty bubble. The guard returns the original.
+    const text =
+      'Once you provide the relevant document, I will be able to determine whether the context does not contain the answer.';
+    expect(filterDeclineSentences(text)).toBe(text);
+  });
+
+  it('PRR-104 guard: the artefact tail is bounded — colon-joined real content survives', () => {
+    const text =
+      'The context does not contain dosage data. Did you forget to include the document: the correct answer is 42 mg/kg daily.';
+    const filtered = filterDeclineSentences(text);
+    expect(filtered).toContain('The context does not contain dosage data.');
+    expect(filtered).toContain('42 mg/kg daily');
+  });
 });
 
 describe('#156 generate() wiring: streamed declines never surface the artefact', () => {
@@ -170,6 +186,28 @@ describe('#156 generate() wiring: streamed declines never surface the artefact',
     // exactly the filter applied to the full raw answer.
     expect(joined).toBe(CAPTURED_DECLINE_FILTERED);
     expect(result.answer).toBe(CAPTURED_DECLINE_FILTERED);
+  });
+
+  it('PRR-102 ORDERING: artefact-before-marker no longer splices — the flush delivers the full filtered answer', async () => {
+    // Artefact-first ordering: old length-based emission spliced mid-answer.
+    // The content guard defers emission on divergence; the terminal flush
+    // then delivers the complete filtered answer after a separator.
+    const raw = 'Did you forget to attach the document? The provided context does not mention that topic. Here is the rest of the answer text.';
+    const words = raw.split(/(\s+)/);
+    NLC.script = words.filter((w) => w.length > 0);
+    NLC.answer = raw;
+    const streamed: string[] = [];
+    const result = await makeFastEngine().query('is the topic covered?', {
+      streamCallback: (chunk: string) => streamed.push(chunk),
+    });
+    const joined = streamed.join('');
+    const expected = filterDeclineSentences(raw);
+    // The final flush carries the complete correct answer.
+    expect(joined).toContain(expected);
+    expect(result.answer).toBe(expected);
+    // No mid-word splice: every emission is either the leaked prefix, the
+    // separator, or the corrected answer.
+    expect(joined.startsWith('Did you forget to attach the document?')).toBe(true);
   });
 
   it('TERMINAL FLUSH: an answer ending WITHOUT a terminator still emits its tail (joined == filter(raw))', async () => {

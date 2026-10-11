@@ -261,6 +261,36 @@ describe('C2 backing: RAM-gate math and auto-selection', () => {
     const fallback = resolveFreeRamBytes({ TRAININGAPP_DESKTOP_FREE_RAM_BYTES: 'not-a-number' });
     expect(fallback).toBeGreaterThan(0);
   });
+
+  it('PRR-105: a probed CPU-only verdict forces fast at first run even when quality fits RAM', () => {
+    const qualityBytes = 1_674_455_040;
+    const fits = autoSelectProfile({
+      freeBytes: 16 * 1024 ** 3,
+      nCtx: 8192,
+      qualityFileBytes: qualityBytes,
+      gpuVerdict: { backend: 'cpu', ok: false },
+    });
+    expect(fits.profile).toBe('fast');
+    expect(fits.warning?.detail).toContain('CPU');
+
+    // A vulkan-ok verdict leaves the RAM rule in charge (quality fits).
+    const withGpu = autoSelectProfile({
+      freeBytes: 16 * 1024 ** 3,
+      nCtx: 8192,
+      qualityFileBytes: qualityBytes,
+      gpuVerdict: { backend: 'vulkan', ok: true },
+    });
+    expect(withGpu.profile).toBe('quality');
+
+    // No verdict (never probed): RAM rule unchanged.
+    const unprobed = autoSelectProfile({
+      freeBytes: 16 * 1024 ** 3,
+      nCtx: 8192,
+      qualityFileBytes: qualityBytes,
+      gpuVerdict: null,
+    });
+    expect(unprobed.profile).toBe('quality');
+  });
 });
 
 // ---- drift + completion guards ---------------------------------------------

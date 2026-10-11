@@ -16,20 +16,27 @@
 const DECLINE_MARKER =
   /does not (?:contain|mention|include|provide)|not (?:mentioned|found|contained) in|cannot (?:be )?found in|no information (?:about|on|regarding)|isn'?t (?:mentioned |provided )?in the (?:provided |retrieved )?context/i;
 
-/** The trained-in artefact sentence families, observed in captured output. */
+/** The trained-in artefact sentence families, observed in captured output.
+ *  The tail is bounded AND colon-free (PRR-104): an unbounded tail deleted
+ *  real answer content when an artefact lead-in shared a sentence with it —
+ *  the tail cannot cross `:`, `;`, or a sentence terminator, so a
+ *  colon-joined real answer survives. */
 const DECLINE_ARTEFACT_SENTENCES = [
   // "Did you perhaps forget to include the document containing this
   // information?" / "did you forget to attach the document?"
-  /Did you (?:perhaps )?forget to (?:include|attach)[^.!?\n]*[.!?](?:\s|$)/gi,
+  /Did you (?:perhaps )?forget to (?:include|attach)[^.!?\n:;]{0,120}?[.!?](?:\s|$)/gi,
   // "Once you provide the relevant document, I will be able to ..."
-  /(?:Once|When) you (?:provide|attach|share|include) the (?:relevant )?document[^.!?\n]*[.!?](?:\s|$)/gi,
+  /(?:Once|When) you (?:provide|attach|share|include) the (?:relevant )?document[^.!?\n:;]{0,120}?[.!?](?:\s|$)/gi,
   // "Please provide/attach the relevant document ..."
-  /Please (?:provide|attach|include|share) the (?:relevant )?document[^.!?\n]*[.!?](?:\s|$)/gi,
+  /Please (?:provide|attach|include|share) the (?:relevant )?document[^.!?\n:;]{0,120}?[.!?](?:\s|$)/gi,
 ];
 
 /**
  * Remove the trained-in decline artefact sentences from a model answer.
  * Byte-identical passthrough for anything that is not decline-shaped.
+ * PRR-103 guard: if filtering would erase the whole answer (a marker clause
+ * embedded inside an artefact-family sentence), return the original — an
+ * unexplained empty bubble is worse than an imperfect decline.
  */
 export function filterDeclineSentences(text: string): string {
   if (text.length === 0) return text;
@@ -38,5 +45,6 @@ export function filterDeclineSentences(text: string): string {
   for (const pattern of DECLINE_ARTEFACT_SENTENCES) {
     out = out.replace(pattern, '');
   }
+  if (out.trim() === '' && text.trim() !== '') return text;
   return out;
 }

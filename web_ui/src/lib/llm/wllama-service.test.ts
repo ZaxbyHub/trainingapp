@@ -303,7 +303,7 @@ describe('WllamaService', () => {
   // through byte-identical.
 
   const DECLINE_ANSWER =
-    'The provided context does not contain information regarding the maximum permitted annual leave carryover for contractors in the EU. Did you perhaps forget to include the document containing this information? Once you provide the relevant document, I will be able to assist further.';
+    'The provided context does not contain information regarding the maximum permitted annual leave carryover for contractors in the EU. Did you perhaps forget to include the document containing this information? Once you provide the relevant document, I will be able to accurately determine and share the answer.';
   const DECLINE_FILTERED =
     'The provided context does not contain information regarding the maximum permitted annual leave carryover for contractors in the EU. ';
 
