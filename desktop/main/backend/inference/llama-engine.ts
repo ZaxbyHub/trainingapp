@@ -696,7 +696,17 @@ export class LlamaEngine implements EngineSurface {
    *  BOTH pin directions: with `inference.vulkan:false` and a GPU-ok verdict
    *  the app ran CPU while claiming Vulkan, and with `inference.vulkan:true`
    *  and a CPU verdict it ran Vulkan while claiming failure. `ok` now means
-   *  "a GPU is actually in use", which is what the renderer's copy assumes.
+   *  "a GPU is actually in use AND working", which is what the renderer's copy
+   *  assumes.
+   *
+   *  One deliberate edge, flagged by the PR #159 reviewer: a FORCED GPU whose
+   *  probe verdict was negative reports `ok:false` with "the probe did not find
+   *  a usable GPU device" even after a forced load succeeds and is generating.
+   *  That matches the contract's own wording ("True only when a GPU backend
+   *  loaded AND produced a sane generation" - the probe never produced one), and
+   *  it is the honest answer to "is a verified GPU in use", but it does mean
+   *  `ok` is not a pure "is a GPU resident" flag. A future field, if that
+   *  distinction is ever needed, should carry the residency separately.
    *
    *  Absent verdict still reads as a CPU decision with a stated reason rather
    *  than an absent field, so the renderer never has to guess. */

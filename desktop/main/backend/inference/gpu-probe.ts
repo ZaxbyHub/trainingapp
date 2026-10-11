@@ -53,6 +53,9 @@ export function setActiveGpuVerdict(verdict: GpuProbeVerdict | null): void {
 
 /** The sidecar name, used beside the other profile-dir sidecars. */
 export const GPU_PROBE_SIDECAR = 'gpu-probe.json';
+/** The sidecar schema this build writes AND understands. A record with any other
+ *  `v` is ignored rather than adopted (PR #159 review PRR-022). */
+export const GPU_PROBE_VERDICT_VERSION = 1;
 
 /** Default probe deadline. The first GPU call pays a one-off warmup, so this is
  *  generous; it is a ceiling that must contain a hang, not a performance target. */
@@ -79,6 +82,12 @@ export function readGpuProbeVerdict(dir: string): GpuProbeVerdict | null {
     const parsed = JSON.parse(raw) as unknown;
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
     const record = parsed as Record<string, unknown>;
+    // PR #159 review PRR-022: the writer stamps `v: 1` but the reader ignored
+    // it, so the tag was decorative - a future record with the same field names
+    // but different semantics would be adopted as authoritative, and a
+    // non-adopted verdict would skip the boot probe. Only v1 is understood; an
+    // unknown version reads as "not probed", which is the safe direction.
+    if (record.v !== GPU_PROBE_VERDICT_VERSION) return null;
     if (record.backend !== 'vulkan' && record.backend !== 'cpu') return null;
     if (typeof record.ok !== 'boolean') return null;
     if (typeof record.reason !== 'string' || record.reason === '') return null;
@@ -109,7 +118,7 @@ export function writeGpuProbeVerdict(dir: string, verdict: GpuProbeVerdict): voi
   let fd: number | undefined;
   try {
     fd = fs.openSync(tmp, 'w');
-    fs.writeSync(fd, JSON.stringify({ v: 1, ...verdict }));
+    fs.writeSync(fd, JSON.stringify({ v: GPU_PROBE_VERDICT_VERSION, ...verdict }));
     fs.fsyncSync(fd);
     fs.closeSync(fd);
     fd = undefined;

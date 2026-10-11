@@ -575,7 +575,11 @@ describe('issue #155 Round 2: the fixes that had no guard now have one', () => {
     try {
       fs.mkdirSync(path.join(dir, 'profiles', 'default'), { recursive: true });
       const store = path.join(dir, 'profiles', 'default', 'store.sqlite');
-      fs.writeFileSync(path.join(dir, 'profiles', 'default', NAME), JSON.stringify(GPU_OK), 'utf8');
+      // Staged through the real WRITER, not a hand-rolled JSON blob: the reader now
+      // checks the sidecar's `v` (PRR-022), so a raw fixture without it is
+      // correctly read as "never probed" and the test would exercise the wrong
+      // path. This is also how production writes it.
+      writeGpuProbeVerdict(path.join(dir, 'profiles', 'default'), GPU_OK);
       const engine = new LlamaEngine({
         profile: 'fast',
         freeMemBytes: () => 8 * GB,
@@ -610,8 +614,8 @@ describe('issue #155 Round 2: the fixes that had no guard now have one', () => {
     try {
       const profileDir = path.join(dir, 'profiles', 'default');
       fs.mkdirSync(profileDir, { recursive: true });
-      const sentinel = { backend: 'vulkan', ok: true, reason: 'SENTINEL-PREEXISTING', device: 'd' };
-      fs.writeFileSync(path.join(profileDir, NAME), JSON.stringify(sentinel), 'utf8');
+      // Written through the real writer so the record carries `v` (PRR-022).
+      writeGpuProbeVerdict(profileDir, { backend: 'vulkan', ok: true, reason: 'SENTINEL-PREEXISTING', device: 'd' });
 
       const engine = new LlamaEngine({
         profile: 'fast',
@@ -664,11 +668,7 @@ describe('issue #155 Round 2: the fixes that had no guard now have one', () => {
     try {
       const profileDir = path.join(dir, 'profiles', 'default');
       fs.mkdirSync(profileDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(profileDir, NAME),
-        JSON.stringify({ backend: 'vulkan', ok: true, reason: 'PRE-EXISTING', device: 'd' }),
-        'utf8',
-      );
+      writeGpuProbeVerdict(profileDir, { backend: 'vulkan', ok: true, reason: 'PRE-EXISTING', device: 'd' });
       const engine = new LlamaEngine({
         profile: 'fast',
         freeMemBytes: () => 8 * GB,
@@ -835,11 +835,7 @@ describe('issue #155 scenarios: the timeline, not the diff', () => {
     try {
       const profileDir = path.join(dir, 'profiles', 'default');
       fs.mkdirSync(profileDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(profileDir, NAME),
-        JSON.stringify({ backend: 'vulkan', ok: true, reason: 'SENTINEL', device: 'd' }),
-        'utf8',
-      );
+      writeGpuProbeVerdict(profileDir, { backend: 'vulkan', ok: true, reason: 'SENTINEL', device: 'd' });
       const engine = new LlamaEngine({
         profile: 'fast',
         freeMemBytes: () => 8 * GB,

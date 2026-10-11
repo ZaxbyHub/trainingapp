@@ -63,22 +63,52 @@ different machine.
 | wllama | PENDING |
 | onnxruntime | PENDING |
 
-### reference-amd-igpu / reference-amd-dgpu / reference-nvidia
+### reference-amd-igpu
 
 Registered by PR #159 review PRR-038 so the GPU device matrix can name a machine that
 does not exist yet. `bench/append_results.py` refuses any row whose `machine` tag is
-absent from this registry, so the three `PENDING` rows in that matrix were previously
-unwritable. No such host has been measured; every field stays PENDING. Fill these in
-only on that hardware, using the same commands as `devstation` above.
+absent from this registry. No AMD host has been measured; every field stays PENDING.
+Fill these in only on that hardware, using the same commands as `devstation` above.
 
-| field | reference-amd-igpu | reference-amd-dgpu | reference-nvidia |
-|---|---|---|---|
-| CPU model | PENDING | PENDING | PENDING |
-| RAM | PENDING | PENDING | PENDING |
-| OS build | PENDING | PENDING | PENDING |
-| GPU + driver | PENDING | PENDING | PENDING |
-| node-llama-cpp (the engine issue #155 probes) | PENDING | PENDING | PENDING |
-| Backend the probe selects | PENDING | PENDING | PENDING |
+NOTE: each tag needs its OWN `### ` heading. `append_results.py` takes the whole
+heading line as one literal tag, so a combined "a / b / c" heading would register as
+the single string `a / b / c` and leave all three individual tags unregistered.
+
+| field | value |
+|---|---|
+| CPU model | PENDING |
+| RAM | PENDING |
+| OS build | PENDING |
+| GPU + driver | PENDING |
+| node-llama-cpp (the engine issue #155 probes) | PENDING |
+| Backend the probe selects | PENDING |
+
+### reference-amd-dgpu
+
+As `reference-amd-igpu` above, for a discrete AMD GPU.
+
+| field | value |
+|---|---|
+| CPU model | PENDING |
+| RAM | PENDING |
+| OS build | PENDING |
+| GPU + driver | PENDING |
+| node-llama-cpp (the engine issue #155 probes) | PENDING |
+| Backend the probe selects | PENDING |
+
+### reference-nvidia
+
+As `reference-amd-igpu` above, for an NVIDIA GPU. Note the CUDA backend is
+deliberately not shipped, so this host is expected to resolve to Vulkan-or-CPU.
+
+| field | value |
+|---|---|
+| CPU model | PENDING |
+| RAM | PENDING |
+| OS build | PENDING |
+| GPU + driver | PENDING |
+| node-llama-cpp (the engine issue #155 probes) | PENDING |
+| Backend the probe selects | PENDING |
 
 ## Native llama.cpp CPU results
 
