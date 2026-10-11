@@ -210,6 +210,27 @@ describe('#156 generate() wiring: streamed declines never surface the artefact',
     expect(joined.startsWith('Did you forget to attach the document?')).toBe(true);
   });
 
+  it('PRR-102 FLUSH GUARD: divergence first detectable AT the flush still delivers the full answer', async () => {
+    // Review round 2: if the stream ends with the marker sentence UNTERMINATED,
+    // no in-loop candidate ever reveals the divergence — the flush is the
+    // first place the filter sees it. The flush must apply the same content
+    // guard (separator + full answer), never a length splice.
+    const raw = 'Did you forget to attach the document? The provided context does not mention that topic. Here is the partial answer';
+    const words = raw.split(/(\s+)/);
+    NLC.script = words.filter((w) => w.length > 0); // ends mid-sentence, no terminator
+    NLC.answer = raw;
+    const streamed: string[] = [];
+    const result = await makeFastEngine().query('partial?', {
+      streamCallback: (chunk: string) => streamed.push(chunk),
+    });
+    const joined = streamed.join('');
+    const expected = filterDeclineSentences(raw);
+    // The flush's separator re-delivery is the designed divergence behavior:
+    // the user ends with the complete correct answer after the stale prefix.
+    expect(joined).toContain('\n\n' + expected);
+    expect(result.answer).toBe(expected);
+  });
+
   it('TERMINAL FLUSH: an answer ending WITHOUT a terminator still emits its tail (joined == filter(raw))', async () => {
     // 4.5 round-2 finding: maxTokens truncation is production-common (fast
     // tier caps at 384 tokens), and then the flush is the ONLY path emitting

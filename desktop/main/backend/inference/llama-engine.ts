@@ -452,11 +452,18 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
       };
       const flushSurface = (): void => {
         const finalText = filterDeclineSentences(accumulated);
-        if (diverged) {
-          // Ordering inverted mid-stream: earlier emissions cannot be
-          // retracted, so deliver the complete filtered answer after a
-          // separator instead of leaving the corrupted projection.
-          if (finalText.length > 0) genOpts.streamCallback?.('\n\n' + finalText);
+        // The content guard applies at the flush too (review round 2): if
+        // divergence is only detectable HERE — e.g. the stream ended with the
+        // marker sentence unterminated, so no in-loop candidate ever revealed
+        // it — the already-emitted prefix is stale and must not be extended by
+        // length. Deliver the complete filtered answer after a separator
+        // (plainly when nothing was emitted yet); corrections cannot retract.
+        const divergedNow = diverged || !finalText.startsWith(emitted);
+        if (divergedNow) {
+          if (finalText.length > 0) {
+            genOpts.streamCallback?.((emitted.length > 0 ? '\n\n' : '') + finalText);
+          }
+          diverged = true;
           emitted = finalText;
           return;
         }

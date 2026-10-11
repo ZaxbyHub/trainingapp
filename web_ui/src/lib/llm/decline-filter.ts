@@ -7,9 +7,6 @@
 // same sentences. Keep both in lockstep when either changes.
 //
 // Both LFM2-1.2B-RAG and LFM2.5-1.2B-Instruct append trained-in "did you
-//
-//
-// Both LFM2-1.2B-RAG and LFM2.5-1.2B-Instruct append trained-in "did you
 // forget to include/attach the document?" sentences when declining a
 // not-in-sources question. The benchmark measured this as trained-in
 // behaviour that prompting does not remove (issue #156, comment 2), with 0

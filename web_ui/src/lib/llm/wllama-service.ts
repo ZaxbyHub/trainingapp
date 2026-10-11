@@ -379,8 +379,16 @@ export class WllamaService implements LLMService {
         yield* emitThrough(filterDeclineSentences(accumulated.slice(0, settled.index + 1)));
       }
       const finalVisible = filterDeclineSentences(accumulated);
-      if (diverged) {
-        if (finalVisible.length > 0) yield '\n\n' + finalVisible;
+      // PRR-102 flush guard (desktop twin parity): the content check applies
+      // at the flush too — divergence can be first detectable HERE when the
+      // stream ends with the marker sentence unterminated. Never extend the
+      // emitted prefix by length; deliver the full filtered answer after a
+      // separator (plainly when nothing was emitted yet).
+      const divergedNow = diverged || !finalVisible.startsWith(emitted);
+      if (divergedNow) {
+        if (finalVisible.length > 0) {
+          yield (emitted.length > 0 ? '\n\n' : '') + finalVisible;
+        }
       } else if (finalVisible.length > emitted.length) {
         yield finalVisible.slice(emitted.length);
       }
