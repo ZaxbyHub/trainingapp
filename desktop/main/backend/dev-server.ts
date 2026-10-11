@@ -98,9 +98,16 @@ async function main(): Promise<void> {
   // universal-provider-settings-overhaul: the headless host has no Electron
   // safeStorage, so an external model API key lives in process memory only
   // (never on disk); the airgap flag comes from TRAININGAPP_AIRGAP alone.
+  const engineStorePath = args.storePath ?? process.env.TRAININGAPP_DESKTOP_STORE_PATH;
   const engine = resolveNodeEngine(
     args.engine === 'stub' ? { ...engineEnv, TRAININGAPP_DESKTOP_ENGINE: 'stub' } : engineEnv,
-    { externalProvider: { secretStore: createMemorySecretStore() } },
+    {
+      externalProvider: { secretStore: createMemorySecretStore() },
+      // issue #155 review PRR-003: same sidecar convention as the Electron host
+      // (path.dirname(storePath)). No storePath leaves the downgrade in memory
+      // only, which is correct for a throwaway process.
+      ...(engineStorePath !== undefined ? { gpuVerdictDir: path.dirname(engineStorePath) } : {}),
+    },
   );
   const host = createBackendHost({
     token: args.token,

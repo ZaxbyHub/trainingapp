@@ -209,8 +209,10 @@ transport maps to the contract 503.
 | Sampler | top-p 0.9, repeat penalty 1.1, lookback window 8192 (generated tokens only) | [desktop/main/backend/inference/penalties.ts](desktop/main/backend/inference/penalties.ts) (`PENALTY_FULL_CONTEXT_TOKENS`) |
 | History | at most 12 turns carried into the prompt | `MAX_HISTORY_TURNS` |
 
-Vulkan stays off (reserved). The memory governor can force the runtime
-profile to `fast` (below); the wizard's RAM gate uses the same estimate
+The compute backend is decided by an out-of-process probe (issue #155): a working
+Vulkan device is used when one is found and CPU inference is the fallback;
+`inference.vulkan` can pin either choice. The memory governor can force the
+runtime profile to `fast` (below); the wizard's RAM gate uses the same estimate
 family (file size + 1 GiB KV-cache + 1 GiB overhead,
 [desktop/main/first-run/ram-gate.ts](desktop/main/first-run/ram-gate.ts)).
 

@@ -315,8 +315,13 @@ export function bootstrap(): void {
       userDataPath: string;
       models?: { quality?: string; fast?: string };
       externalProvider: { secretStore: ReturnType<typeof createSafeStorageSecretStore>; airgap: boolean };
+      /** issue #155 review PRR-003: so the engine can persist its own automatic
+       *  GPU load-failure downgrade. It is constructed before any backend host
+       *  exists, so it cannot reach the host's `adoptGpuVerdict`. */
+      gpuVerdictDir?: string;
     } = {
       userDataPath,
+      gpuVerdictDir: path.dirname(storePath),
       externalProvider: {
         secretStore: createSafeStorageSecretStore({
           safeStorage,

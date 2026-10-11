@@ -362,6 +362,27 @@ export interface ModelStatus {
     profile: string | null;
     loadStartedAt: number | null;
   };
+  /**
+   * issue #155: the GPU decision, as the engine actually made it. `backend` is
+   * what runs; `ok` is whether a GPU was usable; `reason` is always non-empty so
+   * the renderer can explain a CPU fallback instead of guessing; `device` is the
+   * adapter identity when the backend reported one. Optional: an external
+   * endpoint has no local compute backend.
+   */
+  gpu?: {
+    backend: 'vulkan' | 'cpu';
+    ok: boolean;
+    reason: string;
+    /**
+     * PR #159 review PRR-032: optional, matching `contracts/api.openapi.yaml`
+     * (`required: [backend, ok, reason]`; `device` is nullable and may be
+     * omitted) and `web_ui/src/lib/api/types.ts` (`device?: string | null`).
+     * This declaration was the only one of the three that made `device`
+     * mandatory, so a contract-generated client and the hand-written renderer
+     * type could drift apart. The producer always emits it.
+     */
+    device?: string | null;
+  };
 }
 
 /**

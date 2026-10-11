@@ -290,6 +290,14 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
   const writeSeqRef = useRef(0);
 
   // Desktop: the backend is the source of truth for the external settings.
+  // Key the read on the session's IDENTITY STRING (baseUrl), not on the
+  // wrapper object's identity (issue #155): a provider that returns a fresh
+  // session value re-fires an identity-keyed effect on every render, and each
+  // pass re-applies the snapshot into NEW draft/keyState objects — a state
+  // update per pass, so the component re-renders and the effect re-fires
+  // again: an unbounded update loop. The baseUrl changes exactly when the
+  // backend session does. (Same fix as SettingsPage's settings read.)
+  const sessionBaseUrl = session?.baseUrl ?? null;
   useEffect(() => {
     if (!desktop || session === null) return;
     let cancelled = false;
@@ -307,7 +315,7 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
     return () => {
       cancelled = true;
     };
-  }, [desktop, session, applyDesktopSettings]);
+  }, [desktop, sessionBaseUrl, applyDesktopSettings]);
 
   /** Policy check with the airgap rule this app enforces. */
   const checkUrl = useCallback(

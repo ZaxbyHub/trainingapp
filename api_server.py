@@ -771,6 +771,24 @@ async def get_status_models(auth: dict = Security(require_auth())):
     )
 
 
+@app.post("/settings/inference/gpu-test")
+async def test_gpu_inference(auth: dict = Security(require_auth())):
+    """
+    GPU capability re-probe (issue #155).
+
+    The probe runs as a child process against node-llama-cpp's Vulkan backend
+    on the Electron/Node desktop surface only
+    (desktop/main/backend/inference/gpu-probe.ts); this Python host has no
+    llama.cpp GPU backend and never wires a probe, so the route exists to keep
+    the shared contract (contracts/api.openapi.yaml) consistent across backends
+    and always answers the documented unwired 503 - the path is known, never
+    404-absent.
+    """
+    raise HTTPException(
+        status_code=503, detail="GPU probing is not wired on this host"
+    )
+
+
 # --- C7 (issue #74): knowledge pack lifecycle -------------------------------
 # Same wire shapes as the Node backend (desktop/main/backend/server.ts).
 # C8 (issue #75): zip extraction is delegated to the shared pack_extract
