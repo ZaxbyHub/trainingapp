@@ -191,7 +191,7 @@ see the provenance rule 4 above) on the real staged tree, machine-tagged:
 | devstation | models/reranker (ettin-reranker-32m-v1 q8 + root tokenizers) | 39,611,408 | rerank-worker dtype q8; AutoTokenizer loads from the model ROOT |
 | devstation | models/llm-quality (gemma-4-e2b-it Q4_K_M + mmproj) | 3,606,025,056 | ADR-0002; mmproj has no native consumer at E1 |
 | devstation | models/llm-fast (lfm2.5-vl-450m Q4_K_M + mmproj) | 332,128,736 | ADR-0002 |
-| devstation | backend packages EXCLUDED from the installer: @node-llama-cpp/win-x64-cuda (170,658,131) + win-x64-cuda-ext (362,957,501) | 533,615,632 | issue #155: unreachable - the probe passes `exclude: ['cuda']`. Measured `du -sb desktop/node_modules/@node-llama-cpp/win-x64-cuda{,-ext}`, i.e. 508.95 MiB / 533.6 MB decimal. The "~510 MB" quoted in `desktop/electron-builder.yml` is the MiB figure. PR #159 review PRR-037 |
+| devstation | backend packages EXCLUDED from the installer: @node-llama-cpp/win-x64-cuda (170,658,131) + win-x64-cuda-ext (362,957,501) | 533,615,632 | issue #155: unreachable - the probe passes `exclude: ['cuda']`. Measured `du -sb desktop/node_modules/@node-llama-cpp/win-x64-cuda{,-ext}`, i.e. 508.90 MiB / 533.6 MB decimal. The "~510 MB" quoted in `desktop/electron-builder.yml` is the MiB figure. PR #159 review PRR-037 |
 | devstation | packs (bundled-docs + training fixtures) | 1,695 | contracts/fixtures/packs layout fixtures |
 | devstation | docs (licenses.md) | 6,240 | the first-run licensing seam |
 | devstation | staged resources total | 4,111,872,009 | 3.83 GiB (17 model files after the review round added the reranker root tokenizers) |
