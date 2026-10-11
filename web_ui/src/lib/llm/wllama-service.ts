@@ -348,6 +348,9 @@ export class WllamaService implements LLMService {
       // DECIDED sentence terminator (removal decisions are sentence-local and
       // stable once a sentence completes) and the remainder is flushed when
       // the stream ends — no artefact word ever surfaces, no offset splice.
+      // Ordering condition: holds because the decline marker precedes the
+      // artefact in every observed decline (artefact-before-marker is a
+      // bounded, pre-existing scope assumption of the filter).
       let accumulated = '';
       let emitted = '';
       for await (const chunk of stream) {

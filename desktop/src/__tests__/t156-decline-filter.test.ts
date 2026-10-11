@@ -172,6 +172,25 @@ describe('#156 generate() wiring: streamed declines never surface the artefact',
     expect(result.answer).toBe(CAPTURED_DECLINE_FILTERED);
   });
 
+  it('TERMINAL FLUSH: an answer ending WITHOUT a terminator still emits its tail (joined == filter(raw))', async () => {
+    // 4.5 round-2 finding: maxTokens truncation is production-common (fast
+    // tier caps at 384 tokens), and then the flush is the ONLY path emitting
+    // the final partial sentence. Deleting flushSurface() must fail this.
+    const truncated = CAPTURED_DECLINE.slice(0, -1); // drop the final '.'
+    const words = truncated.split(/(\s+)/);
+    NLC.script = words.filter((w) => w.length > 0);
+    NLC.answer = truncated;
+    const streamed: string[] = [];
+    const result = await makeFastEngine().query('what is the carryover?', {
+      streamCallback: (chunk: string) => streamed.push(chunk),
+    });
+    const expected = filterDeclineSentences(truncated);
+    expect(streamed.join('')).toBe(expected);
+    expect(result.answer).toBe(expected);
+    // The tail (no terminator) is exactly what only the flush can emit.
+    expect(expected).not.toMatch(/[.!?]$/);
+  });
+
   it('a streamed ANSWERABLE answer is byte-identical through the same wiring', async () => {
     NLC.script = [ANSWERABLE_ANSWER.slice(0, 20), ANSWERABLE_ANSWER.slice(20)];
     NLC.answer = ANSWERABLE_ANSWER;
