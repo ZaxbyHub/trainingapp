@@ -90,7 +90,6 @@ const fakeLlmService = {
   isReady: () => true,
   getModelInfo: () => null,
   getInferenceMode: () => 'wasm' as const,
-  supportsImages: () => false,
   interrupt: () => undefined,
 };
 

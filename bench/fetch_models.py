@@ -68,10 +68,23 @@ def _asset_path(assets_root: Path, models_relative: str) -> Path:
 
 def asset_status(assets_root: Path) -> list:
     rows = []
+    # Issue #156 LFM lineup first, then the retired/superseded historical rows
+    # (kept so operators can still verify a stale on-disk tree by name).
     ggufs = [
-        ("gemma-4-e2b-it Q4_K_M", "models/gemma-4-e2b-it/model.gguf"),
-        ("lfm2.5-vl-450m Q4_K_M", "models/lfm2.5-vl-450m/model.gguf"),
-        ("gemma-4-e2b-it Q5_K_M", "models/gemma-4-e2b-it/model-Q5_K_M.gguf"),
+        ("lfm2.5-2.6b Q4_K_M (quality tier, #156)", "models/lfm2.5-2.6b/model.gguf"),
+        ("lfm2-1.2b-rag Q4_K_M (fast tier, #156)", "models/lfm2-1.2b-rag/model.gguf"),
+        (
+            "gemma-4-e2b-it Q4_K_M (superseded by #156)",
+            "models/gemma-4-e2b-it/model.gguf",
+        ),
+        (
+            "lfm2.5-vl-450m Q4_K_M (superseded by #156)",
+            "models/lfm2.5-vl-450m/model.gguf",
+        ),
+        (
+            "gemma-4-e2b-it Q5_K_M (superseded by ADR-0002's Q4 pick)",
+            "models/gemma-4-e2b-it/model-Q5_K_M.gguf",
+        ),
         (
             "lfm2.5-1.2b-instruct Q4_K_M",
             "models/lfm2.5-1.2b-instruct/model-Q4_K_M.gguf",

@@ -8,8 +8,11 @@
 //
 // It loads the model handed to it on argv (the host passes the FAST profile's
 // GGUF): the probe validates the BACKEND, the backend behaves identically for
-// both profiles, and loading the 2.6 GB quality GGUF to answer a question the
-// 229 MB fast GGUF answers identically would make first boot needlessly slow.
+// both profiles, and loading the 1,674,455,040-byte quality GGUF (lfm2.5-2.6b,
+// #156) to answer a question the 730,894,048-byte fast GGUF (lfm2-1.2b-rag)
+// answers identically would make first boot needlessly slow. Each LFM profile
+// ships exactly one file (model.gguf; no image adapter), so the fast GGUF
+// figure IS the profile total.
 import fs from 'node:fs';
 import type * as Nlc from 'node-llama-cpp';
 
@@ -88,7 +91,25 @@ async function main(): Promise<void> {
       contextSequence: context.getSequence(),
       autoDisposeSequence: false,
     });
-    const sample = await session.prompt(PROMPT, { maxTokens: MAX_TOKENS, temperature: 0 });
+    // #156: measure decode tok/s while the probe generation runs, so the
+    // verdict can carry real throughput (optional `measured`; CPU failure
+    // shapes measure nothing and omit it).
+    const startedAt = Date.now();
+    let decodedTokens = 0;
+    const sample = await session.prompt(PROMPT, {
+      maxTokens: MAX_TOKENS,
+      temperature: 0,
+      // The library batches generated tokens into arrays; accept a scalar too
+      // (same calling convention llama-engine.ts accepts).
+      onToken: (tokens: unknown) => {
+        decodedTokens += Array.isArray(tokens) ? tokens.length : 1;
+      },
+    });
+    const elapsedMs = Date.now() - startedAt;
+    const measured =
+      decodedTokens > 0 && elapsedMs > 0
+        ? Number(((decodedTokens / elapsedMs) * 1000).toFixed(1))
+        : null;
     // The ADAPTER identity, not the backend name. `selected` is just the string
     // "vulkan", which is the same on every machine and so cannot distinguish
     // devices or support adapter-change detection. Llama exposes
@@ -105,6 +126,8 @@ async function main(): Promise<void> {
       ok: true,
       backend: 'vulkan',
       device,
+      // #156: decode tok/s of this probe generation on the active backend.
+      measured,
       // The parent re-judges this itself (probeOutputIsSane) rather than
       // trusting the child's ok flag - see gpu-probe.ts.
       sample: String(sample ?? ''),

@@ -163,14 +163,6 @@
 .chat-composer__input::placeholder { color: var(--text-placeholder); opacity: 1; }
 .chat-composer__input[data-overflow="scroll"] { overflow-y: auto; }
 .chat-composer__input:disabled { cursor: not-allowed; }
-.chat-composer__previews { display: flex; flex-wrap: wrap; gap: var(--space-3); padding: var(--space-2) var(--space-2) 0; }
-.chat-composer__preview { position: relative; }
-.chat-composer__thumb { display: block; width: 64px; height: 64px; object-fit: cover; border-radius: var(--r-control); border: 1px solid var(--border-subtle); }
-/* Remove-image: an IconButton (danger), so the absolute corner placement goes on its
-   tooltip wrapper; the button itself is shrunk to a 24px round target (2.5.8 minimum). */
-.chat-composer__preview > .ui-tooltip-wrap { position: absolute; top: -8px; right: -8px; }
-.chat-composer__preview .chat-composer__remove { width: 24px; min-width: 24px; height: 24px; min-height: 24px; border-radius: var(--r-pill); }
-.chat-composer__error { margin: 0; padding: 0 var(--space-2); font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--danger); }
 .chat-composer__status { display: flex; flex-direction: column; gap: var(--space-2); padding: 0 var(--space-2) var(--space-1); }
 .chat-composer__status:empty { display: none; }
 

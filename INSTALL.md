@@ -1,6 +1,6 @@
 # Installation Guide
 
-> **Scope note (issue #89):** this guide installs the **legacy Python harness** (`api_server.py` / `config.py`), which survives as the CI conformance surface — it is NOT the shipped product's install path. The v3 desktop app ships as an Electron installer with a first-run wizard; see the README "Installation" section. Model facts here reflect ADR-0002 (Quality: gemma-4-e2b-it Q4_K_M) and the shipped packaging (issue #84).
+> **Scope note (issue #89):** this guide installs the **legacy Python harness** (`api_server.py` / `config.py`), which survives as the CI conformance surface — it is NOT the shipped product's install path. The v3 desktop app ships as an Electron installer with a first-run wizard; see the README "Installation" section. The desktop app's bundled LLM lineup is the LFM pair per ADR-0002 as amended by #156 (Quality: lfm2.5-2.6b Q4_K_M, Fast: lfm2-1.2b-rag Q4_K_M — both LFM Open License v1.0); the legacy Python harness keeps its own Gemma 4 E2B artifact, which #156 leaves out of scope. Packaging facts reflect issue #84.
 
 
 Complete installation guide for the Document Q&A Assistant, including standard Python installation and offline bundle setup.
@@ -83,15 +83,21 @@ Successfully installed pypdf-4.2.0 ...
 - Stored in cache: `%LOCALAPPDATA%\huggingface\hub`
 
 **Option B: Manual Download** (recommended for offline setup)
-1. Download Gemma 4 E2B from Hugging Face:
-    - URL: https://huggingface.co/google/gemma-4-2b-it-gguf
-    - File: `gemma-4-e2b-it-q4_k_m.gguf` (~2.9 GB nominal; 2,620,370,976 bytes (~2.6 GB) measured per bench/RESULTS.md)
+1. Download the LFM GGUFs from Hugging Face (the desktop app's bundled lineup, ADR-0002
+   as amended by #156; both LFM Open License v1.0):
+    - Quality: https://huggingface.co/LiquidAI/LFM2.5-2.6B-GGUF
+      File: `LFM2.5-2.6B-Q4_K_M.gguf` (1,674,455,040 bytes, ~1.7 GB) — stage as
+      `models/lfm2.5-2.6b/model.gguf`
+    - Fast: https://huggingface.co/LiquidAI/LFM2-1.2B-RAG-GGUF
+      File: `LFM2-1.2B-RAG-Q4_K_M.gguf` (730,894,048 bytes, ~0.73 GB) — stage as
+      `models/lfm2-1.2b-rag/model.gguf`
 
 2. Save to a known location:
-    - Example: `C:\Models\gemma-4-e2b-it\model.gguf`
-    - Or in the application directory: `C:\doc_qa_app\models\gemma-4-e2b-it\model.gguf`
+    - Example: `C:\Models\lfm2.5-2.6b\model.gguf`
+    - Or in the application directory: `C:\doc_qa_app\models\lfm2.5-2.6b\model.gguf`
 
-Note: The application includes Gemma 4 E2B bundled in the `models/` directory.
+Note: the legacy Python harness itself still defaults to its own bundled Gemma 4 E2B
+artifact (out of #156's scope); any GGUF works via `RAG_GGUF_PATH`.
 
 #### Embedding Model
 
@@ -171,8 +177,8 @@ This script will:
 
 #### 4. Download GGUF Model
 
-The application bundles Gemma 4 E2B in the `models/` directory.
-To use a custom model:
+The legacy harness bundles its own Gemma 4 E2B artifact in the `models/` directory
+(unchanged by #156's desktop LFM swap). To use a custom model:
 
 Download any GGUF format model:
 - From Hugging Face: https://huggingface.co/models?search=gguf
@@ -209,19 +215,22 @@ This creates `DocumentQAInstaller.exe` in the root directory.
 
 ### GGUF Model Details
 
-**Bundled Model**: Gemma 4 E2B (Q4_K_M — ADR-0002; the quant packaged by issue #84)
+**Bundled Model**: LFM2.5-2.6B (Q4_K_M — ADR-0002 as amended by #156; the quant packaged by issue #84). The desktop app bundles the LLM lineup from ADR-0002's #156 amendment: Quality `lfm2.5-2.6b` (LFM2.5-2.6B) and Fast `lfm2-1.2b-rag` (LFM2-1.2B-RAG), both Q4_K_M GGUFs, both text-only — no multimodal projector ships on any surface. The legacy Python harness separately keeps its own Gemma 4 E2B artifact (its default bundled GGUF, out of #156's scope), which remains Apache-2.0 licensed under the Gemma 4 license.
 
 **Specifications**:
-- Model Size: ~2.9 GB nominal (2,620,370,976 bytes (~2.6 GB) measured per bench/RESULTS.md)
-- Architecture: Gemma 4 (Google)
+- Model Size: 1,674,455,040 bytes (~1.7 GB)
+- Architecture: LFM2.5 (Liquid AI); Fast tier: LFM2-1.2B-RAG (730,894,048 bytes, ~0.73 GB)
 - Quantization: Q4_K_M (ADR-0002 decision)
 - Language: English (primary)
-- License: Apache-2.0 — Gemma 4 ships under the stock Apache License 2.0 (not the
-  classic Gemma Terms of Use); see [docs/licenses.md](docs/licenses.md)
+- License: LFM Open License v1.0 (non-OSI) for BOTH LFM tiers — commercial use by a
+  Legal Entity at or above the $10,000,000 revenue threshold is not licensed
+  (Section 5(b)); see [docs/licenses.md](docs/licenses.md) for the review and
+  [docs/licenses/LFM-OPEN-LICENSE-v1.0.txt](docs/licenses/LFM-OPEN-LICENSE-v1.0.txt)
+  for the full verbatim text
 
 **Alternative Models**:
 - Any GGUF format model from Hugging Face
-- Recommended: Gemma 4 2B, Qwen2.5 1.5B, Llama 3 3B
+- Recommended: LFM2-1.2B-RAG (the Fast tier), Qwen2.5 1.5B, Llama 3 3B
 
 ### Embedding Model Details
 
@@ -305,10 +314,11 @@ Edit settings via GUI:
 
 **Solution**:
 ```powershell
-# Verify GGUF model exists (default bundled model)
-dir C:\path\to\gemma-4-e2b-it\model.gguf
+# Verify GGUF model exists (e.g. the staged LFM quality model)
+dir C:\path\to\lfm2.5-2.6b\model.gguf
 
-# Check file size (should be ~2.9 GB nominal (2,620,370,976 bytes (~2.6 GB) measured per bench/RESULTS.md) for Q4_K_M)
+# Check file size (should be 1,674,455,040 bytes (~1.7 GB) for the Q4_K_M LFM2.5-2.6B;
+# the legacy harness's own Gemma 4 E2B default artifact is unchanged by #156)
 ```
 
 **Problem**: "chromadb not installed"

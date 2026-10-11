@@ -30,6 +30,7 @@ function parseArgs(argv) {
       case '--max-tokens': args['max-tokens'] = Number.parseInt(argv[++i], 10); break;
       case '--prompt-tokens': args['prompt-tokens'] = Number.parseInt(argv[++i], 10); break;
       case '--json': args.json = argv[++i]; break;
+      case '--profile': args.profile = argv[++i]; break;
       default: throw new Error(`unknown argument: ${argv[i]}`);
     }
   }
@@ -45,7 +46,10 @@ async function main() {
     pathToFileURL(path.join(repoRoot, 'desktop', 'dist', 'main', 'backend', 'inference', 'llama-engine.js')).href
   );
   const engine = new LlamaEngine({
-    profile: 'fast',
+    // #156: the profile carries the tier's chat policy (the quality tier's
+    // reasoning suppression is part of its shipping configuration), so a row
+    // measured for the quality model must run under the quality profile.
+    profile: args.profile === 'quality' ? 'quality' : 'fast',
     models: {
       fast: path.resolve(repoRoot, args.gguf),
       quality: path.resolve(repoRoot, args.gguf),

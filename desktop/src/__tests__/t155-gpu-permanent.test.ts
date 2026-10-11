@@ -881,7 +881,7 @@ describe('issue #155 scenarios: the timeline, not the diff', () => {
 
 const REAL_FAST_MODEL =
   process.env.TRAININGAPP_PROBE_TEST_MODEL ??
-  'E:/ZCode/trainingapp/desktop/installer-resources/models/llm-fast/lfm2.5-vl-450m/model.gguf';
+  'E:/ZCode/trainingapp/desktop/installer-resources/models/llm-fast/lfm2-1.2b-rag/model.gguf';
 
 describe('issue #155: the real probe, end to end', () => {
   // A runner-visible SKIP, not an early `return`. An early return inside it()

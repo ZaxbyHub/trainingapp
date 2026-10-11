@@ -1,7 +1,8 @@
 # ADR-0002: Distributable LLM profiles — Quality and Fast
 
-- **Status:** Accepted (2026-09-21)
+- **Status:** Accepted (2026-09-21). Amended 2026-10-11 by #156 (LFM lineup).
 - **Issue:** [#56 (A6, Workstream A, epic #50)](https://github.com/ZaxbyHub/trainingapp/issues/56)
+  (original); amended by [#156](https://github.com/ZaxbyHub/trainingapp/issues/156).
 - **Evidence:** recorded rows in `bench/RESULTS.md` (#52, cited inline per its provenance
   rules — machine-tagged, never hand-patched); license sources quoted verbatim inline;
   retrieval-model decisions cross-referenced from
@@ -9,13 +10,15 @@
 
 ## Context
 
-Three surfaces currently ship an LLM choice that no decision record backs:
+Three surfaces currently ship an LLM choice that no decision record backs (table
+updated by the #156 amendment; each row's pre-amendment incumbent is kept inline as
+history):
 
 | Surface | Incumbent default | Where |
 |---|---|---|
 | Python desktop / API | `gemma-4-E2B-it-Q5_K_M.gguf` (~3.1 GB) | `app_paths.py:17` (`DEFAULT_BUNDLED_GGUF`) |
-| Electron native inference | Quality `gemma-4-e2b-it/model.gguf`, Fast `lfm2.5-vl-450m/model.gguf`, 6 GiB free-RAM gate | `desktop/main/backend/inference/llama-engine.ts:53,55`, `profile-select.ts:14` |
-| Browser web_ui | `gemma-4-e2b-it` (single LLM; no fast profile) | `web_ui/src/lib/models/model-manifest.ts:115` |
+| Electron native inference | Quality `lfm2.5-2.6b/model.gguf`, Fast `lfm2-1.2b-rag/model.gguf`, 6 GiB free-RAM gate (at the original decision: Quality `gemma-4-e2b-it/model.gguf`, Fast `lfm2.5-vl-450m/model.gguf`) | `desktop/main/backend/inference/llama-engine.ts:53,55`, `profile-select.ts:14` |
+| Browser web_ui | `lfm2-1.2b-rag` (single text-only LLM; at the original decision: `gemma-4-e2b-it`) | `web_ui/src/lib/models/model-manifest.ts:115` |
 
 Python's fast-profile fallback (`config.py:123-126` `rag_fast_profile_path`) defaults to
 `None` — the fallback mechanism (A3/#53) is generic and wired, but no Python-side model
@@ -56,6 +59,9 @@ follow-up, and no quality number below is invented.
 
 ## Options considered
 
+Original 2026-09-21 record (kept verbatim as history; the #156 amendment below is
+what changed the selection):
+
 Quality profile — `gemma-4-e2b-it` Q4_K_M vs alternatives:
 
 - **gemma-4-e2b-it Q4_K_M (selected):** the only measured quant of the only measured
@@ -87,62 +93,110 @@ Fast profile — `lfm2.5-vl-450m` Q4_K_M vs alternatives:
   is classic-ToU and gated. Re-evaluation after the reference-i5 run records rows is a
   named follow-up, not a silent dismissal.
 
+### #156 amendment: the LFM family benchmark (2026-10-11)
+
+Issue #156 re-opened the profile selection and swapped both tiers to the LFM family.
+The benchmark summary below quotes the #156 issue comments (a 40-question grounded
+question set run over the LFM family under every scorer variant); the post-swap bench
+run recorded the machine-tagged `bench/RESULTS.md` rows for both new models, which
+the Decision table cites:
+
+- **Quality — LFM2.5-2.6B, Q4_K_M (1.67 GB GGUF; 1,674,455,040 bytes):** 95%
+  grounded score with 0 fabrications at 5 context chunks under every scorer variant;
+  GPU p50 first-answer 1.03 s at 5 chunks / 0.76 s at 3 chunks; CPU ~83.4 s at
+  5 chunks / ~49.0 s at 3 chunks. Reasoning is suppressed at serving time
+  (responsePrefix + zero thought budget — see Consequences).
+- **Fast — LFM2-1.2B-RAG, Q4_K_M (0.73 GB GGUF; 730,894,048 bytes):** 92.5% at
+  5 chunks / 95% at 3 chunks; GPU p50 0.51 s at 5 chunks / 0.36 s at 3 chunks;
+  CPU 30.8 s at 5 chunks / 21.4 s at 3 chunks. Text-only: the multimodal projector
+  (mmproj) artifact is retired from every shipped surface with the swap
+  (node-llama-cpp has no image support; the browser LLM is text-only too).
+- The retired incumbents (gemma-4-e2b-it quality, lfm2.5-vl-450m fast) and their
+  measured rows remain in `bench/RESULTS.md` as history; gemma remains only in the
+  legacy Python harness artifact, which #156 left out of scope.
+
 ## Decision table
+
+Amended 2026-10-11 by #156; the machine-tagged rows for both new models were
+recorded by the post-swap bench run into `bench/RESULTS.md` (native node-llama-cpp
+table, 64-token prompt rows) and are cited below per the citation rules. The
+answer-quality/first-answer latency evidence the amendment rests on is the #156
+issue benchmark summarized in Options above, cited to the issue.
 
 | profile | model | quant | tok/s | first-token | peak rss | license | risk |
 |---|---|---|---|---|---|---|---|
-| Quality | gemma-4-e2b-it | Q4_K_M | 3.65 tok/s @4 threads, 1024-token prompt (machine devstation); 2.12 tok/s @8; 402.57 tok/s Vulkan (discrete Arc Pro B50) | 36813 ms llama-cpp-python @4/1024p; 6558.9 ms node-llama-cpp @8/64p | 2761-2819 MB | Apache-2.0 (Gemma 4 license) | CPU-only decode single-digit tok/s (worse on the slower reference i5, rows PENDING); reference-i5 Vulkan PENDING with gemma-3n-family integrated-GPU crash history (llama.cpp #17389); incumbent Q5_K_M artifact unmeasured — packaging re-pin is #84 |
-| Fast | lfm2.5-vl-450m | Q4_K_M | 95.97 tok/s @4 threads, 1024-token prompt (machine devstation); 80.15 tok/s @8; 51.83 tok/s wllama threaded | 1200.1 ms llama-cpp-python @4/1024p; 969.2 ms node-llama-cpp @8/64p | 497-619 MB | LFM Open License v1.0 (non-OSI) | Commercial Use unlicensed above the $10M-revenue threshold (operator contingency in Consequences); license/NOTICE pass-through required; reference-i5 rows PENDING; issue's named Fast candidates unmeasured |
+| Quality | lfm2.5-2.6b | Q4_K_M | 3.87 tok/s @4 threads, 64-token prompt (machine devstation); 6.17 tok/s @8 | 9587.4 ms node-llama-cpp @4/64p; 6353.7 ms @8/64p | 3069-3070 MB | LFM Open License v1.0 (non-OSI) | CPU-only first answer ~83.4 s at 5 chunks / ~49.0 s at 3 chunks per the #156 issue benchmark (GPU p50 1.03 s / 0.76 s); reasoning suppressed via responsePrefix + zero thought budget; the $10M LFM revenue threshold binds this tier too since #156 (Consequences 3) |
+| Fast | lfm2-1.2b-rag | Q4_K_M | 8.26 tok/s @4 threads, 64-token prompt (machine devstation); 14.16 tok/s @8 | 4044.7 ms node-llama-cpp @4/64p; 2630.5 ms @8/64p | 1412-1413 MB | LFM Open License v1.0 (non-OSI) | GPU p50 0.51 s at 5 chunks / 0.36 s at 3 chunks, CPU 30.8 s / 21.4 s per the #156 issue benchmark; text-only (mmproj retired with the swap); keeps 5 chunks under deviation D1 (Decision prose) |
 
-All numbers above quote recorded `bench/RESULTS.md` rows (native llama.cpp table lines
-72-79, Vulkan table line 90, wllama table lines 102-103); no number is derived or
-hand-patched, per the A2 provenance rules. The issue's named-but-unmeasured candidates —
-LFM2.5-1.2B-Instruct and gemma-3-1b-it — have no recorded rows, and the A5 quality
-comparison covers only embedding/reranking candidates, not LLM generation.
+Provenance: every "<n> tok/s" figure above equals the `decode_tok_s` column of a
+matching machine-tagged `bench/RESULTS.md` row (machine devstation, quant Q4_K_M,
+the post-swap bench run's node-llama-cpp 64-token rows); the first-token and
+peak-RSS cells are narrative provenance from the same rows; the CPU/GPU first-answer
+figures in the risk cells are the #156 issue's benchmark summary (Options), cited to
+the issue, never presented as bench rows. The pre-amendment rows (2026-09-21)
+selected gemma-4-e2b-it Q4_K_M (Apache-2.0) and lfm2.5-vl-450m Q4_K_M (LFM1.0) on the
+then-recorded rows quoted verbatim in the Options section; they are superseded by
+this amendment and retained there as history.
 
 ## Decision
 
-**Quality profile (all surfaces): `gemma-4-e2b-it`, quant `Q4_K_M`** — the measured
-quant of the measured Quality-tier model, Apache-2.0 licensed. The incumbent Q5_K_M
-bundled artifact is superseded by this decision at packaging time (#84 stages the
-Q4_K_M GGUF); no code, installer, or artifact changes land in this ADR itself.
+**Quality profile (all surfaces): `lfm2.5-2.6b`, quant `Q4_K_M`** — the LFM2.5-2.6B
+GGUF (1,674,455,040 bytes) selected by the #156 amendment, replacing the retired
+`gemma-4-e2b-it` (benchmark summary in Options). Reasoning is suppressed at serving
+time — responsePrefix `'\n</think>\n\n'` plus a zero thought budget — so answer
+tokens are never spent on hidden thought segments.
 
-**Fast profile (native/desktop surfaces): `lfm2.5-vl-450m`, quant `Q4_K_M`** — the only
-measured Fast-tier candidate, confirming the already-wired Electron
-`FAST_MODEL_SUBPATH`. The browser surface keeps a single LLM (the Quality model); it
-has no fast-profile mechanism to name.
+**Fast profile (native/desktop surfaces): `lfm2-1.2b-rag`, quant `Q4_K_M`** — the
+LFM2-1.2B-RAG text-only GGUF (730,894,048 bytes) selected by the #156 amendment,
+replacing the retired `lfm2.5-vl-450m`; no mmproj artifact ships anywhere
+(node-llama-cpp has no image support). The fast tier keeps 5 chunks (deviation D1:
+the issue asked for 3 chunks but preconditioned that cut on measured recall@3 vs
+recall@5 over the app's own packs, which could not be measured — the proxy evidence,
+0.259@3 vs 0.574@5 plus rerank-off whole-pool truncation, favors 5; recorded as a
+deviation, not a silent deferral).
 
-**License-review outcome: bundling is not blocked, and the issue's Apache-2.0 fallback
-clause is NOT triggered.** The classic Gemma Terms of Use (which contain the
-redistribution conditions and the Prohibited-Use-Policy pass-through) do not govern the
-selected Quality model — the terms page itself routes Gemma 4 to the stock Apache
-License 2.0. Outcome recorded with basis: the selected Fast model is LFM1.0-licensed
-(non-OSI) rather than Apache-2.0, which is an accepted, documented obligation (below),
-not a bundling blocker: the license permits redistribution with conditions, and its
-restriction is a revenue threshold on the licensee, not a prohibition on distribution.
+**Browser surface (supersedes this ADR's original convention):** the original
+decision said "The browser surface keeps a single LLM (the Quality model)"; #156
+supersedes that convention — the browser (web_ui/wllama) now ships the text-only
+Fast-tier model `lfm2-1.2b-rag`. This is deviation R1/fallback: the browser model
+choice is user-pending (see Consequences), so a future user decision may revisit it.
+
+**License-review outcome: bundling is not blocked.** Both tiers are LFM Open License
+v1.0 (non-OSI) since #156 — an accepted, documented obligation, not a bundling
+blocker: the license permits redistribution with conditions, and its restriction is
+a revenue threshold on the licensee (which now binds the Quality tier too), not a
+prohibition on distribution. The original decision's Apache-2.0 fallback clause is
+moot for the shipped lineup; the full text ships at
+`docs/licenses/LFM-OPEN-LICENSE-v1.0.txt`.
 
 ## License review outcome (per model)
 
-Outcome: bundling is not blocked for either profile, and the issue's Apache-2.0
-fallback was not needed — the review verified the actual governing licenses rather
-than assuming the classic Gemma terms apply.
+Outcome: bundling is not blocked for either profile, and no fallback was needed —
+both reviews verified the actual governing licenses rather than assuming terms apply.
+Amended 2026-10-11 by #156: both tiers now ship under the LFM Open License v1.0.
 
-- **Quality — Gemma 4 E2B-it (Apache-2.0).** The classic Gemma Terms of Use
-  (https://ai.google.dev/gemma/terms) exclude this generation: *"For Gemma 4 terms, see
-  the Gemma 4 license"*; the Gemma 4 license (https://ai.google.dev/gemma/apache_2,
-  labeled "Gemma 4 license" in Google's legal nav) is the stock Apache License 2.0.
-  Obligations are the standard Apache-2.0 Section 4 set: pass along the license, retain
-  copyright/patent/trademark/attribution notices, state changes, include NOTICE file
-  contents where they exist. Recorded in `docs/licenses.md`.
-- **Fast — LFM2.5-VL-450M (LFM Open License v1.0, non-OSI).** Per the license text
-  (Liquid AI, Inc., fetched from the model's LICENSE file 2026-09-21): Section 5(b)
+- **Quality — LFM2.5-2.6B, `lfm2.5-2.6b` (LFM Open License v1.0, non-OSI).** Per the
+  license text (Liquid AI, Inc.; full verbatim text at
+  `docs/licenses/LFM-OPEN-LICENSE-v1.0.txt`, retrieved 2026-10-11 from the model
+  repos' LICENSE files and verified against liquid.ai's published page): Section 5(b)
   *"Any Commercial Use of the Work or a Derivative Work by a Legal Entity that exceeds
   the Threshold is not licensed under this Agreement"* with Threshold = annual revenue
-  of 10 million United States dollars ($10,000,000) or more; Section 4 requires giving
-  recipients a copy of the License, retaining attribution notices, and NOTICE-file
-  pass-through; Section 11 terminates the license automatically and immediately on
-  breach, requiring cessation of use and deletion of copies. Full notices/restrictions
+  of 10 million United States dollars ($10,000,000) or more — since #156 this
+  threshold binds the QUALITY tier as well. Section 4 requires giving recipients a
+  copy of the License, retaining attribution notices, and NOTICE-file pass-through;
+  Section 11 terminates the license automatically and immediately on breach,
+  requiring cessation of use and deletion of copies. Recorded in `docs/licenses.md`.
+- **Fast — LFM2-1.2B-RAG, `lfm2-1.2b-rag` (LFM Open License v1.0, non-OSI).** The same
+  license text governs (same sections, same threshold, same termination); the browser
+  copy of this model ships under the identical terms. Full notices/restrictions
   recorded in `docs/licenses.md`.
+- **Historical (pre-#156 Quality tier) — Gemma 4 E2B-it (Apache-2.0).** Kept as the
+  record behind this section's original citations: the classic Gemma Terms of Use
+  (https://ai.google.dev/gemma/terms) exclude this generation — *"For Gemma 4 terms,
+  see the Gemma 4 license"* — and the Gemma 4 license
+  (https://ai.google.dev/gemma/apache_2) is the stock Apache License 2.0. Gemma is
+  retired from every shipped surface by #156; only the legacy Python harness keeps
+  its own Gemma 4 E2B artifact, which #156 left out of scope.
 - **Embedding + reranker (per ADR-0001/#55):** `Qwen/Qwen3-Embedding-0.6B` and
   `cross-encoder/ettin-reranker-32m-v1`, both Apache-2.0 (verified against their HF
   repos 2026-09-21). Recorded in `docs/licenses.md`, including the transitional
@@ -160,8 +214,15 @@ subpath are exactly the selected models); what changes for them is the Quality q
 Q4_K_M per the measured rows, superseding the unmeasured Q5_K_M incumbent at packaging
 time.
 
+(Historical, 2026-09-21: that gate closed when this ADR merged. The #156 amendment
+later replaced the lineup the gate had confirmed — the reconciliation sentence above
+names the pre-amendment subpaths.)
+
 ## Consequences
 
+Items 1-6 are the original 2026-09-21 consequences, kept as the recorded history
+(items 1, 2 and 5 were resolved when #84 landed); item 3 is amended and item 7 is
+added by #156.
 1. **Quant re-pin pull-through is #84's bundling work.** Until it lands,
    `app_paths.py:17` `DEFAULT_BUNDLED_GGUF`, `app_gui.py:828-835`, `INSTALL.md`
    (lines 208/213/306), `ARCHITECTURE.md:98`, `CONFIGURATION.md:138` and `:561`,
@@ -176,12 +237,14 @@ time.
    `app_paths.py` finds until a staging/wiring change names the fast artifact there.
    This ADR supplies the model name; wiring it into the Python default is deliberately
    not done here (no artifact is staged to point at).
-3. **LFM1.0 revenue-threshold contingency (operator action):** if the distributing
-   entity's annual revenue is or becomes >= $10,000,000, Commercial Use of the bundled
-   LFM weights is unlicensed — the weights must be removed from distributions and the
-   Fast-profile selection re-decided by this ADR's method (from recorded rows, with
-   Apache-2.0 candidates the natural pool). No replacement model is pre-selected
-   without measurement.
+3. **LFM1.0 revenue-threshold contingency (operator action; amended by #156 to cover
+   BOTH tiers):** with both profiles LFM-licensed since #156, the threshold binds the
+   Quality tier as well as the Fast tier. If the distributing entity's annual revenue
+   is or becomes >= $10,000,000, Commercial Use of the bundled LFM weights is
+   unlicensed — the weights must be removed from distributions and the profile
+   selections re-decided by this ADR's method (from recorded rows, with Apache-2.0
+   candidates the natural pool). No replacement model is pre-selected without
+   measurement.
 4. **Terms-revision re-review rule (both sides):** evidence in this ADR is invalidated
    if Google revises the Gemma terms or Liquid AI revises the LFM Open License — a
    revision requires re-review tracked as a new issue, never a silent assumption of
@@ -194,6 +257,23 @@ time.
    unmeasured candidates (the runbook commands already exist) before any future
    re-decision; add an LLM answer-quality harness so a future revision of this ADR can
    weigh quality, not only latency/memory/license.
+7. **#156 integration notes (2026-10-11 amendment):**
+   - **Serving recipe + echo-strip:** the Quality model's reasoning is suppressed by
+     serving with responsePrefix `'\n</think>\n\n'` and a zero thought budget, and any
+     echoed think-tag remnants are stripped from the streamed answer.
+   - **Decline filter:** a decline filter
+     (`desktop/main/backend/inference/decline-filter.ts`) refuses harmful/off-topic
+     prompts with a named, non-fabricated decline instead of an answer.
+   - **Penalty retirement:** the repeat penalty (and its window bookkeeping,
+     `penalties.ts`) is retired with the LFM lineup; sampling no longer applies it.
+   - **CPU-only auto gate:** on machines where the GPU probe finds no working device,
+     the `auto` profile now selects the Fast tier instead of Quality (CPU-only Quality
+     first answers are ~83.4 s at 5 chunks per the #156 issue benchmark).
+   - **Fast-tier chunk count:** 5 chunks retained under deviation D1 (Decision prose
+     records the unmeasurable recall precondition and the proxy evidence).
+   - **Browser model choice:** the browser ships `lfm2-1.2b-rag` (deviation R1
+     fallback, superseding this ADR's original single-Quality-model browser
+     convention); the choice is user-pending — a future user decision may revisit it.
 
 ## Waivers (or none)
 

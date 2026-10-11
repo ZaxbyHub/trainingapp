@@ -10,7 +10,7 @@ const onceRegExp = (s: string) => ({ asymmetricMatch: (v: unknown) => typeof v =
 const local: ChatModelDescription = {
   kind: 'local',
   source: 'Local',
-  model: 'Google Gemma 4 E2B-it',
+  model: 'LiquidAI LFM2-1.2B-RAG',
   host: null,
   detail: 'Runs on this computer in the app (wllama engine).',
   notReady: false,
@@ -20,8 +20,8 @@ describe('ModelChip', () => {
   it('is a button whose name contains the visible text (label-in-name) and opens settings', () => {
     const onOpen = vi.fn();
     render(<ModelChip description={local} onOpenSettings={onOpen} />);
-    const chip = screen.getByRole('button', { name: 'Model: Local · Google Gemma 4 E2B-it. Open model settings' });
-    expect(chip).toHaveTextContent('Local · Google Gemma 4 E2B-it');
+    const chip = screen.getByRole('button', { name: 'Model: Local · LiquidAI LFM2-1.2B-RAG. Open model settings' });
+    expect(chip).toHaveTextContent('Local · LiquidAI LFM2-1.2B-RAG');
     expect(chip).toHaveAttribute('data-kind', 'local');
     fireEvent.click(chip);
     expect(onOpen).toHaveBeenCalledTimes(1);
@@ -33,7 +33,7 @@ describe('ModelChip', () => {
     expect(chip).toHaveAccessibleDescription(local.detail);
     expect(screen.getByTestId('chat-model-chip-detail')).toHaveAttribute('hidden');
     // The accessible name is unchanged (the hidden node is a description, not part of the name).
-    expect(chip).toHaveAccessibleName('Model: Local · Google Gemma 4 E2B-it. Open model settings');
+    expect(chip).toHaveAccessibleName('Model: Local · LiquidAI LFM2-1.2B-RAG. Open model settings');
   });
 
   it('R3-1: focus shows the sentence in a tooltip, the native title is gone, and the description is still exactly the sentence', () => {
@@ -63,8 +63,8 @@ describe('ModelChip', () => {
   it('not ready: the suffix is in the visible text and the accessible name (label-in-name)', () => {
     render(<ModelChip description={{ ...local, notReady: true }} onOpenSettings={() => {}} />);
     const chip = screen.getByTestId('chat-model-chip');
-    expect(chip).toHaveTextContent('Local · Google Gemma 4 E2B-it — not ready');
-    expect(chip).toHaveAccessibleName('Model: Local · Google Gemma 4 E2B-it — not ready. Open model settings');
+    expect(chip).toHaveTextContent('Local · LiquidAI LFM2-1.2B-RAG — not ready');
+    expect(chip).toHaveAccessibleName('Model: Local · LiquidAI LFM2-1.2B-RAG — not ready. Open model settings');
   });
 
   it('not ready: the suffix is its own non-truncating element, outside the truncating name node', () => {
@@ -74,7 +74,7 @@ describe('ModelChip', () => {
     expect(suffix).toHaveTextContent('— not ready');
     expect(name).not.toContainElement(suffix);
     expect(suffix).not.toContainElement(name);
-    expect(name).toHaveTextContent('Local · Google Gemma 4 E2B-it');
+    expect(name).toHaveTextContent('Local · LiquidAI LFM2-1.2B-RAG');
     expect(name).not.toHaveTextContent('not ready');
     expect(suffix.className).toBe('chat-model-chip__suffix');
   });
@@ -113,7 +113,7 @@ describe('ModelChip never exposes endpoint credentials', () => {
           apiKey: 'sk-STORED-KEY-123',
         },
         browserEngine: 'wllama',
-        wllamaModelId: 'gemma-4-e2b-it',
+        wllamaModelId: 'lfm2-1.2b-rag',
         webllmModelId: 'w',
       });
       expect(d.kind).toBe('external');

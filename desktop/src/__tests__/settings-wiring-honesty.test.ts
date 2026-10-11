@@ -13,7 +13,6 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS, SETTING_BOUNDS } from '../../main/backend/engine.js';
-import { PENALTY_FULL_CONTEXT_TOKENS } from '../../main/backend/inference/penalties.js';
 import {
   buildGenerationParams,
   LlamaEngine,
@@ -63,8 +62,14 @@ vi.mock('node-llama-cpp', () => {
     }
   }
   return {
+    // #156: both desktop tiers are LFM. The mock reports gemma-4 metadata ONLY
+    // for a file whose name says gemma-4, so the identity-gated wrapper pin
+    // (issue #154) stays exercisable against an operator-supplied gemma file
+    // while the shipped LFM fixtures resolve no wrapper.
     readGgufFileInfo: async (filePath: string) => ({
-      metadata: { general: path.basename(String(filePath)).startsWith('quality') ? { architecture: 'gemma4', name: 'Gemma 4 E2B' } : { architecture: 'lfm2', name: 'LFM2.5 VL 450M' } },
+      metadata: /gemma[ _-]?4/i.test(path.basename(String(filePath)))
+        ? { general: { architecture: 'gemma4', name: 'Gemma 4 E2B' } }
+        : { general: { architecture: 'lfm2', name: 'LFM2.5 2.6B' } },
     }),
     getLlama: async () => ({
       loadModel: async () => ({
@@ -186,10 +191,13 @@ describe('settings-wiring-honesty: explicit-set precedence (desktop LlamaEngine)
     expect(NLC.prompts[1]).toMatchObject({ maxTokens: 900, temperature: 0.7 });
   });
 
-  it('buildGenerationParams: overrides win field by field; omitted overrides keep the profile value', () => {
-    expect(buildGenerationParams('quality', {}, { maxTokens: 300 })).toEqual({ maxTokens: 300, temperature: 0.2, topP: 0.9 });
-    expect(buildGenerationParams('fast', {}, { temperature: 1.1 })).toEqual({ maxTokens: 384, temperature: 1.1, topP: 0.9 });
-    expect(buildGenerationParams('fast', {}, {})).toEqual(buildGenerationParams('fast'));
+  it('buildGenerationParams: overrides win field by field; omitted overrides keep the profile value; no penalties', () => {
+    expect(buildGenerationParams('quality', { maxTokens: 300 })).toEqual({ maxTokens: 300, temperature: 0.2, topP: 0.9 });
+    expect(buildGenerationParams('fast', { temperature: 1.1 })).toEqual({ maxTokens: 384, temperature: 1.1, topP: 0.9 });
+    expect(buildGenerationParams('fast', {})).toEqual(buildGenerationParams('fast'));
+    // #156: repeat penalty is retired — the sampler shape carries no penalty key.
+    expect(buildGenerationParams('quality')).not.toHaveProperty('repeatPenalty');
+    expect(buildGenerationParams('fast')).not.toHaveProperty('repeatPenalty');
   });
 
   it('generate() opts carry no generation keys until they are explicitly set', async () => {
@@ -319,7 +327,18 @@ describe('issue #154: the desktop local inference path', () => {
   // chatWrapper key at all so the library's own "auto" resolution applies.
   // (Passing an explicit null would crash on chatWrapper.settings.)
   it('pins a Gemma wrapper only when the model file really is gemma-4', async () => {
-    await queryWith('quality');
+    // The operator-supplied-gemma mechanism #156 retains: a file whose header
+    // really is gemma-4 sitting at the quality path still pins reasoning off.
+    const gemma = path.join(tmpDir, 'gemma-4-e2b-it.gguf');
+    fs.writeFileSync(gemma, 'x');
+    const engine = new LlamaEngine({
+      profile: 'quality',
+      freeMemBytes: () => 8 * GB,
+      cpuCount: () => 8,
+      models: { ...modelFiles(), quality: gemma },
+    });
+    engine.attachRetrievalSurface(recordingSurface().surface);
+    await engine.query('q', {});
     expect(NLC.sessions).toHaveLength(1);
     const wrapper = NLC.sessions[0].chatWrapper as { reasoning?: boolean } | undefined;
     expect(wrapper).toBeDefined();
@@ -327,9 +346,10 @@ describe('issue #154: the desktop local inference path', () => {
   });
 
   it('omits the wrapper key when a non-gemma model sits at the quality path', async () => {
-    // Stage a file the stub reports as lfm2, then point the QUALITY profile at
-    // it: same profile, different model identity. This proves the pin is keyed
-    // to the model, not to the profile name. `in` (rather than toBeUndefined)
+    // The #156 world: the shipped quality model is LFM2.5-2.6B, so the DEFAULT
+    // quality fixture (quality.gguf, lfm metadata) must carry no pin. Staging a
+    // differently-NAMED lfm file proves the pin is keyed to the model identity,
+    // not the profile name or the file slot. `in` (rather than toBeUndefined)
     // is what rejects a present-but-undefined key as well as an explicit null.
     const nonGemma = path.join(tmpDir, 'non-gemma.gguf');
     fs.writeFileSync(nonGemma, 'x');
@@ -341,6 +361,12 @@ describe('issue #154: the desktop local inference path', () => {
     });
     engine.attachRetrievalSurface(recordingSurface().surface);
     await engine.query('q', {});
+    expect(NLC.sessions).toHaveLength(1);
+    expect('chatWrapper' in NLC.sessions[0]).toBe(false);
+  });
+
+  it('omits the wrapper key for the shipped lfm2.5-2.6b quality fixture', async () => {
+    await queryWith('quality');
     expect(NLC.sessions).toHaveLength(1);
     expect('chatWrapper' in NLC.sessions[0]).toBe(false);
   });
@@ -421,34 +447,39 @@ describe('issue #154: the desktop local inference path', () => {
     expect(NLC.historyResets.filter((entry) => entry === 'reset').length).toBe(1);
   });
 
-  // AC4 was REMOVED as unsound: node-llama-cpp applies repeatPenalty only to
-  // generated tokens, so bounding lastTokens never protected retrieved
-  // evidence. The desktop path keeps the full-context window; this pins that
-  // so a future change to the window is a deliberate, visible act.
-  it('keeps the repeat-penalty window at the full-context value base used', async () => {
+  // #156: repeat penalty RETIRED. The benchmark that selected both LFM tiers
+  // ran with repeat penalty off, and #158's bounded window existed to stop
+  // gemma-4 repeating itself; no gemma tier remains. This pins that the
+  // sampler carries no penalty keys at all, and that the tier's reasoning
+  // policy rides the same prompt options per tier.
+  it('carries NO penalty keys, and the reasoning policy rides the prompt per tier', async () => {
     await queryWith('quality');
-    const penalty = NLC.prompts[0].repeatPenalty as { lastTokens?: number } | undefined;
-    expect(penalty).toBeDefined();
-    expect(penalty?.lastTokens).toBe(PENALTY_FULL_CONTEXT_TOKENS);
+    expect(NLC.prompts[0]).not.toHaveProperty('repeatPenalty');
+    expect(NLC.prompts[0]).not.toHaveProperty('penalty');
+    expect(NLC.prompts[0]).not.toHaveProperty('frequencyPenalty');
+    expect(NLC.prompts[0]).not.toHaveProperty('presencePenalty');
+    expect(NLC.prompts[0]).toMatchObject({ responsePrefix: '\n</think>\n\n', budgets: { thoughtTokens: 0 } });
+    await queryWith('fast');
+    expect(NLC.prompts[1]).not.toHaveProperty('repeatPenalty');
+    expect('responsePrefix' in NLC.prompts[1]).toBe(false);
+    expect('budgets' in NLC.prompts[1]).toBe(false);
   });
 });
 
-describe('issue #154: chat wrapper is pinned only for the quality profile', () => {
-  it('quality pins a Gemma4ChatWrapper with reasoning disabled', async () => {
+describe('issue #154/#156: the chat wrapper is pinned only for a verified gemma-4 model', () => {
+  it('the shipped LFM quality model omits chatWrapper so the library default applies', async () => {
     const engine = new LlamaEngine({ profile: 'quality', freeMemBytes: () => 8 * GB, cpuCount: () => 8, models: modelFiles() });
     await engine.query('q', {});
     expect(NLC.sessions).toHaveLength(1);
-    const wrapper = NLC.sessions[0].chatWrapper as { reasoning?: boolean };
-    expect(wrapper).toBeDefined();
-    expect(wrapper.reasoning).toBe(false);
+    // `in` rejects both null and an explicitly-present undefined, which is the
+    // shape that would crash LlamaChatSession.
+    expect('chatWrapper' in NLC.sessions[0]).toBe(false);
   });
 
   it('fast omits chatWrapper entirely so the library default applies', async () => {
     const engine = new LlamaEngine({ profile: 'fast', freeMemBytes: () => 8 * GB, cpuCount: () => 8, models: modelFiles() });
     await engine.query('q', {});
     expect(NLC.sessions).toHaveLength(1);
-    // `in` rejects both null and an explicitly-present undefined, which is the
-    // shape that would crash LlamaChatSession.
     expect('chatWrapper' in NLC.sessions[0]).toBe(false);
   });
 });

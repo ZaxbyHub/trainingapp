@@ -36,17 +36,10 @@ import { ensureEmbeddingServiceReady, ensureReadinessGateChecked } from '../../h
 /**
  * Options for RAG query execution.
  */
-/** A raw image to pass to a multimodal LLM (ArrayBuffer bytes + mime type). */
-export interface RAGImageInput {
-  data: ArrayBuffer;
-  mimeType?: string;
-}
-
 /**
  * Issue #40 RC1: one turn of prior conversation. `role` matches the LLM
  * chat-template convention; `content` is the raw message text (history is
- * text-only — multimodal history is out of scope; only the current turn carries
- * images). Mirrors the {role, content} subset the server's `history` field
+ * text-only). Mirrors the {role, content} subset the server's `history` field
  * accepts (api_server.py:187).
  */
 export interface RAGHistoryTurn {
@@ -82,8 +75,6 @@ export interface RAGQueryOptions {
   repeatPenalty?: number;
   frequencyPenalty?: number;
   presencePenalty?: number;
-  /** Images to include with the question (multimodal engines only). */
-  images?: RAGImageInput[];
   /**
    * Issue #40 RC1: prior conversation turns threaded into the LLM prompt and
    * used to contextualize the retrieval query (RC3). Caller caps at the last N
@@ -530,20 +521,16 @@ export class RAGOrchestrator {
 
     // C5 (issue #72): grounded/general provenance. Stamped AFTER the F11
     // budget trim and BEFORE the abstention check so every complete event
-    // (abstain short-circuit included, and the image-question fall-through
-    // with zero text chunks) carries the same decision the abstention gate
-    // just made: non-empty surviving evidence => "grounded".
+    // (abstain short-circuit included) carries the same decision the
+    // abstention gate just made: non-empty surviving evidence => "grounded".
     const grounding: 'grounded' | 'general' = contextChunks.length > 0 ? 'grounded' : 'general';
 
     // F2: abstention. If no chunks survive the floor AND budget, short-circuit
     // BEFORE generation so the model never answers from pretrained knowledge
     // with no source. The UI renders a visually distinct abstention state.
-    //
-    // U8a: do NOT abstain when the user attached images — a multimodal question
-    // like "what's in this screenshot?" on an empty corpus should reach the VLM
-    // rather than abstaining. buildMessages (below) already forwards images
-    // into the multimodal content array, so falling through here is sufficient.
-    if (contextChunks.length === 0 && !(options.images?.length)) {
+    // (Issue #156 removed the former image-question fall-through: the browser
+    // LLM is text-only LFM2-1.2B-RAG, so an empty corpus always abstains.)
+    if (contextChunks.length === 0) {
       yield {
         type: 'complete',
         data: {
@@ -584,7 +571,6 @@ export class RAGOrchestrator {
       systemPrompt,
       question,
       contextText,
-      options.images,
       history,
       options.pinnedContext,
       options.groundedFraming,
@@ -700,15 +686,15 @@ export class RAGOrchestrator {
    *
    * Issue #40 RC1: prior conversation turns are threaded between the system
    * prompt and the current user turn, so the model has conversational continuity
-   * for follow-up questions. History is plain text (multimodal history is out of
-   * scope — only the current turn carries images) and is capped + budgeted by
+   * for follow-up questions. History is plain text and is capped + budgeted by
    * the caller. The chat-template sequence is: system, [...history], user.
+   * (Issue #156: the user turn is a plain string — the multimodal content-part
+   * shape was retired with the Gemma 4 + mmproj vision projector.)
    */
   private buildMessages(
     systemPrompt: string,
     question: string,
     context: string,
-    images?: RAGImageInput[],
     history?: RAGHistoryTurn[],
     pinnedContext?: string,
     framing?: GroundedFraming
@@ -727,16 +713,6 @@ export class RAGOrchestrator {
       ? `${framing.instruction}\n\n${context}${pinBlock}\n\n${framing.questionLabel}${question}`
       : `Context:\n${context}${pinBlock}\n\nQuestion: ${question}`;
 
-    // Text-only: keep the simple string content. With attached images, build a
-    // multimodal content array (text first, then image parts) for the VLM.
-    const userContent: LLMMessage['content'] =
-      images && images.length > 0
-        ? [
-            { type: 'text', text: userText },
-            ...images.map((img) => ({ type: 'image' as const, data: img.data })),
-          ]
-        : userText;
-
     const messages: LLMMessage[] = [
       { role: 'system', content: systemPrompt },
     ];
@@ -747,7 +723,7 @@ export class RAGOrchestrator {
         messages.push({ role: turn.role, content: turn.content });
       }
     }
-    messages.push({ role: 'user', content: userContent });
+    messages.push({ role: 'user', content: userText });
     return messages;
   }
 

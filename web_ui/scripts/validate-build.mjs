@@ -25,10 +25,10 @@
  * Group handling (manifest v2 `group` field):
  *   - `core`    — always enforced (ORT runtime; embedding + reranker now have
  *                 their own groups, enforced unless their --no-X flag is passed).
- *   - `llm`     — the browser-LLM runtime (wllama WASM/compat) + Gemma 4 E2B-it weights.
- *                  Enforced by default; skipped when `--no-llm` is passed (for
- *                  embeddings-only builds where the multi-GB LLM
- *                  weights are deliberately absent).
+ *   - `llm`     — the browser-LLM runtime (wllama WASM/compat) + LiquidAI
+ *                  LFM2-1.2B-RAG weights. Enforced by default; skipped when
+ *                  `--no-llm` is passed (for embeddings-only builds where the
+ *                  LLM weights are deliberately absent).
  *   - `optional` — never enforced.
  *
  * NOTE: we deliberately do NOT grep built JS for CDN hostnames. Vendored ML libs
@@ -79,8 +79,9 @@ function fail(msg) {
 }
 
 /** Compute SHA-256 hex of a file by streaming it through the hash.
- *  MUST stream (not readFileSync) — the wllama GGUF is ~2.9 GB, above Node's
- *  ~2 GB Buffer cap, so readFileSync would throw RangeError on the LLM weights. */
+ *  MUST stream (not readFileSync) — model weights are multi-hundred-MB
+ *  binaries (the LLM GGUF is ~0.73 GB today; a future larger model could
+ *  again exceed Node's ~2 GB Buffer cap), so readFileSync is never safe here. */
 async function sha256OfFile(filePath) {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(filePath)) {
@@ -146,7 +147,7 @@ if (existsSync(MANIFEST)) {
     }
   }
   // Collect checksum-verification jobs (sha256OfFile is async because model
-  // files are streamed — the GGUF is ~2.9 GB, above Node's Buffer cap).
+  // files are streamed — the GGUF is a multi-hundred-MB binary).
   const checksumJobs = [];
   for (const model of manifest?.models ?? []) {
     const group = model.group ?? 'core';
@@ -185,7 +186,7 @@ if (existsSync(MANIFEST)) {
       }
     }
   }
-  // Run the (potentially multi-GB) hashing concurrently but bounded; the file
+  // Run the (large-file) hashing concurrently but bounded; the file
   // set is small (a dozen model files), so a simple Promise.all is fine.
   if (checksumJobs.length > 0) {
     const results = await Promise.all(

@@ -28,8 +28,10 @@ and CONFIGURATION.md.
 - **Signed, opt-in update channel** — Ed25519-signed pack updates and detect-and-notify
   app updates, off until you switch them on
   ([ADR-0010](docs/adr/0010-update-channels.md), [docs/updates.md](docs/updates.md)).
-- **Quality/Fast inference profiles** — `gemma-4-e2b-it` Q4_K_M vs `lfm2.5-vl-450m`
-  Q4_K_M with a free-RAM auto gate ([ADR-0002](docs/adr/0002-llm-profiles.md)).
+- **Quality/Fast inference profiles** — `lfm2.5-2.6b` (LFM2.5-2.6B) vs
+  `lfm2-1.2b-rag` (LFM2-1.2B-RAG), both Q4_K_M and both under the LFM Open License
+  v1.0, with a free-RAM auto gate plus a CPU-only auto gate
+  ([ADR-0002](docs/adr/0002-llm-profiles.md), amended by #156).
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system map.
 
@@ -44,7 +46,9 @@ The browser app is a complete, offline RAG client. See `PACKAGING.md` for the bu
   and most robust on i5/Iris Xe. A hardware-capability panel detects WebGPU/threads/memory.
   The WebLLM (WebGPU) engine remains selectable code but ships no weights in the offline
   manifest, so it is not part of the air-gapped configuration.
-- **Multimodal** — attach a screenshot in chat and ask about it (wllama + Gemma 4 E2B-it mmproj), offline.
+- **Text-only chat (image input removed with the LFM swap, #156)** — chat answers
+  text questions only on every surface; the multimodal projector (mmproj) weights no
+  longer ship anywhere, so attaching a screenshot in chat is no longer supported.
 - **Chat UX** — streaming with interactive source citations, regenerate, conversation export
   (Markdown/JSON), and Fast/Balanced/Quality RAG presets.
 - **Self-contained archive** — `npm run build:offline` produces a validated `web_ui/dist/` the
@@ -83,8 +87,12 @@ The browser app is a complete, offline RAG client. See `PACKAGING.md` for the bu
 ### LLM Backend (GGUF-Only)
 The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, ADR-0003); the browser app uses the same GGUF weights through wllama (llama.cpp WASM) — fully offline on both:
 
-- **Quality profile (default)**: Gemma 4 E2B-it (Q4_K_M GGUF per [ADR-0002](docs/adr/0002-llm-profiles.md); ~2.9 GB nominal per PACKAGING.md; 2,620,370,976 bytes measured per bench/RESULTS.md) — bundled
-- **Fast profile**: lfm2.5-vl-450m (Q4_K_M GGUF per ADR-0002) — bundled
+- **Quality profile (default)**: LFM2.5-2.6B, `lfm2.5-2.6b` (Q4_K_M GGUF per
+  [ADR-0002](docs/adr/0002-llm-profiles.md) as amended by #156; 1,674,455,040 bytes
+  (~1.7 GB)) — bundled; reasoning suppressed at serving time (responsePrefix + zero
+  thought budget)
+- **Fast profile**: LFM2-1.2B-RAG, `lfm2-1.2b-rag` (Q4_K_M GGUF per ADR-0002;
+  730,894,048 bytes (~0.73 GB), text-only) — bundled; also the browser LLM
 - Profile selection: automatic free-RAM gate or in-app choice; `TRAININGAPP_DESKTOP_INFERENCE_PROFILE` (`quality` / `fast` / `auto`) is the desktop env override. (`RAG_GGUF_PATH` / `--gguf-path` select a custom GGUF on the legacy Python harness only.)
 - No particular GPU required: a working Vulkan device is used when one is found, and
   CPU inference is the fallback
@@ -97,7 +105,11 @@ The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, 
 - Intel Core i5 11th generation or newer (or equivalent AMD Ryzen 5000+)
 - Intel integrated graphics (present on all 11th gen+ Intel CPUs); a discrete card is not needed
 - 16GB RAM
-- ~6.4 GB free storage for models + app (measured installed footprint 6,378,451,601 bytes; staged model resources 4,111,872,009 bytes; see bench/RESULTS.md)
+- Storage for models + app: staged model resources ≈ 2,579,067,305 bytes after the
+  #156 LFM swap (LLM bytes 2,405,349,088 vs the pre-swap 3,938,153,792, a
+  1,532,804,704-byte reduction); the installed footprint is smaller than the
+  pre-swap measured 6,378,451,601 bytes by the same reduction — re-measure pending
+  real-weights staging (bench/RESULTS.md rule 4)
 - **Performance**: measured numbers per model and quantization are recorded in [bench/RESULTS.md](bench/RESULTS.md)
 
 #### Recommended (Intel 12th Gen i7, 32GB RAM)
@@ -214,8 +226,10 @@ The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, 
 
 ### Browser LLM Inference (Phase 6)
 - **Browser LLM engines**: **wllama** (llama.cpp WASM, CPU/SIMD, the default) drives the
-  bundled Gemma 4 E2B-it GGUF + mmproj weights — `web_ui/public/models/manifest.json` ships
-  the wllama runtime and the Gemma files, nothing is fetched at runtime. The Phase-6 WebLLM
+  bundled LFM2-1.2B-RAG (`lfm2-1.2b-rag`) text-only GGUF — `web_ui/public/models/manifest.json` ships
+  the wllama runtime and the model file, nothing is fetched at runtime. (Historical note:
+  Phase 6 shipped the Gemma 4 E2B-it GGUF + mmproj; the #156 LFM swap replaced that
+  lineup and image input went away with it.) The Phase-6 WebLLM
   (WebGPU) engine (`@mlc-ai/web-llm`, retired model era) remains selectable code but ships no
   weights in the offline manifest, so it is not part of the air-gapped configuration
   (see PACKAGING.md)
@@ -289,10 +303,10 @@ The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, 
 
 ### Desktop app (recommended)
 
-1. **Download the installer** — unsigned NSIS x64 build (see the repo Releases; the
-   measured installed footprint is ~6.4 GB, staged model resources 4,111,872,009 bytes —
-   [bench/RESULTS.md](bench/RESULTS.md)). Models, knowledge packs, and license docs are
-   bundled; nothing downloads at runtime.
+1. **Download the installer** — unsigned NSIS x64 build (see the repo Releases; staged
+   model resources ≈ 2,579,067,305 bytes after the #156 LFM swap, installed footprint
+   re-measure pending real-weights staging — [bench/RESULTS.md](bench/RESULTS.md)). Models,
+   knowledge packs, and license docs are bundled; nothing downloads at runtime.
 2. **Run the installer** and launch the app.
 3. **Complete the first-run wizard**: hardware detection → profile selection
    (Quality/Fast, with an automatic free-RAM recommendation) → sha256 integrity
@@ -355,8 +369,9 @@ It is retained here for maintainers running that suite.
 
    **GGUF Model (Required for LLM inference)**
    ```powershell
-   # The harness uses a local GGUF via RAG_GGUF_PATH (e.g. the ADR-0002
-   # gemma-4-e2b-it Q4_K_M model.gguf); any GGUF format model works
+   # The harness uses a local GGUF via RAG_GGUF_PATH (e.g. the staged
+   # lfm2.5-2.6b Q4_K_M model.gguf; the harness's own default artifact remains
+   # the legacy Gemma 4 E2B, which #156 leaves untouched); any GGUF format model works
    # From Hugging Face: https://huggingface.co/models?search=gguf
    ```
 
@@ -493,8 +508,9 @@ print(response.json())
 **Backend Selection (legacy Python harness):**
 The harness uses GGUF models only via llama-cpp-python.
 If `RAG_GGUF_PATH` is set, that model is used. Otherwise, it defaults to the bundled Gemma 4
-artifact. The desktop app instead loads its bundled ADR-0002 profile models through
-node-llama-cpp (see the LLM Backend section above).
+artifact (the legacy harness keeps it; #156's LFM swap does not touch the Python harness).
+The desktop app instead loads its bundled ADR-0002 LFM profile models (`lfm2.5-2.6b` /
+`lfm2-1.2b-rag`) through node-llama-cpp (see the LLM Backend section above).
 
 ## 📖 Usage
 
@@ -703,8 +719,8 @@ Mirrors [ARCHITECTURE.md](ARCHITECTURE.md) (the authoritative map):
 **Solution 1: GGUF Model Not Found**
 ```powershell
 # Desktop: both profile models are bundled and integrity-checked at startup:
-#   <resources>/models/llm-quality/gemma-4-e2b-it/model.gguf   (Q4_K_M, ADR-0002)
-#   <resources>/models/llm-fast/lfm2.5-vl-450m/model.gguf      (Q4_K_M, ADR-0002)
+#   <resources>/models/llm-quality/lfm2.5-2.6b/model.gguf     (Q4_K_M, ADR-0002 #156)
+#   <resources>/models/llm-fast/lfm2-1.2b-rag/model.gguf      (Q4_K_M, ADR-0002 #156)
 # A missing model means a broken install — re-run the installer.
 
 # Legacy harness: point RAG_GGUF_PATH at a local GGUF file; custom GGUF models
@@ -808,7 +824,7 @@ import requests
 import json
 
 # Configure the engine (legacy Python harness)
-os.environ["RAG_GGUF_PATH"] = "path/to/gemma-4-e2b-it/model.gguf"  # Q4_K_M, ADR-0002
+os.environ["RAG_GGUF_PATH"] = "path/to/lfm2.5-2.6b/model.gguf"  # Q4_K_M, ADR-0002 (#156 LFM lineup)
 
 # Start API server in another terminal
 # python main.py --api --port 8080
@@ -1117,7 +1133,9 @@ trainingapp/
 
 MIT License - See LICENSE for details.
 
-Bundled model weights carry their own licenses (LLM, embedding, reranker) —
+Bundled model weights carry their own licenses (both LLM tiers: LFM Open License
+v1.0, full text at [docs/licenses/LFM-OPEN-LICENSE-v1.0.txt](docs/licenses/LFM-OPEN-LICENSE-v1.0.txt);
+embedding and reranker: Apache-2.0/MIT) —
 see [docs/licenses.md](docs/licenses.md) for the per-model review.
 
 ## 🤝 Contributing

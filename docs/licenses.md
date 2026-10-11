@@ -10,56 +10,74 @@ show the wizard's "unavailable" fallback.
 
 Model-selection decisions live in the ADRs: [ADR-0001](adr/0001-embedding-reranker.md)
 (embedding + reranker) and [ADR-0002](adr/0002-llm-profiles.md) (LLM Quality/Fast
-profiles). This file records license type, required notices, and restrictions per
-bundled model family. **Maintenance rule:** a revision of any upstream license (Gemma
-terms, LFM Open License, or a model repo's license tag) invalidates the affected
-section — re-review is required and tracked as a new issue, never silently assumed.
+profiles, amended 2026-10-11 by #156 to the LFM lineup). This file records license
+type, required notices, and restrictions per bundled model family. **Maintenance
+rule:** a revision of any upstream license (the LFM Open License, or — historically,
+for the retired Gemma quality tier — the Gemma terms) or of a model repo's license
+tag invalidates the affected section — re-review is required and tracked as a new
+issue, never silently assumed.
 
 The application code itself is MIT (see `LICENSE` at the repository root); this file
 covers the models and bundled content only.
 
-## LLM — Quality profile (per ADR-0002)
+## LLM — Quality profile (per ADR-0002, amended by #156)
 
-- **Model:** `gemma-4-e2b-it` (instruction-tuned; distributed as a GGUF quantization of
-  `google/gemma-4-E2B-it`).
-- **License type:** Apache License 2.0. The classic Gemma Terms of Use
-  (https://ai.google.dev/gemma/terms) do NOT govern this generation — the terms page
-  states: *"For Gemma 4 terms, see the [Gemma 4 license](https://ai.google.dev/gemma/apache_2)"*,
-  and the Gemma 4 license page (https://ai.google.dev/gemma/apache_2) is the stock
-  Apache License 2.0. The distribution source (`unsloth/gemma-4-E2B-it-GGUF`) carries
-  the `apache-2.0` tag.
-- **Required notices:** standard Apache-2.0 Section 4 obligations — include a copy of
-  the Apache License 2.0, retain all copyright, patent, trademark, and attribution
-  notices from the source, state significant changes made to the files, and include any
-  NOTICE-file contents where one exists. Distributions bundle the license text alongside
-  the weights (#84 packaging item).
-- **Restrictions:** none beyond the standard Apache-2.0 grant (patent and trademark
-  terms as written). Note for contrast: the *classic* Gemma Terms of Use — with their
-  Prohibited-Use-Policy pass-through — DO still govern other Gemma-family models such
-  as EmbeddingGemma and gemma-3-1b-it, which is part of why they were not selected
-  (ADR-0001, ADR-0002).
-
-## LLM — Fast profile (per ADR-0002)
-
-- **Model:** `lfm2.5-vl-450m` (LiquidAI/LFM2.5-VL-450M, 0.4B parameters, used text-only).
+- **Model:** `lfm2.5-2.6b` (LiquidAI/LFM2.5-2.6B, distributed as the Q4_K_M GGUF
+  quantization of `LiquidAI/LFM2.5-2.6B-GGUF`; 1,674,455,040 bytes). Selected by the
+  #156 amendment of ADR-0002 (issue benchmark summary in that ADR's Options), replacing
+  the retired `gemma-4-e2b-it`.
 - **License type:** LFM Open License v1.0 ("lfm1.0", `license: other` on Hugging Face) —
-  a source-available, non-OSI license from Liquid AI, Inc. The same license family
-  covers the unmeasured candidate LiquidAI/LFM2.5-1.2B-Instruct.
+  a source-available, non-OSI license from Liquid AI, Inc. The full verbatim text ships
+  at [licenses/LFM-OPEN-LICENSE-v1.0.txt](licenses/LFM-OPEN-LICENSE-v1.0.txt)
+  (retrieved from the `LICENSE` file of `LiquidAI/LFM2.5-2.6B-GGUF` and
+  `LiquidAI/LFM2-1.2B-RAG`, which carry identical text; verified against
+  liquid.ai's published license page 2026-10-11).
+- **Required notices:** per Section 4 of the license — give recipients of the
+  redistributed weights a copy of the LFM Open License v1.0; state prominent notices
+  on modified files (4(b)); retain all copyright, patent, trademark, and attribution
+  notices (4(c)); and pass through any upstream NOTICE file's attribution notices
+  (4(d)). Distributions bundle the license text alongside the weights (#84 packaging
+  item; the stager also ships the full-text file).
+- **Restrictions:** Commercial Use by a Legal Entity whose annual revenue is 10 million
+  United States dollars ($10,000,000) or more is NOT licensed (Section 5(b) and the
+  "Threshold" definition) — an entity at or above that threshold must remove the LFM
+  weights from its distributions and re-select the Quality profile per ADR-0002's
+  method. Section 11 terminates the license automatically and immediately on breach,
+  requiring cessation of use and deletion of copies. Trademark use is limited to
+  describing the origin of the Work (Section 7). With both tiers LFM-licensed since
+  #156, this restriction binds the QUALITY tier too — it is stated here explicitly
+  for that reason.
+- **Historical note (pre-#156 quality model):** the retired `gemma-4-e2b-it` shipped
+  under the stock Apache License 2.0 (the classic Gemma Terms of Use did not govern
+  Gemma 4 — see ADR-0002's License review outcome for the terms-page routing). That
+  review is retained as history in ADR-0002; the legacy Python harness's separate
+  Gemma 4 E2B artifact (INSTALL.md, `api_server.py`, `config.py`) remains out of #156's
+  scope and keeps its own Apache-2.0 posture.
+
+## LLM — Fast profile (per ADR-0002, amended by #156)
+
+- **Model:** `lfm2-1.2b-rag` (LiquidAI/LFM2-1.2B-RAG, distributed as the Q4_K_M GGUF
+  quantization of `LiquidAI/LFM2-1.2B-RAG-GGUF`; 730,894,048 bytes; used text-only —
+  the multimodal projector artifact is gone from every shipped surface with the #156
+  swap). This is also the browser (web_ui/wllama) LLM. Selected by the #156 amendment
+  of ADR-0002, replacing the retired `lfm2.5-vl-450m`.
+- **License type:** LFM Open License v1.0 ("lfm1.0", `license: other` on Hugging Face) —
+  the same license family as the Quality tier. Full verbatim text:
+  [licenses/LFM-OPEN-LICENSE-v1.0.txt](licenses/LFM-OPEN-LICENSE-v1.0.txt).
 - **Required notices:** per Section 4 of the license — give recipients of the
   redistributed weights a copy of the LFM Open License v1.0; retain all copyright,
   patent, trademark, and attribution notices; if an upstream NOTICE file exists, its
   attribution notices must be included in a NOTICE text file distributed with the
   derivative work (or in documentation/third-party-notices displays). Distributions
-  bundle the license text alongside the weights (#84 packaging item).
-- **Restrictions:** Commercial Use by a Legal Entity whose annual revenue is 10 million
-  United States dollars ($10,000,000) or more is NOT licensed (Section 5(b) and the
-  "Threshold" definition) — an entity at or above that threshold must remove the LFM
-  weights from its distributions and re-select the Fast profile per ADR-0002's
-  method. Section 11 terminates the license automatically and immediately on breach,
-  requiring cessation of use and deletion of copies. Trademark use is limited to
-  describing the origin of the Work. This restriction is an obligation on the
-  licensee's scale, not a prohibition on redistribution — redistribution itself is
-  permitted with the notices above.
+  bundle the license text alongside the weights (#84 packaging item; the stager also
+  ships the full-text file).
+- **Restrictions:** identical to the Quality tier above — the same LFM Open License
+  v1.0 governs, so the $10,000,000 revenue threshold (Section 5(b)) and Section 11's
+  automatic termination on breach apply to this tier as well. Redistribution itself is
+  permitted with the notices above; the restriction is an obligation on the licensee's
+  scale, not a prohibition on redistribution. (Pre-#156 this section also noted the
+  same license family covered the then-unmeasured candidate LFM2.5-1.2B-Instruct; that
+  model was never selected and #156 chose the measured LFM2/LFM2.5 family instead.)
 
 ## Embedding (per ADR-0001 / issue #55)
 

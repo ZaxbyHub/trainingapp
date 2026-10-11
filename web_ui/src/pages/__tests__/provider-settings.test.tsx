@@ -50,7 +50,7 @@ vi.mock('../../lib/embeddings/memory-aware', () => ({
 
 vi.mock('../../lib/models/model-manifest', () => ({
   checkPackagedModels: vi.fn((): Promise<null> => Promise.resolve(null)),
-  LLM_MODEL_DIR: 'gemma-4-e2b-it',
+  LLM_MODEL_DIR: 'lfm2-1.2b-rag',
 }));
 
 vi.mock('../../lib/llm/engine-capability', () => ({

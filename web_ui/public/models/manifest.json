@@ -48,13 +48,12 @@
       ]
     },
     {
-      "id": "gemma-4-e2b-it",
-      "label": "Google Gemma 4 E2B-it (browser LLM, multimodal)",
+      "id": "lfm2-1.2b-rag",
+      "label": "LiquidAI LFM2-1.2B-RAG (browser LLM)",
       "kind": "llm",
       "group": "llm",
       "files": [
-        { "path": "llm/gemma-4-e2b-it/model.gguf", "required": true },
-        { "path": "llm/gemma-4-e2b-it/mmproj.gguf", "required": true }
+        { "path": "llm/lfm2-1.2b-rag/model.gguf", "required": true }
       ]
     }
   ]

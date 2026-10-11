@@ -41,7 +41,6 @@ vi.mock('../lib/llm/llm-factory', () => ({
     isReady: () => false,
     getModelInfo: () => null,
     getInferenceMode: () => 'wasm' as const,
-    supportsImages: () => false,
     interrupt: () => undefined,
   }),
   disposeBrowserEngine: () => undefined,

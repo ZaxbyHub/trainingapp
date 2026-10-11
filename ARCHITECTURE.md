@@ -200,13 +200,13 @@ transport maps to the contract 503.
 
 | Knob | Value | Source |
 |---|---|---|
-| Quality model | `gemma-4-e2b-it/model.gguf` (Q4_K_M per ADR-0002) | `QUALITY_MODEL_SUBPATH` |
-| Fast model | `lfm2.5-vl-450m/model.gguf` (Q4_K_M per ADR-0002) | `FAST_MODEL_SUBPATH` |
+| Quality model | `lfm2.5-2.6b/model.gguf` (Q4_K_M per ADR-0002, amended by #156) | `QUALITY_MODEL_SUBPATH` |
+| Fast model | `lfm2-1.2b-rag/model.gguf` (Q4_K_M per ADR-0002, amended by #156) | `FAST_MODEL_SUBPATH` |
 | Context size | 8192 | `CONTEXT_SIZE` |
 | Threads | `min(cores, 8)` | [desktop/main/backend/inference/profile-select.ts](desktop/main/backend/inference/profile-select.ts) |
-| Profile gate | `auto` selects quality at >= 6 GiB free RAM | `DEFAULT_PROFILE_THRESHOLD_GB` |
+| Profile gate | `auto` selects quality at >= 6 GiB free RAM with a working GPU; CPU-only machines select fast (#156) | `DEFAULT_PROFILE_THRESHOLD_GB` |
 | Generation (quality / fast) | 1024 tokens @ temp 0.2 / 384 @ 0.3 | `PROFILE_GENERATION` |
-| Sampler | top-p 0.9, repeat penalty 1.1, lookback window 8192 (generated tokens only) | [desktop/main/backend/inference/penalties.ts](desktop/main/backend/inference/penalties.ts) (`PENALTY_FULL_CONTEXT_TOKENS`) |
+| Sampler | top-p 0.9; the repeat penalty is retired with the #156 LFM swap (no penalty window bookkeeping ships) | [desktop/main/backend/inference/llama-engine.ts](desktop/main/backend/inference/llama-engine.ts) |
 | History | at most 12 turns carried into the prompt | `MAX_HISTORY_TURNS` |
 
 The compute backend is decided by an out-of-process probe (issue #155): a working
@@ -340,9 +340,13 @@ asar-unpacked. [desktop/scripts/stage-installer-resources.mjs](desktop/scripts/s
 assembles the staged tree from explicit allow-lists (a missing required
 file fails the build by name), supports `--fixture-models` for CI, and
 enforces the double-ship guard (no model id may exist in both the renderer
-dist and the staged weights). Measured installed footprint: ~6.4 GB
-(6,378,451,601 bytes) against the 7 GiB budget — devstation row in
-[bench/RESULTS.md](bench/RESULTS.md).
+dist and the staged weights). Footprint after the #156 LFM swap: staged model
+resources ≈ 2,579,067,305 bytes (LLM bytes 2,405,349,088 vs 3,938,153,792
+pre-swap) — the installed footprint is smaller than the pre-swap measured
+6,378,451,601 bytes (~6.4 GB against the 7 GiB budget, devstation row in
+[bench/RESULTS.md](bench/RESULTS.md)) by the same 1,532,804,704-byte LLM
+reduction; installed total re-measure pending real-weights staging
+(bench/RESULTS.md rule 4).
 
 ## Update channels (E5, ADR-0010)
 
@@ -496,7 +500,7 @@ contract; measured performance numbers are recorded machine-tagged in
 | ADR | Decision (one line) |
 |---|---|
 | [0001](docs/adr/0001-embedding-reranker.md) | Embedding/reranker model targets for all surfaces (Qwen3-Embedding-0.6B 1024-dim + ettin-reranker-32m-v1); per-surface re-pin follow-ups open. |
-| [0002](docs/adr/0002-llm-profiles.md) | Distributable LLM profiles: Quality gemma-4-e2b-it / Fast lfm2.5-vl-450m, 6 GiB free-RAM gate. |
+| [0002](docs/adr/0002-llm-profiles.md) | Distributable LLM profiles (amended by #156): Quality lfm2.5-2.6b / Fast lfm2-1.2b-rag, 6 GiB free-RAM + CPU-only auto gates; browser ships the fast-tier model text-only. |
 | [0003](docs/adr/0003-desktop-backend.md) | Desktop backend is a Node main-process server; the Python sidecar loses as default (seam retained). |
 | [0004](docs/adr/0004-knowledge-packs.md) | Knowledge Pack specification and format freeze (content-hash identity, semver, supersedes). |
 | [0005](docs/adr/0005-sqlite-vec-interop.md) | SQLite store schema freeze; sqlite-vec Node/Python interop (0.1.9 exact pin). |

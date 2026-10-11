@@ -23,7 +23,6 @@ vi.mock('../lib/llm/llm-factory', () => ({
   getLLMService: vi.fn().mockImplementation(() => ({
     initialize: vi.fn().mockResolvedValue(undefined),
     interrupt: vi.fn(),
-    supportsImages: vi.fn().mockReturnValue(false),
   })),
   DEFAULT_BROWSER_ENGINE: 'wllama',
   disposeBrowserEngine: vi.fn(),

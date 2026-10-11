@@ -16,9 +16,10 @@ Bundled weights are distributed under their own licenses — the per-model revie
 [docs/licenses.md](docs/licenses.md); keep it current when the packaged model set
 changes.
 
-> Status: **Phase 1** covers the embedding model + ONNX Runtime WASM. The
-> Gemma 4 E2B-it GGUF (browser LLM, wllama) lands in Phase 2 and is documented below as
-> the target procedure.
+> Status: **Phase 1** covered the embedding model + ONNX Runtime WASM. The browser
+> LLM weights (originally a multimodal Gemma GGUF at Phase 2; swapped 2026-10-11 by
+> #156 to the text-only LFM `lfm2-1.2b-rag`) are documented in §5 as the target
+> procedure.
 
 ---
 
@@ -110,9 +111,9 @@ npm run build:offline      # = prepare-models && tsc/vite build && validate-buil
    `public/models/manifest.json` is absent from `dist/models/`. The manifest is
    the **single source of truth** shared with `src/lib/models/model-manifest.ts`
    (imported at runtime), so the TS readiness gate and the build validator
-   cannot drift. Pass `--no-llm` to skip the browser-LLM runtime + Gemma 4 E2B-it
-   weights group (for an embeddings-only archive — e.g. CI — where the
-   multi-GB LLM weights are deliberately absent). (It does not grep bundled JS
+   cannot drift. Pass `--no-llm` to skip the browser-LLM runtime + `lfm2-1.2b-rag`
+   weights group (for an embeddings-only archive — e.g. CI — where the LLM weight is
+   deliberately absent). (It does not grep bundled JS
    for CDN hostnames — vendored ML libs embed default-CDN constants that survive
    minification but are never called at runtime; the offline guarantee is
    enforced by `offline-env.ts` and verified by the no-network preview test in §4.)
@@ -190,10 +191,13 @@ would otherwise make a build with zero model files falsely report "ready".
 
 ---
 
-## 5. Browser LLM — wllama + Gemma 4 E2B-it (multimodal)
+## 5. Browser LLM — wllama + lfm2-1.2b-rag (text-only)
 
 Browser inference uses **wllama** (llama.cpp in WASM, CPU/SIMD, **no WebGPU**)
-running **Google Gemma 4 E2B-it GGUF + mmproj**. Two pieces are packaged:
+running the **LFM2-1.2B-RAG (`lfm2-1.2b-rag`) Q4_K_M GGUF** — text-only. The
+multimodal projector artifact is gone from every shipped surface with the #156 LFM
+swap (the historical image-input browser path was removed with it — see §7). Two
+pieces are packaged:
 
 1. **wllama runtime** — `npm run prepare-models` copies, from node_modules:
    - `@wllama/wllama` → `public/models/wllama/wasm/wllama.wasm` (the modern build)
@@ -202,41 +206,31 @@ running **Google Gemma 4 E2B-it GGUF + mmproj**. Two pieces are packaged:
      (common on target hardware). Without it locally, wllama would fetch its
      runtime from jsdelivr and break offline. No action needed beyond `npm install`
      (both packages are dependencies).
-2. **Model weights** — the GGUF + projector, placed at the repo root so
-   `prepare-models` stages them (this step is **optional**; absence only disables
+2. **Model weights** — the single text-only GGUF, placed at the repo root so
+   `prepare-models` stages it (this step is **optional**; absence only disables
    browser generation; the desktop app's backend and direct API clients of the Python
    server are unaffected):
 
 ```bash
-# (a) obtain Gemma 4 E2B-it GGUF + mmproj from unsloth/gemma-4-E2B-it-GGUF on HuggingFace:
-#       gemma-4-E2B-it-Q4_K_M.gguf  (~2.9 GB) → rename to model.gguf
-#       mmproj-F16.gguf              (~940 MB) → rename to mmproj.gguf
-#     then place them at the repo root as:
-#       models/gemma-4-e2b-it/model.gguf
-#       models/gemma-4-e2b-it/mmproj.gguf
-# (b) npm run prepare-models   # copies them to public/models/llm/gemma-4-e2b-it/
+# (a) obtain the LFM2-1.2B-RAG GGUF from LiquidAI/LFM2-1.2B-RAG-GGUF on HuggingFace:
+#       LFM2-1.2B-RAG-Q4_K_M.gguf  (730,894,048 bytes, ~0.73 GB) → rename to model.gguf
+#     then place it at the repo root as:
+#       models/lfm2-1.2b-rag/model.gguf
+# (b) npm run prepare-models   # copies it to public/models/llm/lfm2-1.2b-rag/
 ```
 
-Gemma 4 E2B-it Q4_K_M is ~2.9 GB. This exceeds the historical ~2 GB/file WASM
-`ArrayBuffer` ceiling, but wllama v3+ streams via HTTP range requests (not a
-single ArrayBuffer), so the practical limit is browser RAM, not the 2 GB ceiling.
-Validate on target hardware before packaging. ~2.3B effective parameters (~5.1B
-total with Per-Layer Embeddings), 128K context window (capped at 8192 by default
-for RAM headroom on 8 GB target boxes).
+LFM2-1.2B-RAG Q4_K_M is ~0.73 GB (730,894,048 bytes). This is comfortably under the
+historical ~2 GB/file WASM `ArrayBuffer` ceiling that once constrained browser
+weights, and wllama v3+ streams via HTTP range requests regardless, so the practical
+limit is browser RAM. Validate on target hardware before packaging.
 
-**Chat-template override (important):** The `gemma-4-e2b-it` GGUF embeds an
-~18 KB Jinja chat template that uses macros (`format_parameters`,
-`format_argument`, etc.) wllama 3.5.1's Jinja subset cannot evaluate — the
-macros render to empty strings, producing a blank prompt and **empty assistant
-responses** (model emits `<eos>` immediately). The app works around this by
-injecting a macro-free Gemma 4 template override at load time via
-`LoadModelParams.chat_template` + `jinja: true` (see
-`web_ui/src/lib/llm/wllama-service.ts` → `GEMMA4_CHAT_TEMPLATE`). This makes
-the app robust to any Gemma 4 GGUF regardless of its embedded template, so
-operators staging a different quant (e.g. Q5_K_M, Q8_0) from
-`unsloth/gemma-4-E2B-it-GGUF` do not need to verify the template field
-themselves. The override can be removed once wllama ships a Jinja runtime
-with macro support.
+**Chat-template note:** the retired model's macro-heavy embedded template needed a
+chat-template override at load time (`LoadModelParams.chat_template` +
+`jinja: true`, see `web_ui/src/lib/llm/wllama-service.ts`); that override went away
+with the #156 swap, and the LFM GGUF's embedded template is served as-is. The robust
+property is unchanged, so operators staging a different quant (e.g. Q5_K_M, Q8_0) from
+`LiquidAI/LFM2-1.2B-RAG-GGUF` only need to verify once on target hardware that the
+template renders a non-empty prompt.
 
 The user picks the engine in Settings (**wllama** default, or **WebLLM** when
 WebGPU is usable); the choice persists and the RAG pipeline routes accordingly.
@@ -272,18 +266,17 @@ The desktop app can serve the self-contained archive locally:
 To run the server serving the archive: `python api_server.py` (or
 `WEB_UI_DIST=/path/to/dist python api_server.py`), then open the server root.
 
-## 7. Server-side VLM (multimodal) — deferred extension
+## 7. Server-side VLM (multimodal) — retired with #156
 
-The **browser** engine (wllama + Gemma 4 E2B-it mmproj) already provides
-verified offline multimodal (image) Q&A. A **server-side** VLM path
-(image → `llama-cpp-python` with the mmproj) is intentionally **not yet wired**:
-it requires constructing a model-specific multimodal chat handler with
-`llama-cpp-python >= 0.3.0` and must be validated against the actual Gemma 4 E2B-it
-GGUF on real hardware. To add it: build `GGUFBackend` with a clip/mmproj chat
-handler, accept an optional `image_base64` on the `/ask` request, and route
-multimodal turns through `create_chat_completion` with `image_url` content.
-Until that is verified end-to-end, the Python `/ask` API answers text-only (for its
-direct API clients; the browser app has no server mode) and multimodal runs in the browser.
+The browser multimodal path (image input in chat via a vision projector alongside
+the browser LLM) was removed by the #156 LFM swap: node-llama-cpp has no image
+support, the browser LLM (`lfm2-1.2b-rag`) is text-only, and no projector artifact
+ships on any surface. The previously deferred server-side VLM extension (image →
+`llama-cpp-python` with a projector chat handler) is retired with it — a future
+multimodal feature would be a new model-selection decision under ADR-0002's method
+plus a fresh packaging review. Until then every surface answers text-only questions
+(the Python `/ask` API answers text-only for its direct API clients; the browser app
+has no server mode).
 
 ## 8. Server authentication (opt-in)
 

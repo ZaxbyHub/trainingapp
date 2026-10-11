@@ -88,8 +88,8 @@ describe('SidebarConnectionChip', () => {
     const onOpen = vi.fn();
     render(<Shell onOpen={onOpen} />);
     const chip = screen.getByTestId('sidebar-model-chip');
-    expect(chip).toHaveTextContent('Local · Google Gemma 4 E2B-it');
-    expect(chip).toHaveAccessibleName('Model: Local · Google Gemma 4 E2B-it. Open model settings');
+    expect(chip).toHaveTextContent('Local · LiquidAI LFM2-1.2B-RAG');
+    expect(chip).toHaveAccessibleName('Model: Local · LiquidAI LFM2-1.2B-RAG. Open model settings');
     fireEvent.click(chip);
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
@@ -157,11 +157,11 @@ describe('SidebarConnectionChip', () => {
     const onOpen = vi.fn();
     render(<Shell collapsed onOpen={onOpen} />);
     expect(screen.queryByTestId('sidebar-model-chip')).toBeNull();
-    const btn = screen.getByRole('button', { name: 'Model: Local · Google Gemma 4 E2B-it. Open model settings' });
+    const btn = screen.getByRole('button', { name: 'Model: Local · LiquidAI LFM2-1.2B-RAG. Open model settings' });
     expect(btn.textContent).toBe('');
     fireEvent.focus(btn);
     const tip = screen.getByRole('tooltip');
-    expect(tip).toHaveTextContent('Model: Local · Google Gemma 4 E2B-it');
+    expect(tip).toHaveTextContent('Model: Local · LiquidAI LFM2-1.2B-RAG');
     expect(tip).toHaveClass('ui-tooltip--end');
     fireEvent.click(btn);
     expect(onOpen).toHaveBeenCalledTimes(1);
@@ -176,7 +176,7 @@ describe('SidebarConnectionChip', () => {
     unmount();
 
     render(<Shell collapsed />);
-    const btn = screen.getByRole('button', { name: 'Model: Local · Google Gemma 4 E2B-it. Open model settings' });
+    const btn = screen.getByRole('button', { name: 'Model: Local · LiquidAI LFM2-1.2B-RAG. Open model settings' });
     const railSentence = screen.getByTestId('sidebar-model-chip-detail');
     expect(railSentence).toHaveAttribute('hidden');
     expect(railSentence.textContent).toBe(sentence);
@@ -194,11 +194,11 @@ describe('SidebarConnectionChip', () => {
     unmount();
 
     render(<Shell collapsed />);
-    const btn = screen.getByRole('button', { name: 'Model: Local · Google Gemma 4 E2B-it. Open model settings' });
+    const btn = screen.getByRole('button', { name: 'Model: Local · LiquidAI LFM2-1.2B-RAG. Open model settings' });
     fireEvent.focus(btn);
     const tip = screen.getByRole('tooltip');
     expect(tip).toHaveTextContent(sentence);
-    expect(tip).toHaveTextContent('Model: Local · Google Gemma 4 E2B-it');
+    expect(tip).toHaveTextContent('Model: Local · LiquidAI LFM2-1.2B-RAG');
     expect(btn).not.toHaveAttribute('title');
     expect(btn).toHaveAccessibleDescription(onceRegExp(sentence));
   });
@@ -224,7 +224,7 @@ describe('SidebarConnectionChip', () => {
   it('updates when the endpoint is saved while the chip stays mounted (same tab)', () => {
     render(<Shell />);
     const chip = screen.getByTestId('sidebar-model-chip');
-    expect(chip).toHaveTextContent('Local · Google Gemma 4 E2B-it');
+    expect(chip).toHaveTextContent('Local · LiquidAI LFM2-1.2B-RAG');
     act(() => {
       saveExternalConfig({ enabled: true, protocol: 'openai', baseUrl: 'http://127.0.0.1:1234/v1', model: 'model-two' });
     });
@@ -232,12 +232,12 @@ describe('SidebarConnectionChip', () => {
     act(() => {
       saveExternalConfig({ enabled: false });
     });
-    expect(screen.getByTestId('sidebar-model-chip')).toHaveTextContent('Local · Google Gemma 4 E2B-it');
+    expect(screen.getByTestId('sidebar-model-chip')).toHaveTextContent('Local · LiquidAI LFM2-1.2B-RAG');
   });
 
   it('updates when another tab changes the stored config (storage event)', () => {
     render(<Shell />);
-    expect(screen.getByTestId('sidebar-model-chip')).toHaveTextContent('Local · Google Gemma 4 E2B-it');
+    expect(screen.getByTestId('sidebar-model-chip')).toHaveTextContent('Local · LiquidAI LFM2-1.2B-RAG');
     act(() => {
       localStorage.setItem(
         'external-provider-config',
@@ -258,7 +258,7 @@ describe('SidebarConnectionChip', () => {
       clearUserSettings();
       clearSessionSettings();
     });
-    expect(screen.getByTestId('sidebar-model-chip')).toHaveTextContent('Local · Google Gemma 4 E2B-it');
+    expect(screen.getByTestId('sidebar-model-chip')).toHaveTextContent('Local · LiquidAI LFM2-1.2B-RAG');
   });
 });
 
@@ -327,14 +327,14 @@ describe('SidebarConnectionChip readiness (review L4)', () => {
     setModelReady(false);
     render(<Shell />);
     const chip = screen.getByTestId('sidebar-model-chip');
-    expect(chip).toHaveTextContent('Local · Google Gemma 4 E2B-it — not ready');
-    expect(chip).toHaveAccessibleName('Model: Local · Google Gemma 4 E2B-it — not ready. Open model settings');
+    expect(chip).toHaveTextContent('Local · LiquidAI LFM2-1.2B-RAG — not ready');
+    expect(chip).toHaveAccessibleName('Model: Local · LiquidAI LFM2-1.2B-RAG — not ready. Open model settings');
   });
 
   it('browser local, model ready: unchanged text', () => {
     setModelReady(true);
     render(<Shell />);
-    expect(screen.getByTestId('sidebar-model-chip')).toHaveTextContent(/^Local · Google Gemma 4 E2B-it$/);
+    expect(screen.getByTestId('sidebar-model-chip')).toHaveTextContent(/^Local · LiquidAI LFM2-1.2B-RAG$/);
   });
 
   it('desktop, no staged model for a real engine: not ready; external engine: never', () => {
@@ -351,9 +351,8 @@ describe('SidebarConnectionChip readiness (review L4)', () => {
   it('rail: the not-ready state reaches the button name and tooltip', () => {
     setModelReady(false);
     render(<Shell collapsed />);
-    const btn = screen.getByRole('button', { name: 'Model: Local · Google Gemma 4 E2B-it — not ready. Open model settings' });
+    const btn = screen.getByRole('button', { name: 'Model: Local · LiquidAI LFM2-1.2B-RAG — not ready. Open model settings' });
     fireEvent.focus(btn);
-    expect(screen.getByRole('tooltip')).toHaveTextContent('Model: Local · Google Gemma 4 E2B-it — not ready');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Model: Local · LiquidAI LFM2-1.2B-RAG — not ready');
   });
 });
-

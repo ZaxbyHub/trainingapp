@@ -29,6 +29,14 @@ export interface GpuProbeVerdict {
   reason: string;
   /** Adapter/device identity when the backend reported one, else null. */
   device?: string | null;
+  /**
+   * #156: decode throughput the probe measured on the active backend
+   * (tokens/second of the fast model), when the probe produced one. OPTIONAL
+   * so v1 sidecar records written before the field existed — and every CPU
+   * failure shape, which measures nothing — stay valid; the reader adopts it
+   * only when the record carries a finite number.
+   */
+  measured?: number | null;
 }
 
 /**
@@ -92,11 +100,18 @@ export function readGpuProbeVerdict(dir: string): GpuProbeVerdict | null {
     if (typeof record.ok !== 'boolean') return null;
     if (typeof record.reason !== 'string' || record.reason === '') return null;
     const device = record.device;
+    // #156: `measured` is OPTIONAL within v1 — a record written before the
+    // field existed (or by a failure shape that measures nothing) reads back
+    // without it, and only a finite number is adopted, never a coerced string
+    // or NaN. This mirrors the tolerance rule update-checker established: an
+    // unknown-shaped value degrades to "absent", never to a throw.
+    const measured = record.measured;
     return {
       backend: record.backend,
       ok: record.ok,
       reason: record.reason,
       device: typeof device === 'string' ? device : null,
+      ...(typeof measured === 'number' && Number.isFinite(measured) ? { measured } : {}),
     };
   } catch {
     // Tolerant by design: a missing or corrupt sidecar is never fatal, and a
@@ -205,6 +220,8 @@ interface ProbeChildReport {
   device?: unknown;
   sample?: unknown;
   reason?: unknown;
+  /** #156: decode tok/s the child measured, when it ran a full generation. */
+  measured?: unknown;
 }
 
 /**
@@ -355,6 +372,11 @@ export async function runGpuProbe(opts: GpuProbeRunOptions = {}): Promise<GpuPro
         ok: true,
         reason: 'GPU probe: Vulkan loaded and produced a sane generation.',
         device: typeof report.device === 'string' ? report.device : null,
+        // #156: the child's measured decode tok/s rides along when it
+        // reported a finite number; a CPU/failed probe measures nothing.
+        ...(typeof report.measured === 'number' && Number.isFinite(report.measured)
+          ? { measured: report.measured }
+          : {}),
       });
     });
   });

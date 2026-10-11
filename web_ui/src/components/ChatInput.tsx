@@ -1,19 +1,17 @@
 /**
  * Message input component with send and cancel functionality.
  * Supports multiline input with auto-resize behavior.
+ *
+ * Issue #156: the image-attach control was removed with the Gemma 4 + mmproj
+ * multimodal surface — the packaged browser LLM (LFM2-1.2B-RAG) is text-only.
  */
 
 import React, { useRef, useCallback, useState, useEffect, type ReactNode } from 'react';
-import {
-  prepareImage,
-  validateImageFile,
-  type AttachedImage,
-} from '../lib/processing/image-input';
 import { IconButton } from '../ui';
 import '../pages/chat.css';
 
 interface ChatInputProps {
-  onSend: (message: string, images?: AttachedImage[]) => void;
+  onSend: (message: string) => void;
   isLoading: boolean;
   onCancel: () => void;
   disabled?: boolean;
@@ -21,10 +19,6 @@ interface ChatInputProps {
    *  model-loading banner) — wired to aria-describedby on the textarea so
    *  assistive tech announces the gate reason (PRR-229). */
   disabledReasonId?: string;
-  /** Show the image-attach control (only for multimodal engines, e.g. wllama). */
-  imageUploadEnabled?: boolean;
-  /** Max images attachable to a single message. */
-  maxImages?: number;
   /** Notifies the parent of the current draft text so a global shortcut
    *  (Ctrl+Enter) can send it without owning the input state. */
   onDraftChange?: (text: string) => void;
@@ -42,16 +36,11 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   onCancel,
   disabled = false,
   disabledReasonId,
-  imageUploadEnabled = false,
-  maxImages = 3,
   onDraftChange,
   status,
 }) => {
   const [value, setValue] = useState('');
-  const [images, setImages] = useState<AttachedImage[]>([]);
-  const [attachError, setAttachError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const adjustHeight = useCallback(() => {
     const textarea = textareaRef.current;
@@ -103,61 +92,15 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
     const trimmed = value.trim();
     if (!trimmed || isLoading) return;
 
-    // Only pass the 2nd arg when images are attached, to preserve the simple
-    // onSend(text) call shape for the common (text-only) path.
-    if (images.length > 0) {
-      onSend(trimmed, images);
-    } else {
-      onSend(trimmed);
-    }
+    onSend(trimmed);
     setValue('');
     onDraftChange?.('');
-    setImages([]);
-    setAttachError(null);
 
     // Reset textarea height
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
-  }, [value, isLoading, onSend, images]);
-
-  const handleFilesSelected = useCallback(
-    async (fileList: FileList | null) => {
-      if (!fileList || fileList.length === 0) return;
-      setAttachError(null);
-      const incoming = Array.from(fileList);
-      // Track count locally so the overflow error fires correctly during multi-select.
-      // The closure images.length is accurate at callback-creation time (correct start
-      // value), but setImages is async and won't update it mid-loop.
-      let runningCount = images.length;
-
-      for (const file of incoming) {
-        if (runningCount >= maxImages) {
-          setAttachError(`You can attach at most ${maxImages} images.`);
-          break;
-        }
-        const check = validateImageFile(file);
-        if (!check.valid) {
-          setAttachError(check.error ?? 'Invalid image.');
-          continue;
-        }
-        try {
-          const prepared = await prepareImage(file);
-          setImages((prev) => (prev.length < maxImages ? [...prev, prepared] : prev));
-          runningCount++;
-        } catch {
-          setAttachError(`Could not read "${file.name}".`);
-        }
-      }
-      // Allow re-selecting the same file.
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    },
-    [images.length, maxImages]
-  );
-
-  const removeImage = useCallback((id: string) => {
-    setImages((prev) => prev.filter((img) => img.id !== id));
-  }, []);
+  }, [value, isLoading, onSend]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -198,60 +141,12 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
     onCancel();
   }, [onCancel]);
 
-  const attachDisabled = isLoading || disabled || images.length >= maxImages;
   const sendDisabled = !value.trim() || disabled;
 
   return (
     <div className="chat-composer">
       <div className="chat-composer__card" data-loading={isLoading || undefined}>
-        {/* Attached-image previews */}
-        {images.length > 0 && (
-          <div className="chat-composer__previews">
-            {images.map((img) => (
-              <div key={img.id} className="chat-composer__preview">
-                <img src={img.dataUrl} alt={img.fileName} className="chat-composer__thumb" />
-                <IconButton
-                  icon="x"
-                  iconSize={14}
-                  variant="danger"
-                  size="sm"
-                  tooltipPlacement="top"
-                  className="chat-composer__remove"
-                  onClick={() => removeImage(img.id)}
-                  aria-label={`Remove ${img.fileName}`}
-                />
-              </div>
-            ))}
-          </div>
-        )}
-        {attachError && (
-          <div role="alert" className="chat-composer__error">
-            {attachError}
-          </div>
-        )}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/png,image/jpeg,image/webp,image/gif"
-          multiple
-          onChange={(e) => void handleFilesSelected(e.target.files)}
-          hidden
-          aria-hidden="true"
-          tabIndex={-1}
-        />
         <div className="chat-composer__row">
-          {imageUploadEnabled && (
-            <IconButton
-              icon="paperclip"
-              variant="ghost"
-              tooltipPlacement="top"
-              className="chat-composer__attach"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={attachDisabled}
-              aria-disabled={attachDisabled || undefined}
-              aria-label="Attach image"
-            />
-          )}
           <textarea
             ref={textareaRef}
             className="chat-composer__input"

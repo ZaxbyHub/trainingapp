@@ -51,7 +51,7 @@ vi.mock('../../lib/llm/readiness-gate', () => ({
   resetReadinessCache: vi.fn(),
 }));
 vi.mock('../../lib/models/model-manifest', () => ({
-  LLM_MODEL_DIR: 'gemma-4-e2b-it',
+  LLM_MODEL_DIR: 'lfm2-1.2b-rag',
 }));
 vi.mock('../../lib/desktop-session', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../lib/desktop-session')>();

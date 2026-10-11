@@ -216,13 +216,15 @@ describe('e1 manifest contract (issue #84, frozen check C2)', () => {
     expect(reranker).toContain('onnx/model_quantized.onnx');
     expect(reranker).toContain('tokenizer.json');
     expect(reranker).toContain('tokenizer_config.json');
-    // LLM groups (llama-engine modelPathFor): model.gguf per ADR-0002 pair.
+    // LLM groups (llama-engine modelPathFor): model.gguf per ADR-0002 as
+    // amended by #156 — the text GGUF ALONE (no image adapter: node-llama-cpp
+    // has no image support), so the file list is exactly one entry.
     for (const group of ['llm-quality', 'llm-fast']) {
-      expect(byGroup.get(group) ?? []).toContain('model.gguf');
+      expect(byGroup.get(group) ?? []).toEqual(['model.gguf']);
     }
   });
 
-  it('reconcileRendererManifest drops exactly the staged-id entries and keeps the rest', async () => {
+  it('reconcileRendererManifest drops exactly the deliberate-exclusion ids and keeps the rest', async () => {
     const stager = await import('../../scripts/stage-installer-resources.mjs');
     const rendererRoot = makeTempDir('e1-renderer-manifest-');
     const modelsDir = path.join(rendererRoot, 'models');
@@ -231,7 +233,12 @@ describe('e1 manifest contract (issue #84, frozen check C2)', () => {
       version: '2',
       models: [
         { id: 'ettin-reranker-32m-v1', group: 'reranker', files: [{ path: 'reranker/ettin-reranker-32m-v1/onnx/model_quantized.onnx', required: true }] },
+        // #156: the retired browser LLM stays excluded after the exclusion was
+        // decoupled from STAGED_MODELS (stale renderer copies stay excluded)…
         { id: 'gemma-4-e2b-it', group: 'llm', files: [{ path: 'llm/gemma-4-e2b-it/model.gguf', required: true }] },
+        // …and the NEW browser fallback LLM is excluded too — it is also the
+        // staged fast model, so shipping it in both trees double-ships bytes.
+        { id: 'lfm2-1.2b-rag', group: 'llm', files: [{ path: 'llm/lfm2-1.2b-rag/model.gguf', required: true }] },
         { id: 'onnxruntime-web', group: 'core', files: [{ path: 'ort/ort-wasm-simd-threaded.jsep.wasm', required: true }] },
         { id: 'snowflake-arctic-embed-m-v1.5', group: 'embedding', files: [{ path: 'embeddings/snowflake-arctic-embed-m-v1.5/onnx/model_quantized.onnx', required: true }] },
       ],
@@ -240,17 +247,23 @@ describe('e1 manifest contract (issue #84, frozen check C2)', () => {
     stager.reconcileRendererManifest(rendererRoot, stager.RENDERER_EXCLUDED_MODEL_IDS as ReadonlySet<string>);
     const reconciled = JSON.parse(fs.readFileSync(path.join(modelsDir, 'manifest.json'), 'utf8'));
     const ids = reconciled.models.map((m: { id: string }) => m.id);
-    // Staged-weight entries are gone; the packaged renderer's readiness gate
-    // no longer demands files this installer deliberately does not ship.
+    // Deliberately-excluded weight entries are gone; the packaged renderer's
+    // readiness gate no longer demands files this installer does not ship.
     expect(ids).not.toContain('ettin-reranker-32m-v1');
     expect(ids).not.toContain('gemma-4-e2b-it');
+    expect(ids).not.toContain('lfm2-1.2b-rag');
     expect(ids).toContain('onnxruntime-web');
     expect(ids).toContain('snowflake-arctic-embed-m-v1.5');
   });
 
-  it('cross-manifest invariant: staged∩renderer-required groups covered by .env.desktop; accepted collateral pinned', async () => {
+  it('cross-manifest invariant: deliberate exclusion coverage pinned; accepted collateral unchanged', async () => {
     const stager = await import('../../scripts/stage-installer-resources.mjs');
     const stagedIds = new Set((stager.STAGED_MODELS as { id: string }[]).map((m) => m.id));
+    // #156: the exclusion is a PACKAGING decision decoupled from STAGED_MODELS
+    // (RENDERER_EXCLUDED_MODEL_IDS) — the desktop ships no browser-LLM/embedder
+    // weights in the renderer copy. The invariants key on THAT set, not on
+    // "whatever we stage".
+    const excludedIds = stager.RENDERER_EXCLUDED_MODEL_IDS as ReadonlySet<string>;
     const webUiManifest = JSON.parse(
       fs.readFileSync(path.resolve(desktopDir, '..', 'web_ui', 'public', 'models', 'manifest.json'), 'utf8'),
     );
@@ -272,18 +285,21 @@ describe('e1 manifest contract (issue #84, frozen check C2)', () => {
     // Group granularity is coarse (exclusion is per web_ui manifest GROUP, and
     // checkPackagedModels inlines the manifest at Vite build time —
     // reconciling the copied JSON alone fixes nothing, review PRR-132):
-    // 1. every staged id that is ALSO renderer-required must have its group
-    //    covered by .env.desktop (else the packaged gate demands files the
-    //    installer does not ship in the renderer copy);
-    // 2. every NON-staged renderer-required id whose group got swept up by
-    //    that exclusion is ACCEPTED COLLATERAL and must be exactly the list
-    //    below — a new id landing in an excluded group fails here until it is
-    //    consciously added (the ADR-0001 snowflake re-pin tripwire).
+    // 1. every renderer-required id in an excluded group is EITHER in the
+    //    deliberate exclusion set (its weights ship staged, or it is the
+    //    retired id that ships nowhere on purpose) OR is ACCEPTED COLLATERAL —
+    //    exactly the list below; a new id landing in an excluded group fails
+    //    here until it is consciously added (the ADR-0001 snowflake re-pin
+    //    tripwire);
+    // 2. every EXCLUDED id that is ALSO staged covers each renderer-required
+    //    file (consumer coverage: the native backend loads them staged);
+    // 3. every STAGED renderer-required id is in the exclusion set with its
+    //    group covered by .env.desktop (else the same bytes double-ship into
+    //    renderer/models — the guard assertNoWeightOverlap holds at build).
     const acceptedCollateral: Record<string, string[]> = {
       core: ['onnxruntime-web'], // excluded for ettin; ort ships in the copy but its readiness probe is skipped
-      llm: ['wllama-runtime'], // excluded for gemma; wllama wasm/js ship in the copy
+      llm: ['wllama-runtime'], // excluded for the browser LLM; wllama wasm/js ship in the copy
     };
-    const missingCoverage: string[] = [];
     const collateral: Record<string, string[]> = {};
     for (const entry of webUiManifest.models as {
       id: string;
@@ -292,27 +308,32 @@ describe('e1 manifest contract (issue #84, frozen check C2)', () => {
     }[]) {
       const requiredFiles = entry.files.filter((f) => f.required !== false);
       if (requiredFiles.length === 0 || !envGroups.has(entry.group)) continue;
-      if (stagedIds.has(entry.id)) {
-        // Its weights must ship in the staged tree (consumer coverage).
-        const staged = (stager.STAGED_MODELS as { id: string; files: string[] }[]).find((m) => m.id === entry.id);
-        for (const file of requiredFiles) {
-          const fileName = path.basename(file.path);
-          const covered = (staged?.files ?? []).some((f) => f === fileName || f.endsWith(`/${fileName}`));
-          expect(covered, `staged ${entry.id} does not cover renderer-required file ${fileName}`).toBe(true);
+      if (excludedIds.has(entry.id)) {
+        if (stagedIds.has(entry.id)) {
+          const staged = (stager.STAGED_MODELS as { id: string; files: string[] }[]).find((m) => m.id === entry.id);
+          for (const file of requiredFiles) {
+            const fileName = path.basename(file.path);
+            const covered = (staged?.files ?? []).some((f) => f === fileName || f.endsWith(`/${fileName}`));
+            expect(covered, `staged ${entry.id} does not cover renderer-required file ${fileName}`).toBe(true);
+          }
         }
-        void 0;
+        // Excluded but NOT staged (the retired browser-LLM id): ships nowhere
+        // by design — the deliberate decoupled packaging pin (#156).
       } else {
         (collateral[entry.group] ??= []).push(entry.id);
       }
     }
-    // Coverage check (staged side) recorded via excludedGroups semantics:
-    for (const entry of webUiManifest.models as { id: string; group: string }[]) {
-      if (stagedIds.has(entry.id)) {
-        expect(
-          envGroups.has(entry.group),
-          `staged id ${entry.id} is renderer-required but its group is not excluded by .env.desktop — the packaged gate would demand files the installer does not ship in the renderer copy`,
-        ).toBe(true);
-      }
+    for (const entry of webUiManifest.models as { id: string; group: string; files?: { required?: boolean }[] }[]) {
+      const requiredFiles = (entry.files ?? []).filter((f) => f.required !== false);
+      if (requiredFiles.length === 0 || !stagedIds.has(entry.id)) continue;
+      expect(
+        excludedIds.has(entry.id),
+        `staged id ${entry.id} is renderer-required but NOT in RENDERER_EXCLUDED_MODEL_IDS — the same weight bytes would double-ship into renderer/models`,
+      ).toBe(true);
+      expect(
+        envGroups.has(entry.group),
+        `staged id ${entry.id} is renderer-required but its group is not excluded by .env.desktop — the packaged gate would demand files the installer does not ship in the renderer copy`,
+      ).toBe(true);
     }
     expect(collateral).toEqual(acceptedCollateral);
   });

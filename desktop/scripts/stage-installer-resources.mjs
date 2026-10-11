@@ -9,21 +9,23 @@
  *      models/{embedding,reranker,llm-quality,llm-fast}/<id>/…
  *      packs/{bundled-docs,training}/<packId>-<version>/
  *      docs/licenses.md
+ *      docs/licenses/LFM-OPEN-LICENSE-v1.0.txt
  *    The staged models are the ones the packaged DESKTOP runtime actually
  *    loads at base (verified in the trace's localization): the OnnxEmbedder's
  *    bge-small-en-v1.5 fp32 onnx/model.onnx (embedder.ts), the rerank
  *    worker's ettin-reranker-32m-v1 q8 onnx/model_quantized.onnx, and the
- *    ADR-0002 LLM GGUF pairs. Explicit allow-lists — never a directory copy —
- *    so unselected leftovers on disk (gemma-4-e2b-it-qat/, bge safetensors,
- *    model-Q4_K_M-old.gguf, fp32 variants) cannot ship. A missing required
- *    source file FAILS the build by name (electron-builder's extraResources
- *    would silently skip a missing from: — staging must not).
+ *    ADR-0002 LLM GGUFs (as amended by #156). Explicit allow-lists — never a
+ *    directory copy — so unselected leftovers on disk (the retired E2B qat
+ *    tree, bge safetensors, model-Q4_K_M-old.gguf, fp32 variants) cannot
+ *    ship. A missing required source file FAILS the build by name
+ *    (electron-builder's extraResources would silently skip a missing from: —
+ *    staging must not).
  *
  * 2. Copy web_ui/dist → desktop/renderer for desktop:build, EXCLUDING the
  *    weight files that are duplicated into installer-resources/models/. The
  *    two trees use different group coordinates (staged
- *    models/llm-quality/gemma-4-e2b-it vs renderer dist models/llm/
- *    gemma-4-e2b-it), so the exclusion matches on the model-id directory
+ *    models/llm-quality/lfm2.5-2.6b vs renderer dist models/llm/
+ *    lfm2-1.2b-rag), so the exclusion matches on the model-id directory
  *    name, not the staged path. Everything else in dist/models/ is KEPT
  *    (models/ort + models/manifest.json are hard requirements of the
  *    packaged renderer's offline env; the snowflake browser embedder stays).
@@ -106,22 +108,42 @@ export const STAGED_MODELS = [
   },
   {
     group: 'llm-quality',
-    id: 'gemma-4-e2b-it',
-    label: 'Google Gemma 4 E2B-it Q4_K_M (Quality LLM, ADR-0002)',
-    files: ['model.gguf', 'mmproj.gguf'],
+    id: 'lfm2.5-2.6b',
+    label: 'LiquidAI LFM2.5-2.6B Q4_K_M (Quality LLM, ADR-0002 as amended by #156)',
+    // No image adapter ships: node-llama-cpp has no image support, so only the
+    // text GGUF is staged (#156; 1,674,455,040 bytes).
+    files: ['model.gguf'],
   },
   {
     group: 'llm-fast',
-    id: 'lfm2.5-vl-450m',
-    label: 'LFM 2.5 VL 450M Q4_K_M (Fast LLM, ADR-0002)',
-    files: ['model.gguf', 'mmproj.gguf'],
+    id: 'lfm2-1.2b-rag',
+    label: 'LiquidAI LFM2-1.2B-RAG Q4_K_M (Fast LLM, ADR-0002 as amended by #156)',
+    // Text GGUF only (#156; 730,894,048 bytes).
+    files: ['model.gguf'],
   },
 ];
 
-/** Renderer-copy exclusion key: model-id directories whose staged weights
- *  must not ALSO ship inside the packaged web_ui renderer copy. Exported for
- *  the committed cross-manifest parity spec (review PRR-132). */
-export const RENDERER_EXCLUDED_MODEL_IDS = new Set(STAGED_MODELS.map((m) => m.id));
+/** Renderer-copy exclusion key: model-id directories whose weights must not
+ *  ALSO ship inside the packaged web_ui renderer copy. Exported for
+ *  the committed cross-manifest parity spec (review PRR-132).
+ *
+ *  #156 DECOUPLED from STAGED_MODELS: this set is a PACKAGING decision — the
+ *  desktop ships NO browser-LLM/embedder weights in the renderer copy (the
+ *  native backend serves both roles from installer-resources/models) — not
+ *  "whatever we stage". That is why the retired browser-LLM id STAYS listed
+ *  although it is no longer staged (a renderer dist that still carries it
+ *  would otherwise double-ship its weights), and why lfm2-1.2b-rag is listed:
+ *  it is BOTH the browser fallback LLM and the staged fast model — the same
+ *  bytes must not ship twice. Keep in lockstep with web_ui/.env.desktop's
+ *  VITE_EXCLUDE_MODEL_GROUPS (group granularity) via the cross-manifest parity
+ *  spec in e1-manifest-contract.test.ts. */
+export const RENDERER_EXCLUDED_MODEL_IDS = new Set([
+  'bge-small-en-v1.5',
+  'ettin-reranker-32m-v1',
+  'gemma-4-e2b-it',
+  'lfm2.5-vl-450m',
+  'lfm2-1.2b-rag',
+]);
 
 /** The staged pack set (issue #133). When the operator has built the initial
  *  knowledge pack from the local knowledgepack/ corpus
@@ -323,13 +345,19 @@ function stagePacks() {
 }
 
 function stageDocs() {
-  const src = path.join(repoRoot, 'docs', 'licenses.md');
-  if (!fs.existsSync(src)) {
-    fail(`required docs file missing: docs/licenses.md (the first-run licensing gate reads <resourcesPath>/docs/licenses.md)`);
-    return;
+  // Issue #84 licensing: the first-run wizard reads <resources>/docs/licenses.md.
+  // #156 adds the full verbatim LFM Open License v1.0 text (both bundled LLM
+  // tiers are LFM-licensed; the summary alone is not the license).
+  const docsFiles = ['docs/licenses.md', 'docs/licenses/LFM-OPEN-LICENSE-v1.0.txt'];
+  for (const rel of docsFiles) {
+    const src = path.join(repoRoot, ...rel.split('/'));
+    if (!fs.existsSync(src)) {
+      fail(`required docs file missing: ${rel} (the first-run licensing gate reads <resourcesPath>/docs/licenses.md; the LFM license text must ship beside it)`);
+      continue;
+    }
+    copyFileSyncLoud(src, path.join(stageDir, ...rel.split('/')));
+    console.log(`${SCRIPT}: staged ${rel}`);
   }
-  copyFileSyncLoud(src, path.join(stageDir, 'docs', 'licenses.md'));
-  console.log(`${SCRIPT}: staged docs/licenses.md`);
 }
 
 /** Contract files the PACKAGED app must resolve from inside app.asar

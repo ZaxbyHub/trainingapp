@@ -12,7 +12,8 @@
  *   2. Copy the ONNX Runtime WASM binaries (shipped inside node_modules) into
  *      public/models/ort/ so Transformers.js never reaches for the jsdelivr CDN.
  *
- * Phase 2 will extend this to copy/convert/split the Gemma 4 E2B-it GGUF + mmproj.
+ * Phase 2 extended this to the browser LLM GGUF (issue #156: LiquidAI
+ * LFM2-1.2B-RAG, text-only — model.gguf only, no mmproj projector).
  *
  * Usage:  node scripts/prepare-models.mjs   (or: npm run prepare-models)
  * Exit code is non-zero if a required source asset cannot be found.
@@ -238,42 +239,37 @@ function prepareWllamaRuntime() {
 }
 
 // ---------------------------------------------------------------------------
-// 1d. Browser LLM weights (OPTIONAL): Gemma 4 E2B-it GGUF + mmproj projector.
-//     Large binaries assembled at packaging time; absence is a warning so an
-//     embeddings-only build still succeeds.
+// 1d. Browser LLM weights (OPTIONAL): LiquidAI LFM2-1.2B-RAG GGUF (text-only,
+//     issue #156 — no mmproj projector). Large binary assembled at packaging
+//     time; absence is a warning so an embeddings-only build still succeeds.
 // ---------------------------------------------------------------------------
 function prepareBrowserLLM() {
   const srcDir = firstExisting([
-    join(REPO_ROOT, 'models', 'gemma-4-e2b-it'),
-    join(WEB_UI, 'models', 'gemma-4-e2b-it'),
+    join(REPO_ROOT, 'models', 'lfm2-1.2b-rag'),
+    join(WEB_UI, 'models', 'lfm2-1.2b-rag'),
   ]);
-  const destDir = join(PUBLIC_MODELS, 'llm', 'gemma-4-e2b-it');
+  const destDir = join(PUBLIC_MODELS, 'llm', 'lfm2-1.2b-rag');
 
   if (!srcDir) {
     warn(
-      'browser LLM (Gemma 4 E2B-it) source not found at models/gemma-4-e2b-it/ (optional). ' +
+      'browser LLM (LiquidAI LFM2-1.2B-RAG) source not found at models/lfm2-1.2b-rag/ (optional). ' +
         'Browser wllama generation will be unavailable (an external model or the desktop app can still answer). ' +
-        'See PACKAGING.md to include model.gguf + mmproj.gguf.'
+        'See PACKAGING.md to include model.gguf.'
     );
     return;
   }
 
   const gguf = join(srcDir, 'model.gguf');
-  const mmproj = join(srcDir, 'mmproj.gguf');
-  let staged = 0;
-  for (const [src, name] of [[gguf, 'model.gguf'], [mmproj, 'mmproj.gguf']]) {
-    if (!existsSync(src) || statSync(src).size <= 1024) {
-      warn(`browser LLM file missing or stub: ${src} (skipped).`);
-      continue;
-    }
-    if (isLfsPointer(src)) {
-      warn(`browser LLM file is a Git-LFS pointer stub: ${src} (skipped). Run \`git lfs pull\`.`);
-      continue;
-    }
-    copyInto(src, join(destDir, name));
-    staged++;
+  if (!existsSync(gguf) || statSync(gguf).size <= 1024) {
+    warn(`browser LLM file missing or stub: ${gguf} (skipped).`);
+    return;
   }
-  if (staged === 2) log(`browser LLM (Gemma 4 E2B-it) -> ${destDir}`);
+  if (isLfsPointer(gguf)) {
+    warn(`browser LLM file is a Git-LFS pointer stub: ${gguf} (skipped). Run \`git lfs pull\`.`);
+    return;
+  }
+  copyInto(gguf, join(destDir, 'model.gguf'));
+  log(`browser LLM (LiquidAI LFM2-1.2B-RAG) -> ${destDir}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -330,7 +326,7 @@ if (!NO_LLM) {
   prepareWllamaRuntime();
   prepareBrowserLLM();
 } else {
-  log('--no-llm: skipping browser-LLM runtime (wllama WASM/compat) + Gemma 4 E2B-it weights.');
+  log('--no-llm: skipping browser-LLM runtime (wllama WASM/compat) + LiquidAI LFM2-1.2B-RAG weights.');
 }
 prepareOnnxRuntimeWasm();
 
@@ -379,8 +375,9 @@ if (hadError) {
 // ---------------------------------------------------------------------------
 const MANIFEST_PATH = join(PUBLIC_MODELS, 'manifest.json');
 const CHECKSUMS_PATH = join(PUBLIC_MODELS, 'manifest.checksums.json');
-// Issue #37 P4: streaming SHA-256 — the wllama GGUF is ~2.9 GB, above Node's
-// ~2 GB Buffer cap, so readFileSync would throw RangeError on the LLM weights.
+// Issue #37 P4: streaming SHA-256 — the browser-LLM GGUF is a multi-hundred-MB
+// binary (LFM2-1.2B-RAG Q4_K_M is ~0.73 GB; a future larger model could again
+// exceed Node's ~2 GB Buffer cap), so streaming keeps hashing safe at any size.
 async function sha256OfFile(filePath) {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(filePath)) {

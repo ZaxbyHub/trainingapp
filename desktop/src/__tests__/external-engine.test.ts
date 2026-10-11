@@ -476,10 +476,10 @@ describe('direct chat, status and cancellation', () => {
 describe('#154 AC3: the local llama.cpp prompt carries a groundedness rule', () => {
   it('the local path prepends the same flat grounded string and pins a grounded system prompt', async () => {
     const modelDir = tmp('ext-local-');
-    fs.mkdirSync(path.join(modelDir, 'gemma-4-e2b-it'), { recursive: true });
-    fs.mkdirSync(path.join(modelDir, 'lfm2.5-vl-450m'), { recursive: true });
-    fs.writeFileSync(path.join(modelDir, 'gemma-4-e2b-it', 'model.gguf'), 'x');
-    fs.writeFileSync(path.join(modelDir, 'lfm2.5-vl-450m', 'model.gguf'), 'x');
+    fs.mkdirSync(path.join(modelDir, 'lfm2.5-2.6b'), { recursive: true });
+    fs.mkdirSync(path.join(modelDir, 'lfm2-1.2b-rag'), { recursive: true });
+    fs.writeFileSync(path.join(modelDir, 'lfm2.5-2.6b', 'model.gguf'), 'x');
+    fs.writeFileSync(path.join(modelDir, 'lfm2-1.2b-rag', 'model.gguf'), 'x');
     const seen: string[] = [];
     const engine = new LlamaEngine({
       modelDir,

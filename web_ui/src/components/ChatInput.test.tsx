@@ -4,36 +4,18 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { ChatInput } from './ChatInput';
 
-// Mock image processing for attach tests
-const mockPrepareImage = vi.fn();
-const mockValidateImageFile = vi.fn();
-
-vi.mock('../lib/processing/image-input', () => ({
-  validateImageFile: (...args: unknown[]) => mockValidateImageFile(...args),
-  prepareImage: (...args: unknown[]) => mockPrepareImage(...args),
-}));
+// Issue #156: the image-attach control is gone with the text-only LFM2 model
+// swap — the composer is text-only (see the Image Attachment removal describe
+// at the bottom for the regression pin).
 
 describe('ChatInput', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     cleanup();
-    mockPrepareImage.mockReset();
-    mockValidateImageFile.mockReset();
-    // Default: images are valid and prepareImage returns a stub AttachedImage
-    mockValidateImageFile.mockReturnValue({ valid: true });
-    mockPrepareImage.mockResolvedValue({
-      id: 'img-1',
-      dataUrl: 'data:image/png;base64,abc',
-      data: new ArrayBuffer(0),
-      mimeType: 'image/png',
-      fileName: 'test.png',
-      width: 100,
-      height: 100,
-    });
   });
 
   afterEach(() => {
@@ -358,129 +340,24 @@ describe('ChatInput', () => {
     });
   });
 
-  describe('Image Attachment', () => {
-    it('does not render attach button when imageUploadEnabled is false (default)', () => {
+  describe('Image Attachment removal (issue #156)', () => {
+    it('renders no attach button, file input, or image affordance', () => {
       render(<ChatInput onSend={vi.fn()} isLoading={false} onCancel={vi.fn()} />);
       expect(screen.queryByRole('button', { name: /attach image/i })).not.toBeInTheDocument();
+      expect(document.querySelector('input[type="file"]')).toBeNull();
     });
 
-    it('renders attach button when imageUploadEnabled is true', () => {
-      render(<ChatInput onSend={vi.fn()} isLoading={false} onCancel={vi.fn()} imageUploadEnabled />);
-      expect(screen.getByRole('button', { name: /attach image/i })).toBeInTheDocument();
-    });
-
-    it('calls onSend with images when files are attached then sent', async () => {
+    it('calls onSend with the text argument only', () => {
       const mockSend = vi.fn();
-      render(<ChatInput onSend={mockSend} isLoading={false} onCancel={vi.fn()} imageUploadEnabled />);
-
-      // Trigger file selection via the hidden input
-      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-      const file = new File([''], 'test.png', { type: 'image/png' });
-      Object.defineProperty(fileInput, 'files', { value: [file], writable: false });
-      fireEvent.change(fileInput);
-
-      // Wait for prepareImage promise
-      await act(async () => { await Promise.resolve(); });
-
-      // Type and send
-      const textarea = screen.getByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)');
-      fireEvent.change(textarea, { target: { value: 'Describe this image' } });
-      fireEvent.click(screen.getByRole('button', { name: /send message/i }));
-
-      expect(mockSend).toHaveBeenCalledWith('Describe this image', expect.arrayContaining([
-        expect.objectContaining({ id: 'img-1', mimeType: 'image/png' }),
-      ]));
-    });
-
-    it('calls onSend with text only when no images attached', () => {
-      const mockSend = vi.fn();
-      render(<ChatInput onSend={mockSend} isLoading={false} onCancel={vi.fn()} imageUploadEnabled />);
+      render(<ChatInput onSend={mockSend} isLoading={false} onCancel={vi.fn()} />);
 
       const textarea = screen.getByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)');
       fireEvent.change(textarea, { target: { value: 'Text only message' } });
       fireEvent.click(screen.getByRole('button', { name: /send message/i }));
 
-      // onSend called with just text, no second argument
       expect(mockSend).toHaveBeenCalledWith('Text only message');
       expect(mockSend).toHaveBeenCalledTimes(1);
       expect(mockSend.mock.calls[0]).toHaveLength(1);
-    });
-
-    it('clears images after send', async () => {
-      render(<ChatInput onSend={vi.fn()} isLoading={false} onCancel={vi.fn()} imageUploadEnabled />);
-
-      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-      const file = new File([''], 'test.png', { type: 'image/png' });
-      Object.defineProperty(fileInput, 'files', { value: [file], writable: false });
-      fireEvent.change(fileInput);
-      await act(async () => { await Promise.resolve(); });
-
-      // Send
-      const textarea = screen.getByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)');
-      fireEvent.change(textarea, { target: { value: 'hi' } });
-      fireEvent.click(screen.getByRole('button', { name: /send message/i }));
-
-      // Image preview should be gone
-      expect(screen.queryByRole('img')).not.toBeInTheDocument();
-    });
-
-    it('shows error when maxImages exceeded on multi-select', async () => {
-      // Set up prepareImage to return unique ids for each call
-      let callCount = 0;
-      mockPrepareImage.mockImplementation(async () => ({
-        id: `img-${++callCount}`,
-        dataUrl: 'data:image/png;base64,abc',
-        data: new ArrayBuffer(0),
-        mimeType: 'image/png',
-        fileName: `test${callCount}.png`,
-        width: 100,
-        height: 100,
-      }));
-
-      render(<ChatInput onSend={vi.fn()} isLoading={false} onCancel={vi.fn()} imageUploadEnabled maxImages={2} />);
-
-      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-      const files = [
-        new File([''], 'a.png', { type: 'image/png' }),
-        new File([''], 'b.png', { type: 'image/png' }),
-        new File([''], 'c.png', { type: 'image/png' }),
-      ];
-      Object.defineProperty(fileInput, 'files', { value: files, writable: false });
-      fireEvent.change(fileInput);
-      await act(async () => { await new Promise(r => setTimeout(r, 10)); });
-
-      expect(screen.getByRole('alert')).toHaveTextContent(/at most 2 images/i);
-    });
-
-    it('shows error when file validation fails', async () => {
-      mockValidateImageFile.mockReturnValue({ valid: false, error: 'File too large.' });
-
-      render(<ChatInput onSend={vi.fn()} isLoading={false} onCancel={vi.fn()} imageUploadEnabled />);
-
-      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-      const file = new File([''], 'bad.png', { type: 'image/png' });
-      Object.defineProperty(fileInput, 'files', { value: [file], writable: false });
-      fireEvent.change(fileInput);
-      await act(async () => { await Promise.resolve(); });
-
-      expect(screen.getByRole('alert')).toHaveTextContent('File too large.');
-    });
-
-    it('removes image when remove button clicked', async () => {
-      render(<ChatInput onSend={vi.fn()} isLoading={false} onCancel={vi.fn()} imageUploadEnabled />);
-
-      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-      const file = new File([''], 'test.png', { type: 'image/png' });
-      Object.defineProperty(fileInput, 'files', { value: [file], writable: false });
-      fireEvent.change(fileInput);
-      await act(async () => { await Promise.resolve(); });
-
-      // Image preview should appear
-      const removeBtn = screen.getByRole('button', { name: /remove test\.png/i });
-      expect(removeBtn).toBeInTheDocument();
-      fireEvent.click(removeBtn);
-
-      expect(screen.queryByRole('button', { name: /remove/i })).not.toBeInTheDocument();
     });
   });
 

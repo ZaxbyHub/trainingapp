@@ -103,10 +103,8 @@ export function buildHistorySnapshot(
   // PRR-001: when the cap splits mid-conversation, slice(-N) can land on an
   // assistant-first window (e.g. [u,a,u,a,u,a,u].slice(-6) = [a,u,a,u,a,u]).
   // A leading assistant turn is orphaned context — it has no preceding user
-  // turn in the window — and, under the Gemma 4 chat-template override, it
-  // also mis-targets `loop.first` so a `system_prefix` kwarg would be silently
-  // dropped (the assistant branch has no prefix handling). Drop a leading
-  // assistant turn so the window always opens user-first.
+  // turn in the window. Drop a leading assistant turn so the window always
+  // opens user-first.
   while (windowed.length > 1 && windowed[0].role === 'assistant') {
     windowed = windowed.slice(1);
   }
@@ -114,8 +112,8 @@ export function buildHistorySnapshot(
   // turn was dropped (error / abstain / empty card) or never happened — and
   // the caller is about to append the CURRENT user turn, so sending this one
   // would put two consecutive `user` messages on the wire. Third-party jinja
-  // chat templates (llama-server --jinja, LM Studio Gemma/Mistral templates)
-  // can reject that shape outright, wedging the conversation until New Chat
+  // chat templates (llama-server --jinja, LM Studio templates) can reject
+  // that shape outright, wedging the conversation until New Chat
   // (Try-again cannot recover it). An unanswered question carries no answer
   // context, so drop trailing user turns instead of sending them.
   while (windowed.length > 0 && windowed[windowed.length - 1].role === 'user') {

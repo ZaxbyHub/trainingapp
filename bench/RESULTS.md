@@ -129,6 +129,10 @@ cells are appended per recorded run.
 | devstation | gemma-4-e2b-it | Q4_K_M | 4 | 64 | 0.61 | 9860.1 | 2818 | node-llama-cpp | pass |
 | devstation | lfm2.5-vl-450m | Q4_K_M | 8 | 64 | 37.12 | 969.2 | 619 | node-llama-cpp | pass |
 | devstation | lfm2.5-vl-450m | Q4_K_M | 4 | 64 | 22.72 | 1343.1 | 617 | node-llama-cpp | pass |
+| devstation | lfm2-1.2b-rag | Q4_K_M | 4 | 64 | 8.26 | 4044.7 | 1413 | node-llama-cpp | pass |
+| devstation | lfm2-1.2b-rag | Q4_K_M | 8 | 64 | 14.16 | 2630.5 | 1412 | node-llama-cpp | pass |
+| devstation | lfm2.5-2.6b | Q4_K_M | 4 | 64 | 3.87 | 9587.4 | 3069 | node-llama-cpp | pass |
+| devstation | lfm2.5-2.6b | Q4_K_M | 8 | 64 | 6.17 | 6353.7 | 3070 | node-llama-cpp | pass |
 
 ## Vulkan attempt
 

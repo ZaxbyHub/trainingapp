@@ -31,7 +31,7 @@ vi.mock('../../lib/llm/readiness-gate', () => ({
   resetReadinessCache: vi.fn(),
 }));
 vi.mock('../../lib/models/model-manifest', () => ({
-  LLM_MODEL_DIR: 'gemma-4-e2b-it',
+  LLM_MODEL_DIR: 'lfm2-1.2b-rag',
 }));
 vi.mock('../../lib/desktop-session', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../lib/desktop-session')>();
@@ -111,7 +111,7 @@ describe('ChatPage header model chip', () => {
     mockContext('browser-local');
     const onOpenSettings = renderChat();
     const chip = screen.getByTestId('chat-model-chip');
-    expect(chip).toHaveTextContent('Local · Google Gemma 4 E2B-it');
+    expect(chip).toHaveTextContent('Local · LiquidAI LFM2-1.2B-RAG');
     fireEvent.click(chip);
     expect(onOpenSettings).toHaveBeenCalledWith(MODEL_CONNECTION_SECTION_ID);
   });
@@ -174,7 +174,7 @@ describe('ChatPage header model chip', () => {
   test('header chip follows an endpoint save without a remount (review round 2)', () => {
     mockContext('browser-local');
     renderChat();
-    expect(screen.getByTestId('chat-model-chip')).toHaveTextContent('Local · Google Gemma 4 E2B-it');
+    expect(screen.getByTestId('chat-model-chip')).toHaveTextContent('Local · LiquidAI LFM2-1.2B-RAG');
     act(() => {
       saveExternalConfig({ enabled: true, protocol: 'openai', baseUrl: 'http://127.0.0.1:1234/v1', model: 'saved-model' });
     });
