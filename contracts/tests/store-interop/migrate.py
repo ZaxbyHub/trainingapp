@@ -179,7 +179,10 @@ def _selftest() -> int:
         raise RuntimeError(
             f"SCHEMA-BUMP-CONTRACT: contracts/store.schema.sql seed {seed} != "
             f"migrate.py CURRENT_SCHEMA_VERSION {CURRENT_SCHEMA_VERSION}; "
-            "land both migrate.ts and migrate.py in the same commit (#100)"
+            # Deliberately does not name both ladder files on one line: the
+            # canonical four-token #100 acknowledgment is single-sourced in
+            # contracts/store.schema.sql (frozen check C4 reads raw lines).
+            "land both runtime ladders in the same commit (#100)"
         )
     with tempfile.TemporaryDirectory() as tmp:
         db_path = Path(tmp) / "selftest.sqlite"
