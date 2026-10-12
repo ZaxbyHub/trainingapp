@@ -6,8 +6,12 @@
 //   AC1: single-flight start() on BOTH hosts (Node + Sidecar), store close
 //        proof (db.open), and a Windows-strength no-leak assertion;
 //   AC2: explicit connection pragmas (journal_mode=wal, busy_timeout>0) and
-//        the WAL-refusal read-back behavior (throw while a foreign connection
-//        holds a non-WAL file open; succeed once it closes);
+//        fail-loud refusal behavior (held write lock -> throw; idle foreign
+//        connection -> succeed with verified wal). HONESTY NOTE: on THIS
+//        build the refusal throws from the pragma statement itself
+//        (better-sqlite3 SQLITE_BUSY) before the production read-back branch
+//        runs — no test here exercises that branch; it is cross-build defense
+//        for builds where the conversion is refused silently;
 //   AC5: direct closeStore() contract pin + loadSchemaSql substitution pin;
 //   AC6: openStore throws on a relative dbPath.
 import { afterEach, describe, expect, it } from 'vitest';
@@ -206,7 +210,8 @@ describe('i100 AC2: store connection pragmas', () => {
     };
     // A foreign connection holding a write lock mid-transaction is the real
     // refusal shape: better-sqlite3 surfaces it as "database is locked" and
-    // openStore fails loud (its read-back also covers silent-refusal builds)
+    // openStore fails loud (SQLITE_BUSY from the pragma on this build; the
+    // production read-back covers silent-refusal builds)
     // instead of quietly serving with journal_mode=delete.
     const foreign = new Database(dbPath);
     foreign.exec('BEGIN IMMEDIATE');
