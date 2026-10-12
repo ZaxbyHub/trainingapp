@@ -163,10 +163,12 @@ export function openStore(options: StoreOptions): StoreHandle {
     // pragma returns the unchanged mode — without the read-back the hardening
     // would vanish exactly in the shared-file case it exists for. Refusal now
     // fails loud (openStore throws; the host degrades via its failure
-    // isolation). busy_timeout=5000 matches both drivers' previous implicit
-    // defaults, made explicit.
-    db.pragma('journal_mode = WAL');
+    // isolation). busy_timeout FIRST (swarm-pr-review PRR-008) so the
+    // handler covers the conversion itself, matching the interop mirrors;
+    // busy_timeout=5000 matches both drivers' previous implicit defaults,
+    // made explicit.
     db.pragma('busy_timeout = 5000');
+    db.pragma('journal_mode = WAL');
     const journalMode = String(db.pragma('journal_mode', { simple: true })).toLowerCase();
     if (journalMode !== 'wal') {
       throw new Error(

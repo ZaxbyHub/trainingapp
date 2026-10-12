@@ -201,6 +201,15 @@ def node_side(db_path: Path, mode: str) -> dict:
 
 
 def python_write(db_path: Path, fixture: dict) -> dict:
+    # issue #100 swarm-pr-review PRR-020: write-direction parity with
+    # interop_node.mjs --write — clear any previous run's db/-wal/-shm so a
+    # rewrite into an existing path starts fresh instead of dying on the
+    # non-idempotent schema apply (node->python already swept; CI always uses
+    # a fresh temp dir so the asymmetry was invisible there).
+    for suffix in ("", "-wal", "-shm"):
+        stale = Path(f"{db_path}{suffix}")
+        if stale.exists():
+            stale.unlink()
     conn = connect_with_vec(db_path)
     try:
         apply_schema(conn, fixture)

@@ -34,6 +34,12 @@ function findRepoRoot(dir: string): string {
   throw new Error('repo root not found (marker contracts/api.openapi.yaml)');
 }
 const REPO_ROOT = findRepoRoot(path.join(THIS_DIR, '..', '..', '..'));
+// swarm-pr-review PRR-024: repo convention — skip (not hard-fail) when the
+// better-sqlite3 native addon is absent (CI always installs it). The frozen
+// acceptance probes deliberately do NOT use this guard; the permanent tests
+// follow the b5/b6 convention.
+const NATIVE_DEPS_PRESENT = fs.existsSync(path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'));
+const itReal = NATIVE_DEPS_PRESENT ? it : it.skip;
 
 const tempDirs: string[] = [];
 const START_CWD = process.cwd();
@@ -75,7 +81,7 @@ async function loadStoreModule() {
 }
 
 describe('i100 AC1: start() is single-flight on BOTH hosts', () => {
-  it('NodeBackendHost: concurrent start() calls share one handle/one listener/one store', async () => {
+  itReal('NodeBackendHost: concurrent start() calls share one handle/one listener/one store', async () => {
     const dir = makeTempDir('i100-node-sf-');
     const dbPath = path.join(dir, 'store.db');
     const { NodeBackendHost } = await import('../../main/backend/index');
@@ -103,7 +109,7 @@ describe('i100 AC1: start() is single-flight on BOTH hosts', () => {
     tempDirs.pop();
   });
 
-  it('SidecarBackendHost: concurrent start() calls share one handle and one child', async () => {
+  itReal('SidecarBackendHost: concurrent start() calls share one handle and one child', async () => {
     // REAL stub child (SidecarManager's spawnFn/pingFn are not injectable
     // through the host): serves GET /health 200 on 127.0.0.1:$API_PORT — the
     // manager's documented env contract. Low healthTimeoutMs so a broken stub
@@ -124,7 +130,7 @@ describe('i100 AC1: start() is single-flight on BOTH hosts', () => {
     await host.stop();
   });
 
-  it('stop() during an in-flight start waits for it, then a restart works', async () => {
+  itReal('stop() during an in-flight start waits for it, then a restart works', async () => {
     const dir = makeTempDir('i100-stop-during-');
     const dbPath = path.join(dir, 'store.db');
     const { NodeBackendHost } = await import('../../main/backend/index');
@@ -158,7 +164,7 @@ describe('i100 AC1: start() is single-flight on BOTH hosts', () => {
 });
 
 describe('i100 AC2: store connection pragmas', () => {
-  it('openStore sets journal_mode=wal and busy_timeout>0 on a fresh file', async () => {
+  itReal('openStore sets journal_mode=wal and busy_timeout>0 on a fresh file', async () => {
     const dir = makeTempDir('i100-pragmas-');
     const { openStore } = await loadStoreModule();
     const store = openStore({ dbPath: path.join(dir, 'store.db'), dims: 8, repoRoot: REPO_ROOT });
@@ -172,7 +178,7 @@ describe('i100 AC2: store connection pragmas', () => {
     }
   });
 
-  it('a second accessor does not defeat the hardening: openStore verifies wal with a foreign idle connection open', async () => {
+  itReal('a second accessor does not defeat the hardening: openStore verifies wal with a foreign idle connection open', async () => {
     const dir = makeTempDir('i100-wal-foreign-');
     const dbPath = path.join(dir, 'store.db');
     const require2 = createRequire(import.meta.url);
@@ -199,7 +205,7 @@ describe('i100 AC2: store connection pragmas', () => {
     }
   });
 
-  it('WAL conversion refused under a held write lock fails loud; retry after release succeeds', async () => {
+  itReal('WAL conversion refused under a held write lock fails loud; retry after release succeeds', async () => {
     const dir = makeTempDir('i100-wal-refuse-');
     const dbPath = path.join(dir, 'store.db');
     const require2 = createRequire(import.meta.url);
@@ -218,7 +224,12 @@ describe('i100 AC2: store connection pragmas', () => {
     foreign.prepare('CREATE TABLE probe (x)').run();
     try {
       const { openStore } = await loadStoreModule();
-      expect(() => openStore({ dbPath, dims: 8, repoRoot: REPO_ROOT })).toThrow();
+      // swarm-pr-review PRR-014: bind the title to the pragma/read-back path —
+      // a bare toThrow() also passes if the whole pragma block is deleted
+      // (the later schema exec throws SQLITE_BUSY under the held lock).
+      expect(() => openStore({ dbPath, dims: 8, repoRoot: REPO_ROOT })).toThrow(
+        /locked|journal_mode/,
+      );
     } finally {
       try {
         foreign.exec('ROLLBACK');
@@ -240,7 +251,7 @@ describe('i100 AC2: store connection pragmas', () => {
 });
 
 describe('i100 AC5: store module coverage pins', () => {
-  it('closeStore() closes the underlying connection directly', async () => {
+  itReal('closeStore() closes the underlying connection directly', async () => {
     const dir = makeTempDir('i100-closestore-');
     const { openStore, closeStore } = await loadStoreModule();
     const store = openStore({ dbPath: path.join(dir, 'store.db'), dims: 8, repoRoot: REPO_ROOT });
@@ -249,7 +260,7 @@ describe('i100 AC5: store module coverage pins', () => {
     expect(store.db.open).toBe(false);
   });
 
-  it('loadSchemaSql substitutes every __EMBEDDING_DIMS__ occurrence', async () => {
+  itReal('loadSchemaSql substitutes every __EMBEDDING_DIMS__ occurrence', async () => {
     const { loadSchemaSql } = await loadStoreModule();
     const sql = loadSchemaSql(REPO_ROOT, 8);
     // Two occurrences in the DDL body: the vec0 width and the meta seed.
@@ -260,7 +271,7 @@ describe('i100 AC5: store module coverage pins', () => {
 });
 
 describe('i100 AC6: openStore rejects a relative dbPath', () => {
-  it('throws before creating cwd-relative directories', async () => {
+  itReal('throws before creating cwd-relative directories', async () => {
     const dir = makeTempDir('i100-relpath-');
     process.chdir(dir);
     const { openStore } = await loadStoreModule();

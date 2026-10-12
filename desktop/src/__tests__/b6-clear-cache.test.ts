@@ -124,11 +124,15 @@ describe('b6 C7 (AC7): host-level clear cache', () => {
       // pre-clear db/-wal/-shm before re-initializing, but the reopened store
       // now sets journal_mode=wal at open and legitimately recreates fresh,
       // empty sidecars. The former "-wal/-shm absent" bar encoded the delete-
-      // journal era and is superseded by the content bars: a surviving
-      // PRE-clear sidecar would resurrect the ingested row, so the
-      // still-serving host must report an empty list (next line) and the
-      // post-shutdown probe must find zero docs rows plus a verified-wal
-      // journal (asserted below).
+      // journal era; swarm-pr-review PRR-021 replaces it with the POSITIVE
+      // recreation bar below, so the doc claim "the reopened store recreates
+      // the sidecars" stays pinned. Content still carries the no-stale-bytes
+      // contract: a surviving PRE-clear sidecar would resurrect the ingested
+      // row, so the still-serving host must report an empty list (next line)
+      // and the post-shutdown probe must find zero docs rows plus a
+      // verified-wal journal (asserted below).
+      expect(fs.existsSync(`${storePath}-wal`)).toBe(true);
+      expect(fs.existsSync(`${storePath}-shm`)).toBe(true);
 
       // Still serving WITHOUT a restart, from a re-initialized empty store.
       expect((await httpJson(handle.port, 'GET', '/documents', undefined, TOKEN)).json?.total).toBe(0);

@@ -66,10 +66,12 @@ const sha256Hex = (text) =>
   requireFromDesktop('node:crypto').createHash('sha256').update(text, 'utf8').digest('hex');
 
 function openAndLoad(dbPath, mode) {
-  if (mode === 'write' && fs.existsSync(dbPath)) {
-    // issue #100: this harness now opens in WAL mode (below), so a rewrite
-    // must clear the previous run's sidecars along with the db file — an
-    // orphaned -wal from the old file would outlive its database.
+  if (mode === 'write') {
+    // issue #100: this harness opens in WAL mode (below), so a rewrite must
+    // clear the previous run's sidecars along with the db file — an orphaned
+    // -wal from the old file would outlive its database. Gate on the MODE, not
+    // on the db file existing (swarm-pr-review PRR-019): the orphan case the
+    // comment names is exactly db-gone/-wal-present.
     for (const suffix of ['', '-wal', '-shm']) {
       const p = `${dbPath}${suffix}`;
       if (fs.existsSync(p)) fs.rmSync(p);

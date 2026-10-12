@@ -103,4 +103,25 @@ describe('SCHEMA-BUMP-CONTRACT (issue #100 item 3): version copies agree', () =>
         `and pin the new version's DDL hash (actual=${actual})`,
     ).toBe(pinned);
   });
+
+  it('both ladders actually contain a step for the current seed (not just matching constants)', () => {
+    // swarm-pr-review PRR-002: agreeing constants are not enough — a bump to
+    // seed 4 in all three files with no `if version < 4` step would leave
+    // existing v3 stores silently un-migrated. Pin the step's textual form in
+    // both ladders for the CURRENT seed.
+    const seed = schemaSeed(schemaText());
+    const migrateTs = fs.readFileSync(
+      path.join(REPO_ROOT, 'desktop', 'main', 'backend', 'store', 'migrate.ts'),
+      'utf8',
+    );
+    const migratePy = fs.readFileSync(MIGRATE_PY_PATH, 'utf8');
+    expect(
+      migrateTs,
+      `SCHEMA-BUMP-CONTRACT: desktop/main/backend/store/migrate.ts has no ladder step for schema version ${seed} — add the step in the same commit as the bump (#100)`,
+    ).toContain(`if (version < ${seed})`);
+    expect(
+      migratePy,
+      `SCHEMA-BUMP-CONTRACT: contracts/tests/store-interop/migrate.py has no ladder step for schema version ${seed} — add the step in the same commit as the bump (#100)`,
+    ).toContain(`if version < ${seed}:`);
+  });
 });

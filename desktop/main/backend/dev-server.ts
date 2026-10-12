@@ -91,14 +91,42 @@ export function parseArgs(argv: string[]): DevServerArgs {
 /**
  * issue #100 item 5a: the one store-path resolution — CLI flag wins over the
  * TRAININGAPP_DESKTOP_STORE_PATH env fallback, undefined when neither is set.
- * Every consumer in this file (engine sidecar dir, host storePath, backups
- * dir) resolves through here so the precedence cannot drift per site.
+ * A present-but-EMPTY value counts as unset at BOTH levels (swarm-pr-review
+ * PRR-013): `??` alone let `--store-path ""` beat a valid env value, and the
+ * emptiness check alone still let it shadow the env — an empty flag is an
+ * empty-variable accident, so fall through rather than derive cwd-relative
+ * dirs from "". Every consumer in this file (engine sidecar dir, host
+ * storePath, backups dir) resolves through here so the precedence cannot
+ * drift per site.
  */
 export function resolveStorePath(
   args: Pick<DevServerArgs, 'storePath'>,
   env: NodeJS.ProcessEnv,
 ): string | undefined {
-  return args.storePath ?? env.TRAININGAPP_DESKTOP_STORE_PATH;
+  for (const candidate of [args.storePath, env.TRAININGAPP_DESKTOP_STORE_PATH]) {
+    if (candidate !== undefined && candidate.length > 0) return candidate;
+  }
+  return undefined;
+}
+
+/**
+ * issue #100 item 5a / swarm-pr-review PRR-033: wire the three shutdown
+ * triggers (stdin end, SIGINT, SIGTERM) to ONE callback. Exported so the
+ * registration itself is unit-testable with fake emitters; the issue's item-5
+ * coverage claim explicitly names signal handling. The callback must stop the
+ * host BEFORE exiting (no-orphan rule): a bare Ctrl+C used to exit without
+ * stopping the host, orphaning a sidecar child.
+ */
+export function installShutdownHandlers(
+  stdin: { on(event: 'end', cb: () => void): unknown },
+  proc: { on(event: 'SIGINT' | 'SIGTERM', cb: () => void): unknown },
+  stopAndExit: () => void,
+): void {
+  // Keep running until stdin closes (checks/CI hold it open; killing the
+  // parent closes it). Signals get the same no-orphan treatment.
+  stdin.on('end', stopAndExit);
+  proc.on('SIGINT', stopAndExit);
+  proc.on('SIGTERM', stopAndExit);
 }
 
 async function main(): Promise<void> {
@@ -155,12 +183,7 @@ async function main(): Promise<void> {
   const stopAndExit = (): void => {
     void host.stop().finally(() => process.exit(0));
   };
-  // Keep running until stdin closes (checks/CI hold it open; killing the
-  // parent closes it). Signals get the same no-orphan treatment — a bare
-  // Ctrl+C used to exit without stopping the host, orphaning a sidecar child.
-  process.stdin.on('end', stopAndExit);
-  process.on('SIGINT', stopAndExit);
-  process.on('SIGTERM', stopAndExit);
+  installShutdownHandlers(process.stdin, process, stopAndExit);
   process.stdin.resume();
 }
 
