@@ -71,15 +71,17 @@ export function capHistoryTokens<T extends HistoryTurn>(history: T[], maxChars: 
   }
   // A single over-budget survivor is tail-truncated to fit. PRR-015: guard
   // maxChars <= 0 (JS slice(-0) returns the FULL string — the truncation
-  // would silently no-op at a degenerate bound) and trim on a code-point
-  // boundary so the cut cannot emit a lone surrogate.
+  // would silently no-op at a degenerate bound) and trim on code-point
+  // boundaries: the CUT START is the split hazard (a maxChars landing inside
+  // a surrogate pair leaves a lone LOW surrogate first), and the tail is
+  // defensively stripped of an unpaired HIGH surrogate.
   const lone = kept.length === 1 ? kept[0]! : null;
   if (lone !== null && String(lone.content ?? '').length > maxChars) {
     let content = maxChars > 0 ? String(lone.content ?? '').slice(-maxChars) : '';
     if (content.length > 0) {
+      const first = content.charCodeAt(0);
+      if (first >= 0xdc00 && first <= 0xdfff) content = content.slice(1);
       const last = content.charCodeAt(content.length - 1);
-      // A high surrogate (0xD800-0xDBFF) with no following low surrogate is a
-      // split pair — drop it.
       if (last >= 0xd800 && last <= 0xdbff) content = content.slice(0, -1);
     }
     kept = [{ ...lone, content } as T];
