@@ -539,12 +539,15 @@ the Python backend's flat defaults by design. Optional properties explain the va
 - `reranking_available` — whether a reranker can run;
 - `not_applied` — every stored keyspace key with no desktop reader. Today that includes
   `rag_chunk_size`, `rag_chunk_overlap`, `rag_min_similarity`, `rag_hybrid_search`,
-  `rag_context_truncation`, `rag_retrieval_window`, `rag_initial_retrieval_top_k`,
+  `rag_retrieval_window`, `rag_initial_retrieval_top_k`,
   `rag_rerank_top_k` and the stored `rag_packs_recency_*` values (pack recency comes from the
   `TRAININGAPP_PACKS_RECENCY_*` environment variables). These keys are validated and saved
   but do not change desktop behavior; `rag_min_similarity` and `rag_hybrid_search` stay
   unwired on purpose (the calibrated relevance floor of ADR-0007 governs, and fused scores are
-  not cosine similarities).
+  not cosine similarities). `rag_context_truncation` left this list in issue #157: the
+  desktop local path now reads it as an additional CHARACTER ceiling on the assembled
+  grounded context (`min(context-window-derived budget, rag_context_truncation)` — it
+  can only tighten the bound, never loosen it).
 
 The Settings page derives the selected preset from these values: a preset is shown only when
 every explicitly set preset key matches it; otherwise it shows "Custom server settings", or

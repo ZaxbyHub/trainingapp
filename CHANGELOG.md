@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+- **Desktop local RAG gets a token-based context and history budget (issue #157)**: the
+  desktop inference path now bounds its prompt below the model's 8,192-token context
+  window deterministically, porting the browser's F11 reserved-token approach. The
+  grounded context drops trailing whole retrieved chunks (never truncates mid-chunk)
+  once the assembled prompt would exceed what remains after reserving the answer
+  budget, a safety margin, and every other prompt channel (system prompt, grounded
+  instruction, question, and the conversation history). Conversation history is now
+  token-capped (2,048 estimated tokens / 8,192 chars) in addition to the 12-turn cap:
+  oldest whole turns drop first, the surviving window re-anchors user-first, and a lone
+  oversized turn is tail-truncated — previously twelve individually small turns could
+  seed unbounded history and silently trigger the library's default context shift,
+  erasing retrieved evidence mid-generation. `rag_context_truncation` is no longer a
+  dead setting: GET /settings now reports it applied, and its value acts as an
+  additional CHARACTER ceiling on the assembled grounded context (it can only tighten
+  the context-window-derived bound, never loosen it; desktop local path only). When
+  the budget drops chunks, `sources`, `context_length`, and citations reflect only the
+  surviving evidence. Within-budget prompts assemble byte-identically to before.
+
 - **Desktop LLM tiers swap to the LFM lineup (issue #156)**: both desktop inference
   profiles change — Quality is now `lfm2.5-2.6b` (LFM2.5-2.6B, Q4_K_M,
   1,674,455,040 bytes) and Fast is now `lfm2-1.2b-rag` (LFM2-1.2B-RAG, Q4_K_M,

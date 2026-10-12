@@ -558,6 +558,23 @@ function nonDefaultValue(key: string, reported: unknown): unknown {
   throw new Error(`no non-default value found for ${key}`);
 }
 
+/**
+ * Issue #157: keys whose query-time effect is a CEILING cannot show an
+ * observable change at a ±1-of-default probe value — the recording surface's
+ * single small chunk sits far under a 20,000-char ceiling, so a correctly
+ * wired key would fail the "claimed applied but changed nothing observable"
+ * arm. For these keys the probe uses a BINDING value instead: small enough
+ * that the ceiling demonstrably bites (every grounded row drops, `cited`
+ * empties, and `grounding` flips in the observable signature). This
+ * STRENGTHENS the guardrail rather than relaxing it — the assertion itself is
+ * untouched, and a dead key produces no signature change at ANY probe value,
+ * binding ones included, so discrimination is preserved. Key-scoped data, not
+ * generic logic.
+ */
+const BINDING_PROBE_VALUES: Record<string, number> = {
+  rag_context_truncation: 10,
+};
+
 describe('settings-wiring-honesty guardrail (b): every desktop keyspace key is applied or reported', () => {
   const keyspace = Object.keys(SETTING_BOUNDS);
 
@@ -570,7 +587,9 @@ describe('settings-wiring-honesty guardrail (b): every desktop keyspace key is a
     const baseline = await observe(null);
     const before = baseline.engine.responseSettings();
     const responseKey = key.replace(/^rag_/, '');
-    const value = nonDefaultValue(key, before[responseKey]);
+    // Issue #157: ceiling keys probe with a BINDING value (see
+    // BINDING_PROBE_VALUES); everything else keeps the ±-of-default probe.
+    const value = BINDING_PROBE_VALUES[key] ?? nonDefaultValue(key, before[responseKey]);
     const after = await observe({ [key]: value });
     const notApplied = after.engine.responseSettings().not_applied as string[];
     if (notApplied.includes(key)) {

@@ -216,17 +216,31 @@ const SAMPLER_TOP_P = 0.9;
 // with repeat penalty off, and #158's bounded window existed to stop gemma-4
 // repeating itself; no gemma tier remains, and penalising the LFM tiers would
 // diverge from the measured configuration the ADR now records.
-export const CONTEXT_SIZE = 8192; // DEFAULT_N_CTX parity (web_ui/src/lib/llm/wllama-service.ts:39)
-// Exported for the E2 first-run wizard's RAM gate (first-run/ram-gate.ts), which must
-// estimate with the SAME context size the engine will actually create — one source of truth.
+// Issue #157: the context-window constant moved to prompt-budget.ts (single
+// source of truth — the budget math must derive from the same window the
+// context is created with). Re-exported so existing importers (index.ts, the
+// E2 wizard's RAM gate, tests) are unchanged.
+export { CONTEXT_SIZE } from './prompt-budget.js';
+import { CONTEXT_SIZE } from './prompt-budget.js';
+// Issue #157: the desktop port of the browser F11 budget + the PR #48
+// token-capped history (see prompt-budget.ts for the contract).
+import {
+  CHARS_PER_TOKEN,
+  MAX_HISTORY_BUDGET_TOKENS,
+  capHistoryTokens,
+  groundedContextBudgetChars,
+} from './prompt-budget.js';
 const CANCEL_POLL_MS = 20;
 // Bounds shared by the PUT /settings gate and the env-var ingress so neither
 // path can reach createContext() with an unvalidated thread count.
 export const INFERENCE_THREADS_MIN = 1;
 export const INFERENCE_THREADS_MAX = 64;
 // Carry at most this many history turns: the browser client caps at 6
-// (buildHistorySnapshot), but the contract accepts unbounded arrays and an
-// oversized history would overflow CONTEXT_SIZE on the resident model.
+// (buildHistorySnapshot), but the contract accepts unbounded arrays. Issue
+// #157 closes the overflow the old comment here warned about: on top of the
+// turn cap, capHistoryTokens bounds the seeded history to
+// MAX_HISTORY_BUDGET_TOKENS estimated tokens (8,192 chars), so an oversized
+// history can no longer overflow CONTEXT_SIZE on the resident model.
 const MAX_HISTORY_TURNS = 12;
 
 // Issue #154 AC3: this is the same groundedness rule the external path already
@@ -237,6 +251,11 @@ const MAX_HISTORY_TURNS = 12;
 const SYSTEM_PROMPT =
   "You are TrainingApp's local assistant. Answer the user's question directly and concisely. " +
   'When retrieved context is provided, answer only from that context and say when it does not contain the answer.';
+
+// Issue #157: one constant shared by the grounded-prompt assembly and the
+// context budget's reserved-token estimate (the estimate must charge exactly
+// the instruction the assembly places in the window).
+const GROUNDED_INSTRUCTION = 'Answer the question using the retrieved context when relevant.';
 
 // Issue #154 investigated bounding the repeat-penalty lookback, on the premise
 // that node-llama-cpp applies it to prompt+generated tokens and was therefore
@@ -257,19 +276,32 @@ const SYSTEM_PROMPT =
 // tokens. punishTokensFilter and penalizeNewLine operate on that same
 // generated-only array.
 
-/** Map contract history turns ({role, content}) to library chat history. */
+/** Map contract history turns ({role, content}) to library chat history.
+ *
+ * Issue #157: on top of the MAX_HISTORY_TURNS turn cap, the history is
+ * token-capped (capHistoryTokens — drop oldest whole turns, keep >= 1,
+ * re-anchor user-first after the drop, tail-truncate a lone oversized
+ * survivor; no-op passthrough when it already fits). The cap runs BEFORE the
+ * turn-cap slice; that order is load-bearing for the user-first re-anchor
+ * (see prompt-budget.ts). Within-budget histories map byte-identically to
+ * the pre-#157 behavior. */
 export function historyToChatHistory(history?: unknown[]): ChatHistoryItem[] {
-  if (!Array.isArray(history)) return [];
-  const items: ChatHistoryItem[] = [];
+  if (!Array.isArray(history) || history.length === 0) return [];
+  const turns: Array<{ role: unknown; content: string }> = [];
   for (const turn of history) {
     if (typeof turn !== 'object' || turn === null) continue;
     const role = (turn as { role?: unknown }).role;
     const content = (turn as { content?: unknown }).content;
     if (typeof content !== 'string') continue;
-    if (role === 'user') items.push({ type: 'user', text: content });
-    else if (role === 'assistant') items.push({ type: 'model', response: [content] });
+    if (role === 'user' || role === 'assistant') turns.push({ role, content });
   }
-  return items.slice(-MAX_HISTORY_TURNS);
+  const capped = capHistoryTokens(turns, MAX_HISTORY_BUDGET_TOKENS * CHARS_PER_TOKEN);
+  const items: ChatHistoryItem[] = [];
+  for (const turn of capped.slice(-MAX_HISTORY_TURNS)) {
+    if (turn.role === 'user') items.push({ type: 'user', text: turn.content });
+    else items.push({ type: 'model', response: [turn.content] });
+  }
+  return items;
 }
 
 /** The profile's generation defaults (what GET /settings reports when not explicitly set). */
@@ -1152,11 +1184,40 @@ export class LlamaEngine implements EngineSurface {
     // (zero change when no surface is attached). An /ask cancellation during
     // an in-flight retrieval lets the work complete and discards the result —
     // the rerank worker is never terminated mid-query.
-    const context = await this.stub.retrieveContext(question, opts.nResults);
+    //
+    // Issue #157: the grounded context is now BUDGETED. The char ceiling
+    // reserves the per-query answer budget (the same overrides snapshot read
+    // above — explicit rag_max_tokens or the profile default), the safety
+    // margin, and estimates for every other prompt channel, then also applies
+    // the wired rag_context_truncation setting (min(derived, setting): the
+    // setting can only tighten the CONTEXT_SIZE-derived bound). The history
+    // estimate joins the RAW contract history — an upper bound of what
+    // historyToChatHistory actually seeds (it filters and token-caps first),
+    // so the reservation can never under-count the seeded text. Rows that do
+    // not fit are dropped whole at row level inside retrieveContext; when
+    // nothing is dropped the assembled prompt is byte-identical to pre-#157.
+    const historyEstimateText = Array.isArray(opts.history)
+      ? opts.history
+          .map((turn) =>
+            typeof turn === 'object' && turn !== null && typeof (turn as { content?: unknown }).content === 'string'
+              ? ((turn as { content: string }).content)
+              : '',
+          )
+          .join('\n')
+      : '';
+    const contextCharCeiling = groundedContextBudgetChars({
+      answerTokens: overrides.maxTokens ?? PROFILE_GENERATION[profile].maxTokens,
+      systemPrompt: SYSTEM_PROMPT,
+      groundedInstruction: GROUNDED_INSTRUCTION,
+      question,
+      cappedHistoryText: historyEstimateText,
+      truncationChars: this.stub.contextTruncationChars(),
+    });
+    const context = await this.stub.retrieveContext(question, opts.nResults, contextCharCeiling);
     const groundedQuestion =
       context === null
         ? question
-        : `${'Answer the question using the retrieved context when relevant.'}\n\n${context.texts
+        : `${GROUNDED_INSTRUCTION}\n\n${context.texts
             .map((text, index) => `[${index + 1}] ${text}`)
             .join('\n\n')}\n\n\nQuestion: ${question}`;
     const run = this.queue.then(async () => {
