@@ -69,18 +69,47 @@ export function capHistoryTokens<T extends HistoryTurn>(history: T[], maxChars: 
   while (kept.length > 1 && kept[0]!.role !== 'user') {
     kept = kept.slice(1);
   }
-  // A single over-budget survivor is tail-truncated to fit.
+  // A single over-budget survivor is tail-truncated to fit. PRR-015: guard
+  // maxChars <= 0 (JS slice(-0) returns the FULL string — the truncation
+  // would silently no-op at a degenerate bound) and trim on a code-point
+  // boundary so the cut cannot emit a lone surrogate.
   const lone = kept.length === 1 ? kept[0]! : null;
   if (lone !== null && String(lone.content ?? '').length > maxChars) {
-    const content = String(lone.content ?? '').slice(-maxChars);
+    let content = maxChars > 0 ? String(lone.content ?? '').slice(-maxChars) : '';
+    if (content.length > 0) {
+      const last = content.charCodeAt(content.length - 1);
+      // A high surrogate (0xD800-0xDBFF) with no following low surrogate is a
+      // split pair — drop it.
+      if (last >= 0xd800 && last <= 0xdbff) content = content.slice(0, -1);
+    }
     kept = [{ ...lone, content } as T];
   }
   return kept;
 }
 
-/** Estimated tokens for a char count (chars-per-token, rounded up). */
-export function estimateTokens(chars: number): number {
-  return Math.ceil(chars / CHARS_PER_TOKEN);
+/** CJK (Han, Hiragana, Katakana, Hangul, CJK Ext A + compat) code-point
+ *  ranges. Issue #157 PR-review PRR-001: BPE tokenizers encode CJK at
+ *  ~1.4-2 chars/token (best case) — the 4 chars/token Latin average
+ *  under-counts this class ~2-6x, which would defeat the window bound on the
+ *  CJK corpora the ingest pipeline deliberately supports (text-chunker's
+ *  isCjkDense). */
+const CJK_RANGE = /[぀-ヿ㐀-䶿一-鿿豈-﫿가-힯ｦ-ﾟ]/;
+
+/**
+ * Estimated tokens for a string: CJK code points are charged ONE token each
+ * (a conservative upper bound — real Chinese tokenizers average ~0.5-0.7
+ * tokens/char), everything else at CHARS_PER_TOKEN. Over-estimating only
+ * tightens the ceiling (safe direction for a budget).
+ *
+ * (The single-number `estimateTokens(chars)` form was replaced here; the only
+ * callers pass the actual prompt-channel strings.)
+ */
+export function estimateTokens(text: string): number {
+  let cjk = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    if (CJK_RANGE.test(text[i]!)) cjk += 1;
+  }
+  return cjk + Math.ceil((text.length - cjk) / CHARS_PER_TOKEN);
 }
 
 /**
@@ -104,9 +133,7 @@ export function groundedContextBudgetChars(inputs: {
   const reserved =
     inputs.answerTokens +
     SAFETY_MARGIN_TOKENS +
-    estimateTokens(
-      inputs.systemPrompt.length + inputs.groundedInstruction.length + inputs.question.length + inputs.cappedHistoryText.length,
-    );
+    estimateTokens(inputs.systemPrompt + inputs.groundedInstruction + inputs.question + inputs.cappedHistoryText);
   const derived = Math.max(0, CONTEXT_SIZE - reserved) * CHARS_PER_TOKEN;
   return inputs.truncationChars === undefined ? derived : Math.min(derived, inputs.truncationChars);
 }

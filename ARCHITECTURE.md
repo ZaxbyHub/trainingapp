@@ -202,12 +202,13 @@ transport maps to the contract 503.
 |---|---|---|
 | Quality model | `lfm2.5-2.6b/model.gguf` (Q4_K_M per ADR-0002, amended by #156) | `QUALITY_MODEL_SUBPATH` |
 | Fast model | `lfm2-1.2b-rag/model.gguf` (Q4_K_M per ADR-0002, amended by #156) | `FAST_MODEL_SUBPATH` |
-| Context size | 8192 | `CONTEXT_SIZE` |
+| Context size | 8192 | `CONTEXT_SIZE` in [desktop/main/backend/inference/prompt-budget.ts](desktop/main/backend/inference/prompt-budget.ts) |
 | Threads | `min(cores, 8)` | [desktop/main/backend/inference/profile-select.ts](desktop/main/backend/inference/profile-select.ts) |
 | Profile gate | `auto` selects quality at >= 6 GiB free RAM with a working GPU; CPU-only machines select fast (#156) | `DEFAULT_PROFILE_THRESHOLD_GB` |
 | Generation (quality / fast) | 1024 tokens @ temp 0.2 / 384 @ 0.3 | `PROFILE_GENERATION` |
 | Sampler | top-p 0.9; the repeat penalty is retired with the #156 LFM swap (no penalty window bookkeeping ships) | [desktop/main/backend/inference/llama-engine.ts](desktop/main/backend/inference/llama-engine.ts) |
-| History | at most 12 turns carried into the prompt | `MAX_HISTORY_TURNS` |
+| History | token-capped at 2,048 estimated tokens (8,192 chars; oldest whole turns drop, window re-anchors user-first), then sliced to the last 12 turns (#157) | `capHistoryTokens` + `MAX_HISTORY_TURNS` in [prompt-budget.ts](desktop/main/backend/inference/prompt-budget.ts) |
+| Prompt budget | the assembled grounded prompt is bounded below `CONTEXT_SIZE`: reserve the per-profile answer budget + 512-token margin + per-channel estimates (CJK code points 1 token each, other text 4 chars/token), then apply `min(derived, rag_context_truncation)` and drop trailing whole retrieved rows (#157) | `groundedContextBudgetChars` + `countRowsWithinBudget` in [prompt-budget.ts](desktop/main/backend/inference/prompt-budget.ts) |
 
 The compute backend is decided by an out-of-process probe (issue #155): a working
 Vulkan device is used when one is found and CPU inference is the fallback;
@@ -229,8 +230,12 @@ publishedAt/semver/id precedence, linear recency multiplier per
 ([desktop/main/backend/retrieval/reranker.ts](desktop/main/backend/retrieval/reranker.ts),
 model `ettin-reranker-32m-v1`; reranker scores replace the fused ones and the
 calibrated floor applies to reranker scores only — a no-reranker path is
-floor-free and resolves `grounding: "general"`) -> topK slice. The surface's
-`floorActive` flag is what the C5 `grounding` enum derives from.
+floor-free and resolves `grounding: "general"`) -> topK slice -> #157 prompt
+budget inside `StubEngine.retrieveContext` (trailing whole rows are dropped
+until the `[n]`-numbered assembly fits the `min(derived,
+rag_context_truncation)` char ceiling; `sources`/`context_length`/citations
+derive from the surviving rows and drops emit a `[RAG] budget` log). The
+surface's `floorActive` flag is what the C5 `grounding` enum derives from.
 
 Shipped defaults ([desktop/main/backend/retrieval/config.ts](desktop/main/backend/retrieval/config.ts);
 every key has a `TRAININGAPP_RETRIEVAL_*` / `TRAININGAPP_PACKS_RECENCY_*` env

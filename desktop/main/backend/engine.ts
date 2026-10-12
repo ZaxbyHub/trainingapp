@@ -253,6 +253,17 @@ export class StubEngine implements EngineSurface {
       contextCharCeiling === undefined
         ? allRows
         : allRows.slice(0, countRowsWithinBudget(allRows.map((row) => row.text), contextCharCeiling));
+    // PRR-008 (PR review): make budget drops observable — mirrors the browser
+    // F11 port's structured content-gap log (rag-orchestrator) so an operator
+    // can tell "the budget removed evidence" from "retrieval found nothing".
+    if (survivors.length < allRows.length) {
+      console.info('[RAG] budget', {
+        droppedForBudget: allRows.length - survivors.length,
+        bestScore: survivors.length > 0 ? (survivors[0]?.similarity ?? null) : null,
+        ceilingChars: contextCharCeiling,
+        scale: 'char-budget',
+      });
+    }
     const sources: string[] = [];
     for (const row of survivors) {
       if (!sources.includes(row.source)) sources.push(row.source);
@@ -448,6 +459,13 @@ export class StubEngine implements EngineSurface {
    * prompt budget at query time (min(derived, setting): it can only tighten
    * the CONTEXT_SIZE-derived bound). Falls back to the stored default when
    * unset/garbage; SETTING_BOUNDS guarantees a positive int.
+   *
+   * PRR-024 (PR review): deliberately NOT on the EngineSurface interface —
+   * only LlamaEngine's prompt budget reads it today, and adding it to the
+   * contract would obligate every future surface to implement a reader while
+   * GENERATION_READ_KEYS statically claims the key is applied. A future
+   * non-Llama generating surface must add the reader AND keep the
+   * responseSettings honesty (see llama-engine's external-mode carve-out).
    */
   contextTruncationChars(): number {
     const value = Number(this.settings.rag_context_truncation);

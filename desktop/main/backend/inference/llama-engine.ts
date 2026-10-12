@@ -1218,22 +1218,31 @@ export class LlamaEngine implements EngineSurface {
     // estimate is exactly the seeded text — never an under-count, and never
     // the raw join's over-reservation, which zeroed all retrieved evidence on
     // large-but-legal histories (12 x 3,000-char turns drove the ceiling to
-    // 0 while the seeded history itself fit its own budget). Rows that do not
-    // fit the ceiling are dropped whole at row level inside retrieveContext;
-    // when nothing is dropped the assembled prompt is byte-identical to
-    // pre-#157.
+    // 0 while the seeded history itself fit its own budget).
+    //
+    // PRR-004 (PR review): charge the SAME slice(-MAX_HISTORY_TURNS) the
+    // seeder applies — an in-budget history of >12 turns would otherwise be
+    // charged in full while only 12 turns seed, needlessly shrinking the
+    // grounded-context ceiling. Rows that do not fit the ceiling are dropped
+    // whole at row level inside retrieveContext; when nothing is dropped the
+    // assembled prompt is byte-identical to pre-#157.
     const cappedHistory = capContractHistory(opts.history);
+    const seededTurns = cappedHistory.slice(-MAX_HISTORY_TURNS);
     const contextCharCeiling = groundedContextBudgetChars({
       answerTokens: overrides.maxTokens ?? PROFILE_GENERATION[profile].maxTokens,
       systemPrompt: SYSTEM_PROMPT,
       groundedInstruction: GROUNDED_INSTRUCTION,
       question,
-      cappedHistoryText: cappedHistory.map((turn) => turn.content).join('\n'),
+      cappedHistoryText: seededTurns.map((turn) => turn.content).join('\n'),
       truncationChars: this.stub.contextTruncationChars(),
     });
     const context = await this.stub.retrieveContext(question, opts.nResults, contextCharCeiling);
+    // PRR-007 (PR review): a budget that dropped EVERY row must fall back to
+    // the bare question exactly like the no-retrieval path — assembling the
+    // grounded instruction with an empty context block would tell the model
+    // to answer from context that is not present.
     const groundedQuestion =
-      context === null
+      context === null || context.texts.length === 0
         ? question
         : `${GROUNDED_INSTRUCTION}\n\n${context.texts
             .map((text, index) => `[${index + 1}] ${text}`)
@@ -1604,7 +1613,7 @@ export class LlamaEngine implements EngineSurface {
   }
 
   responseSettings(): Record<string, unknown> {
-    return {
+    const settings: Record<string, unknown> = {
       // Effective generation values follow the profile the NEXT query uses
       // (effectiveProfile() may advance the sticky AUTO latch exactly as
       // modelStatus() does — see the PRR-240 note there).
@@ -1619,6 +1628,18 @@ export class LlamaEngine implements EngineSurface {
       // universal-provider-settings-overhaul: external.* (never the key).
       ...this.external.responseFields(),
     };
+    // PRR-005 (PR review): GENERATION_READ_KEYS is engine-wide, but when an
+    // external provider is active every grounded query runs queryExternal(),
+    // which retrieves with NO char ceiling — so the honest report re-adds
+    // rag_context_truncation to not_applied for exactly that configuration
+    // (mirrors the stub-mode carve-out in engine.ts's readers set).
+    if (this.external.active()) {
+      const notApplied = settings.not_applied;
+      if (Array.isArray(notApplied) && !notApplied.includes('rag_context_truncation')) {
+        settings.not_applied = [...notApplied, 'rag_context_truncation'];
+      }
+    }
+    return settings;
   }
 
   async search(query: string, nResults?: number): Promise<Array<{ text: string; source: string; similarity: number }>> {

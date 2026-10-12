@@ -547,7 +547,9 @@ the Python backend's flat defaults by design. Optional properties explain the va
   not cosine similarities). `rag_context_truncation` left this list in issue #157: the
   desktop local path now reads it as an additional CHARACTER ceiling on the assembled
   grounded context (`min(context-window-derived budget, rag_context_truncation)` — it
-  can only tighten the bound, never loosen it).
+  can only tighten the bound, never loosen it). In stub mode, and whenever an external
+  provider is active (that path retrieves without a ceiling), the key honestly stays
+  in `not_applied`.
 
 The Settings page derives the selected preset from these values: a preset is shown only when
 every explicitly set preset key matches it; otherwise it shows "Custom server settings", or
@@ -764,7 +766,7 @@ reranker_model="cross-encoder/ms-marco-MiniLM-L6-v2"
 **Configuration**:
 ```python
 min_similarity=0.3  # Filter low-relevance chunks
-context_truncation=2000  # Max context length
+context_truncation=20000  # Max context length (characters)
 ```
 
 **Format**:
@@ -859,19 +861,29 @@ reranker_model="cross-encoder/ms-marco-MiniLM-L6-v2"
 
 ### Context Truncation
 
-**Purpose**: Limit context length for LLM
+**Purpose**: Limit the amount of retrieved context assembled into the LLM prompt.
 
 **Configuration**:
 ```python
-max_context_length=2000  # characters
+context_truncation=20000  # characters (the shared rag_context_truncation setting)
 ```
 
-**Default**: 2000 characters (~500 tokens)
+**Default**: 20000 characters (unbounded max; must be positive)
+
+**Semantics differ per backend** (issue #157): the desktop local path treats
+this as an additional CHARACTER ceiling on the assembled grounded context —
+it is applied as `min(context-window-derived budget, setting)`, so it can
+only tighten the window-derived bound, never loosen it, and it drops trailing
+whole retrieved chunks (never truncates mid-chunk). The Python sidecar
+truncates the assembled context at a sentence boundary up to the same
+character count (keeping a partial final chunk). The desktop local GET
+/settings path reports the key as applied; stub mode and an active external
+provider honestly report it `not_applied` (nothing reads it there).
 
 **Benefits**:
 - Prevents out-of-context errors
-- Reduces memory usage
-- Faster generation
+- Bounds prompt assembly deterministically
+- Reduces memory usage / faster generation
 
 ## Configuration File Formats
 

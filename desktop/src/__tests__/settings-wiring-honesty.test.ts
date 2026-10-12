@@ -572,6 +572,13 @@ function nonDefaultValue(key: string, reported: unknown): unknown {
  * generic logic.
  */
 const BINDING_PROBE_VALUES: Record<string, number> = {
+  // PRR-020 (PR review): this value is coupled to the recordingSurface
+  // fixture's chunk text length ('chunk for <query>' is ~28 chars) — it binds
+  // only while 4 + fixture.length > value. Shortening the fixture below ~7
+  // chars would make the probe fail LOUDLY ('claimed applied but changed
+  // nothing observable'), never silently, which is the acceptable failure
+  // mode; the single-bit oracle (grounding flips) is sufficient to catch the
+  // min()-direction and table-removal mutants (M2/M5).
   rag_context_truncation: 10,
 };
 
