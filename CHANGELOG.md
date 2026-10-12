@@ -14,7 +14,9 @@
   oversized turn is tail-truncated — previously twelve individually small turns could
   seed unbounded history and silently trigger the library's default context shift,
   erasing retrieved evidence mid-generation. `rag_context_truncation` is no longer a
-  dead setting: GET /settings now reports it applied, and its value acts as an
+  dead setting: the desktop local path's GET /settings now reports it applied
+  (stub mode honestly keeps reporting it not_applied — nothing reads it there), and its
+  value acts as an
   additional CHARACTER ceiling on the assembled grounded context (it can only tighten
   the context-window-derived bound, never loosen it; desktop local path only). When
   the budget drops chunks, `sources`, `context_length`, and citations reflect only the

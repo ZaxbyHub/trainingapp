@@ -276,6 +276,33 @@ const GROUNDED_INSTRUCTION = 'Answer the question using the retrieved context wh
 // tokens. punishTokensFilter and penalizeNewLine operate on that same
 // generated-only array.
 
+/** Role-filter a raw contract history into {role, content} turns (the shared
+ *  first step of historyToChatHistory and the query-side reservation — one
+ *  filter, so the reservation can never diverge from what seeding filters). */
+function contractHistoryTurns(history?: unknown[]): Array<{ role: 'user' | 'assistant'; content: string }> {
+  if (!Array.isArray(history)) return [];
+  const turns: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+  for (const turn of history) {
+    if (typeof turn !== 'object' || turn === null) continue;
+    const role = (turn as { role?: unknown }).role;
+    const content = (turn as { content?: unknown }).content;
+    if (typeof content !== 'string') continue;
+    if (role === 'user' || role === 'assistant') turns.push({ role, content });
+  }
+  return turns;
+}
+
+/**
+ * Issue #157 one-cap rule: filter + token-cap a raw contract history ONCE.
+ * historyToChatHistory applies exactly these two steps before its turn-cap
+ * slice (running them again on the output is an identity), and query() passes
+ * the result both to the context-budget reservation (its joined text is what
+ * the window will actually hold) and onward as the history generate() seeds.
+ */
+function capContractHistory(history?: unknown[]): Array<{ role: 'user' | 'assistant'; content: string }> {
+  return capHistoryTokens(contractHistoryTurns(history), MAX_HISTORY_BUDGET_TOKENS * CHARS_PER_TOKEN);
+}
+
 /** Map contract history turns ({role, content}) to library chat history.
  *
  * Issue #157: on top of the MAX_HISTORY_TURNS turn cap, the history is
@@ -286,16 +313,7 @@ const GROUNDED_INSTRUCTION = 'Answer the question using the retrieved context wh
  * (see prompt-budget.ts). Within-budget histories map byte-identically to
  * the pre-#157 behavior. */
 export function historyToChatHistory(history?: unknown[]): ChatHistoryItem[] {
-  if (!Array.isArray(history) || history.length === 0) return [];
-  const turns: Array<{ role: unknown; content: string }> = [];
-  for (const turn of history) {
-    if (typeof turn !== 'object' || turn === null) continue;
-    const role = (turn as { role?: unknown }).role;
-    const content = (turn as { content?: unknown }).content;
-    if (typeof content !== 'string') continue;
-    if (role === 'user' || role === 'assistant') turns.push({ role, content });
-  }
-  const capped = capHistoryTokens(turns, MAX_HISTORY_BUDGET_TOKENS * CHARS_PER_TOKEN);
+  const capped = capContractHistory(history);
   const items: ChatHistoryItem[] = [];
   for (const turn of capped.slice(-MAX_HISTORY_TURNS)) {
     if (turn.role === 'user') items.push({ type: 'user', text: turn.content });
@@ -1190,27 +1208,27 @@ export class LlamaEngine implements EngineSurface {
     // above — explicit rag_max_tokens or the profile default), the safety
     // margin, and estimates for every other prompt channel, then also applies
     // the wired rag_context_truncation setting (min(derived, setting): the
-    // setting can only tighten the CONTEXT_SIZE-derived bound). The history
-    // estimate joins the RAW contract history — an upper bound of what
-    // historyToChatHistory actually seeds (it filters and token-caps first),
-    // so the reservation can never under-count the seeded text. Rows that do
-    // not fit are dropped whole at row level inside retrieveContext; when
-    // nothing is dropped the assembled prompt is byte-identical to pre-#157.
-    const historyEstimateText = Array.isArray(opts.history)
-      ? opts.history
-          .map((turn) =>
-            typeof turn === 'object' && turn !== null && typeof (turn as { content?: unknown }).content === 'string'
-              ? ((turn as { content: string }).content)
-              : '',
-          )
-          .join('\n')
-      : '';
+    // setting can only tighten the CONTEXT_SIZE-derived bound).
+    //
+    // ONE-CAP RULE (plan-critic round 1, implementation review round 1): the
+    // history is capped ONCE here (filter + capHistoryTokens, the same
+    // first steps historyToChatHistory applies); the CAPPED text is what the
+    // reservation charges, and the capped array is what generate() seeds
+    // (historyToChatHistory's filter+cap on it is an identity), so the
+    // estimate is exactly the seeded text — never an under-count, and never
+    // the raw join's over-reservation, which zeroed all retrieved evidence on
+    // large-but-legal histories (12 x 3,000-char turns drove the ceiling to
+    // 0 while the seeded history itself fit its own budget). Rows that do not
+    // fit the ceiling are dropped whole at row level inside retrieveContext;
+    // when nothing is dropped the assembled prompt is byte-identical to
+    // pre-#157.
+    const cappedHistory = capContractHistory(opts.history);
     const contextCharCeiling = groundedContextBudgetChars({
       answerTokens: overrides.maxTokens ?? PROFILE_GENERATION[profile].maxTokens,
       systemPrompt: SYSTEM_PROMPT,
       groundedInstruction: GROUNDED_INSTRUCTION,
       question,
-      cappedHistoryText: historyEstimateText,
+      cappedHistoryText: cappedHistory.map((turn) => turn.content).join('\n'),
       truncationChars: this.stub.contextTruncationChars(),
     });
     const context = await this.stub.retrieveContext(question, opts.nResults, contextCharCeiling);
@@ -1227,8 +1245,11 @@ export class LlamaEngine implements EngineSurface {
         // settings-wiring-honesty: explicit rag_max_tokens/rag_temperature
         // (read at query start, above) are passed only when set so the
         // profile defaults apply otherwise.
+        // One-cap rule: seed the SAME capped history the reservation charged
+        // (historyToChatHistory's filter+cap on it is an identity; the
+        // turn-cap slice still applies inside).
         const result = await entry.backend.generate(groundedQuestion, {
-          history: opts.history,
+          history: cappedHistory,
           streamCallback: opts.streamCallback,
           cancellationEvent: opts.cancellationEvent,
           ...(overrides.maxTokens !== undefined ? { maxTokens: overrides.maxTokens } : {}),
