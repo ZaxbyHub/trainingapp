@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+- **Store hardening deferred from PR #99 lands (issue #100)**: concurrent backend
+  `start()` calls are now single-flight on both hosts — the in-flight promise is
+  memoized and `stop()` awaits a pending start before teardown, so two simultaneous
+  starts can no longer leak a second listener and store (the sidecar host likewise
+  can no longer double-spawn its child). Every store open path now sets explicit
+  `journal_mode=WAL` + `busy_timeout=5000` with read-back verification (Node
+  `openStore`, both Python interop paths, and the interop harness — previously the
+  file opened in rollback-journal mode with only implicit driver defaults, which
+  corrects the issue's "immediate SQLITE_BUSY" rationale). The store schema's
+  SCHEMA-BUMP contract is now mechanically enforced: a new guard binds the schema
+  seed to `CURRENT_SCHEMA_VERSION` in both runtimes and pins the DDL body hash per
+  version, and the `migrate.py` selftest fails on seed drift from either cwd — a
+  DDL edit without a version bump or a one-runtime-only ladder change can no longer
+  sail through CI green. `openStore` fails loud on a relative `dbPath` instead of
+  silently creating cwd-relative store directories, the headless dev-server's
+  arg/env contract (exported `parseArgs`/`resolveStorePath`, hardened ESM-entry
+  guard), `closeStore()`, and the schema substitution all have direct regression
+  tests, and four unreachable "failed to substitute" guards were deleted (desktop,
+  packtool, and both interop harnesses — the fourth was caught by the independent
+  implementation review). **User-visible:** the profile store now creates
+  `-wal`/`-shm` sidecar files next to `store.sqlite` (clear-cache still fully
+  clears them; backups and recovery already handled sidecars), and a relative
+  `--store-path`/`TRAININGAPP_DESKTOP_STORE_PATH` now degrades loudly instead of
+  silently persisting a cwd-relative store.
+
 - **Desktop local RAG gets a token-based context and history budget (issue #157)**: the
   desktop inference path now bounds its prompt below the model's 8,192-token context
   window, adapting the browser's F11 reserved-token approach (prefix-drop of trailing
