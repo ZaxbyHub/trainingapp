@@ -455,8 +455,36 @@ export class NodeBackendHost implements BackendHost {
       ),
   ) {}
 
+  /**
+   * issue #100 item 1: the single-flight memo. Instance field, deliberately
+   * never a prototype member (the b3 duck-type pin requires both host
+   * prototypes to expose exactly start/stop). Cleared on rejection so a
+   * failed start can retry, and by stop() once the flight has settled.
+   */
+  private startInflight: Promise<BackendHandle> | null = null;
+
   async start(): Promise<BackendHandle> {
     if (this.handle) return this.handle;
+    // issue #100 item 1: without this memo, two concurrent callers both pass
+    // the handle check above (this.handle is only published after the first
+    // await) and double-create the listener, scheduler, and store — the second
+    // write orphans the first of each. Both callers now await ONE flight that
+    // resolves to ONE handle.
+    if (this.startInflight === null) {
+      this.startInflight = this.runStart().catch((err: unknown) => {
+        this.startInflight = null;
+        throw err;
+      });
+    }
+    return this.startInflight;
+  }
+
+  /**
+   * The former start() body, verbatim (issue #100: split out so start() can
+   * be the thin single-flight wrapper above). Own-property arrow — instance
+   * fields stay off the prototype (b3 pin).
+   */
+  private runStart = async (): Promise<BackendHandle> => {
     // B8 (issue #66): resolve the memory/concurrency budget and build the
     // governance stack BEFORE the listener exists, so /telemetry/memory and
     // the generation mutex are live from the first request.
@@ -850,11 +878,24 @@ export class NodeBackendHost implements BackendHost {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       throw err;
     }
-  }
-
-
+  };
 
   async stop(): Promise<void> {
+    // issue #100 item 1: never tear down under an in-flight start. Await the
+    // flight first (a rejection already cleared its own memo) so teardown runs
+    // only after it settled — start→stop→start can no longer run two flights
+    // concurrently, and a start() issued during this await either joins the
+    // flight or (once teardown has nulled the fields) begins a fresh,
+    // sequential one. Known caller-ordered-out interleave: a handle resolved
+    // here may be one stop() is about to close; all in-repo call sites await
+    // sequentially.
+    if (this.startInflight !== null) {
+      try {
+        await this.startInflight;
+      } catch {
+        /* rejected flight cleared its own memo; teardown proceeds */
+      }
+    }
     const dbg = (m: string): void => {
       if (process.env.TRAININGAPP_CORS_DEBUG) console.error(`[stop-debug] ${m}`);
     };
@@ -891,6 +932,7 @@ export class NodeBackendHost implements BackendHost {
     const server = this.server;
     this.server = null;
     this.handle = null;
+    this.startInflight = null;
     if (this.surface !== null && typeof this.engine.attachDocumentSurface === 'function') {
       this.engine.attachDocumentSurface(null);
       this.surface = null;
@@ -950,8 +992,27 @@ export class SidecarBackendHost implements BackendHost {
 
   constructor(private readonly config: BackendHostConfig) {}
 
+  /**
+   * issue #100 item 1: single-flight memo for the sidecar host — same shape
+   * (and same b3 instance-field rule) as NodeBackendHost.start. Without it,
+   * concurrent callers double-spawn SidecarManager children and double-bind
+   * front listeners; stop() awaits the flight before teardown.
+   */
+  private startInflight: Promise<BackendHandle> | null = null;
+
   async start(): Promise<BackendHandle> {
     if (this.handle) return this.handle;
+    if (this.startInflight === null) {
+      this.startInflight = this.runStart().catch((err: unknown) => {
+        this.startInflight = null;
+        throw err;
+      });
+    }
+    return this.startInflight;
+  }
+
+  /** The former sidecar start() body, verbatim (issue #100 split). */
+  private runStart = async (): Promise<BackendHandle> => {
     const sidecar = this.config.sidecar ?? {};
     const command = sidecar.command;
     if (typeof command !== 'string' || command.length === 0) {
@@ -999,14 +1060,24 @@ export class SidecarBackendHost implements BackendHost {
       await manager.stop();
       throw err;
     }
-  }
+  };
 
   async stop(): Promise<void> {
+    // issue #100 item 1: await an in-flight start before teardown (same
+    // contract as NodeBackendHost.stop).
+    if (this.startInflight !== null) {
+      try {
+        await this.startInflight;
+      } catch {
+        /* rejected flight cleared its own memo; teardown proceeds */
+      }
+    }
     const server = this.server;
     const manager = this.manager;
     this.server = null;
     this.manager = null;
     this.handle = null;
+    this.startInflight = null;
     if (manager !== null) await manager.stop();
     if (server !== null) {
       (server as unknown as { closeAllConnections?: () => void }).closeAllConnections?.();

@@ -12,6 +12,7 @@
 // host) when stdin closes — the checks' orphan-prevention backstop.
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createBackendHost, resolveBackendMode } from './index.js';
 import { resolveNodeEngine } from './inference/llama-engine.js';
 import { resolvePacksSecurity } from './packs/pack-extract.js';
@@ -33,7 +34,8 @@ interface DevServerArgs {
   storePath?: string;
 }
 
-function parseArgs(argv: string[]): DevServerArgs {
+/** issue #100 item 5a: exported so the arg contract is directly testable. */
+export function parseArgs(argv: string[]): DevServerArgs {
   const args: DevServerArgs = { portFile: '', token: '', sidecar: { args: [] } };
   for (let i = 0; i < argv.length; i += 1) {
     const value = (): string => {
@@ -86,9 +88,23 @@ function parseArgs(argv: string[]): DevServerArgs {
   return args;
 }
 
+/**
+ * issue #100 item 5a: the one store-path resolution — CLI flag wins over the
+ * TRAININGAPP_DESKTOP_STORE_PATH env fallback, undefined when neither is set.
+ * Every consumer in this file (engine sidecar dir, host storePath, backups
+ * dir) resolves through here so the precedence cannot drift per site.
+ */
+export function resolveStorePath(
+  args: Pick<DevServerArgs, 'storePath'>,
+  env: NodeJS.ProcessEnv,
+): string | undefined {
+  return args.storePath ?? env.TRAININGAPP_DESKTOP_STORE_PATH;
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const sidecar = args.sidecar;
+  const storePath = resolveStorePath(args, process.env);
   // B4 (issue #62): node-mode engine selection. 'auto' (the default) resolves
   // through resolveNodeEngine(env) — TRAININGAPP_DESKTOP_ENGINE /
   // TRAININGAPP_INFERENCE_MODEL_DIR / TRAININGAPP_DESKTOP_INFERENCE_* — so the
@@ -98,7 +114,7 @@ async function main(): Promise<void> {
   // universal-provider-settings-overhaul: the headless host has no Electron
   // safeStorage, so an external model API key lives in process memory only
   // (never on disk); the airgap flag comes from TRAININGAPP_AIRGAP alone.
-  const engineStorePath = args.storePath ?? process.env.TRAININGAPP_DESKTOP_STORE_PATH;
+  const engineStorePath = storePath;
   const engine = resolveNodeEngine(
     args.engine === 'stub' ? { ...engineEnv, TRAININGAPP_DESKTOP_ENGINE: 'stub' } : engineEnv,
     {
@@ -113,20 +129,16 @@ async function main(): Promise<void> {
     token: args.token,
     mode: resolveBackendMode({ mode: args.mode }),
     engine,
-    storePath: args.storePath ?? process.env.TRAININGAPP_DESKTOP_STORE_PATH,
+    storePath,
     // Issue #75 (C8): headless hosts resolve the pack-installation security
     // limits from the TRAININGAPP_PACKS_* env seam (same resolution the
     // Electron host performs from its config + env).
     packsSecurity: resolvePacksSecurity(engineEnv),
     // B6 (issue #64): backups default next to the store; corruption without a
     // prompt seam auto-recovers (restore from the latest backup, else fresh).
-    storeBackupsDir:
-      args.storePath !== undefined || process.env.TRAININGAPP_DESKTOP_STORE_PATH !== undefined
-        ? path.join(
-            path.dirname(args.storePath ?? process.env.TRAININGAPP_DESKTOP_STORE_PATH ?? '.'),
-            'backups',
-          )
-        : undefined,
+    // issue #100 item 5a: resolved through the same single helper as the
+    // storePath above (the former third inline fallback is gone).
+    storeBackupsDir: storePath !== undefined ? path.join(path.dirname(storePath), 'backups') : undefined,
     sidecar: sidecar?.command
       ? { command: sidecar.command, args: sidecar.args, cwd: sidecar.cwd, port: sidecar.port }
       : undefined,
@@ -152,7 +164,18 @@ async function main(): Promise<void> {
   process.stdin.resume();
 }
 
-main().catch((err: unknown) => {
-  console.error('[trainingapp-backend] dev-server failed:', err instanceof Error ? err.message : err);
-  process.exit(1);
-});
+// issue #100 item 5a: run main() only when THIS module is the process entry
+// (executed directly, e.g. the compiled dist entry spawned by
+// scripts/run-conformance-host.mjs), never on import — so tests can import
+// parseArgs/resolveStorePath without starting a server. path.resolve keeps the
+// relative invocation documented in the header working; argv[1] is checked
+// first for bare `node -e`-style contexts.
+const isMain =
+  process.argv[1] !== undefined &&
+  fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+if (isMain) {
+  main().catch((err: unknown) => {
+    console.error('[trainingapp-backend] dev-server failed:', err instanceof Error ? err.message : err);
+    process.exit(1);
+  });
+}

@@ -31,6 +31,7 @@
 -- migrate.py). The version ladder and ingestion wiring are owned by B6
 -- (#64), which must also reconcile the legacy path-derived doc_id in
 -- document_processor.py with the content-hash chunk id defined below.
+-- Ladder coordination (#100): every version step MUST land in migrate.ts and migrate.py in the same commit, or existing stores become unopenable.
 --
 -- Concurrency: v1 assumes a single writer per store file; the multi-writer
 -- policy is owned by B6 (#66/#64).

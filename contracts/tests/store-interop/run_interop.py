@@ -83,6 +83,19 @@ def connect_with_vec(db_path: Path) -> sqlite3.Connection:
     import sqlite_vec
 
     conn = sqlite3.connect(str(db_path))
+    # issue #100 item 2: explicit connection pragmas on the Python open path,
+    # mirroring desktop/main/backend/store/sqlite-store.ts. WAL conversion is
+    # best-effort in SQLite — read it back and fail loud if refused (a foreign
+    # connection holding a non-WAL file open silently blocks the conversion).
+    # busy_timeout=5000 matches sqlite3.connect's previous implicit default.
+    conn.execute("PRAGMA busy_timeout = 5000")
+    conn.execute("PRAGMA journal_mode = WAL")
+    mode = str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+    if mode != "wal":
+        raise RuntimeError(
+            f"PRAGMA journal_mode could not be set to wal (got {mode!r}); "
+            "close other connections to the store file and retry"
+        )
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     return conn
@@ -93,10 +106,12 @@ def apply_schema(conn: sqlite3.Connection, fixture: dict) -> None:
     if not isinstance(dims, int) or dims <= 0:
         raise ValueError(f"invalid fixture dims: {dims!r}")
     raw = SCHEMA_PATH.read_text(encoding="utf-8")
-    sql = raw.replace("__EMBEDDING_DIMS__", str(dims))
-    if "__EMBEDDING_DIMS__" in sql:
-        raise ValueError("schema substitution failed")
-    conn.executescript(sql)
+    # issue #100 defect class 4 (unreachable guard after unconditional token
+    # removal): the former `if "__EMBEDDING_DIMS__" in sql: raise` here could
+    # never fire — str.replace removes every occurrence. Deleted with its
+    # desktop/packtool siblings; the substitution is exercised end-to-end by
+    # the interop runs (the applied schema must satisfy both runtimes).
+    conn.executescript(raw.replace("__EMBEDDING_DIMS__", str(dims)))
 
 
 def write_fixture(conn: sqlite3.Connection, fixture: dict) -> None:

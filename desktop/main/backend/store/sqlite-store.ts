@@ -51,6 +51,10 @@ interface BetterSqlite3Db {
     all(...params: unknown[]): unknown[];
     run(...params: unknown[]): { changes: number | bigint };
   };
+  /** issue #100 item 2: connection pragmas (journal_mode/busy_timeout). */
+  pragma(sql: string, options?: { simple?: boolean }): unknown;
+  /** issue #100 item 5b: open-state probe used by the closeStore pin. */
+  readonly open: boolean;
   loadExtension(path: string): void;
   close(): void;
 }
@@ -116,11 +120,12 @@ function assertValidDims(dims: number): void {
 export function loadSchemaSql(repoRoot: string, dims: number): string {
   assertValidDims(dims);
   const raw = fs.readFileSync(path.join(repoRoot, SCHEMA_RELATIVE_PATH), 'utf8');
-  const sql = raw.split(EMBEDDING_DIMS_TOKEN).join(String(dims));
-  if (sql.includes(EMBEDDING_DIMS_TOKEN)) {
-    throw new Error(`failed to substitute ${EMBEDDING_DIMS_TOKEN} in ${SCHEMA_RELATIVE_PATH}`);
-  }
-  return sql;
+  // issue #100 item 5c: the former `if (sql.includes(EMBEDDING_DIMS_TOKEN))
+  // throw` guard here was unreachable by construction — the split/join above
+  // removes every occurrence before the check could run. Deleted (frozen
+  // check C5(c) pins its absence); the substitution itself is pinned directly
+  // by the loadSchemaSql test.
+  return raw.split(EMBEDDING_DIMS_TOKEN).join(String(dims));
 }
 
 /** Close a store handle returned by openStore (host stop path). */
@@ -138,12 +143,37 @@ export function closeStore(handle: StoreHandle): void {
 export function openStore(options: StoreOptions): StoreHandle {
   const dims = options.dims ?? DEFAULT_EMBEDDING_DIMS;
   assertValidDims(dims);
+  // issue #100 item 6: the docstring contract "Absolute path" is now
+  // enforced fail-loud BEFORE any mkdir/IO — a relative dbPath would
+  // silently materialize cwd-relative directories (reproduced at R6).
+  if (!path.isAbsolute(options.dbPath)) {
+    throw new Error(
+      `openStore requires an absolute dbPath (issue #100); got: ${options.dbPath}`,
+    );
+  }
   const repoRoot = options.repoRoot ?? findRepoRoot();
   const schemaSql = loadSchemaSql(repoRoot, dims);
 
   fs.mkdirSync(path.dirname(options.dbPath), { recursive: true });
   const db = new Database(options.dbPath);
   try {
+    // issue #100 item 2: explicit connection pragmas, then READ BACK the
+    // journal mode. SQLite's WAL conversion is best-effort: with a foreign
+    // connection holding a non-WAL file open it is silently refused and the
+    // pragma returns the unchanged mode — without the read-back the hardening
+    // would vanish exactly in the shared-file case it exists for. Refusal now
+    // fails loud (openStore throws; the host degrades via its failure
+    // isolation). busy_timeout=5000 matches both drivers' previous implicit
+    // defaults, made explicit.
+    db.pragma('journal_mode = WAL');
+    db.pragma('busy_timeout = 5000');
+    const journalMode = String(db.pragma('journal_mode', { simple: true })).toLowerCase();
+    if (journalMode !== 'wal') {
+      throw new Error(
+        `PRAGMA journal_mode could not be set to wal (got ${journalMode}); ` +
+          'close other connections to the store file and retry',
+      );
+    }
     // Asar-safe native load (#133): the resolved vec0 path points inside the
     // virtual app.asar in packaged builds; unpackAsarPath redirects to the
     // real app.asar.unpacked twin (no-op in dev/plain node).
