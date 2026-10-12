@@ -19,9 +19,11 @@
   DDL edit without a version bump or a one-runtime-only ladder change can no longer
   sail through CI green. `openStore` fails loud on a relative `dbPath` instead of
   silently creating cwd-relative store directories, the headless dev-server's
-  arg/env contract (exported `parseArgs`/`resolveStorePath`, hardened ESM-entry
-  guard), `closeStore()`, and the schema substitution all have direct regression
-  tests, and four unreachable substitution guards were deleted (desktop,
+  arg/env contract (exported `parseArgs`/`resolveStorePath`), `closeStore()`,
+  and the schema substitution all have direct regression tests — the hardened
+  ESM-entry guard is exercised end-to-end by the conformance harness's real
+  spawn rather than a unit test — and four unreachable substitution guards
+  were deleted (desktop,
   packtool, and both interop harnesses — the fourth was caught by the independent
   implementation review). A relative `--store-path`/`TRAININGAPP_DESKTOP_STORE_PATH`
   on the headless path now degrades loudly (console.error plus a
