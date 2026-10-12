@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+- **Desktop local RAG gets a token-based context and history budget (issue #157)**: the
+  desktop inference path now bounds its prompt below the model's 8,192-token context
+  window, adapting the browser's F11 reserved-token approach (prefix-drop of trailing
+  whole retrieved chunks rather than F11's greedy skip; never truncates mid-chunk).
+  Token estimation is chars-based — CJK code points are charged one token each and
+  other text 4 chars/token — with a 512-token safety margin: deterministic in
+  characters, an estimate in tokens, and deliberately over-reserved for the CJK
+  corpora the ingest pipeline supports. The grounded context drops trailing whole
+  retrieved chunks once the assembled prompt would exceed what remains after
+  reserving the answer budget, the safety margin, and every other prompt channel
+  (system prompt, grounded instruction, question, and the token-capped conversation
+  history); a budget that empties the evidence set falls back to the bare question,
+  and budget drops emit a `[RAG] budget` log so operators can tell budgeting from
+  retrieval misses. Conversation history is now
+  token-capped (2,048 estimated tokens / 8,192 chars) in addition to the 12-turn cap:
+  oldest whole turns drop first, the surviving window re-anchors user-first, and a lone
+  oversized turn is tail-truncated — previously twelve individually small turns could
+  seed unbounded history and silently trigger the library's default context shift,
+  erasing retrieved evidence mid-generation. `rag_context_truncation` is no longer a
+  dead setting: the desktop local path's GET /settings now reports it applied (stub
+  mode honestly keeps it not_applied — nothing reads it there; an active external
+  provider also keeps it not_applied — that path retrieves without a ceiling), and its
+  value acts as an additional CHARACTER ceiling on the assembled grounded context
+  (it can only tighten the context-window-derived bound, never loosen it; desktop
+  local path only). When the budget drops chunks, `sources`, `context_length`, and
+  citations reflect only the surviving evidence. Within-budget prompts assemble
+  byte-identically to before.
+
 - **Desktop LLM tiers swap to the LFM lineup (issue #156)**: both desktop inference
   profiles change — Quality is now `lfm2.5-2.6b` (LFM2.5-2.6B, Q4_K_M,
   1,674,455,040 bytes) and Fast is now `lfm2-1.2b-rag` (LFM2-1.2B-RAG, Q4_K_M,

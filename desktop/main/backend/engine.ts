@@ -21,6 +21,7 @@ import type {
 } from './types.js';
 import type { PackManager } from './store/pack-manager.js';
 import { DEFAULT_RETRIEVAL_CONFIG } from './retrieval/config.js';
+import { countRowsWithinBudget } from './inference/prompt-budget.js';
 
 // STORED defaults mirror config.py's RAGSettings field defaults so the
 // desktop keyspace and its PUT bounds stay number-compatible with the Python
@@ -108,7 +109,16 @@ const RAG_TO_RESPONSE: Record<string, string> = {
  * `not_applied` (derived from SETTING_BOUNDS minus these sets).
  */
 const RETRIEVAL_READ_KEYS: readonly string[] = ['rag_n_results', 'rag_reranking_enabled'];
-export const GENERATION_READ_KEYS: readonly string[] = ['rag_max_tokens', 'rag_temperature'];
+// Issue #157: rag_context_truncation is read by LlamaEngine's prompt assembly
+// (the grounded-context char ceiling), which is a generation-path reader by
+// this file's own taxonomy — an engine that generates reads it, so it belongs
+// with the generation keys. RETRIEVAL placement would make a stub-mode
+// GET /settings claim the key applied while StubEngine never reads it.
+export const GENERATION_READ_KEYS: readonly string[] = [
+  'rag_max_tokens',
+  'rag_temperature',
+  'rag_context_truncation',
+];
 
 /** Effective generation values an engine falls back to when not explicitly set. */
 export interface GenerationDefaults {
@@ -204,10 +214,22 @@ export class StubEngine implements EngineSurface {
    * LlamaEngine.query() (which retrieves before grounding its prompt).
    * Returns null when no surface is attached or retrieval yields nothing —
    * callers keep their pre-B7 behavior in that case.
+   *
+   * Issue #157: `contextCharCeiling`, passed only by LlamaEngine's prompt
+   * assembly, applies the grounded-context budget AT ROW LEVEL — the leading
+   * rows whose `[n] `-numbered assembly fits the ceiling survive, and every
+   * downstream field (texts/sources/contextLength/cited) is derived from the
+   * SURVIVING rows (rows and cited are not index-aligned: cited carries only
+   * rows with a chunkId). Trailing rows are dropped whole, never truncated
+   * mid-row. A ceiling that drops every row returns the emptied object (not
+   * null): retrieval happened, the budget emptied the evidence set, and the
+   * callers' grounding rule resolves that to 'general'. The stub's own
+   * query() path passes no ceiling and is unchanged.
    */
   async retrieveContext(
     question: string,
     nResults?: number,
+    contextCharCeiling?: number,
   ): Promise<{
     sources: string[];
     contextLength: number;
@@ -223,22 +245,39 @@ export class StubEngine implements EngineSurface {
     // settings-wiring-honesty: the REQUESTED rerank flag rides each query, so
     // a stored rag_reranking_enabled takes effect without a surface rebuild.
     const rerank = this.requestedRerank();
-    const rows = await this.retrievalSurface.search(question, n, { rerank });
-    if (rows.length === 0) return null;
+    const allRows = await this.retrievalSurface.search(question, n, { rerank });
+    if (allRows.length === 0) return null;
+    // Issue #157: budget at row level when the assembly site supplies a
+    // ceiling; without one (stub path, pre-#157 callers) every row survives.
+    const survivors =
+      contextCharCeiling === undefined
+        ? allRows
+        : allRows.slice(0, countRowsWithinBudget(allRows.map((row) => row.text), contextCharCeiling));
+    // PRR-008 (PR review): make budget drops observable — mirrors the browser
+    // F11 port's structured content-gap log (rag-orchestrator) so an operator
+    // can tell "the budget removed evidence" from "retrieval found nothing".
+    if (survivors.length < allRows.length) {
+      console.info('[RAG] budget', {
+        droppedForBudget: allRows.length - survivors.length,
+        bestScore: survivors.length > 0 ? (survivors[0]?.similarity ?? null) : null,
+        ceilingChars: contextCharCeiling,
+        scale: 'char-budget',
+      });
+    }
     const sources: string[] = [];
-    for (const row of rows) {
+    for (const row of survivors) {
       if (!sources.includes(row.source)) sources.push(row.source);
     }
     return {
       sources,
-      contextLength: rows.reduce((total, row) => total + row.text.length, 0),
-      texts: rows.map((row) => row.text),
+      contextLength: survivors.reduce((total, row) => total + row.text.length, 0),
+      texts: survivors.map((row) => row.text),
       // Per-query (issue #72 contract): a rerank-off query skipped the
       // reranker, so its scores were never floor-gated.
       floorActive: this.retrievalSurface.floorActive !== false && rerank,
       // D6 (issue #82): cited chunk ids + scores for the learn assembler
       // (rows whose surface predates chunkId are simply absent from cited).
-      cited: rows
+      cited: survivors
         .filter((row): row is typeof row & { chunkId: string } => typeof row.chunkId === 'string')
         .map((row) => ({
           chunkId: row.chunkId,
@@ -412,6 +451,25 @@ export class StubEngine implements EngineSurface {
     if (this.explicitKeys.has('rag_max_tokens')) out.maxTokens = Number(this.settings.rag_max_tokens);
     if (this.explicitKeys.has('rag_temperature')) out.temperature = Number(this.settings.rag_temperature);
     return out;
+  }
+
+  /**
+   * Issue #157: the effective rag_context_truncation setting — an additional
+   * CHAR ceiling on the grounded-context assembly, read by LlamaEngine's
+   * prompt budget at query time (min(derived, setting): it can only tighten
+   * the CONTEXT_SIZE-derived bound). Falls back to the stored default when
+   * unset/garbage; SETTING_BOUNDS guarantees a positive int.
+   *
+   * PRR-024 (PR review): deliberately NOT on the EngineSurface interface —
+   * only LlamaEngine's prompt budget reads it today, and adding it to the
+   * contract would obligate every future surface to implement a reader while
+   * GENERATION_READ_KEYS statically claims the key is applied. A future
+   * non-Llama generating surface must add the reader AND keep the
+   * responseSettings honesty (see llama-engine's external-mode carve-out).
+   */
+  contextTruncationChars(): number {
+    const value = Number(this.settings.rag_context_truncation);
+    return Number.isFinite(value) && value > 0 ? value : DEFAULT_SETTINGS.rag_context_truncation;
   }
 
   /**

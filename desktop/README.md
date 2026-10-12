@@ -158,9 +158,14 @@ profile auto-selection.
   depending on electron-builder's implicit native-module heuristic. The CUDA
   backend packages are excluded from the installer and no code path selects
   them. Dev runs and the headless dev-server are unaffected.
-- **History**: contract-supplied history is capped to the last 12 turns
-  before seeding the model, so an oversized array cannot overflow the 8192
-  context (the browser client already caps at 6).
+- **History**: contract-supplied history is token-capped (2,048 estimated
+  tokens / 8,192 chars — oldest whole turns drop, window re-anchors
+  user-first) and then sliced to the last 12 turns before seeding the model;
+  together with the grounded-context budget this keeps the assembled prompt's
+  estimated size inside the 8192-token context (estimate in tokens — chars
+  divided by 4, CJK code points charged one each, plus a 512-token margin;
+  issue #157; the browser client caps at 6 turns and budgets chunks in its
+  orchestrator).
 - **Stub fixture**: `TRAININGAPP_DESKTOP_ENGINE=stub` (or dev-server
   `--engine stub`) restores the B3 deterministic engine for dev/CI transport
   conformance without weights. The CI conformance job does exactly this;
