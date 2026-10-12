@@ -224,9 +224,14 @@ describe('i100 AC2: store connection pragmas', () => {
     foreign.prepare('CREATE TABLE probe (x)').run();
     try {
       const { openStore } = await loadStoreModule();
-      // swarm-pr-review PRR-014: bind the title to the pragma/read-back path —
-      // a bare toThrow() also passes if the whole pragma block is deleted
-      // (the later schema exec throws SQLITE_BUSY under the held lock).
+      // swarm-pr-review PRR-014 (claim corrected after mutation probing):
+      // this arm pins END-TO-END LOUD FAILURE under the real refusal shape.
+      // The message binding below is belt-and-braces ONLY — under this held
+      // lock every reachable failure is "database is locked", so the regex
+      // cannot discriminate a deleted pragma block; what catches that
+      // mutation is the retry leg after ROLLBACK (journal_mode must come
+      // back wal) together with the fresh-file pragma pin. The production
+      // read-back remains the labeled cross-build defense.
       expect(() => openStore({ dbPath, dims: 8, repoRoot: REPO_ROOT })).toThrow(
         /locked|journal_mode/,
       );

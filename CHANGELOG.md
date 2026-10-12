@@ -9,10 +9,10 @@
   can no longer double-spawn its child). All four hardened store open paths now
   set explicit `busy_timeout=5000` and `journal_mode=WAL`, with the journal mode
   read back and verified (Node `openStore`, both Python interop paths, and the
-  interop harness — packtool's read-only open sites are unchanged — previously the
-  hardened paths opened in rollback-journal mode with only implicit driver
-  defaults, which corrects the issue's "immediate SQLITE_BUSY" rationale). The
-  store schema's
+  interop harness — previously the hardened paths opened in rollback-journal
+  mode with only implicit driver defaults, which corrects the issue's
+  "immediate SQLITE_BUSY" rationale; packtool's own open sites — read-only and
+  conditional-write alike — are unchanged). The store schema's
   SCHEMA-BUMP contract is now mechanically enforced: a new guard binds the schema
   seed to `CURRENT_SCHEMA_VERSION` in both runtimes and pins the DDL body hash per
   version, and the `migrate.py` selftest fails on seed drift from either cwd — a
