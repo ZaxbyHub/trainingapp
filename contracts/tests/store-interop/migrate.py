@@ -18,6 +18,7 @@ asserts the v3 packs shape and row mapping; exits 0 on agreement.
 """
 
 import json
+import re
 import sqlite3
 import tempfile
 from pathlib import Path
@@ -161,9 +162,42 @@ def migrate(conn: sqlite3.Connection) -> int:
 
 def _selftest() -> int:
     """Build a v2-shaped store, migrate to v3, assert shape + row mapping."""
+    # SCHEMA-BUMP-CONTRACT parity (issue #100 items 3/4): this runtime's
+    # CURRENT_SCHEMA_VERSION must equal the meta.schema_version seed in the
+    # authoritative schema file — otherwise cross-runtime readers break. The
+    # path anchors on THIS file (cwd-independent), and the failure raises so
+    # it also fires under `python -O`. Both ladders must change in the same
+    # commit (#100): migrate.ts and migrate.py.
+    schema_path = Path(__file__).resolve().parents[2] / "store.schema.sql"
+    seed_match = re.search(
+        r"\('schema_version',\s*'(\d+)'\)", schema_path.read_text(encoding="utf-8")
+    )
+    if seed_match is None:
+        raise RuntimeError(f"meta.schema_version seed not found in {schema_path}")
+    seed = int(seed_match.group(1))
+    if seed != CURRENT_SCHEMA_VERSION:
+        raise RuntimeError(
+            f"SCHEMA-BUMP-CONTRACT: contracts/store.schema.sql seed {seed} != "
+            f"migrate.py CURRENT_SCHEMA_VERSION {CURRENT_SCHEMA_VERSION}; "
+            # Deliberately does not name both ladder files on one line: the
+            # canonical four-token #100 acknowledgment is single-sourced in
+            # contracts/store.schema.sql (frozen check C4 reads raw lines).
+            "land both runtime ladders in the same commit (#100)"
+        )
     with tempfile.TemporaryDirectory() as tmp:
         db_path = Path(tmp) / "selftest.sqlite"
         conn = sqlite3.connect(str(db_path))
+        # issue #100 item 2: explicit pragmas on this runtime's open path
+        # (mirrors sqlite-store.ts / run_interop.connect_with_vec), with
+        # read-back verification of the best-effort WAL conversion.
+        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA journal_mode = WAL")
+        mode = str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+        if mode != "wal":
+            conn.close()
+            raise RuntimeError(
+                f"PRAGMA journal_mode could not be set to wal (got {mode!r})"
+            )
         try:
             # Minimal v2 store: meta (version 2), packs (v2 shape), docs (v2
             # shape with the FK that v3 drops), plus the tables the v3 step

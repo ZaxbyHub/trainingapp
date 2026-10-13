@@ -120,13 +120,19 @@ describe('b6 C7 (AC7): host-level clear cache', () => {
       expect(cleared.status).toBe(200);
       expect(cleared.json?.status).toBe('cleared');
 
-      // While the host is STILL RUNNING: clearDocuments unlinked dbPath,
-      // dbPath-wal and dbPath-shm before re-initializing. The reopened store
-      // runs in rollback-journal mode (better-sqlite3 default; the schema sets
-      // no WAL pragma), so the fresh connection never recreates -wal/-shm —
-      // plain absence here is direct evidence the old sidecars were removed.
-      expect(fs.existsSync(`${storePath}-wal`)).toBe(false);
-      expect(fs.existsSync(`${storePath}-shm`)).toBe(false);
+      // issue #100 item 2 (WAL hardening): clearDocuments still unlinks the
+      // pre-clear db/-wal/-shm before re-initializing, but the reopened store
+      // now sets journal_mode=wal at open and legitimately recreates fresh,
+      // empty sidecars. The former "-wal/-shm absent" bar encoded the delete-
+      // journal era; swarm-pr-review PRR-021 replaces it with the POSITIVE
+      // recreation bar below, so the doc claim "the reopened store recreates
+      // the sidecars" stays pinned. Content still carries the no-stale-bytes
+      // contract: a surviving PRE-clear sidecar would resurrect the ingested
+      // row, so the still-serving host must report an empty list (next line)
+      // and the post-shutdown probe must find zero docs rows plus a
+      // verified-wal journal (asserted below).
+      expect(fs.existsSync(`${storePath}-wal`)).toBe(true);
+      expect(fs.existsSync(`${storePath}-shm`)).toBe(true);
 
       // Still serving WITHOUT a restart, from a re-initialized empty store.
       expect((await httpJson(handle.port, 'GET', '/documents', undefined, TOKEN)).json?.total).toBe(0);
@@ -139,6 +145,9 @@ describe('b6 C7 (AC7): host-level clear cache', () => {
     try {
       expect(countRows(probe, 'docs')).toBe(0);
       expect(probe.schemaVersion).toBe(3);
+      // issue #100 item 2: the clear -> reopen cycle preserves the WAL contract.
+      const jm = probe.db.prepare('PRAGMA journal_mode').get() as { journal_mode: string };
+      expect(jm.journal_mode).toBe('wal');
     } finally {
       probe.close();
     }

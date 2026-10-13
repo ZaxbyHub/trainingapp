@@ -54,13 +54,12 @@ export function findRepoRoot(startDir: string): string | undefined {
 /** The DDL with __EMBEDDING_DIMS__ substituted (read from disk, never copied). */
 export function loadSchemaSql(repoRoot: string, dims: number): string {
   const raw = fs.readFileSync(path.join(repoRoot, SCHEMA_RELATIVE_PATH), 'utf8');
-  const sql = raw.split(EMBEDDING_DIMS_TOKEN).join(String(dims));
-  if (sql.includes(EMBEDDING_DIMS_TOKEN)) {
-    // Parity with sqlite-store.ts: a surviving token means a divergent schema
-    // file — refuse rather than write a store with a malformed vec0 DDL.
-    throw new Error(`failed to substitute ${EMBEDDING_DIMS_TOKEN} in ${SCHEMA_RELATIVE_PATH}`);
-  }
-  return sql;
+  // issue #100 defect class 4 (unreachable guard after unconditional token
+  // removal): the `if (sql.includes(EMBEDDING_DIMS_TOKEN)) throw` that lived
+  // here was dead by construction — split/join removes every occurrence first
+  // — and duplicated the desktop store's deleted guard byte-for-byte. The
+  // substitution is pinned by schema-substitution.test.ts instead.
+  return raw.split(EMBEDDING_DIMS_TOKEN).join(String(dims));
 }
 
 /**

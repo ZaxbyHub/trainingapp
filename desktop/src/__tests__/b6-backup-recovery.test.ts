@@ -158,4 +158,44 @@ describe('b6 C3 (AC5): backup and restore', () => {
       probe.close();
     }
   });
+
+  itReal('createBackup fails loud when a foreign reader blocks the WAL checkpoint (issue #100 swarm-pr-review PRR-001)', async () => {
+    const root = makeTempDir('b6-prr001-');
+    const dbPath = path.join(root, 'store.sqlite');
+    const backupsDir = path.join(root, 'backups');
+    const store = openStore({ dbPath, dims: 8, repoRoot: REPO_ROOT });
+    seedDoc(store, 'doc-prr001-1', 'PRR001-BEFORE');
+
+    // A foreign connection pins a read snapshot (deferred BEGIN + a read =
+    // SHARED lock only, so the store keeps writing); commits made AFTER that
+    // snapshot are exactly the rows a busy checkpoint would leave behind in
+    // the WAL — copying the main file then yields a stale-but-VALID backup
+    // that would pass restore validation and silently roll the store back.
+    const foreign = new RawDatabase(dbPath);
+    try {
+      foreign.exec('BEGIN');
+      foreign.exec('SELECT count(*) FROM docs');
+      seedDoc(store, 'doc-prr001-2', 'PRR001-AFTER');
+      expect(() => createBackup(store, backupsDir)).toThrow(/checkpoint incomplete/);
+    } finally {
+      try {
+        foreign.exec('ROLLBACK');
+      } catch {
+        /* nothing to roll back */
+      }
+      foreign.close();
+    }
+
+    // With the reader gone the same call succeeds and the snapshot carries
+    // BOTH rows — proving the refusal above was about the reader, not a fault.
+    const ok = createBackup(store, backupsDir);
+    expect(fs.existsSync(ok.path)).toBe(true);
+    const snap = openStore({ dbPath: ok.path, dims: 8, repoRoot: REPO_ROOT });
+    try {
+      expect(countRows(snap, 'docs')).toBe(2);
+    } finally {
+      snap.close();
+    }
+    store.close();
+  });
 });

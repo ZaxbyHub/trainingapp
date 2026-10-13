@@ -148,9 +148,13 @@ lifecycle), `links` (doc-chunk to training-slide links), and `meta`
 pinned at 0.1.9 exactly on both the Node and Python sides (ADR-0005).
 
 - **Open/apply** — [desktop/main/backend/store/sqlite-store.ts](desktop/main/backend/store/sqlite-store.ts):
-  better-sqlite3 connection, sqlite-vec extension load (with an app.asar
-  unpacked-twin path rewrite for packaged layouts), schema applied from the
-  contracts file on disk (never copied), `meta.schema_version` verified.
+  better-sqlite3 connection with explicit `busy_timeout=5000` then
+  `journal_mode=WAL` pragmas (busy first so the handler covers the WAL
+  conversion) and a journal-mode read-back that fails loud when conversion is
+  refused under a foreign lock (issue #100); `dbPath` must be absolute.
+  sqlite-vec extension load (with an app.asar unpacked-twin path rewrite for
+  packaged layouts), schema applied from the contracts file on disk (never
+  copied), `meta.schema_version` verified.
 - **Migrations** — [desktop/main/backend/store/migrate.ts](desktop/main/backend/store/migrate.ts):
   ladder v1 -> v2 (links finalization) -> v3 (per-version packs table);
   `CURRENT_SCHEMA_VERSION = 3`.

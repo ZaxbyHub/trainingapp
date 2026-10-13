@@ -208,8 +208,14 @@ The Node host opens the per-profile SQLite store (`contracts/store.schema.sql`,
 schema v3 — per-version `packs` since C3/#70) on the `NodeBackendHost` start
 path when a store path is configured
 (Electron bootstrap: `<userData>/store/store.db`; dev-server:
-`--store-path` or `TRAININGAPP_DESKTOP_STORE_PATH`). Init is
-failure-isolated — the store is not load-bearing until B6 (#64). Pinned
+`--store-path` or `TRAININGAPP_DESKTOP_STORE_PATH`). An empty value counts
+as unset on both seams. The headless seam requires an ABSOLUTE path (issue
+#100): a relative value is rejected by `openStore` and the host degrades to
+storeless (console.error + a `store-unavailable` pack-lifecycle status)
+instead of creating a cwd-relative store — the Electron bootstrap resolves
+its env override against the cwd before opening, so pass an absolute path
+there too. Init is failure-isolated — a store that cannot open degrades the
+host to storeless operation rather than failing startup. Pinned
 sqlite-vec 0.1.9 (`better-sqlite3` + `sqlite-vec` in `desktop/package.json`);
 Node↔Python interop proof: `contracts/tests/store-interop/` (ADR-0005). The
 Electron-packaged native-addon path remains #84/E1. Browser IndexedDB storage
@@ -265,7 +271,10 @@ A fresh install walks a deterministic six-state sequence: `detect-hardware` →
   which is otherwise exempt like the B9 boot gate).
 - `TRAININGAPP_DESKTOP_STORE_PATH` is honored by the Electron bootstrap (not
   just the headless dev-server), which is what gives the Playwright-under-
-  Electron suite per-test store isolation.
+  Electron suite per-test store isolation. Pass it absolute: the bootstrap
+  `path.resolve`s the value against the cwd, while the headless seam hands it
+  to `openStore` as-is, where a relative path is rejected (issue #100). An
+  empty value counts as unset on both seams.
 
 ## Installer resources + startup integrity gate (E1, issue #84)
 
@@ -388,7 +397,9 @@ persistence, `/packs` 200.
 Design decisions are frozen in ADR-0006 (`docs/adr/0006-profile-model.md`).
 
 - **Profiles**: one OS-user-scoped profile by default at
-  `<userData>/profiles/default/store.sqlite`. Named profiles are opt-in:
+  `<userData>/profiles/default/store.sqlite` (always an absolute,
+  userData-derived path — the cwd-relative store class issue #100 closes
+  cannot arise from profile layout). Named profiles are opt-in:
   `TRAININGAPP_PROFILE_MODE=named` + `TRAININGAPP_PROFILE_NAME` (required in
   named mode; allowlist `[a-z0-9-]{1,64}` — names become directory names, so
   traversal is structurally impossible). B5's interim `<userData>/store/store.db`

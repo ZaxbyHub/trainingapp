@@ -66,8 +66,27 @@ const sha256Hex = (text) =>
   requireFromDesktop('node:crypto').createHash('sha256').update(text, 'utf8').digest('hex');
 
 function openAndLoad(dbPath, mode) {
-  if (mode === 'write' && fs.existsSync(dbPath)) fs.rmSync(dbPath);
+  if (mode === 'write') {
+    // issue #100: this harness opens in WAL mode (below), so a rewrite must
+    // clear the previous run's sidecars along with the db file — an orphaned
+    // -wal from the old file would outlive its database. Gate on the MODE, not
+    // on the db file existing (swarm-pr-review PRR-019): the orphan case the
+    // comment names is exactly db-gone/-wal-present.
+    for (const suffix of ['', '-wal', '-shm']) {
+      const p = `${dbPath}${suffix}`;
+      if (fs.existsSync(p)) fs.rmSync(p);
+    }
+  }
   const db = new Database(dbPath);
+  // issue #100 item 2 (mirrors run_interop.connect_with_vec): explicit
+  // connection pragmas with read-back verification of the best-effort WAL
+  // conversion (refusal fails loud instead of silently serving delete mode).
+  db.pragma('busy_timeout = 5000');
+  db.pragma('journal_mode = WAL');
+  const journalMode = String(db.pragma('journal_mode', { simple: true })).toLowerCase();
+  if (journalMode !== 'wal') {
+    fail(`PRAGMA journal_mode could not be set to wal (got ${journalMode}); close other connections and retry`);
+  }
   sqliteVec.load(db); // must precede any vec0 DDL/DML
   return db;
 }
@@ -77,8 +96,11 @@ function applySchema(db) {
   const dims = Number(fixture.dims);
   if (!Number.isInteger(dims) || dims <= 0) fail(`invalid fixture dims: ${fixture.dims}`);
   const raw = fs.readFileSync(SCHEMA_PATH, 'utf8');
+  // issue #100 defect class 4: the former token-mismatch guard below this
+  // split/join was unreachable by construction (same dead-guard family
+  // deleted from sqlite-store.ts, index-writer.ts and run_interop.py). The
+  // substitution is exercised end-to-end by both interop directions.
   const sql = raw.split('__EMBEDDING_DIMS__').join(String(dims));
-  if (sql.includes('__EMBEDDING_DIMS__')) fail('schema substitution failed');
   db.exec(sql);
   return fixture;
 }

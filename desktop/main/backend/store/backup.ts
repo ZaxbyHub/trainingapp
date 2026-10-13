@@ -1,10 +1,15 @@
 // store/backup.ts — backup/restore for the per-profile store (issue #64).
 //
-// createBackup: flush WAL (wal_checkpoint TRUNCATE — after it the -wal file is
-// empty, so copying the main db file alone is a complete snapshot) then copy
-// to <backupsDir>/<UTC-timestamp>/<store.sqlite>. Timestamp dirs include
-// milliseconds and a monotonic sequence suffix so rapid successive backups
-// never collide and sort lexicographically = chronologically.
+// createBackup: flush WAL (wal_checkpoint TRUNCATE) and VERIFY the flush
+// completed, then copy to <backupsDir>/<UTC-timestamp>/<store.sqlite>. The
+// copy is only a complete snapshot when every WAL page reached the main file:
+// a busy checkpoint (another connection holds a read snapshot) with
+// checkpointed < log leaves a stale-but-VALID main file that would pass
+// restoreBackup's validation and silently roll the store back on recovery —
+// so that shape fails the backup loud (issue #100 swarm-pr-review PRR-001).
+// Timestamp dirs include milliseconds and a monotonic sequence suffix so
+// rapid successive backups never collide and sort lexicographically =
+// chronologically.
 //
 // restoreBackup: validate the backup (schema_version integer in
 // [1, CURRENT_SCHEMA_VERSION], embedding_dims match) BEFORE touching the
@@ -36,9 +41,35 @@ const require = createRequire(import.meta.url);
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- native addon resolved at runtime
 const RawDatabase = require('better-sqlite3') as RawDatabaseConstructor;
 
-/** Flush WAL so the main db file is a complete, self-consistent snapshot. */
-function checkpoint(store: { db: { prepare(sql: string): { get(...params: unknown[]): unknown } } }): void {
-  store.db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get();
+/**
+ * Flush WAL so the main db file is a complete, self-consistent snapshot, and
+ * verify that it became one (issue #100 swarm-pr-review PRR-001).
+ *
+ * `PRAGMA wal_checkpoint(TRUNCATE)` returns { busy, log, checkpointed }:
+ * busy != 0 means the truncation/flush was refused because another
+ * connection holds a read snapshot. The copy below reads ONLY the main file,
+ * so it is complete iff every WAL page was written back (checkpointed ===
+ * log). Without this check a foreign reader (a DB browser, a second host
+ * sharing --store-path) can make createBackup return ok:true with a stale —
+ * but validation-passing — snapshot that restoreBackup would later copy over
+ * the live store: silent data loss through the recovery path itself.
+ */
+function checkpoint(store: {
+  db: { prepare(sql: string): { get(...params: unknown[]): unknown } };
+}): { busy: number; log: number; checkpointed: number } {
+  const row = store.db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get() as
+    | { busy?: number | bigint; log?: number | bigint; checkpointed?: number | bigint }
+    | undefined;
+  const busy = Number(row?.busy ?? 0);
+  const log = Number(row?.log ?? 0);
+  const checkpointed = Number(row?.checkpointed ?? 0);
+  if (busy !== 0 && checkpointed !== log) {
+    throw new Error(
+      `backup refused: WAL checkpoint incomplete (busy=${busy}, checkpointed=${checkpointed}/${log}) — ` +
+        'close other connections to the store file and retry',
+    );
+  }
+  return { busy, log, checkpointed };
 }
 
 function timestampDirName(sequence: number): string {

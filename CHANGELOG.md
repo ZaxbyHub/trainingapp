@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+- **Store hardening deferred from PR #99 lands (issue #100)**: concurrent backend
+  `start()` calls are now single-flight on both hosts — the in-flight promise is
+  memoized and `stop()` awaits a pending start before teardown, so two simultaneous
+  starts can no longer leak a second listener and store (the sidecar host likewise
+  can no longer double-spawn its child). All four hardened store open paths now
+  set explicit `busy_timeout=5000` and `journal_mode=WAL`, with the journal mode
+  read back and verified (Node `openStore`, both Python interop paths, and the
+  interop harness — previously the hardened paths opened in rollback-journal
+  mode with only implicit driver defaults, which corrects the issue's
+  "immediate SQLITE_BUSY" rationale; packtool's own open sites — read-only and
+  conditional-write alike — are unchanged). The store schema's
+  SCHEMA-BUMP contract is now mechanically enforced: a new guard binds the schema
+  seed to `CURRENT_SCHEMA_VERSION` in both runtimes and pins the DDL body hash per
+  version, and the `migrate.py` selftest fails on seed drift from either cwd — a
+  DDL edit without a version bump or a one-runtime-only ladder change can no longer
+  sail through CI green. `openStore` fails loud on a relative `dbPath` instead of
+  silently creating cwd-relative store directories, the headless dev-server's
+  arg/env contract (exported `parseArgs`/`resolveStorePath`), `closeStore()`,
+  and the schema substitution all have direct regression tests — the hardened
+  ESM-entry guard is exercised end-to-end by the conformance harness's real
+  spawn rather than a unit test — and four unreachable substitution guards
+  were deleted (desktop,
+  packtool, and both interop harnesses — the fourth was caught by the independent
+  implementation review). A relative `--store-path`/`TRAININGAPP_DESKTOP_STORE_PATH`
+  on the headless path now degrades loudly (console.error plus a
+  `store-unavailable` pack-lifecycle status) instead of silently persisting a
+  cwd-relative store. **User-visible:**
+  the profile store now creates `-wal`/`-shm` sidecar files next to
+  `store.sqlite` (clear-cache unlinks them along with `store.sqlite` before
+  re-initializing an empty schema — the reopened store then recreates fresh,
+  empty sidecars, which are pinned by test rather than by absence; backups and
+  recovery already handled sidecars).
+
 - **Desktop local RAG gets a token-based context and history budget (issue #157)**: the
   desktop inference path now bounds its prompt below the model's 8,192-token context
   window, adapting the browser's F11 reserved-token approach (prefix-drop of trailing
