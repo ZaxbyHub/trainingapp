@@ -261,7 +261,10 @@ target (full layout inspected: resources-root `manifest.json`, four model
 groups, packs, docs, renderer weights excluded, double-ship guard clean);
 the CI fixture-mode NSIS (~350 MB payload) builds normally. Resolution
 options (custom multi-volume NSIS machinery vs two-artifact bundle vs
-budget/ADR revisit) are a product-level fork surfaced in issue #84's PR.
+budget/ADR revisit) were a product-level fork surfaced in issue #84's PR;
+DECIDED 2026-10-13 on issue #131 — the two-artifact bundle (Setup.exe +
+models sidecar) is recorded in `docs/adr/0013-real-weights-distribution.md`,
+with the build-out tracked as issue #171.
 
 ## Desktop backend host cold start (issue #61)
 

@@ -25,12 +25,10 @@ import { autoSelectProfile, resolveFreeRamBytes } from './first-run/ram-gate.js'
 import { readGpuProbeVerdict } from './backend/inference/gpu-probe.js';
 import {
   containedJoin,
-  loadManifest,
   manifestGroupBytes,
-  resolveManifestPath,
-  verifyManifest,
   type ManifestFailure,
 } from './first-run/manifest-verifier.js';
+import { createWizardManifest } from './first-run/wizard-manifest.js';
 import {
   EMPTY_FIRST_RUN_STATE,
   evaluateStatus,
@@ -658,37 +656,20 @@ export function bootstrap(): void {
       const root = devRepoRoot();
       return path.join(root, 'docs', 'licenses.md');
     };
-    /** Load + verify the integrity manifest (E1 contract, #84). `staged:false`
-     *  is NOT an error — dev/CI trees and pre-E1 packaged builds have none;
-     *  the fail-closed decision belongs to the caller. */
-    const wizardManifest = () => {
-      const manifestPath = resolveManifestPath({
-        env: process.env,
-        isPackaged: app.isPackaged,
-        resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
-        repoRoot: devRepoRoot(),
-      });
-      if (manifestPath === null || !existsSync(manifestPath)) {
-        return { staged: false, manifestPath, manifest: null, verify: null, loadError: null };
-      }
-      const manifestDir = path.dirname(manifestPath);
-      try {
-        const { manifest } = loadManifest(manifestPath);
-        const verify =
-          manifest === null
-            ? null
-            : verifyManifest(manifest, [manifestDir, path.join(userDataPath, 'models')]);
-        return { staged: manifest !== null, manifestPath, manifest, verify, loadError: null };
-      } catch (err) {
-        return {
-          staged: true,
-          manifestPath,
-          manifest: null,
-          verify: null,
-          loadError: err instanceof Error ? err.message : String(err),
-        };
-      }
-    };
+    // Load + verify the integrity manifest (E1 contract, #84). `staged:false`
+    // is NOT an error — dev/CI trees and pre-E1 packaged builds have none;
+    // the fail-closed decision belongs to the caller. Extracted into
+    // first-run/wizard-manifest.ts (#131 item 3): the full sha256 pass is
+    // cached per (manifestPath, mtime), so boot push / status polls /
+    // activate-packs share one hash pass per manifest change, while callers
+    // that must re-hash (the completion handler's TOCTOU re-verify) pass
+    // {fresh: true}.
+    const { wizardManifest } = createWizardManifest({
+      isPackaged: app.isPackaged,
+      resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+      repoRoot: devRepoRoot(),
+      userDataPath,
+    });
     // Manifest-controlled dir (PRR-001): containment-checked join; null when
     // the entry tries to escape the manifest's packs directory.
     const packEntryDir = (
@@ -696,7 +677,7 @@ export function bootstrap(): void {
       entry: { id: string; version?: string; dir?: string },
     ): string | null =>
       containedJoin(path.join(manifestDir, 'packs'), entry.dir ?? `${entry.id}-${entry.version ?? ''}`);
-    const buildFirstRunStatus = async () => {
+    const buildFirstRunStatus = async (opts?: { fresh?: boolean }) => {
       const freeBytes = resolveFreeRamBytes(process.env);
       const modelStatus =
         typeof engine.modelStatus === 'function' ? engine.modelStatus() : null;
@@ -712,10 +693,11 @@ export function bootstrap(): void {
       };
       const qualityBytes = modelBytesFor('quality');
       const fastBytes = modelBytesFor('fast');
-      // One load+verify per status invocation: each wizardManifest() runs a
-      // full sha256 pass over every required file, so callers share the result
-      // (PRR-002) instead of hashing the manifest tree twice.
-      const wm = wizardManifest();
+      // One wizardManifest() per status invocation: results are cached per
+      // (manifestPath, mtime) (#131 item 3, subsuming PRR-002's within-status
+      // sharing), so repeated status calls cost a stat, not a hash pass; the
+      // completion handler passes {fresh: true} for its TOCTOU re-verify.
+      const wm = wizardManifest(opts);
       // RAM-gate sizes: the staged file's real size when present, otherwise
       // the manifest's declared size for the group (a quality model that has
       // not been staged yet still gets an honest gate at first run).
@@ -951,8 +933,11 @@ export function bootstrap(): void {
             };
           }
           // Fresh verification (TOCTOU guard): the operator may have completed
-          // the wizard long after the status they saw was rendered.
-          const status = await buildFirstRunStatus();
+          // the wizard long after the status they saw was rendered. #131:
+          // {fresh: true} re-hashes even though the cache may hold a clean
+          // result, and the digest capture below then reads THIS pass from
+          // the cache instead of paying a second hash.
+          const status = await buildFirstRunStatus({ fresh: true });
           const manifestOk = manifestCompletionState({
             packaged: status.manifest.packaged,
             staged: status.manifest.staged,

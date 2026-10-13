@@ -105,8 +105,13 @@ jobs:
       # wizard completion + persistence, /packs 200). The packaged store-init
       # regression this catches (vec0 path inside app.asar) is invisible to
       # every dev-mode suite.
+      # --driver cdp (issue #135, closed by #131): the windowed Playwright
+      # _electron.launch handshake intermittently never completes on windows
+      # runners (both websockets connect, then launch times out — harness,
+      # not app); the CDP transport drives the identical ladder over
+      # --remote-debugging-port instead. Local runs keep the windowed default.
       - name: Packaged-boot smoke (win-unpacked, hash embedder)
-        run: node desktop/scripts/packaged-smoke.mjs
+        run: node desktop/scripts/packaged-smoke.mjs --driver cdp
 
   renderer-e2e:
     name: "Playwright under Electron (issue #67 AC1 smoke)"
