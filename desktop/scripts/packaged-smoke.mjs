@@ -238,7 +238,29 @@ async function bootCdp() {
       throw new Error('DevTools stderr line never appeared (endpoint parser found nothing)');
     }
 
-    const browser = await playwright.chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: 60_000 });
+    // CDP attach retry: a loaded CI runner wedged the relaunch attach once
+    // (PR #172 round 1: steps 1-5 green on the runner, connectOverCDP timed
+    // out at 60s on the SECOND boot). Attaching is idempotent to retry
+    // while the browser endpoint still answers.
+    let browser = null;
+    let attachError = null;
+    for (let attempt = 1; attempt <= 3 && browser === null; attempt++) {
+      try {
+        browser = await playwright.chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: 60_000 });
+      } catch (err) {
+        attachError = err;
+        if (child.exitCode !== null) {
+          throw new Error(`packaged exe exited early with code ${child.exitCode} during CDP attach (attempt ${attempt})`);
+        }
+        if (attempt < 3) {
+          console.log(`SMOKE: CDP attach attempt ${attempt} failed (${err instanceof Error ? err.message : String(err)}); retrying`);
+          await new Promise((r) => setTimeout(r, 3_000));
+        }
+      }
+    }
+    if (browser === null) {
+      throw new Error(`CDP attach failed after 3 attempts: ${attachError instanceof Error ? attachError.message : String(attachError)}`);
+    }
     const ctx = browser.contexts()[0];
     let page = null;
     const pageDeadline = Date.now() + 120_000;
@@ -261,7 +283,10 @@ async function bootCdp() {
       evaluate: (fn) => page.evaluate(fn),
       close: async () => {
         // Graceful first (close the window; Electron quits on last window),
-        // then the same forceful tree kill the windowed path uses.
+        // then the same forceful tree kill the windowed path uses. Wait for
+        // FULL main-process exit before returning: the relaunch needs the
+        // single-instance lock released, and a half-dead first instance
+        // wedged the second instance's CDP attach on the CI runner.
         try {
           await page.evaluate(() => window.close()).catch(() => {});
           await new Promise((r) => setTimeout(r, 2_000));
@@ -271,7 +296,17 @@ async function bootCdp() {
         await new Promise((r) => setTimeout(r, 1_500));
         if (child.exitCode === null) {
           spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-          await new Promise((r) => setTimeout(r, 3_000));
+        }
+        const exitDeadline = Date.now() + 20_000;
+        while (child.exitCode === null && Date.now() < exitDeadline) {
+          await new Promise((r) => setTimeout(r, 250));
+        }
+        if (child.exitCode === null) {
+          killTree();
+          await new Promise((r) => setTimeout(r, 5_000));
+          if (child.exitCode === null) {
+            throw new Error(`packaged exe pid ${child.pid} survived close (exitCode still null after tree kill)`);
+          }
         }
       },
     };
@@ -376,6 +411,9 @@ try {
     await relaunch.close();
   } catch (err) {
     await relaunch?.close().catch(() => {});
+    // Round-1 gap: the relaunch catch dumped nothing, so the runner log for
+    // the wedged second attach had zero app-side context.
+    dumpConsole('SMOKE: relaunch failed');
     final(2, `SMOKE: INFRA - relaunch failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 } catch (err) {
