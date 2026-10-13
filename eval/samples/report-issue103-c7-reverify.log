@@ -1,0 +1,18 @@
+# Recorded desktop-host parity re-verification (issue #103), 2026-10-13.
+# Verbatim output of the C7-parity replay at base c7e2e956 on the devstation
+# (60q/9doc set, real bge-small + ettin weights, stub engine) — the source
+# run behind the 're-verified' numbers in the bench/RESULTS.md
+# desktop-retrieval-eval provenance strings.
+----
+c7-seed: documents=9 chunks_added=12 success=true
+c7: host up on 127.0.0.1:59446 (engine=stub, real-weights store seeded by c7-seed)
+Unknown tokenizer class "TokenizersBackend", attempting to construct from base class.
+eval: 60 questions vs http://127.0.0.1:59448 [c7-parity-2026-10-13T04-38-47-117Z] recall@5=0.648 mrr=0.369 abstain=0/6 p50=504ms p95=648ms errors=0
+c7: measured recall@1=0.204 recall@3=0.426 recall@5=0.648 mrr=0.369
+C7 PASS recall@5=0.648 mrr=0.369
+c7: recall@1=0.204 (baseline 0.100)
+c7: recall@3=0.426 (baseline 0.340)
+c7: recall@5=0.648 (baseline 0.640)
+c7: mrr=0.369 (baseline 0.324)
+c7: abstain=0/6 errors=0 label=c7-parity-2026-10-13T04-38-47-117Z
+EXIT:0

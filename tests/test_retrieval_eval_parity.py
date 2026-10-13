@@ -25,6 +25,7 @@ import http.client
 import http.server
 import json
 import os
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -44,9 +45,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 WEIGHTS_MIN_BYTES = 10 * 1024 * 1024
 
 EMBED_ONNX = REPO_ROOT / "models" / "bge-small-en-v1.5" / "onnx" / "model.onnx"
+# Full (non-quantized) ONNX only: the recorded floors were measured with the
+# staged full ettin artifact, and a quantized reranker changes exactly the
+# ordering these floors bound — artifact identity, not just sufficient size.
 RERANK_ONNX_CANDIDATES = (
     REPO_ROOT / "models" / "ettin-reranker-32m-v1" / "onnx" / "model.onnx",
-    REPO_ROOT / "models" / "ettin-reranker-32m-v1" / "onnx" / "model_quantized.onnx",
 )
 DEV_SERVER = REPO_ROOT / "desktop" / "dist" / "main" / "backend" / "dev-server.js"
 MAIN_SRC = REPO_ROOT / "desktop" / "main"
@@ -54,6 +57,12 @@ MAIN_SRC = REPO_ROOT / "desktop" / "main"
 # Eval-set identity pins (see the module docstring's re-derivation contract).
 EXPECTED_QUESTIONS = 60
 EXPECTED_DOCUMENTS = 9
+# The denominator recall@5 and MRR divide over (runner counts rows with a
+# non-null expected_doc_id): 54 of the 60 — 4 in-corpus rows target
+# eval/corpus/slides/*.json, which desktop ingest cannot load
+# (SUPPORTED_EXTENSIONS has no .json), so they are structurally unanswerable
+# and are part of the recorded set identity, not a corpus defect.
+EXPECTED_IN_CORPUS = 54
 
 _STAGING_HINT = "run python bench/fetch_models.py --onnx"
 _COMPILE_HINT = "run npm --prefix desktop run compile"
@@ -70,8 +79,20 @@ def _has_reranker_weights() -> bool:
     return any(_real_weights(p) for p in RERANK_ONNX_CANDIDATES)
 
 
+# Populated by _floors_value when a machine tag IS set but the lookup fails;
+# consumed by _assert_floors_armed (fail-closed, never a silent skip).
+_FLOORS_BROKEN: dict = {}
+
+
 def _floors_value(metric: str):
-    """Floor for the current machine tag; None when absent (never invented)."""
+    """Floor for the current machine tag; None when absent (never invented).
+
+    Failure modes are deliberately distinguished: no machine tag -> None
+    (designed skip for weightless/unconfigured boxes), but once a tag IS
+    set, a broken import/fence/key/direction must NOT read as "absent" —
+    the test body hard-fails in that case (see _assert_floors_armed), so a
+    malformed bench-floors fence can never silently disarm the guard.
+    """
     machine = (os.environ.get("BENCH_FLOORS_MACHINE", "") or "").strip()
     if not machine:
         return None
@@ -84,14 +105,33 @@ def _floors_value(metric: str):
             "bge-small-en-v1.5",
             metric,
         )
-    except Exception:
+    except Exception as exc:
+        _FLOORS_BROKEN[f"import/lookup error for {metric}"] = repr(exc)
         return None
     if found is None:
+        _FLOORS_BROKEN[f"no floor row for {metric}"] = (
+            "surface/model/metric key miss or unparsable value in the "
+            "bench-floors fence"
+        )
         return None
     value, direction = found
     # The parity contract is metric >= floor; a ceiling row would be a
     # misconfigured fence, not a parity bound.
-    return value if direction == "floor" else None
+    if direction != "floor":
+        _FLOORS_BROKEN[f"direction of {metric}"] = f"direction={direction!r}"
+        return None
+    return value
+
+
+def _assert_floors_armed() -> None:
+    """Fail closed when the machine tag is set but the lookup failed."""
+    machine = (os.environ.get("BENCH_FLOORS_MACHINE", "") or "").strip()
+    if machine and (_FLOOR_RECALL5 is None or _FLOOR_MRR is None):
+        pytest.fail(
+            f"floors rows missing/broken for BENCH_FLOORS_MACHINE={machine!r} "
+            f"({_FLOORS_BROKEN or 'rows absent'}); fix the bench-floors fence "
+            "in bench/RESULTS.md — an armed parity guard must fail, not skip"
+        )
 
 
 _FLOOR_RECALL5 = _floors_value("recall@5")
@@ -129,8 +169,12 @@ _SKIP_GATES = [
 
 # Ambient overrides that would silently skew the measured parity: retrieval
 # geometry/flags (retrieval/config.ts), packs recency (same), ingest chunking
-# (ingest/config.ts — changes seeded chunks, hence recall/mrr), and the
-# stub-token delay (latency only, stripped for determinism).
+# (ingest/config.ts — changes seeded chunks, hence recall/mrr), the
+# stub-token delay (latency only, stripped for determinism), security-posture
+# seams the host resolves from env (pack-extract.ts, server.ts cors, the
+# airgap flag — a differently-postured host is a differently-measured host),
+# and proxy env (httpx honors HTTP_PROXY/HTTPS_PROXY/ALL_PROXY by default and
+# would route the loopback metric path off-box on a proxied machine).
 _SKEWING_OVERRIDES = (
     "TRAININGAPP_RETRIEVAL_TOPK",
     "TRAININGAPP_RETRIEVAL_CANDIDATE_MULTIPLIER",
@@ -144,6 +188,16 @@ _SKEWING_OVERRIDES = (
     "TRAININGAPP_INGEST_CHUNK_OVERLAP_WORDS",
     "TRAININGAPP_DESKTOP_RERANKER_STUB",
     "TRAININGAPP_STUB_TOKEN_DELAY_MS",
+    "TRAININGAPP_PACKS_REQUIRE_SIGNATURE",
+    "TRAININGAPP_PACKS_TRUSTED_KEYS",
+    "TRAININGAPP_DESKTOP_DEV_ORIGINS",
+    "TRAININGAPP_AIRGAP",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
 )
 
 
@@ -190,6 +244,15 @@ process.exit(code);
 """
 
 
+def _host_stderr(work: Path) -> str:
+    """Tail of the captured host stderr (exists while the tempdir is alive)."""
+    err = work / "host.err"
+    if not err.is_file():
+        return "(no host stderr captured)"
+    text = err.read_text(encoding="utf-8", errors="replace")
+    return "--- host stderr (tail) ---\n" + text[-4000:]
+
+
 def _rederive_message(what: str) -> str:
     return (
         f"{what} — the tier-0 eval set changed. Re-derive the "
@@ -216,14 +279,30 @@ def _assert_dist_fresh() -> None:
 
 
 def _run_node(script: Path, env: dict, timeout: int) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["node", str(script)],
-        cwd=REPO_ROOT,
-        env=env,
-        timeout=timeout,
-        capture_output=True,
-        text=True,
-    )
+    # utf-8 (not the locale codec) so a non-ASCII byte can never raise
+    # before the diagnostic assert; errors=replace keeps stdout/stderr
+    # readable on any box. TimeoutExpired is converted to a diagnostic
+    # failure — the raw exception carries no captured output.
+    try:
+        return subprocess.run(
+            ["node", str(script)],
+            cwd=REPO_ROOT,
+            env=env,
+            timeout=timeout,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except subprocess.TimeoutExpired as exc:
+        partial_out = (
+            (exc.stdout or b"").decode("utf-8", "replace")
+            if isinstance(exc.stdout, bytes)
+            else (exc.stdout or "")
+        )
+        raise AssertionError(
+            f"node seed timed out after {timeout}s (no captured completion)\n{partial_out}"
+        ) from None
 
 
 def _seed_store(work: Path, env: dict, store_path: Path) -> None:
@@ -232,7 +311,7 @@ def _seed_store(work: Path, env: dict, store_path: Path) -> None:
     seed_env = dict(env)
     seed_env["PARITY_REPO_ROOT"] = str(REPO_ROOT)
     seed_env["PARITY_STORE_PATH"] = str(store_path)
-    proc = _run_node(script, seed_env, timeout=300)
+    proc = _run_node(script, seed_env, timeout=240)
     assert (
         proc.returncode == 0
     ), f"seed failed exit={proc.returncode}\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
@@ -243,7 +322,8 @@ def _seed_store(work: Path, env: dict, store_path: Path) -> None:
     documents = result.get("documents")
     assert documents == EXPECTED_DOCUMENTS, _rederive_message(
         f"seed ingested {documents!r} documents, pinned {EXPECTED_DOCUMENTS} "
-        "(sanity floor >= 8)"
+        "(exact identity pin; recursive ingest counts every supported file "
+        "under eval/corpus including slides/PROVENANCE.md)"
     )
 
 
@@ -258,6 +338,7 @@ class _HostProc:
                 subprocess.run(
                     ["taskkill", "/PID", str(self.proc.pid), "/T", "/F"],
                     capture_output=True,
+                    timeout=30,
                 )
             else:
                 self.proc.kill()
@@ -268,7 +349,7 @@ class _HostProc:
 
 
 def _start_host(work: Path, env: dict, store_path: Path) -> _HostProc:
-    token = f"parity-{os.getpid()}-{time.time_ns()}"
+    token = f"parity-{secrets.token_hex(16)}"
     port_file = work / "port.txt"
     out_path = work / "host.out"
     err_path = work / "host.err"
@@ -317,8 +398,14 @@ def _start_host(work: Path, env: dict, store_path: Path) -> _HostProc:
             if time.monotonic() > deadline:
                 raise _host_failure("host did not write its port file within 30s")
             time.sleep(0.05)
-        port = int(port_file.read_text(encoding="utf-8").strip())
+        # The port file is child-written; poll-then-parse has a truncate
+        # window, so a bad read reports through _host_failure, not ValueError.
+        try:
+            port = int(port_file.read_text(encoding="utf-8").strip())
+        except (ValueError, OSError) as exc:
+            raise _host_failure(f"unparseable port file ({exc!r})") from None
         health_deadline = time.monotonic() + 30
+        last_health_error: Exception | None = None
         while True:
             try:
                 req = urllib.request.Request(
@@ -329,13 +416,38 @@ def _start_host(work: Path, env: dict, store_path: Path) -> _HostProc:
                 with opener.open(req, timeout=5) as res:
                     if res.status == 200:
                         break
-            except Exception:
-                pass
+            except Exception as exc:
+                # Keep the client-side cause: a permanent 401/proxy error
+                # must be distinguishable from startup ConnectionRefused.
+                last_health_error = exc
             if proc.poll() is not None:
                 raise _host_failure("host exited before /health became ready")
             if time.monotonic() > health_deadline:
-                raise _host_failure("host /health not ready within 30s")
+                raise _host_failure(
+                    "host /health not ready within 30s "
+                    f"(last client error: {last_health_error!r})"
+                )
             time.sleep(0.1)
+    except BaseException:
+        # A raise anywhere above leaves a LIVE node host behind (the caller
+        # never receives `host`, so its kill_tree cannot run). Tear it down
+        # here: closing stdin triggers the dev-server's own backstop, and the
+        # explicit kill covers a host that ignores EOF.
+        try:
+            if proc.stdin is not None:
+                proc.stdin.close()
+        except OSError:
+            pass
+        if proc.poll() is None:
+            if sys.platform == "win32":
+                subprocess.run(
+                    ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                    capture_output=True,
+                    timeout=30,
+                )
+            else:
+                proc.kill()
+        raise
     finally:
         out_fh.close()
         err_fh.close()
@@ -354,20 +466,41 @@ class _TokenProxy(http.server.ThreadingHTTPServer):
 
 
 class _ProxyHandler(http.server.BaseHTTPRequestHandler):
+    # Hardening for the hand-rolled proxy: validate the request boundary
+    # (malformed/negative Content-Length must 400, not raise or read until
+    # EOF), cap the buffered body, and never forward hop-by-hop or duplicate
+    # framing headers upstream (send_response already emits Server/Date).
+    _MAX_BODY_BYTES = 64 * 1024 * 1024
+
     def _forward(self) -> None:
         server: _TokenProxy = self.server  # type: ignore[assignment]
-        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            self.send_response(400)
+            self.end_headers()
+            return
+        length = max(0, min(length, self._MAX_BODY_BYTES))
         body = self.rfile.read(length) if length else None
         conn = http.client.HTTPConnection("127.0.0.1", server.upstream_port, timeout=60)
         try:
-            headers = {k: v for k, v in self.headers.items() if k.lower() != "host"}
+            headers = {
+                k: v
+                for k, v in self.headers.items()
+                if k.lower() not in ("host", "content-length", "transfer-encoding")
+            }
             headers["x-desktop-token"] = server.token
             conn.request(self.command, self.path, body=body, headers=headers)
             res = conn.getresponse()
             payload = res.read()
             self.send_response(res.status)
             for key, value in res.getheaders():
-                if key.lower() not in ("transfer-encoding", "connection"):
+                if key.lower() not in (
+                    "transfer-encoding",
+                    "connection",
+                    "date",
+                    "server",
+                ):
                     self.send_header(key, value)
             self.end_headers()
             self.wfile.write(payload)
@@ -389,25 +522,40 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
 def _run_eval(work: Path, env: dict, proxy_port: int) -> dict:
     json_out = work / "report.json"
     report_md = work / "REPORT.md"
-    proc = subprocess.run(
-        [
-            sys.executable,
-            str(REPO_ROOT / "eval" / "runner.py"),
-            "--base-url",
-            f"http://127.0.0.1:{proxy_port}",
-            "--label",
-            "pytest-parity",
-            "--json-out",
-            str(json_out),
-            "--report",
-            str(report_md),
-        ],
-        cwd=REPO_ROOT,
-        env=env,
-        timeout=420,
-        capture_output=True,
-        text=True,
-    )
+    # Budget: 240s + the 30/30s host waits + 240s seed = 540s worst case,
+    # deliberately under CI's per-test 600s cap (test.yml --timeout=600) so
+    # an outer timeout can never destroy the metric evidence first.
+    try:
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(REPO_ROOT / "eval" / "runner.py"),
+                "--base-url",
+                f"http://127.0.0.1:{proxy_port}",
+                "--label",
+                "pytest-parity",
+                "--json-out",
+                str(json_out),
+                "--report",
+                str(report_md),
+            ],
+            cwd=REPO_ROOT,
+            env=env,
+            timeout=240,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except subprocess.TimeoutExpired as exc:
+        partial_out = (
+            (exc.stdout or b"").decode("utf-8", "replace")
+            if isinstance(exc.stdout, bytes)
+            else (exc.stdout or "")
+        )
+        raise AssertionError(
+            f"eval runner timed out after 240s\n{partial_out}"
+        ) from None
     assert (
         proc.returncode == 0
     ), f"eval runner exit={proc.returncode}\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
@@ -420,6 +568,7 @@ def _run_eval(work: Path, env: dict, proxy_port: int) -> dict:
 @_SKIP_GATES[3]
 def test_desktop_retrieval_eval_parity() -> None:
     """Desktop host retrieval stays at parity with the recorded weighted run."""
+    _assert_floors_armed()
     _assert_dist_fresh()
     with tempfile.TemporaryDirectory(prefix="i103-parity-") as tmp:
         work = Path(tmp)
@@ -436,22 +585,40 @@ def test_desktop_retrieval_eval_parity() -> None:
             finally:
                 proxy.shutdown()
                 proxy.server_close()
+
+            # All assertions run INSIDE the tempdir block so host.out/host.err
+            # (the only host-side diagnostics) still exist when a metric
+            # failure is reported — deleting them first destroyed the cause.
+            assert (
+                report.get("error_count") == 0
+            ), f"eval run had errors: {report.get('error_count')}\n{_host_stderr(work)}"
+            question_count = report.get("question_count")
+            assert question_count == EXPECTED_QUESTIONS, _rederive_message(
+                f"question_count={question_count!r}, pinned {EXPECTED_QUESTIONS}"
+            )
+            in_corpus = report.get("in_corpus_count")
+            assert in_corpus == EXPECTED_IN_CORPUS, _rederive_message(
+                f"in_corpus_count={in_corpus!r}, pinned {EXPECTED_IN_CORPUS} "
+                "(the denominator recall@5 and MRR divide over)"
+            )
+            # Silent-degrade detector: a run that reaches the metric asserts
+            # must not have logged the rerank degrade — otherwise a fused-
+            # ordering host could satisfy the floors unnoticed.
+            host_err = (work / "host.err").read_text(encoding="utf-8", errors="replace")
+            assert "reranker unavailable" not in host_err, (
+                "host logged a rerank degrade during a passing run — "
+                f"the floors were measured without the reranker:\n{host_err}"
+            )
+            metrics = report["metrics"]
+            recall5 = float(metrics["recall_at_k"]["5"])
+            mrr = float(metrics["mrr"])
+            assert recall5 >= float(_FLOOR_RECALL5), (
+                f"recall@5={recall5} below floor {float(_FLOOR_RECALL5)} — "
+                f"retrieval parity regressed\n{_host_stderr(work)}"
+            )
+            assert mrr >= float(_FLOOR_MRR), (
+                f"mrr={mrr} below floor {float(_FLOOR_MRR)} — "
+                f"retrieval parity regressed\n{_host_stderr(work)}"
+            )
         finally:
             host.kill_tree()
-
-    assert (
-        report.get("error_count") == 0
-    ), f"eval run had errors: {report.get('error_count')}"
-    question_count = report.get("question_count")
-    assert question_count == EXPECTED_QUESTIONS, _rederive_message(
-        f"question_count={question_count!r}, pinned {EXPECTED_QUESTIONS}"
-    )
-    metrics = report["metrics"]
-    recall5 = float(metrics["recall_at_k"]["5"])
-    mrr = float(metrics["mrr"])
-    assert recall5 >= float(
-        _FLOOR_RECALL5
-    ), f"recall@5={recall5} below floor {float(_FLOOR_RECALL5)} — retrieval parity regressed"
-    assert mrr >= float(
-        _FLOOR_MRR
-    ), f"mrr={mrr} below floor {float(_FLOOR_MRR)} — retrieval parity regressed"

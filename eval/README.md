@@ -14,8 +14,8 @@ quality; it is the measuring instrument.
 
 | path | purpose |
 |---|---|
-| `questions.jsonl` | 56 tier-0 questions (50 in-corpus + 6 out-of-corpus) |
-| `corpus/*.md` | the 8 checked-in synthetic documents the questions target |
+| `questions.jsonl` | 60 tier-0 questions (54 in-corpus + 6 out-of-corpus) |
+| `corpus/` | the 9 checked-in synthetic documents the questions target (recursive ingest: 8 root `.md` + `slides/PROVENANCE.md`; `slides/*.json` are not ingestible and 4 in-corpus questions reference them) |
 | `runner.py` | scores a `--base-url` backend, writes `REPORT.md` + `report.json` |
 | `ci_serve.py` | deterministic no-weights backend for CI / smoke runs |
 | `a8-probe.mjs` | A8 probe harness (issue #58): serves a Storyline publish same-origin under COOP/COEP/CORP, drives the embed/read/jump probes via Playwright from `desktop/node_modules`, writes `a8-recipe-probe.json` + screenshots |
@@ -152,8 +152,9 @@ strip environment from background jobs):
 RAG_DB_PATH=.agents/tmp/eval-weighted-db RAG_GGUF_PATH=models/lfm2.5-2.6b/model.gguf API_PORT=8123 python api_server.py
 
 # 2. ingest the tier-0 corpus (multipart upload of every corpus doc; os.path.basename
-#    keeps the upload filename = the doc id on every OS):
-python -c "import httpx,glob,os; c=httpx.Client(timeout=120); [c.post('http://127.0.0.1:8123/ingest/file', files={'file':(os.path.basename(p), open(p,'rb').read(),'text/markdown')}) for p in glob.glob('eval/corpus/*.md')]"
+#    keeps the upload filename = the doc id on every OS; recursive so the run
+#    covers all 9 corpus documents incl. corpus/slides/PROVENANCE.md):
+python -c "import httpx,glob,os; c=httpx.Client(timeout=120); [c.post('http://127.0.0.1:8123/ingest/file', files={'file':(os.path.basename(p), open(p,'rb').read(),'text/markdown')}) for p in glob.glob('eval/corpus/**/*.md', recursive=True)]"
 # 3. run the harness with a provenance label:
 python eval/runner.py --base-url http://127.0.0.1:8123 \
     --report eval/samples/REPORT-<machine>-weighted.md \
