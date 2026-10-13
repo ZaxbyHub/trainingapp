@@ -12,7 +12,10 @@ latency, and embed/rerank cost for the candidate models, per machine.
    for desktop-host telemetry (issue #61) —
    `desktop/scripts/run-conformance-host.mjs`, which prints its own
    machine-tagged measurement line on every run (CI and local) and whose
-   cold-start section below quotes those lines. No number is hand-patched; a
+   cold-start section below quotes those lines, OR — for retrieval-quality
+   floors (issue #103) — a weighted `eval/runner.py` run recorded under
+   `eval/samples/` (see eval/README.md; the `desktop-retrieval-eval` floor
+   rows name their source run in `provenance`). No number is hand-patched; a
    value without a corresponding run is PENDING.
 2. Rows are **machine-tagged**. A row's `machine` cell names the hardware the
    measurement came from. Dev-station numbers must never be read as
@@ -333,7 +336,9 @@ python -m pytest tests/test_rag_performance.py tests/test_low_end_hardware.py -v
     {"surface": "onnx-rerank", "model": "ettin-reranker-32m-v1", "machine": "devstation", "metric": "top15_ceiling_ms", "value": 5.32, "direction": "ceiling", "provenance": "devstation onnx row 2.66ms x2 slack"},
     {"surface": "onnx-rerank", "model": "ettin-reranker-32m-v1", "machine": "devstation", "metric": "top30_ceiling_ms", "value": 5.34, "direction": "ceiling", "provenance": "devstation onnx row 2.67ms x2 slack"},
     {"surface": "native", "model": "lfm2.5-vl-450m", "machine": "devstation", "metric": "decode_floor_tps", "value": 40.0, "direction": "floor", "provenance": "devstation native row 95.97 tok/s (t=4) /2 slack"},
-    {"surface": "native", "model": "gemma-4-e2b-it", "machine": "devstation", "metric": "decode_floor_tps", "value": 1.0, "direction": "floor", "provenance": "devstation native row 3.65 tok/s (t=4) - floor set well below to avoid CPU-state flakiness; the laptop row replaces this"}
+    {"surface": "native", "model": "gemma-4-e2b-it", "machine": "devstation", "metric": "decode_floor_tps", "value": 1.0, "direction": "floor", "provenance": "devstation native row 3.65 tok/s (t=4) - floor set well below to avoid CPU-state flakiness; the laptop row replaces this"},
+    {"surface": "desktop-retrieval-eval", "model": "bge-small-en-v1.5", "machine": "devstation", "metric": "recall@5", "value": 0.64, "direction": "floor", "provenance": "eval/samples/report-devstation-weighted.json weighted run 2026-09-07 recall@5=0.640 (56q/8doc set); desktop host re-verified 0.648 on the current 60q/9doc set at c7e2e956 (issue #103 trace)"},
+    {"surface": "desktop-retrieval-eval", "model": "bge-small-en-v1.5", "machine": "devstation", "metric": "mrr", "value": 0.3236, "direction": "floor", "provenance": "eval/samples/report-devstation-weighted.json weighted run 2026-09-07 mrr=0.32366666666666666, floor truncated down to 4dp; desktop host re-verified 0.369 at c7e2e956 (issue #103 trace)"}
   ]
 }
 ```
@@ -350,6 +355,22 @@ Floor rows are added per machine after that machine's runs are recorded
 `BENCH_FLOORS_MACHINE` selects the machine; a machine with no rows falls back
 to the suites' legacy generous bounds. This block is parsed by
 `bench/floors.py` — do not change its fence marker or JSON shape.
+
+The `desktop-retrieval-eval` rows are retrieval-QUALITY floors (issue
+#103), enforced by `tests/test_retrieval_eval_parity.py`: the test boots
+the compiled desktop host (`npm --prefix desktop run compile`) with the
+real bge-small embedder AND the staged ettin reranker (the recorded
+baseline is a rerank-era measurement — rerank defaults on), runs
+`eval/runner.py` over the tier-0 question set, and asserts recall@5 and
+MRR at-or-above these floors. Reproduce: `python bench/fetch_models.py
+--onnx`, `npm --prefix desktop run compile`, then
+`BENCH_FLOORS_MACHINE=devstation python -m pytest
+tests/test_retrieval_eval_parity.py`. The parity test pins the eval-set
+identity (60 questions / 9 documents); when the corpus or question set
+changes, re-derive: record a fresh weighted run per eval/README.md,
+refresh `eval/samples/report-devstation-weighted.json` alongside the floor
+rows and the test's pins (floor values must stay <= that recorded run's
+metrics), and re-run the parity test.
 
 ## Desktop ingest (B6)
 
