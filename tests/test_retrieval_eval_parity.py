@@ -45,11 +45,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 WEIGHTS_MIN_BYTES = 10 * 1024 * 1024
 
 EMBED_ONNX = REPO_ROOT / "models" / "bge-small-en-v1.5" / "onnx" / "model.onnx"
-# Full (non-quantized) ONNX only: the recorded floors were measured with the
-# staged full ettin artifact, and a quantized reranker changes exactly the
-# ordering these floors bound — artifact identity, not just sufficient size.
+# The host loads the q8/QUANTIZED artifact: the reranker worker hardcodes
+# dtype 'q8' (rerank-worker.ts:74), whose suffix maps to model_quantized.onnx,
+# and bench/fetch_models.py stages/downloads exactly that file first for
+# ettin (candidates[0]) — gating on the full model would skip every correctly
+# staged box and never match what the recorded floors were measured with.
 RERANK_ONNX_CANDIDATES = (
-    REPO_ROOT / "models" / "ettin-reranker-32m-v1" / "onnx" / "model.onnx",
+    REPO_ROOT / "models" / "ettin-reranker-32m-v1" / "onnx" / "model_quantized.onnx",
 )
 DEV_SERVER = REPO_ROOT / "desktop" / "dist" / "main" / "backend" / "dev-server.js"
 MAIN_SRC = REPO_ROOT / "desktop" / "main"
@@ -79,6 +81,11 @@ def _has_reranker_weights() -> bool:
     return any(_real_weights(p) for p in RERANK_ONNX_CANDIDATES)
 
 
+# The arm/disarm switch: tag set = the guard is armed (lookup failures must
+# HARD-FAIL in the body); tag unset = the designed skip for unconfigured boxes
+# (CI). Captured at collection like every skipif input.
+_MACHINE_TAG = (os.environ.get("BENCH_FLOORS_MACHINE", "") or "").strip()
+
 # Populated by _floors_value when a machine tag IS set but the lookup fails;
 # consumed by _assert_floors_armed (fail-closed, never a silent skip).
 _FLOORS_BROKEN: dict = {}
@@ -93,8 +100,7 @@ def _floors_value(metric: str):
     the test body hard-fails in that case (see _assert_floors_armed), so a
     malformed bench-floors fence can never silently disarm the guard.
     """
-    machine = (os.environ.get("BENCH_FLOORS_MACHINE", "") or "").strip()
-    if not machine:
+    if not _MACHINE_TAG:
         return None
     try:
         from bench.floors import threshold
@@ -125,10 +131,9 @@ def _floors_value(metric: str):
 
 def _assert_floors_armed() -> None:
     """Fail closed when the machine tag is set but the lookup failed."""
-    machine = (os.environ.get("BENCH_FLOORS_MACHINE", "") or "").strip()
-    if machine and (_FLOOR_RECALL5 is None or _FLOOR_MRR is None):
+    if _MACHINE_TAG and (_FLOOR_RECALL5 is None or _FLOOR_MRR is None):
         pytest.fail(
-            f"floors rows missing/broken for BENCH_FLOORS_MACHINE={machine!r} "
+            f"floors rows missing/broken for BENCH_FLOORS_MACHINE={_MACHINE_TAG!r} "
             f"({_FLOORS_BROKEN or 'rows absent'}); fix the bench-floors fence "
             "in bench/RESULTS.md — an armed parity guard must fail, not skip"
         )
@@ -158,11 +163,10 @@ _SKIP_GATES = [
         reason=f"desktop dist not built: {DEV_SERVER.relative_to(REPO_ROOT)} - {_COMPILE_HINT}",
     ),
     pytest.mark.skipif(
-        _FLOOR_RECALL5 is None or _FLOOR_MRR is None,
+        not _MACHINE_TAG,
         reason=(
-            "no desktop-retrieval-eval floors rows for BENCH_FLOORS_MACHINE="
-            f"{os.environ.get('BENCH_FLOORS_MACHINE', '')!r} in bench/RESULTS.md "
-            "(set the machine tag or record rows)"
+            "BENCH_FLOORS_MACHINE not set (unconfigured box; record "
+            "bench-floors rows for this machine to arm the parity guard)"
         ),
     ),
 ]
