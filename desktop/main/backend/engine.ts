@@ -397,11 +397,15 @@ export class StubEngine implements EngineSurface {
     // chunk_count) so a concurrent ingest cannot skew them apart. No surface
     // attached keeps the frozen B3 no-store zero contract.
     if (this.documentSurface !== null) {
-      const listed = await this.documentSurface.listDocuments();
+      // issue #185: capture the surface ONCE before the await (the #191
+      // pattern) so a detach/attach landing in the await window can never
+      // null-deref or mix surface-A counts with surface-B's embedder id.
+      const surface = this.documentSurface;
+      const listed = await surface.listDocuments();
       return {
         document_count: listed.total,
         chunk_count: listed.documents.reduce((acc, doc) => acc + doc.chunk_count, 0),
-        embedding_model: 'desktop-stub (B5 #63)',
+        embedding_model: surface.embedderModelId,
         llm_backend: null,
         documents: [],
       };
