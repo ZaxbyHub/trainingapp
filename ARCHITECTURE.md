@@ -520,6 +520,7 @@ contract; measured performance numbers are recorded machine-tagged in
 | [0010](docs/adr/0010-update-channels.md) | Opt-in Ed25519-signed update channels for packs (installable) and the app binary (notify-only). |
 | [0011](docs/adr/0011-external-model-endpoints.md) | Opt-in, grounded external model endpoints (OpenAI- and Anthropic-compatible); reverses the 2.0.0 no-network posture for this feature only; desktop backend owns the outbound call with pinned-address `node:https`. |
 | [0012](docs/adr/0012-browser-training-packs.md) | Browser app installs Knowledge Packs (OPFS, desktop-twin guards and signature checks) and plays courses on an isolated player origin fed by an app-side byte relay; supersedes ADR-0009. |
+| [0013](docs/adr/0013-real-weights-distribution.md) | Real-weights distribution is a two-artifact bundle (Setup.exe + models sidecar, staged/verified by the E1 manifest mechanics); single-file NSIS is permanently impossible past the 2 GB embedded-file cap; build-out tracked by #171. |
 
 ## Known limits & pending work
 

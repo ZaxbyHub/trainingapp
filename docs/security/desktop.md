@@ -196,6 +196,16 @@ the contract above as follows:
   passes the run token to the headless host via `--token` ARGV (visible in
   local process listings) — dev/CI-only: the production path mints the token
   in-process and never places it on a command line.
+- **Packaged-smoke CDP debug port (dev/CI-only).** The desktop-build smoke's
+  `--driver cdp` launches the packaged exe with `--remote-debugging-port` on
+  a loopback port for the duration of the run, and the harness attaches
+  over `connectOverCDP`. That endpoint is unauthenticated BY Chromium's
+  design — any local process that reaches it controls the (fixture-mode,
+  throwaway-profile) app while the smoke runs. It exists only under the CI
+  harness flag on ephemeral runners and local operator invocations; the
+  production app never sets the flag, and the harness kills the process
+  tree (including on SIGINT/SIGTERM) before exiting. This is the same
+  dev/CI-only class as the conformance proxy's `--token` ARGV above.
 - **Reserved profile slot.** `X-Profile-Id`
   (`RESERVED_PROFILE_HEADER_NAME`, `desktop/main/backend/types.ts`) is
   accepted on every route and ignored until B6 (#64) gives it meaning, so

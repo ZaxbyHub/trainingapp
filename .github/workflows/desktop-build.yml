@@ -21,7 +21,10 @@ jobs:
   desktop-build:
     name: Electron shell (unsigned NSIS x64)
     runs-on: windows-latest
-    timeout-minutes: 30
+    # 30 was measured too tight once the smoke's worst-case budgets stack
+    # (both boots x [page-target wait + attach retries + renderer wait],
+    # PR-#172 review PRR-012); 35 keeps a verdict inside the wall clock.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
 
@@ -105,8 +108,13 @@ jobs:
       # wizard completion + persistence, /packs 200). The packaged store-init
       # regression this catches (vec0 path inside app.asar) is invisible to
       # every dev-mode suite.
+      # --driver cdp (issues #135/#131, closed by PR #172): the windowed Playwright
+      # _electron.launch handshake intermittently never completes on windows
+      # runners (both websockets connect, then launch times out — harness,
+      # not app); the CDP transport drives the identical ladder over
+      # --remote-debugging-port instead. Local runs keep the windowed default.
       - name: Packaged-boot smoke (win-unpacked, hash embedder)
-        run: node desktop/scripts/packaged-smoke.mjs
+        run: node desktop/scripts/packaged-smoke.mjs --driver cdp
 
   renderer-e2e:
     name: "Playwright under Electron (issue #67 AC1 smoke)"
