@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+- **`GET /stats` reports real store counts instead of hardcoded zeros
+  (issue #169, PR #188)**: `StubEngine.getStats()` and
+  `LlamaEngine.getStats()` now derive `document_count`/`chunk_count` from
+  the attached document surface (a single `listDocuments()` call per site,
+  the same surface `listDocuments()` already delegates to) whenever a store
+  is attached, so eval reports' `backend_stats` block records the truth
+  about the host that produced it; with no surface attached the B3 no-store
+  zero contract is preserved verbatim and the `/stats` payload schema is
+  unchanged. One deviation from the issue's Scope note: the claim "fixing
+  the stub fixes the LlamaEngine spread" was verified false
+  (`LlamaEngine.attachDocumentSurface` does not forward to its internal
+  stub), so the llama path reads counts from its own `this.documents`.
+
 - **Packaged-boot smoke runs over a CDP driver on CI, and the wizard's
   integrity verify pass is cached (issue #131, PR #172)**: the desktop-build
   smoke step now spawns the packaged exe with `--remote-debugging-port` and

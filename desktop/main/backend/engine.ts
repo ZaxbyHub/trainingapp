@@ -391,6 +391,21 @@ export class StubEngine implements EngineSurface {
   }
 
   async getStats(): Promise<{ document_count: number; chunk_count: number; embedding_model: string; llm_backend: string | null; documents: string[] }> {
+    // issue #169: delegate to the attached document surface exactly like
+    // listDocuments() above — a single listDocuments() call derives BOTH
+    // counts (document_count = total, chunk_count = SUM of per-document
+    // chunk_count) so a concurrent ingest cannot skew them apart. No surface
+    // attached keeps the frozen B3 no-store zero contract.
+    if (this.documentSurface !== null) {
+      const listed = await this.documentSurface.listDocuments();
+      return {
+        document_count: listed.total,
+        chunk_count: listed.documents.reduce((acc, doc) => acc + doc.chunk_count, 0),
+        embedding_model: 'desktop-stub (B5 #63)',
+        llm_backend: null,
+        documents: [],
+      };
+    }
     return {
       document_count: 0,
       chunk_count: 0,
