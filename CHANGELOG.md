@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+- **Stub `/stats` reports the attached surface's real embedder id instead of the
+  legacy marker (issue #185)**: `StubEngine.getStats()`'s surface-attached branch now
+  returns the attached document surface's `embedderModelId` as `embedding_model`
+  (matching what `LlamaEngine.getStats()`'s B6 override already does), so stub-hosted
+  eval reports' `backend_stats.embedding_model` records the real embedder (e.g. a
+  deterministic HashEmbedder's `modelId`) rather than the literal
+  `'desktop-stub (B5 #63)'`. The surface reference is captured once before the
+  `listDocuments()` await (the issue-#191 pattern), so a detach/attach landing in
+  that window can neither null-deref nor pair one surface's counts with another's
+  id; the no-surface branch keeps the frozen B3 marker verbatim and the payload
+  schema is unchanged. Guardrail: `i185-stub-getstats-mixed-state` pins the
+  detach- and swap-during-await invariants.
+
 - **`GET /stats` reports real store counts instead of hardcoded zeros
   (issue #169, PR #188)**: `StubEngine.getStats()` and
   `LlamaEngine.getStats()` now derive `document_count`/`chunk_count` from
