@@ -136,5 +136,18 @@ describeReal('issue #169: /stats over a REAL seeded store', () => {
     expect(payload.chunk_count).toBe(summedChunks);
     expect(payload.document_count).toBe(stats.document_count);
     expect(payload.chunk_count).toBe(stats.chunk_count);
+
+    // Independent chunk/document oracle (issue-169 feedback): raw table
+    // counts straight from sqlite, NOT derived through the same
+    // listDocuments() query the engine reads — an under-count in the
+    // per-doc GROUP BY aggregation would otherwise leave this spec green
+    // while /stats reports fewer chunks than the store holds.
+    if (store === null) throw new Error('store handle unexpectedly null after seed');
+    const rawDocs = (store.db.prepare('SELECT COUNT(*) AS n FROM docs').get() as { n: number }).n;
+    const rawChunks = (store.db.prepare('SELECT COUNT(*) AS n FROM chunks').get() as { n: number }).n;
+    expect(rawDocs).toBe(SEEDED_DOCS);
+    expect(rawChunks).toBeGreaterThan(0);
+    expect(payload.document_count).toBe(rawDocs);
+    expect(payload.chunk_count).toBe(rawChunks);
   });
 });

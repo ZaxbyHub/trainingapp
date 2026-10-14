@@ -13,11 +13,25 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { LlamaEngine, type LlamaEngineBackend, type LlamaEngineOptions } from '../../main/backend/inference/llama-engine';
 import type { DocumentSurface } from '../../main/backend/types';
 
 const GB = 1024 ** 3;
+
+// Every staged dummy-model dir is tracked and drained at suite end so repeated
+// runs leave no `i169-dummy-models-*` litter in os.tmpdir() (issue #189 —
+// the b4 harness leaks the same way; this file does not copy that debt).
+const tempDirs: string[] = [];
+
+function drainTempDirs(): void {
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (dir !== undefined) fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+afterAll(drainTempDirs);
 
 /** Fake native backend: getStats never generates, but the factory contract
  *  requires the interface. */
@@ -31,6 +45,7 @@ class FakeBackend implements LlamaEngineBackend {
 
 function stageDummyModels(): { quality: string; fast: string; dir: string } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'i169-dummy-models-'));
+  tempDirs.push(dir);
   const quality = path.join(dir, 'quality-dummy.gguf');
   const fast = path.join(dir, 'fast-dummy.gguf');
   fs.writeFileSync(quality, 'x', 'utf8');
@@ -106,5 +121,57 @@ describe('issue #169: LlamaEngine.getStats reads the attached document surface',
     const detached = await engine.getStats();
     expect(detached.document_count).toBe(0);
     expect(detached.chunk_count).toBe(0);
+  });
+
+  it('mixed-state: a detach landing inside the listDocuments await can never pair real counts with the stub embedder id', async () => {
+    // issue #191 falsification: enter the surface's listDocuments, then detach
+    // while getStats is parked on that await. With the attachment captured
+    // once before the await, the payload must stay internally consistent —
+    // counts and embedding_model describe the SAME (captured) surface.
+    const engine = makeEngine();
+    const base = makeFakeSurface();
+    let entered!: () => void;
+    let release!: () => void;
+    const enteredGate = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const releaseGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    engine.attachDocumentSurface({
+      ...base,
+      async listDocuments() {
+        entered();
+        await releaseGate;
+        return base.listDocuments();
+      },
+    });
+
+    const pending = engine.getStats();
+    await enteredGate; // getStats is now suspended INSIDE listDocuments
+    engine.attachDocumentSurface(null); // detach lands in the await window
+    release();
+    const stats = await pending;
+
+    // The captured-attachment payload: counts from the old surface paired
+    // with the OLD surface's embedder id — never the stub marker. The
+    // pre-fix double-read produced counts 2/5 + 'desktop-stub (B5 #63)'.
+    expect(stats.document_count).toBe(2);
+    expect(stats.chunk_count).toBe(5);
+    expect(stats.embedding_model).toBe('test-embedder');
+  });
+
+  it('tmp-cleanup: staged dummy-model directories are drained by the suite cleanup', () => {
+    // issue #189: every stageDummyModels() dir is tracked; drainTempDirs()
+    // (wired into afterAll) removes each one so repeated runs leave no
+    // i169-dummy-models-* litter in os.tmpdir().
+    const staged = stageDummyModels();
+    expect(fs.existsSync(staged.dir)).toBe(true);
+    expect(tempDirs).toContain(staged.dir);
+
+    drainTempDirs();
+
+    expect(fs.existsSync(staged.dir)).toBe(false);
+    expect(tempDirs).toHaveLength(0);
   });
 });
