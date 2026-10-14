@@ -224,7 +224,7 @@ let activeChild = null;
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {
     try {
-      if (activeChild !== null && activeChild.exitCode === null) {
+      if (activeChild !== null && activeChild.exitCode === null && activeChild.signalCode === null) {
         spawnSync('taskkill', ['/PID', String(activeChild.pid), '/T', '/F'], { stdio: 'ignore' });
       }
     } catch { /* best effort */ }
@@ -326,7 +326,7 @@ async function bootCdp() {
     if (!pageReady) {
       // Exercise the shared parser on the real stderr before giving up.
       throw new Error(
-        `no CDP page target within 120s (server=${String(serverUp)}, devtools line: ${String(parseDevToolsEndpoint(stderrBuf))})`,
+        `no CDP page target within 120s (server=${String(serverUp)}, devtools line: ${String(parseDevToolsEndpoint(stderrBuf)).replace(/devtools\/browser\/[0-9a-f-]+/i, 'devtools/browser/<redacted>')})`,
       );
     }
     // Same parser as the selftest, against live process output.
@@ -380,7 +380,7 @@ async function bootCdp() {
     }
     await page.waitForLoadState('domcontentloaded');
     return {
-      evaluate: (fn) => page.evaluate(fn),
+      evaluate: (fn) => withTimeout(page.evaluate(fn), 120_000, 'ladder evaluate'),
       close: async () => {
         // Idempotent: the relaunch catch re-invokes close() after a throw —
         // never pay the escalation ladder twice (PRR-016).
