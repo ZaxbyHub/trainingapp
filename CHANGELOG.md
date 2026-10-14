@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+- **Packaged-boot smoke runs over a CDP driver on CI, and the wizard's
+  integrity verify pass is cached (issue #131, PR #172)**: the desktop-build
+  smoke step now spawns the packaged exe with `--remote-debugging-port` and
+  drives the same first-run ladder over `connectOverCDP` (`--driver cdp`),
+  closing the windows-runner Playwright-launch handshake flake (#135); the
+  windowed driver remains the local default, with `--driver-selftest` and a
+  `TRAININGAPP_SMOKE_EXE` seam. The first-run wizard's manifest verify pass
+  (~2.4 s sha256 over the staged tree) is now cached per (manifest, mtime) in
+  the main process; the completion-time TOCTOU re-verify stays a real fresh
+  pass (PRR-123). ADR-0013 records the two-artifact real-weights
+  distribution decision (build-out: #171).
+
 - **Store hardening deferred from PR #99 lands (issue #100)**: concurrent backend
   `start()` calls are now single-flight on both hosts — the in-flight promise is
   memoized and `stop()` awaits a pending start before teardown, so two simultaneous

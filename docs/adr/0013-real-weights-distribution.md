@@ -1,7 +1,10 @@
 # ADR-0013: Real-weights distribution is a two-artifact bundle (Setup.exe + models sidecar)
 
-- **Status:** Accepted (2026-10-13, owner decision recorded on issue #131;
-  build-out deferred to issue #171)
+- **Status:** Accepted (2026-10-13; the owner's pick was made during the
+  issue-tracer session for #131 and is recorded by this ADR, by PR #172's
+  body/trace, and corroborated by the follow-up build-out issue #171 — it
+  was not itself posted as a comment on issue #131; build-out deferred to
+  issue #171)
 - **Context:** Workstream E slot E1 (issue #84, PR #130) packaged models and
   packs with an integrity manifest and a measured ≤7 GB size budget, and its
   review left the distribution FORM as an open product fork (PRR-129, tracked
@@ -41,10 +44,22 @@ the `<userData>/models` compatibility surface accepts the staged payload).
 ### Option C — revisit the model/budget decision (rejected)
 
 Reopen ADR-0002 / the ≤7 GB budget to squeeze the payload below the NSIS cap.
-Rejected: the budget holds post-#156 (measured 6.38 GB ≤ 7 GiB in
-`bench/RESULTS.md`), so size is not the failing dimension — the cap is about
-single-file embedding, not total footprint — and a model revisit would undo
-the measured #156 lineup for an installer-format reason.
+Rejected: the ≤7 GiB budget held at the pre-#156 measured 6.38 GB
+installed footprint (bench/RESULTS.md E1 TOTAL row), the post-#156 staged
+resources are ~1.5 GB SMALLER, and the post-swap installed total re-measure
+is recorded PENDING per the RESULTS.md provenance rules — every direction
+of travel is away from the budget, not toward it. The cap that actually
+blocks shipping is about single-file embedding, not total footprint, and a
+model revisit would undo the measured #156 lineup for an installer-format
+reason.
+
+## Decision
+
+Option B — the two-artifact bundle — is accepted as the real-weights
+distribution strategy: a small Setup.exe carrying the app shell plus a
+separate models/packs sidecar staged and verified by the E1 manifest
+mechanics. Options A (multi-volume NSIS) and C (model/budget revisit) are
+rejected for the reasons recorded above.
 
 ## Consequences
 
@@ -56,7 +71,12 @@ the measured #156 lineup for an installer-format reason.
   bundle remains the shipping form for real weights; the fixture-mode
   Setup.exe remains CI-only and must never be mistaken for a real-weights
   installer (loud in the manifest note and artifact name).
-- The startup integrity gate stays the single trust anchor for BOTH
+- The startup integrity gate is the single CORRUPTION anchor for BOTH
   artifacts: whatever is staged is verified against `resources/manifest.json`
   at every launch, so a missing or corrupted sidecar fails closed with named
-  files rather than crashing.
+  files rather than crashing. Honest limit: the manifest is unsigned
+  (manifest-verifier.ts — protected only by write access to the install
+  directory, none for portable builds per ADR-0011), so against a
+  ADVERSARIAL sidecar writer this anchor proves self-consistency, not
+  provenance; the signature coverage that closes that gap is part of #171's
+  scope, as the first Consequences bullet states.

@@ -10,8 +10,10 @@
 //   - result shape identical to the old closure: {staged, manifestPath,
 //     manifest, verify, loadError};
 //   - verify roots exactly [manifestDir, <userData>/models];
-//   - `env` read per call when options.env is omitted (closure fidelity for
-//     TRAININGAPP_DESKTOP_MANIFEST changes mid-session);
+//   - `env` read per call when options.env is omitted (fidelity for the
+//     TRAININGAPP_DESKTOP_MANIFEST override; note repoRoot is captured once
+//     at construction — a mid-session TRAININGAPP_DESKTOP_REPO_ROOT change
+//     does not re-resolve, unlike the old closure);
 //   - cache keyed (manifestPath, manifest mtimeMs): a non-fresh call on an
 //     unchanged manifest returns the cached verify result WITHOUT re-hashing;
 //     `{fresh: true}` re-verifies and refreshes the cache — the
@@ -22,7 +24,14 @@
 // Deliberate staleness window: a verified file mutated WITHOUT the manifest
 // changing is only re-detected by the next fresh call (completion) — the
 // trade the issue itself specifies (status/activate paths save the pass,
-// completion keeps the TOCTOU guarantee).
+// completion keeps the TOCTOU guarantee). The consumer consequence: the
+// drift re-check in evaluateStatus compares stored digests against these
+// cached digests, so within one process it cannot surface such a mutation;
+// the startup integrity gate re-verifies at every launch and the completion
+// handler re-verifies on every wizard completion. Transient loadError
+// results are never cached (see wizardManifest below), so a one-off read
+// failure recovers on the next status call exactly as the uncached closure
+// did.
 import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 
@@ -96,8 +105,10 @@ export function createWizardManifest(options: CreateWizardManifestOptions): {
     try {
       mtimeMs = statSync(manifestPath).mtimeMs;
     } catch {
-      // Deleted between existsSync and stat: fall through to compute, which
-      // reproduces the old closure's loadManifest throw -> loadError result.
+      // Deleted between existsSync and stat: loadManifest re-guards with its
+      // own existsSync and returns {manifest: null}, so compute() yields the
+      // same staged:false/loadError:null shape the old closure produced in
+      // this race — deliberately NOT cached, so a restored file recomputes.
       return compute(manifestPath);
     }
     const key = JSON.stringify([manifestPath, mtimeMs]);
@@ -105,7 +116,15 @@ export function createWizardManifest(options: CreateWizardManifestOptions): {
       return cached.result;
     }
     const result = compute(manifestPath);
-    cached = { key, result };
+    // A loadError result (transient read failure: EBUSY/EPERM/EMFILE on
+    // Windows while an installer copy is in flight) is NOT cached: the old
+    // uncached closure recovered on the next status call, and latching a
+    // transient error under an unchanged mtime would block the wizard until
+    // restart (PRR-003). Clean results — including legitimate verify
+    // failures — cache normally.
+    if (result.loadError === null) {
+      cached = { key, result };
+    }
     return result;
   };
 

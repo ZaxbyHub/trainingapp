@@ -346,6 +346,25 @@ verified. Key facts for operators and reviewers:
   ROOT tokenizer files are load-bearing (`AutoTokenizer.from_pretrained`
   reads the model root).
 
+### Real-weights portable bundle (interim shipping form, ADR-0013)
+
+A single-file NSIS installer cannot carry the real-weights payload
+(makensis aborts past its 2 GB embedded-file cap — see the "Known limit"
+note in `bench/RESULTS.md`). Until the two-artifact build-out (#171)
+lands, the shipping form for real weights is the portable bundle built
+from the `win-unpacked` directory target:
+
+```powershell
+7z a -mx=9 TrainingApp-portable-<version>-win64.7z .\desktop\desktop-release\win-unpacked\*
+Get-FileHash .\TrainingApp-portable-<version>-win64.7z -Algorithm SHA256 |
+  ForEach-Object { "$($_.Hash)  TrainingApp-portable-<version>-win64.7z" } |
+  Set-Content TrainingApp-portable-<version>-win64.7z.sha256
+```
+
+Ship the `.7z` + `.sha256` + `desktop/desktop-release/README-portable.txt`
+together; the packaged app self-verifies `resources/manifest.json` at every
+startup, so a missing/corrupt sidecar fails closed with named files.
+
 ## Packaged-boot runtime wiring + initial knowledge pack (#133)
 
 Two packaged-only runtime facts are wired deliberately (both invisible to
@@ -390,7 +409,14 @@ paths (`.git/info/exclude`, the `models/` precedent). The packaged-boot CI
 smoke (`desktop/scripts/packaged-smoke.mjs`) boots the fixture build's
 `win-unpacked` app with the hash-embedder seam and asserts the whole
 first-run ladder — store init, pack activation, wizard completion and
-persistence, `/packs` 200.
+persistence, `/packs` 200. Two transports: `--driver cdp` (CI) spawns the
+exe with `--remote-debugging-port` and drives the ladder over
+`connectOverCDP` — the windowed Playwright driver hangs intermittently on
+windows runners (#135); the default `--driver playwright` keeps the
+windowed path for local runs. `--driver-selftest` exercises the driver
+selection/endpoint parsing without spawning anything, and
+`TRAININGAPP_SMOKE_EXE=<path>` points the smoke at an explicit exe
+(skipping the stale-build guard — operator assertion, logged at boot).
 
 ## Ingestion, profiles, backup and recovery (B6, issue #64)
 

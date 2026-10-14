@@ -53,7 +53,10 @@ const DEVTOOLS_STDERR_SAMPLE =
 
 function parseDriver(args) {
   const idx = args.indexOf('--driver');
-  if (idx !== -1 && idx + 1 < args.length) return args[idx + 1];
+  // A bare `--driver` (missing value) must NOT silently fall back to the
+  // windowed driver — that is the transport #135 proved hangs on runners;
+  // return a value that fails the whitelist below and exits 2 (PRR-019).
+  if (idx !== -1) return idx + 1 < args.length ? args[idx + 1] : '';
   const eq = args.find((a) => a.startsWith('--driver='));
   if (eq !== undefined) return eq.slice('--driver='.length);
   return 'playwright';
@@ -87,6 +90,7 @@ const exe = explicitExe ? path.resolve(exeEnv) : path.join(desktopDir, 'desktop-
 
 const final = (code, line) => {
   console.log(line);
+  removeWs();
   process.exit(code);
 };
 
@@ -116,18 +120,50 @@ if (!explicitExe) {
     for (const dir of dirs) walk(dir);
     return newest;
   };
-  const exeMtime = fs.statSync(exe).mtimeMs;
-  const newer = [path.join(repoRoot, 'desktop', 'main'), path.join(repoRoot, 'desktop', 'scripts'), path.join(repoRoot, 'web_ui', 'src')].filter(fs.existsSync)
-    .map((dir) => newestSource([dir]))
-    .find((file) => file !== null && fs.statSync(file).mtimeMs > exeMtime);
-  if (newer !== undefined || fs.statSync(path.join(desktopDir, 'electron-builder.yml')).mtimeMs > exeMtime) {
+  let exeMtime = null;
+  let newer = undefined;
+  let builderNewer = false;
+  try {
+    exeMtime = fs.statSync(exe).mtimeMs;
+    // Every source root whose contents ship inside the exe or the staged
+    // resources the ladder asserts over (PRR-017): main, scripts, the
+    // renderer sources, preload (compiled into dist/preload), and the
+    // knowledge-pack sources staged into installer-resources/packs.
+    newer = [
+      path.join(repoRoot, 'desktop', 'main'),
+      path.join(repoRoot, 'desktop', 'preload'),
+      path.join(repoRoot, 'desktop', 'scripts'),
+      path.join(repoRoot, 'desktop', 'knowledge-pack-src'),
+      path.join(repoRoot, 'web_ui', 'src'),
+    ].filter(fs.existsSync)
+      .map((dir) => newestSource([dir]))
+      .find((file) => file !== null && fs.statSync(file).mtimeMs > exeMtime);
+    const builderYml = path.join(desktopDir, 'electron-builder.yml');
+    builderNewer = fs.existsSync(builderYml) && fs.statSync(builderYml).mtimeMs > exeMtime;
+  } catch (err) {
+    // A file disappearing mid-walk (concurrent build, editor atomic save) is
+    // a harness precondition failure, not an assertion failure (PRR-018).
+    final(2, `SMOKE: INFRA - stale-build guard could not read the source trees: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (newer !== undefined || builderNewer) {
     final(2, `SMOKE: STALE BUILD - ${exe} predates the current sources${newer !== undefined ? ` (newest: ${newer})` : ' (electron-builder.yml)'}; rebuild before probing`);
   }
+} else {
+  console.log('SMOKE: stale-build guard skipped (TRAININGAPP_SMOKE_EXE set — operator assertion)');
 }
 
 const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'trainingapp-smoke-'));
 const storePath = path.join(ws, 'store', 'store.sqlite');
 const packsDir = path.join(ws, 'packs');
+// Isolated Electron profile: without this the packaged exe boots against the
+// machine's REAL %APPDATA%/TrainingApp userData (single-instance lock with a
+// locally-running app, legacy store migration, real model hashes) (PRR-013).
+const userDataDir = path.join(ws, 'user-data');
+
+/** Best-effort temp cleanup on every exit path (PRR-023). */
+function removeWs() {
+  try { fs.rmSync(ws, { recursive: true, force: true }); } catch { /* best effort */ }
+}
 
 const step = (n, name, ok, detail = '') => {
   console.log(`step ${n}: ${ok ? 'OK' : 'FAIL'} - ${name}${detail.length > 0 ? ` (${detail})` : ''}`);
@@ -135,14 +171,35 @@ const step = (n, name, ok, detail = '') => {
 };
 
 /** Launch output capture, dumped when a launch or ladder step fails (a
- *  packaged GUI app that dies before its window is otherwise silent). */
+ *  packaged GUI app that dies before its window is otherwise silent).
+ *  Capped ring-style buffer: only the tail is ever printed, so retention
+ *  beyond the cap serves nothing (PRR-020). */
 let consoleBuf = '';
-const appendOut = (d) => { consoleBuf += d.toString(); };
+const CONSOLE_BUF_MAX = 200_000;
+const appendOut = (d) => {
+  consoleBuf += d.toString();
+  if (consoleBuf.length > CONSOLE_BUF_MAX) consoleBuf = consoleBuf.slice(-Math.floor(CONSOLE_BUF_MAX / 2));
+};
 const dumpConsole = (prefix) => {
-  const lines = consoleBuf.split(/\r?\n/).filter((l) => l.length > 0);
+  const lines = consoleBuf.split(/\r?\n/)
+    // Redact the DevTools attach URL's instance id before it reaches a
+    // retained CI log (PRR-039); the endpoint is dead with the job's VM,
+    // but the log surface stays minimal.
+    .map((l) => l.replace(/devtools\/browser\/[0-9a-f-]+/gi, 'devtools/browser/<redacted>'))
+    .filter((l) => l.length > 0);
   console.log(`${prefix} — app process output (last 30 lines):`);
   for (const line of lines.slice(-30)) console.log(`  ${line}`);
   if (lines.length === 0) console.log('  (no output captured — the app died before any stream write)');
+};
+
+/** Bound an await so a wedged renderer/transport resolves into a loud INFRA
+ *  verdict instead of eating the whole CI job wall (PRR-025). */
+const withTimeout = (promise, ms, label) => {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 };
 
 const appEnv = () => ({
@@ -160,13 +217,31 @@ const appEnv = () => ({
 // Both return a session with the SAME evaluate surface; the ladder below is
 // transport-agnostic.
 
+// The live CDP child (if any) for signal hygiene: a harness Ctrl-C/CI cancel
+// must not orphan a packaged exe still holding an unauthenticated debug port
+// (PRR-027).
+let activeChild = null;
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => {
+    try {
+      if (activeChild !== null && activeChild.exitCode === null) {
+        spawnSync('taskkill', ['/PID', String(activeChild.pid), '/T', '/F'], { stdio: 'ignore' });
+      }
+    } catch { /* best effort */ }
+    removeWs();
+    process.exit(2);
+  });
+}
+
 async function bootPlaywright() {
   const app = await playwright._electron.launch({
     executablePath: exe,
     // --disable-gpu: GitHub windows runners have no usable GPU; Chromium
     // compositing can stall ready-to-show without it (harmless locally).
     // Longer timeout: the first window on a cold runner is slow.
-    args: ['--disable-gpu'],
+    // --user-data-dir: isolate the profile so local runs never touch the
+    // operator's real %APPDATA%/TrainingApp userData (PRR-013).
+    args: ['--disable-gpu', `--user-data-dir=${userDataDir}`],
     timeout: 300_000,
     env: appEnv(),
   });
@@ -175,25 +250,45 @@ async function bootPlaywright() {
   const win = await app.firstWindow();
   await win.waitForLoadState('domcontentloaded');
   return {
-    evaluate: (fn) => win.evaluate(fn),
+    evaluate: (fn) => withTimeout(win.evaluate(fn), 120_000, 'ladder evaluate'),
     close: async () => { await closeApp(app); },
   };
 }
 
 async function bootCdp() {
   const port = randomInt(9300, 9900);
-  const child = spawn(exe, [`--remote-debugging-port=${port}`, '--disable-gpu'], {
+  const child = spawn(exe, [`--remote-debugging-port=${port}`, '--disable-gpu', `--user-data-dir=${userDataDir}`], {
     env: appEnv(),
     stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  activeChild = child;
+  child.on('exit', () => { if (activeChild === child) activeChild = null; });
+  // A failed spawn (EACCES, locked exe, AV quarantine) emits 'error'; without
+  // a listener Node exits 1 with a raw stack — the assertion-failure code —
+  // violating the documented 1-vs-2 contract (PRR-010).
+  child.on('error', (err) => {
+    console.log(`SMOKE: INFRA - packaged exe failed to spawn: ${err instanceof Error ? err.message : String(err)}`);
+    removeWs();
+    process.exit(2);
   });
   child.stdout.on('data', appendOut);
   child.stderr.on('data', appendOut);
   let stderrBuf = '';
-  child.stderr.on('data', (d) => { stderrBuf += d.toString(); });
+  child.stderr.on('data', (d) => {
+    stderrBuf += d.toString();
+    if (stderrBuf.length > 100_000) stderrBuf = stderrBuf.slice(-50_000);
+  });
+
+  // signal-aware liveness: a signal-terminated child keeps exitCode null
+  // (PRR-022); the sibling e2e helper pins the same predicate.
+  const alive = () => child.exitCode === null && child.signalCode === null;
+  const deadExit = () => (child.exitCode !== null ? child.exitCode : `signal ${String(child.signalCode)}`);
 
   const killTree = () => {
     try { spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' }); } catch { /* already gone */ }
   };
+
+  let closeAttempted = false;
 
   try {
     // Wait for BOTH the CDP HTTP endpoint and a PAGE target before
@@ -208,19 +303,21 @@ async function bootCdp() {
     let serverUp = false;
     let pageReady = false;
     while (Date.now() < deadline) {
-      if (child.exitCode !== null) {
-        throw new Error(`packaged exe exited early with code ${child.exitCode} (port ${port})`);
+      if (!alive()) {
+        throw new Error(`packaged exe exited early with code ${deadExit()} (port ${port})`);
       }
       try {
         if (!serverUp) {
-          const res = await fetch(`http://127.0.0.1:${port}/json/version`);
+          // Bounded fetches: the loop deadline cannot interrupt an in-flight
+          // request, so each fetch carries its own signal (PRR-009).
+          const res = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(2_000) });
           if (res.ok) { serverUp = true; }
         }
         if (serverUp) {
-          const list = await fetch(`http://127.0.0.1:${port}/json/list`);
+          const list = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(2_000) });
           if (list.ok) {
             const targets = await list.json();
-            if (targets.some((t) => t.type === 'page')) { pageReady = true; break; }
+            if (Array.isArray(targets) && targets.some((t) => t.type === 'page')) { pageReady = true; break; }
           }
         }
       } catch { /* not up yet */ }
@@ -249,8 +346,8 @@ async function bootCdp() {
         browser = await playwright.chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: 60_000 });
       } catch (err) {
         attachError = err;
-        if (child.exitCode !== null) {
-          throw new Error(`packaged exe exited early with code ${child.exitCode} during CDP attach (attempt ${attempt})`);
+        if (!alive()) {
+          throw new Error(`packaged exe exited early with code ${deadExit()} during CDP attach (attempt ${attempt})`);
         }
         if (attempt < 3) {
           console.log(`SMOKE: CDP attach attempt ${attempt} failed (${err instanceof Error ? err.message : String(err)}); retrying`);
@@ -262,11 +359,14 @@ async function bootCdp() {
       throw new Error(`CDP attach failed after 3 attempts: ${attachError instanceof Error ? attachError.message : String(attachError)}`);
     }
     const ctx = browser.contexts()[0];
+    if (ctx === undefined) {
+      throw new Error('CDP attach returned no browser context');
+    }
     let page = null;
     const pageDeadline = Date.now() + 120_000;
     while (Date.now() < pageDeadline) {
-      if (child.exitCode !== null) {
-        throw new Error(`packaged exe exited early with code ${child.exitCode} while waiting for the renderer`);
+      if (!alive()) {
+        throw new Error(`packaged exe exited early with code ${deadExit()} while waiting for the renderer`);
       }
       for (const p of ctx.pages()) {
         const has = await p.evaluate(() => typeof window.desktopApi !== 'undefined').catch(() => false);
@@ -282,6 +382,10 @@ async function bootCdp() {
     return {
       evaluate: (fn) => page.evaluate(fn),
       close: async () => {
+        // Idempotent: the relaunch catch re-invokes close() after a throw —
+        // never pay the escalation ladder twice (PRR-016).
+        if (closeAttempted) return;
+        closeAttempted = true;
         // Graceful first (close the window; Electron quits on last window),
         // then the same forceful tree kill the windowed path uses. Wait for
         // FULL main-process exit before returning: the relaunch needs the
@@ -291,20 +395,20 @@ async function bootCdp() {
           await page.evaluate(() => window.close()).catch(() => {});
           await new Promise((r) => setTimeout(r, 2_000));
         } catch { /* window already gone */ }
-        if (child.exitCode === null) killTree();
+        if (alive()) killTree();
         try { await browser.close(); } catch { /* disconnect only */ }
         await new Promise((r) => setTimeout(r, 1_500));
-        if (child.exitCode === null) {
+        if (alive()) {
           spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
         }
         const exitDeadline = Date.now() + 20_000;
-        while (child.exitCode === null && Date.now() < exitDeadline) {
+        while (alive() && Date.now() < exitDeadline) {
           await new Promise((r) => setTimeout(r, 250));
         }
-        if (child.exitCode === null) {
+        if (alive()) {
           killTree();
           await new Promise((r) => setTimeout(r, 5_000));
-          if (child.exitCode === null) {
+          if (alive()) {
             throw new Error(`packaged exe pid ${child.pid} survived close (exitCode still null after tree kill)`);
           }
         }
@@ -322,14 +426,19 @@ async function boot() {
 }
 
 async function closeApp(app) {
+  // Captured BEFORE close(): Playwright disposes the handle during close,
+  // after which app.process() throws and the kill fallback below would be
+  // skipped for a lingering tree (the exact defect e2e/launch-helpers.ts
+  // documents; PRR-024).
+  const proc = app.process();
   try {
     await Promise.race([app.close(), new Promise((resolve) => setTimeout(resolve, 20_000))]);
   } catch {
     /* already closing */
   }
   try {
-    if (app.process().exitCode === null) {
-      spawnSync('taskkill', ['/PID', String(app.process().pid), '/T', '/F'], { stdio: 'ignore' });
+    if (proc.exitCode === null && proc.signalCode === null) {
+      spawnSync('taskkill', ['/PID', String(proc.pid), '/T', '/F'], { stdio: 'ignore' });
       await new Promise((resolve) => setTimeout(resolve, 3_000));
     }
   } catch {
@@ -363,6 +472,12 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 2_000));
   }
   const requiredIds = (status.packs?.required ?? []).map((entry) => entry.id);
+  // A deadline exit with no observable status/manifest is a harness/infra
+  // condition, not an assertion failure — the sibling bounded waits throw
+  // INFRA for the same reason (PRR-021).
+  if (status === null || status === undefined || status.manifest === undefined) {
+    throw new Error('first-run status (or its manifest section) never became observable within 120s');
+  }
   check(
     1,
     'manifest staged with zero failures',
@@ -402,11 +517,18 @@ try {
   await session.close();
 
   // 6. relaunch fresh on the SAME store: the wizard must stay completed.
+  //    Poll like step 1 — a fixed sleep misreports slow store restores as
+  //    persistence regressions on loaded runners (PRR-014).
   let relaunch;
   try {
     relaunch = await boot();
-    await new Promise((resolve) => setTimeout(resolve, 8_000));
-    const next = await relaunch.evaluate(() => window.desktopApi?.getFirstRunStatus?.());
+    let next = null;
+    const relaunchDeadline = Date.now() + 90_000;
+    while (Date.now() < relaunchDeadline) {
+      next = await relaunch.evaluate(() => window.desktopApi?.getFirstRunStatus?.());
+      if (next?.needed === false) break;
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    }
     check(6, 'completion persists across relaunch (needed === false)', next?.needed === false, `needed=${String(next?.needed)}`);
     await relaunch.close();
   } catch (err) {
@@ -414,10 +536,19 @@ try {
     // Round-1 gap: the relaunch catch dumped nothing, so the runner log for
     // the wedged second attach had zero app-side context.
     dumpConsole('SMOKE: relaunch failed');
+    // Recorded assertion failures outrank a later close/relaunch infra
+    // error: a genuine step FAIL must not be re-labeled INFRA (PRR-015).
+    if (failures.length > 0) {
+      final(1, `SMOKE: FAIL - packaged first-run ladder failed at: ${failures.join('; ')} (relaunch/close also errored: ${err instanceof Error ? err.message : String(err)})`);
+    }
     final(2, `SMOKE: INFRA - relaunch failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 } catch (err) {
   await session.close().catch(() => {});
+  dumpConsole('SMOKE: ladder failed');
+  if (failures.length > 0) {
+    final(1, `SMOKE: FAIL - packaged first-run ladder failed at: ${failures.join('; ')} (ladder also errored: ${err instanceof Error ? err.message : String(err)})`);
+  }
   final(2, `SMOKE: INFRA - ${err instanceof Error ? err.message : String(err)}`);
 }
 
