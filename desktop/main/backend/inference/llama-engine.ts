@@ -1428,8 +1428,20 @@ export class LlamaEngine implements EngineSurface {
   }> {
     const profile = this.effectiveProfile();
     const stubStats = await this.stub.getStats();
+    // issue #169: attachDocumentSurface stores the surface HERE (not on the
+    // internal stub), so the counts must come from this.documents — the same
+    // source every sibling document method below reads. One listDocuments()
+    // call derives both counts so a concurrent ingest cannot skew them.
+    const listed =
+      this.documents !== null ? await this.documents.listDocuments() : null;
     return {
       ...stubStats,
+      ...(listed !== null
+        ? {
+            document_count: listed.total,
+            chunk_count: listed.documents.reduce((acc, doc) => acc + doc.chunk_count, 0),
+          }
+        : {}),
       // B6 (issue #64): when a store surface is attached, the real embedder id
       // (also what meta.embedding_model_id records) replaces the stub value.
       embedding_model:
