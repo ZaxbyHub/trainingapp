@@ -53,20 +53,30 @@ function findRepoRoot(dir: string): string {
 }
 
 const REPO_ROOT = findRepoRoot(THIS_DIR);
-const NATIVE_DEPS_PRESENT = fs.existsSync(
-  path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'),
-);
+// TRAININGAPP_TEST_FORCE_NATIVE_DEPS_ABSENT lets the AC21 wiring checks
+// (i193) exercise the skip/fail branches end-to-end without uninstalling
+// the addon; production runs never set it.
+const NATIVE_DEPS_PRESENT =
+  process.env.TRAININGAPP_TEST_FORCE_NATIVE_DEPS_ABSENT === '1'
+    ? false
+    : fs.existsSync(path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'));
 // issue #193 D2 (trace test-batch-oct2026 Cluster A, AC21): the native-deps
 // decision is made by the shared policy predicate — 'run' when
 // better-sqlite3 is present; 'skip' locally when absent (the repo's
 // sanctioned staged-deps skip, preserved from the original gate); 'fail'
 // under CI when absent (a silent CI skip is the silent-degrade class this
 // batch exists to kill). The suite-scoped beforeAll inside describeReal
-// executes the 'fail' branch.
+// executes the 'fail' branch; the skip branch carries the staging
+// instruction in the skipped suite title (AC21: "skip with the staging
+// instruction").
 const NATIVE_DEPS_GATE = nativeDepsGate({
   ci: Boolean(process.env.CI),
   nativeDepsPresent: NATIVE_DEPS_PRESENT,
 });
+const DESCRIBE_REAL_TITLE =
+  NATIVE_DEPS_GATE === 'skip'
+    ? 'issue #169: /stats over a REAL seeded store [SKIPPED: desktop/node_modules/better-sqlite3 absent — run `npm --prefix desktop ci` to stage it (issue #193 D2: local skip)]'
+    : 'issue #169: /stats over a REAL seeded store';
 const describeReal = NATIVE_DEPS_GATE === 'skip' ? describe.skip : describe;
 
 function words(n: number, prefix: string): string {
@@ -124,7 +134,7 @@ afterAll(async () => {
   if (tempDir !== undefined) fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-describeReal('issue #169: /stats over a REAL seeded store', () => {
+describeReal(DESCRIBE_REAL_TITLE, () => {
   beforeAll(() => {
     // issue #193 D2: under CI with the native deps missing the suite FAILS
     // loudly with the staging instruction — never a silent skip. (The local

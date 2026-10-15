@@ -38,8 +38,16 @@ type RawDatabaseConstructor = new (dbPath: string, options?: { readonly?: boolea
 // addon loads from desktop/node_modules in both src and dist layouts (same
 // pattern as sqlite-store.ts).
 const require = createRequire(import.meta.url);
-// eslint-disable-next-line @typescript-eslint/no-require-imports -- native addon resolved at runtime
-const RawDatabase = require('better-sqlite3') as RawDatabaseConstructor;
+// Lazy (first use, never import): importing this module must stay safe on
+// machines without the staged native addon (issue #193 D2 gate wiring).
+let rawDatabaseCtor: RawDatabaseConstructor | null = null;
+function rawDatabase(): RawDatabaseConstructor {
+  if (rawDatabaseCtor === null) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- native addon resolved at runtime
+    rawDatabaseCtor = require('better-sqlite3') as RawDatabaseConstructor;
+  }
+  return rawDatabaseCtor;
+}
 
 /**
  * Flush WAL so the main db file is a complete, self-consistent snapshot, and
@@ -136,7 +144,7 @@ interface BackupMeta {
 }
 
 function readBackupMeta(backupPath: string): BackupMeta {
-  const db = new RawDatabase(backupPath, { readonly: true });
+  const db = new (rawDatabase())(backupPath, { readonly: true });
   try {
     const rows = db.prepare('SELECT key, value FROM meta').all() as Array<{ key: string; value: unknown }>;
     const map = new Map(rows.map((r) => [r.key, r.value]));

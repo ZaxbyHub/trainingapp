@@ -34,8 +34,16 @@ type RawDatabaseConstructor = new (
 };
 
 const require = createRequire(import.meta.url);
-// eslint-disable-next-line @typescript-eslint/no-require-imports -- native addon resolved at runtime
-const RawDatabase = require('better-sqlite3') as RawDatabaseConstructor;
+// Lazy (first use, never import): importing this module must stay safe on
+// machines without the staged native addon (issue #193 D2 gate wiring).
+let rawDatabaseCtor: RawDatabaseConstructor | null = null;
+function rawDatabase(): RawDatabaseConstructor {
+  if (rawDatabaseCtor === null) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- native addon resolved at runtime
+    rawDatabaseCtor = require('better-sqlite3') as RawDatabaseConstructor;
+  }
+  return rawDatabaseCtor;
+}
 
 /** Read-only PRAGMA integrity_check; un-openable files are corrupt by definition. */
 export function checkStoreIntegrity(dbPath: string): IntegrityResult {
@@ -44,7 +52,7 @@ export function checkStoreIntegrity(dbPath: string): IntegrityResult {
   }
   let db: InstanceType<RawDatabaseConstructor> | null = null;
   try {
-    db = new RawDatabase(dbPath, { readonly: true, fileMustExist: true });
+    db = new (rawDatabase())(dbPath, { readonly: true, fileMustExist: true });
     const row = db.prepare('PRAGMA integrity_check').get() as unknown;
     // integrity_check returns one column named like the pragma; both drivers
     // expose it as the first property of the row object.
