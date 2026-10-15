@@ -19,9 +19,14 @@
  * (`lumen-axe -g "axe"`) runs it too.
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
-import { axeSeriousCriticalNodes, fitViewportToContent } from './axe-full-page';
+import { axeSeriousCriticalNodes, fitViewportToContent, wholePageAxeExpectClean } from './axe-full-page';
 import { assertOverlayOptOutAllowed, hideModelGate, settleFontsAndFrames } from '../model-gate';
+
+const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 // PRR-151-054: the LUMEN_ALLOW_NO_OVERLAY opt-out is refused under CI.
 assertOverlayOptOutAllowed();
@@ -106,5 +111,52 @@ test.describe('axe below-fold geometry', () => {
     await settleFontsAndFrames(page);
     const found = await axeSeriousCriticalNodes(page);
     expect(found, 'the below-fold violation is reported by the whole-page scan').toContain('color-contrast | #below-fold-violation');
+  });
+});
+
+test.describe('axe gate wiring (issue #146: the gate itself must grow)', () => {
+  test.use({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+
+  test('gate wiring: the shared whole-page gate rejects a planted below-fold violation', async ({ page }) => {
+    await openSettings(page);
+
+    // Absolute-positioned plant (containing block = the scroller after
+    // position:relative): later async Settings content cannot push it down,
+    // and the row itself NEVER calls fitViewportToContent — a row-side grow
+    // would mask the exact wiring under test. With the gate's own grow call
+    // removed or neutralized the viewport stays 900px, axe defers the plant
+    // as offscreen `incomplete`, and the gate goes vacuously green — which is
+    // what makes this row the named killer for that mutant.
+    const planted = await page.evaluate(() => {
+      const scroller = document.querySelector('.ui-shell__main') ?? document.body;
+      scroller.setAttribute('style', `${scroller.getAttribute('style') ?? ''};position:relative`);
+      const node = document.createElement('p');
+      node.id = 'below-fold-violation';
+      node.textContent = 'deliberate below-fold contrast violation planted for the axe gate wiring check';
+      node.style.position = 'absolute';
+      node.style.top = '2500px';
+      node.style.color = '#cfcfcf';
+      node.style.background = '#ffffff';
+      scroller.append(node);
+      return { scroller: scroller.tagName, top: node.getBoundingClientRect().top };
+    });
+    expect(planted.scroller, 'the app scroller exists (.ui-shell__main)').toBe('MAIN');
+    expect(planted.top, 'the planted node starts below the initial fold').toBeGreaterThan(900);
+
+    await expect(
+      wholePageAxeExpectClean(page, { key: 'below-fold-wiring', knownBaseline: {} }),
+    ).rejects.toThrow(/below-fold-violation/);
+  });
+
+  test('gate wiring: lumen-axe expectAxeClean delegates to the shared whole-page gate', () => {
+    // Source pin for the call-site twin: the behavioral row above covers the
+    // gate's internals, this covers the delegation every surface scan rides
+    // on. Named mutant: revert expectAxeClean to the old viewport-only body
+    // (drop the delegation call) — every C4 surface row then scans 900px only
+    // and stays green, so only this row can see that revert.
+    const source = fs.readFileSync(path.join(THIS_DIR, 'lumen-axe.spec.ts'), 'utf8');
+    expect(source, 'lumen-axe.spec.ts must route expectAxeClean through wholePageAxeExpectClean').toMatch(
+      /await wholePageAxeExpectClean\(/,
+    );
   });
 });

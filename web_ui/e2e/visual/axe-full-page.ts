@@ -18,7 +18,8 @@
  */
 
 import AxeBuilder from '@axe-core/playwright';
-import type { Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
+import { settleFontsAndFrames } from '../model-gate';
 
 /** Height cap for the grow loop (settings-full precedent; tallest surface is ~4k). */
 export const MAX_SCAN_HEIGHT = 12_000;
@@ -55,4 +56,33 @@ export async function axeSeriousCriticalNodes(page: Page, excludeSelector?: stri
     .filter((v) => v.impact === 'serious' || v.impact === 'critical')
     .flatMap((v) => v.nodes.map((n) => `${v.id} | ${n.target.join(' ')}`))
     .sort();
+}
+
+export interface WholePageAxeGateOptions {
+  /** Baseline key for the failure message (never a baseline entry — see below). */
+  key: string;
+  /** Passed in from the gate's own spec: it must stay an EMPTY map there. */
+  knownBaseline: Record<string, unknown>;
+  excludeSelector?: string;
+}
+
+/**
+ * The axe gate contract end-to-end (#146): settle fonts/frames, GROW the
+ * viewport until nothing scrolls, then scan and fail loud on any
+ * serious/critical node or any baseline entry. The grow call is load-bearing
+ * wiring — a viewport-only pass defers below-fold nodes as `incomplete` and
+ * the gate goes vacuously green — so this function is where the gate's scan
+ * semantics live, and lumen-axe-below-fold.spec.ts pins both the behavior
+ * (planted below-fold violation must reject) and the call-site delegation.
+ */
+export async function wholePageAxeExpectClean(page: Page, opts: WholePageAxeGateOptions): Promise<void> {
+  await page.waitForTimeout(500);
+  await settleFontsAndFrames(page);
+  await fitViewportToContent(page, page.viewportSize()?.width ?? 1440);
+  const found = await axeSeriousCriticalNodes(page, opts.excludeSelector);
+  if (process.env.LUMEN_AXE_INVENTORY) {
+    console.info(`AXE ${opts.key} ${JSON.stringify(found)}`);
+  }
+  expect(opts.knownBaseline[opts.key], `${opts.key} must never be baselined`).toBeUndefined();
+  expect(found, `serious/critical axe nodes on ${opts.key}`).toEqual([]);
 }

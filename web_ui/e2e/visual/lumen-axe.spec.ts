@@ -27,13 +27,12 @@
 import { createHash } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
 import JSZip from 'jszip';
-import { axeSeriousCriticalNodes, fitViewportToContent } from './axe-full-page';
+import { wholePageAxeExpectClean } from './axe-full-page';
 import {
   assertOverlayOptOutAllowed,
   expectModelGateHidden,
   hideModelGate,
   requireModelGate,
-  settleFontsAndFrames,
 } from '../model-gate';
 
 // PRR-151-054: the LUMEN_ALLOW_NO_OVERLAY opt-out is refused under CI.
@@ -167,15 +166,12 @@ async function bootWithInstalledCourse(page: Page, theme: string): Promise<void>
  * expectModelGateHidden right before this.
  */
 async function expectAxeClean(page: Page, key: string, excludeSelector?: string): Promise<void> {
-  await page.waitForTimeout(500);
-  await settleFontsAndFrames(page);
-  await fitViewportToContent(page, page.viewportSize()?.width ?? 1440);
-  const found = await axeSeriousCriticalNodes(page, excludeSelector);
-  if (process.env.LUMEN_AXE_INVENTORY) {
-    console.info(`AXE ${key} ${JSON.stringify(found)}`);
-  }
-  expect(KNOWN_BASELINE[key], `${key} must never be baselined`).toBeUndefined();
-  expect(found, `serious/critical axe nodes on ${key}`).toEqual([]);
+  // The whole-page scan semantics (settle -> grow -> scan -> fail loud) live
+  // in axe-full-page.ts wholePageAxeExpectClean (#146). This delegation is
+  // itself pinned: lumen-axe-below-fold.spec.ts's gate-wiring source row goes
+  // red if it is removed — deleting it silently reverts every surface scan
+  // below to a viewport-only pass.
+  await wholePageAxeExpectClean(page, { key, knownBaseline: KNOWN_BASELINE, excludeSelector });
 }
 
 for (const theme of THEMES) {
