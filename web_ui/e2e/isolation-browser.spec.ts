@@ -596,7 +596,7 @@ test('course content cannot reach app storage, app windows, other packs, popups 
 
 test('course content cannot escape its CSP through a same-origin player-origin document (FC6)', async ({ page, browserName }) => {
   // The course probe alone waits up to 90 s for its report; the default 30 s budget would cut it short.
-  test.setTimeout(150_000);
+  test.setTimeout(240_000);
   await page.goto('/');
   const appOrigin = new URL(page.url()).origin;
   await installReportCollector(page);
@@ -735,9 +735,18 @@ function relayInjectStoryHtml(appOrigin: string): string {
   };
   child.src = 'about:blank';
   document.body.appendChild(child);
-  setTimeout(function () {
-    document.getElementById('minted-probe').textContent = JSON.stringify(r);
-  }, 1500);
+  // Serialize only once every egress attempt has settled AND its CSP
+  // violation event landed (bounded 10s): a fixed timer here raced the
+  // childNav/form events under load and silently dropped their categories.
+  var started = Date.now();
+  var timer = setInterval(function () {
+    var settled = r.attempts.fetch !== undefined && r.attempts.img !== undefined &&
+      r.attempts.form !== undefined && r.attempts.childNav !== 'pending';
+    if ((settled && r.violations.length >= 4) || Date.now() - started >= 10000) {
+      clearInterval(timer);
+      document.getElementById('minted-probe').textContent = JSON.stringify(r);
+    }
+  }, 100);
 })();
 </script></body></html>`;
   const script = `
@@ -835,10 +844,18 @@ function relayInjectStoryHtml(appOrigin: string): string {
   f.src = MINTED;
   document.body.appendChild(f);
   await Promise.race([loaded, wait(10000)]);
-  await wait(2500);
+  // Poll for the minted record instead of a fixed settle: the minted script
+  // serializes only after its attempts land (bounded 10s).
+  var mintedText = null;
+  for (var readDeadline = Date.now() + 12000; mintedText === null && Date.now() < readDeadline;) {
+    await wait(250);
+    try {
+      var pre = f.contentDocument && f.contentDocument.getElementById('minted-probe');
+      if (pre && pre.textContent && pre.textContent !== 'running') mintedText = pre.textContent;
+    } catch (e) { r.minted = 'unreadable:' + name(e); break; }
+  }
   try {
-    var pre = f.contentDocument && f.contentDocument.getElementById('minted-probe');
-    r.minted = pre && pre.textContent && pre.textContent !== 'running' ? JSON.parse(pre.textContent) : null;
+    r.minted = mintedText !== null ? JSON.parse(mintedText) : null;
   } catch (e) { r.minted = 'unreadable:' + name(e); }
   await wait(500);
   document.getElementById('relay-probe').textContent = JSON.stringify(r);
