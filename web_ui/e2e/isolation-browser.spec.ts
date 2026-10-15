@@ -596,7 +596,7 @@ test('course content cannot reach app storage, app windows, other packs, popups 
 
 test('course content cannot escape its CSP through a same-origin player-origin document (FC6)', async ({ page, browserName }) => {
   // The course probe alone waits up to 90 s for its report; the default 30 s budget would cut it short.
-  test.setTimeout(240_000);
+  test.setTimeout(150_000);
   await page.goto('/');
   const appOrigin = new URL(page.url()).origin;
   await installReportCollector(page);
@@ -866,7 +866,7 @@ function relayInjectStoryHtml(appOrigin: string): string {
 
 test('relay-port injection: a course-supplied relay cannot weaken the forced course CSP (#145)', async ({ page, browserName }) => {
   // The course probe alone waits up to 90 s for its report; the default 30 s budget would cut it short.
-  test.setTimeout(150_000);
+  test.setTimeout(240_000);
   await page.goto('/');
   const appOrigin = new URL(page.url()).origin;
   await installReportCollector(page);

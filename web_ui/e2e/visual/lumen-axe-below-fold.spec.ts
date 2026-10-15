@@ -155,8 +155,10 @@ test.describe('axe gate wiring (issue #146: the gate itself must grow)', () => {
     // (drop the delegation call) — every C4 surface row then scans 900px only
     // and stays green, so only this row can see that revert.
     const source = fs.readFileSync(path.join(THIS_DIR, 'lumen-axe.spec.ts'), 'utf8');
+    // Line-anchored code shape (leading indent + await, no comment marker):
+    // a comment-only mention cannot satisfy it.
     expect(source, 'lumen-axe.spec.ts must route expectAxeClean through wholePageAxeExpectClean').toMatch(
-      /await wholePageAxeExpectClean\(/,
+      /^ {2}await wholePageAxeExpectClean\(page, \{ key, knownBaseline: KNOWN_BASELINE/m,
     );
   });
 });
