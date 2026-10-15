@@ -15,7 +15,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { LlamaEngine, type LlamaEngineBackend, type LlamaEngineOptions } from '../../main/backend/inference/llama-engine';
-import type { DocumentSurface } from '../../main/backend/types';
+// The fake surface factory lives in ./fixtures/document-surface-fake.ts —
+// ONE fixture source shared by i103c/i169-llama/i175/i185 (issue #193 AC19 /
+// #200 AC2; previously copy-pasted here). The zero-arg form preserves this
+// spec's historical payload exactly: 'test-embedder' (asserted below) + the
+// 2-doc (2+3 chunks) DEFAULT_DOCS corpus.
+import { makeFakeSurface } from './fixtures/document-surface-fake.js';
 
 const GB = 1024 ** 3;
 
@@ -65,31 +70,7 @@ function makeEngine(overrides: Partial<LlamaEngineOptions> = {}): LlamaEngine {
   });
 }
 
-/** Minimal fake surface: two documents, 2 + 3 chunks, everything else no-op. */
-function makeFakeSurface(): DocumentSurface {
-  return {
-    async listDocuments() {
-      return {
-        documents: [
-          { id: 'a.md', chunk_count: 2 },
-          { id: 'b.md', chunk_count: 3 },
-        ],
-        total: 2,
-      };
-    },
-    async clearDocuments() {},
-    async ingestDirectory() {
-      return { success: true, documents: 0, chunks_added: 0, message: null };
-    },
-    async ingestFile() {
-      return { success: true, documents: 0, chunks_added: 0, message: null };
-    },
-    async ingestBatch() {
-      return { total_files: 0, successful: 0, failed: 0, results: [] };
-    },
-    embedderModelId: 'test-embedder',
-  };
-}
+/** Minimal fake surface: shared fixture (see the import above). */
 
 describe('issue #169: LlamaEngine.getStats reads the attached document surface', () => {
   it('with a surface attached, getStats counts equal the SAME engine\'s listDocuments totals (the stub spread cannot leak zeros)', async () => {
@@ -173,5 +154,64 @@ describe('issue #169: LlamaEngine.getStats reads the attached document surface',
 
     expect(fs.existsSync(staged.dir)).toBe(false);
     expect(tempDirs).toHaveLength(0);
+  });
+});
+
+// issue #190 AC17 (trace test-batch-oct2026 Cluster A): the LLAMA engine's
+// rejection path — a listDocuments() that throws during getStats must
+// propagate to the caller (the route turns it into a 500), never be
+// swallowed into a zeroed/marker payload. The stub engine's rejection
+// propagation is already pinned at i185-stub-getstats-mixed-state.test.ts
+// (:166-174); this is the llama-side twin, previously untested.
+describe('LlamaEngine.getStats rejection path (issue #190 AC17)', () => {
+  it('listDocuments-rejects', async () => {
+    const engine = makeEngine();
+    const boom = new Error('llama surface exploded');
+    engine.attachDocumentSurface(makeFakeSurface('test-embedder', { rejectList: boom }));
+
+    let rejected: unknown = null;
+    let payload: Awaited<ReturnType<LlamaEngine['getStats']>> | null = null;
+    try {
+      payload = await engine.getStats();
+    } catch (err) {
+      rejected = err;
+    }
+
+    // Rejected with THAT exact error (not a generic wrapper)...
+    expect(rejected).toBe(boom);
+    // ...and never resolved into a zeroed/marker payload either: the
+    // try/catch-swallow mutant (zero counts + stub marker) fails both rows.
+    expect(payload).toBeNull();
+  });
+});
+
+// PRR-010 folded finding (F-2, trace test-batch-oct2026 Cluster A): the
+// external-provider + attached-surface COMPOSITION was unpinned — external-engine
+// tests attach no surface and the count tests set no externalProvider, so the two
+// getStats branches (counts override from the surface vs llm_backend naming) were
+// never asserted together. The keys are disjoint by design; this pins both in one
+// spec so a future refactor cannot let one branch mask the other.
+describe('LlamaEngine.getStats external-provider + attached surface composition (F-2)', () => {
+  it('external-with-surface: counts come from the surface and llm_backend names the external endpoint', async () => {
+    const engine = makeEngine();
+    engine.attachDocumentSurface(makeFakeSurface());
+    const applied = engine.applySettingsPatch({
+      'external.enabled': true,
+      'external.protocol': 'openai',
+      'external.baseUrl': 'http://127.0.0.1:8080/v1',
+      'external.model': 'm1',
+    });
+    expect(applied.ok).toBe(true);
+
+    const stats = await engine.getStats();
+
+    // Counts: the attached surface's payload (not zeros, not the stub spread).
+    expect(stats.document_count).toBe(2);
+    expect(stats.chunk_count).toBe(5);
+    // llm_backend: the external endpoint naming, not the llama.cpp default —
+    // a counts-only or backend-only regression fails the other assertion here.
+    expect(stats.llm_backend).toBe('external (openai) model=m1 endpoint=http://127.0.0.1:8080');
+    // The B6 embedder override keeps working alongside both branches.
+    expect(stats.embedding_model).toBe('test-embedder');
   });
 });

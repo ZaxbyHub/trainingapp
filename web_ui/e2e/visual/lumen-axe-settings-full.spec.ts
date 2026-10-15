@@ -13,15 +13,14 @@
  * Runs in CI with the a11y subset (`lumen-axe` matches this file; see README.md).
  */
 
-import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
+import { axeSeriousCriticalNodes, fitViewportToContent } from './axe-full-page';
 import { hideModelGate } from '../model-gate';
 
 // 1440: side nav; 1024: wrapped-row nav; 500: "Jump to section" select.
 const WIDTHS = [1440, 1024, 500] as const;
 const THEMES = ['light', 'dark'] as const;
 const STATES = ['default', 'external'] as const;
-const MAX_HEIGHT = 12_000;
 
 async function blockExternalNetwork(page: Page): Promise<void> {
   await page.route('**/*', (route) => {
@@ -65,24 +64,7 @@ async function configureExternal(page: Page): Promise<void> {
   await expect(page.getByRole('switch', { name: 'Use external model' })).toBeChecked();
 }
 
-/** Grow the viewport until no element scrolls vertically (the scroller is <main>). */
-async function fitViewportToContent(page: Page, width: number): Promise<void> {
-  for (let i = 0; i < 6; i++) {
-    const need = await page.evaluate(() => {
-      let delta = 0;
-      document.querySelectorAll('*').forEach((el) => {
-        if (/(auto|scroll)/.test(getComputedStyle(el).overflowY) && el.scrollHeight > el.clientHeight + 1) {
-          delta = Math.max(delta, el.scrollHeight - el.clientHeight);
-        }
-      });
-      return delta;
-    });
-    if (need <= 0) return;
-    const current = page.viewportSize()?.height ?? 900;
-    await page.setViewportSize({ width, height: Math.min(current + need, MAX_HEIGHT) });
-    await page.waitForTimeout(150);
-  }
-}
+/** Grow the viewport until nothing scrolls: the shared full-page scan geometry (axe-full-page.ts). */
 
 for (const state of STATES) {
   for (const theme of THEMES) {
@@ -101,12 +83,7 @@ for (const state of STATES) {
           expect(about, 'About section must render').not.toBeNull();
           expect((about?.y ?? Infinity) + (about?.height ?? 0)).toBeLessThanOrEqual(vh);
 
-          const results = await new AxeBuilder({ page })
-            .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22a', 'wcag22aa'])
-            .analyze();
-          const blocking = results.violations
-            .filter((v) => v.impact === 'serious' || v.impact === 'critical')
-            .flatMap((v) => v.nodes.map((n) => `${v.id} | ${n.target.join(' ')}`));
+          const blocking = await axeSeriousCriticalNodes(page);
           expect(blocking, `serious/critical axe nodes on full-page Settings (${state} ${theme} ${width})`).toEqual([]);
         });
       });

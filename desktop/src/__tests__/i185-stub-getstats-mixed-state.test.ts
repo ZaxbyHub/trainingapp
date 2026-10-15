@@ -26,47 +26,15 @@
 // GREEN after the fix: every case stays internally consistent.
 import { describe, expect, it } from 'vitest';
 import { StubEngine } from '../../main/backend/engine.js';
-import type { DocumentSurface } from '../../main/backend/types.js';
+// The fake surface factory is THE shared fixture in
+// ./fixtures/document-surface-fake.ts — this file's factory body was moved
+// there verbatim as the superset shape (issue #193 AC19 / #200 AC2): same
+// parameterization (embedderModelId first, then docs/onList/rejectList),
+// same DEFAULT_DOCS, same `total: documents.length`. The swap test below is
+// byte-verbatim and still speaks the docs seam.
+import { makeFakeSurface } from './fixtures/document-surface-fake.js';
 
 const STUB_MARKER = 'desktop-stub (B5 #63)';
-
-const DEFAULT_DOCS = [
-  { id: 'a.md', chunk_count: 2 },
-  { id: 'b.md', chunk_count: 3 },
-];
-
-interface FakeSurfaceOpts {
-  /** Documents the surface reports. Default: the 2-doc/5-chunk payload. Pass a
-   *  DISTINCT array per surface so COUNT assertions detect cross-surface mixing. */
-  docs?: Array<{ id: string; chunk_count: number }>;
-  /** Gates listDocuments() so a test can land an attach/detach in the await window. */
-  onList?: () => Promise<void>;
-  /** Makes listDocuments() throw (negative path). */
-  rejectList?: Error;
-}
-
-/** Minimal fake surface parameterized by embedder id and payload. */
-function makeFakeSurface(embedderModelId: string, opts: FakeSurfaceOpts = {}): DocumentSurface {
-  return {
-    async listDocuments() {
-      if (opts.rejectList !== undefined) throw opts.rejectList;
-      if (opts.onList !== undefined) await opts.onList();
-      const documents = opts.docs ?? DEFAULT_DOCS;
-      return { documents, total: documents.length };
-    },
-    async clearDocuments() {},
-    async ingestDirectory() {
-      return { success: true, documents: 0, chunks_added: 0, message: null };
-    },
-    async ingestFile() {
-      return { success: true, documents: 0, chunks_added: 0, message: null };
-    },
-    async ingestBatch() {
-      return { total_files: 0, successful: 0, failed: 0, results: [] };
-    },
-    embedderModelId,
-  };
-}
 
 /** Bound the enteredGate so a getStats that never enters listDocuments fails fast
  *  with a descriptive error instead of hanging to the 30s suite timeout. */
