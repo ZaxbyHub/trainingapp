@@ -22,8 +22,9 @@
 export const EMBED_THREADS_ENV = 'TRAININGAPP_DESKTOP_EMBED_THREADS';
 
 /**
- * Narrow structural subset of onnxruntime-common's
- * InferenceSession.SessionOptions — exactly the determinism-relevant knobs.
+ * Narrow structural subset of the onnxruntime-common session-options type —
+ * exactly the determinism-relevant knobs. (No ONNX API is called here; this
+ * seam is pure env parsing, which is why it stays outside the B7 owner set.)
  */
 export interface EmbedSessionThreadOptions {
   readonly intraOpNumThreads: number;
