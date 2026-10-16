@@ -1,14 +1,18 @@
 // build/embedder.ts — embedding surfaces for the pack build (issue #79).
 //
 // Mirrors desktop/main/backend/ingest/embedder.ts conventions so prebuilt
-// pack vectors are query-compatible with the runtime by construction:
-// production is transformers.js over repo-staged bge-small-en-v1.5 ONNX
-// weights (384-dim, pooling 'cls', normalize true, fp32 — ADR-0001 #55 may
-// re-pin later, which is a build-invocation change here, not a schema
-// change); HashEmbedder is the deterministic dev/CI fixture, selected via
-// --embedder hash, never a production default. Native code loads lazily
-// (dynamic import) so merely constructing the embedder — or running CI with
-// the hash fixture — never loads onnxruntime.
+// pack vectors are query-compatible with the runtime: the mirroring is by
+// review plus named pins, not by construction — the session knobs below are
+// locked to the desktop seam by the drift pin in
+// desktop/src/__tests__/embed-seam-contract.test.ts (issue #211), and the
+// remaining conventions (pooling 'cls', normalize true, fp32, dims) are
+// mirrored by review. Production is transformers.js over repo-staged
+// bge-small-en-v1.5 ONNX weights (384-dim, pooling 'cls', normalize true,
+// fp32 — ADR-0001 #55 may re-pin later, which is a build-invocation change
+// here, not a schema change); HashEmbedder is the deterministic dev/CI
+// fixture, selected via --embedder hash, never a production default. Native
+// code loads lazily (dynamic import) so merely constructing the embedder —
+// or running CI with the hash fixture — never loads onnxruntime.
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,6 +22,21 @@ export const ONNX_MODEL_SUBPATH = 'onnx/model.onnx';
 export const DEFAULT_EMBEDDING_DIMS = 384;
 /** A real weight file is ~133MB; a Git-LFS pointer is ~134 bytes. */
 const STAGED_WEIGHTS_MIN_BYTES = 10 * 1024 * 1024;
+
+// Embed-session threading: deliberately NOT imported from the desktop seam
+// (desktop/main/backend/ingest/embed-threads.ts) — packtool is a separate
+// tsconfig/package (rootDir ".") and cannot share that source file. This
+// literal is pinned to the seam's 1-thread shape under the reproducible-build
+// contract at the createPipeline call site below (a last-ulp vector
+// difference would break the reproducible-build contract), and it is locked
+// to the seam by the drift pin in
+// desktop/src/__tests__/embed-seam-contract.test.ts (issue #211): changing
+// either side without the other goes red there.
+export const PACK_EMBED_SESSION_OPTIONS: {
+  intraOpNumThreads: number;
+  interOpNumThreads: number;
+  executionMode: 'sequential';
+} = { intraOpNumThreads: 1, interOpNumThreads: 1, executionMode: 'sequential' };
 
 export interface EmbeddingSurface {
   /** Identifier recorded into pack.json embedding.model_id + meta. */
@@ -115,7 +134,7 @@ export class OnnxEmbedder implements EmbeddingSurface {
         // differed in index.sqlite exactly this way before the pin).
         return createPipeline('feature-extraction', this.modelDir, {
           dtype: 'fp32',
-          session_options: { intraOpNumThreads: 1, interOpNumThreads: 1, executionMode: 'sequential' },
+          session_options: PACK_EMBED_SESSION_OPTIONS,
         });
       })();
       this.pipelinePromise.catch(() => {
