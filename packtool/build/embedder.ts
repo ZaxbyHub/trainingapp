@@ -36,7 +36,7 @@ export const PACK_EMBED_SESSION_OPTIONS: {
   intraOpNumThreads: number;
   interOpNumThreads: number;
   executionMode: 'sequential';
-} = { intraOpNumThreads: 1, interOpNumThreads: 1, executionMode: 'sequential' };
+} = Object.freeze({ intraOpNumThreads: 1, interOpNumThreads: 1, executionMode: 'sequential' });
 
 export interface EmbeddingSurface {
   /** Identifier recorded into pack.json embedding.model_id + meta. */
