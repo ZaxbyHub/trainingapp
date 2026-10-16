@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+- **Opt-in embedding determinism seam (issue #170, D1)**:
+  `TRAININGAPP_DESKTOP_EMBED_THREADS=<n>` pins ONNX session threading
+  (intra-op `n`, inter-op 1, sequential execution) at all three
+  retrieval-path transformer session sites — the ingest/query embedder and
+  the rerank worker's rerank and query-embed sessions — so embeddings and
+  rerank scores are run-to-run byte-deterministic (a prior incident broke
+  byte-identical pack builds under the default multithreaded pool).
+  DEFAULT OFF: unset/empty/invalid values keep the pre-seam call shape
+  byte-identical (no `session_options` key at all), so production embed
+  cost is unchanged unless the env var opts in; the eval-parity host pins
+  it to 1 so recall@5/MRR parity runs are reproducible. Same batch
+  (issues #145/#146/#167/#168/#186/#190/#193/#197/#200): the native-deps
+  skip-vs-fail gate for real-store specs is now reachable on machines
+  without staged native addons (lazy addon loading), and the Lumen axe
+  gate scans the whole page instead of the first 900px.
+
 - **Stub `/stats` reports the attached surface's real embedder id instead of the
   legacy marker (issue #185)**: `StubEngine.getStats()`'s surface-attached branch now
   returns the attached document surface's `embedderModelId` as `embedding_model`

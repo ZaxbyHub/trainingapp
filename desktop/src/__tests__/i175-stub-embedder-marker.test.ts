@@ -21,35 +21,14 @@
 //      branch) => getStats().embedding_model === 'desktop-stub (B5 #63)'.
 import { describe, expect, it } from 'vitest';
 import { StubEngine } from '../../main/backend/engine.js';
-import type { DocumentSurface } from '../../main/backend/types.js';
+// The fake surface factory lives in ./fixtures/document-surface-fake.ts —
+// ONE fixture source shared by i103c/i169-llama/i175/i185 (issue #193 AC19 /
+// #200 AC2; previously copy-pasted here). Behavior-preserving adoption in
+// this frozen spec (closed trace 185, blob 1a177d5): the id-taking call
+// shape and the 2-doc (2+3 chunks) payload are unchanged.
+import { makeFakeSurface } from './fixtures/document-surface-fake.js';
 
 const STUB_MARKER = 'desktop-stub (B5 #63)';
-
-/** Minimal fake surface: two documents, 2 + 3 chunks, everything else no-op. */
-function makeFakeSurface(embedderModelId: string): DocumentSurface {
-  return {
-    async listDocuments() {
-      return {
-        documents: [
-          { id: 'a.md', chunk_count: 2 },
-          { id: 'b.md', chunk_count: 3 },
-        ],
-        total: 2,
-      };
-    },
-    async clearDocuments() {},
-    async ingestDirectory() {
-      return { success: true, documents: 0, chunks_added: 0, message: null };
-    },
-    async ingestFile() {
-      return { success: true, documents: 0, chunks_added: 0, message: null };
-    },
-    async ingestBatch() {
-      return { total_files: 0, successful: 0, failed: 0, results: [] };
-    },
-    embedderModelId,
-  };
-}
 
 describe('StubEngine.getStats embedding_model surface id (i175)', () => {
   it('with a surface attached, getStats reports the surface embedderModelId as embedding_model, not the stub marker', async () => {

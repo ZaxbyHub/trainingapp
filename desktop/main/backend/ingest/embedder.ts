@@ -20,6 +20,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ModelNotConfiguredError } from '../types.js';
+import { embedSessionOptions, type EmbedSessionThreadOptions } from './embed-threads.js';
 
 export const EMBEDDER_ENV = 'TRAININGAPP_DESKTOP_EMBEDDER';
 export const EMBEDDING_MODEL_DIR_ENV = 'TRAININGAPP_EMBEDDING_MODEL_DIR';
@@ -113,11 +114,19 @@ export class OnnxEmbedder implements EmbeddingSurface {
         const createPipeline = transformers.pipeline as unknown as (
           task: 'feature-extraction',
           modelPath: string,
-          options: { dtype: string },
+          options: { dtype: string; session_options?: EmbedSessionThreadOptions },
         ) => Promise<FeatureExtractionPipeline>;
+        // Determinism seam (issue #170 D1): TRAININGAPP_DESKTOP_EMBED_THREADS
+        // pins ONNX session threading; unset/invalid keeps the options object
+        // byte-identical to the pre-seam call (no session_options key at all).
+        const sessionOptions = embedSessionOptions();
+        const pipelineOptions =
+          sessionOptions === undefined
+            ? { dtype: 'fp32' }
+            : { dtype: 'fp32', session_options: sessionOptions };
         // fp32: the staged model.onnx is a full-precision export (a q8 sibling
         // would be selected via dtype when ADR-0001 stages one).
-        return createPipeline('feature-extraction', this.modelDir, { dtype: 'fp32' });
+        return createPipeline('feature-extraction', this.modelDir, pipelineOptions);
       })();
       this.pipelinePromise.catch(() => {
         // Allow a retry after a transient failure (e.g. weights swapped in).

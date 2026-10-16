@@ -326,6 +326,13 @@ python bench/append_results.py --row-file <row.json>   # per emitted row
 #    run the perf suites for real PASS/FAIL evidence:
 set BENCH_FLOORS_MACHINE=reference-i5
 python -m pytest tests/test_rag_performance.py tests/test_low_end_hardware.py -v
+
+# 7. enforce the recorded floors LIVE (onnx-embed / onnx-rerank / native,
+#    issue #168: tests/test_bench_floor_enforcement.py) on a machine whose
+#    tag has rows below; unset/rowless machines skip by design. Groups are
+#    selectable with -k embed / -k rerank / -k native.
+#    POSIX/Git Bash: BENCH_FLOORS_MACHINE=devstation python -m pytest tests/test_bench_floor_enforcement.py -q
+#    cmd.exe:        set BENCH_FLOORS_MACHINE=devstation && python -m pytest tests/test_bench_floor_enforcement.py -q
 ```
 
 ## bench-floors (machine-tagged thresholds consumed by tests)

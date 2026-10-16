@@ -27,7 +27,12 @@
  *   - course content cannot create a same-origin child iframe and steer it
  *     off-origin through child.contentWindow.location.href (the course's own
  *     frame-src: a child's immediate embedder is the course document, PR 144
- *     review R1.1).
+ *     review R1.1);
+ *   - course content cannot weaken the course CSP by becoming the worker's
+ *     relay itself (NC1 regression, issue #145): a port injected directly and
+ *     through the boot frame's realm serves bytes, but every response still
+ *     carries the worker's FORCED course CSP, all egress from the served
+ *     document is refused, and nothing reaches a sink.
  *
  * The course script only records outcomes; it carries no payload beyond what
  * the assertions need. Run under web_ui/playwright.config.ts (vite preview of
@@ -54,6 +59,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import JSZip from 'jszip';
 import { expect, test, type Page } from '@playwright/test';
+import { buildBrowserTrainingCsp } from '../src/lib/packs/training-relay';
 
 /**
  * Spec 6 (a REAL click inside the course frame) on Firefox, PRR-151-030 lane I.
@@ -173,6 +179,7 @@ const ESCAPE_PACK = 'isolation-escape-course';
 const NAV_PACK = 'isolation-nav-egress-course';
 const CHILD_NAV_PACK = 'isolation-child-nav-course';
 const WORKER_PACK = 'isolation-worker-course';
+const RELAY_PACK = 'isolation-relay-course';
 
 /**
  * Real built app assets, picked deterministically from the build the preview
@@ -665,6 +672,271 @@ test('course content cannot escape its CSP through a same-origin player-origin d
   await expect(page.locator('iframe[data-testid="training-player-boot"]')).toHaveAttribute('sandbox', 'allow-scripts allow-same-origin');
   // Nothing reached the sink from any document.
   expect(hits, 'FC6 cross-origin egress from a same-origin player document').toEqual([]);
+});
+
+/**
+ * The relay-injection course (issue #145 — the #144 NC1 mitigation pinned at
+ * the browser level): course JS is a same-origin client of /training/sw.js and
+ * can hand the worker a relay port of its own — directly from the course
+ * document (route a: navigator.serviceWorker.controller.postMessage) and
+ * through the sibling boot frame's realm (route b: registration.active
+ * .postMessage; from the worker's side that message's source client IS the
+ * boot page). The probe injects a hostile relay by both routes; the relay
+ * answers the worker's `open` for /training/<pack>/minted.html with 200, a
+ * permissive CSP (`default-src *`) and a minted document, which the course
+ * then frames and reads back (proving the injected relay served it). The
+ * minted document attempts fetch, form POST, image and grandchild-navigation
+ * egress to a local cross-origin sink. The mitigation under test: the worker
+ * owns every relay-served response's security headers, so the minted document
+ * carries the FORCED course CSP whatever the injected relay says, every egress
+ * channel is refused with a CSP violation, and nothing reaches the sink.
+ * Loopback only; the sink is the app origin itself, intercepted by the test.
+ */
+function relayInjectStoryHtml(appOrigin: string): string {
+  // The document the injected relay serves: it records its CSP violations and
+  // each egress attempt's outcome in <pre id="minted-probe"> for the course
+  // (same origin) to read back. Its body carries the marker that proves the
+  // bytes came from the injected relay, not the pack (minted.html is not in
+  // the pack at all: the real relay answers it 404). The form submission
+  // targets a NESTED frame: the CSP refusal must be observable without the
+  // blocked navigation taking this document (and its record) with it, and
+  // under a permissive policy the sink would load inside the target frame
+  // with the record still in place.
+  const minted = `<!doctype html><html><head><title>minted</title></head><body><p>MINTED-BY-INJECTED-RELAY</p><pre id="minted-probe">running</pre><script>
+(function () {
+  var SINK = ${JSON.stringify(appOrigin)} + '/__relay-sink/minted/';
+  var r = { violations: [], attempts: { childNav: 'pending', img: 'pending' } };
+  document.addEventListener('securitypolicyviolation', function (e) {
+    r.violations.push((e.effectiveDirective || e.violatedDirective) + ' ' + e.blockedURI);
+  });
+  fetch(SINK + 'fetch', { mode: 'no-cors', cache: 'no-store' }).then(
+    function () { r.attempts.fetch = 'sent'; },
+    function (e) { r.attempts.fetch = (e && e.name) || String(e); }
+  );
+  var img = new Image();
+  img.onload = function () { r.attempts.img = 'loaded'; };
+  img.onerror = function () { r.attempts.img = 'error'; };
+  img.src = SINK + 'img';
+  var target = document.createElement('iframe');
+  target.name = 'minted-form-target';
+  document.body.appendChild(target);
+  var form = document.createElement('form');
+  form.method = 'POST';
+  form.action = SINK + 'form';
+  form.target = 'minted-form-target';
+  document.body.appendChild(form);
+  try { form.submit(); r.attempts.form = 'submitted'; } catch (e) { r.attempts.form = 'threw:' + ((e && e.name) || e); }
+  var child = document.createElement('iframe');
+  child.onload = function () {
+    if (child.dataset.navigated) return;
+    child.dataset.navigated = '1';
+    try { child.contentWindow.location.href = SINK + 'child'; r.attempts.childNav = 'attempted'; }
+    catch (e) { r.attempts.childNav = 'threw:' + ((e && e.name) || e); }
+  };
+  child.src = 'about:blank';
+  document.body.appendChild(child);
+  // Serialize only once every egress attempt has settled AND its CSP
+  // violation event landed (bounded 10s): a fixed timer here raced the
+  // childNav/form events under load and silently dropped their categories.
+  var started = Date.now();
+  var timer = setInterval(function () {
+    var settled = r.attempts.fetch !== undefined && r.attempts.img !== undefined &&
+      r.attempts.form !== undefined && r.attempts.childNav !== 'pending';
+    if ((settled && r.violations.length >= 4) || Date.now() - started >= 10000) {
+      clearInterval(timer);
+      document.getElementById('minted-probe').textContent = JSON.stringify(r);
+    }
+  }, 100);
+})();
+</script></body></html>`;
+  const script = `
+(async function () {
+  ${coursePrelude(appOrigin)}
+  var MINTED = '/training/${RELAY_PACK}/minted.html';
+  var MINTED_BODY = ${JSON.stringify(minted).replace(/<\//g, '<\\/')};
+  var r = { ancestorOrigin: ancestorOrigin, relayServed: [] };
+  function wait(ms) { return new Promise(function (res) { setTimeout(res, ms); }); }
+  function name(e) { return (e && e.name) || String(e); }
+  // The injected relay: 200 + a permissive CSP + the minted document for every
+  // open. relay-ready (the worker's attach acknowledgement) resolves .attached.
+  function makeRelay() {
+    var channel = new MessageChannel();
+    var notify;
+    var relay = { attached: new Promise(function (res) { notify = res; }) };
+    channel.port1.onmessage = function (event) {
+      var q = event.data;
+      if (!q || typeof q !== 'object') return;
+      if (q.type === 'relay-ready') { notify(); return; }
+      if (q.type !== 'open') return;
+      r.relayServed.push(q.path);
+      channel.port1.postMessage({ id: q.id, status: 200, headers: { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': 'default-src *' }, body: MINTED_BODY });
+    };
+    channel.port1.start();
+    relay.port2 = channel.port2;
+    return relay;
+  }
+  // The course document must be controlled by /training/sw.js first.
+  var controller = null;
+  for (var deadline = Date.now() + 10000; controller === null && Date.now() < deadline;) {
+    controller = navigator.serviceWorker.controller;
+    if (controller === null) await wait(200);
+  }
+  r.controllerReady = controller !== null;
+  // Route (a): the course's own controller. The worker must refuse this port
+  // (the source client is the course, not the boot page): minted.html is not
+  // in the pack, so the REAL relay still answers it 404.
+  if (controller !== null) {
+    var relayA = makeRelay();
+    try { controller.postMessage({ type: 'trainingapp-relay-port' }, [relayA.port2]); r.routeA = 'posted'; } catch (e) { r.routeA = 'threw:' + name(e); }
+    await wait(500);
+    try { r.afterRouteA = (await fetch(MINTED, { cache: 'no-store' })).status; } catch (e) { r.afterRouteA = 'threw:' + name(e); }
+  } else {
+    r.routeA = 'no-controller';
+    r.afterRouteA = 'no-controller';
+  }
+  // Route (b): through the sibling boot frame's realm — registration.active.
+  var boot = null;
+  for (var i = 0; i < window.parent.frames.length; i++) {
+    try {
+      var c = window.parent.frames[i];
+      if (c !== window && c.location.pathname === '/training-boot.html') { boot = c; break; }
+    } catch (e) { /* cross-origin frame */ }
+  }
+  r.bootFrame = boot ? 'found' : 'missing';
+  r.routeB = boot ? 'no-worker' : 'missing-boot';
+  if (boot !== null) {
+    var relayB = makeRelay();
+    try {
+      var reg = await boot.navigator.serviceWorker.getRegistration('/training/');
+      var worker = reg && (reg.active || reg.waiting || reg.installing);
+      if (worker && worker.state !== 'activated') {
+        var target = worker;
+        await Promise.race([
+          new Promise(function (res) {
+            target.addEventListener('statechange', function on() {
+              if (target.state === 'activated' || target.state === 'redundant') { target.removeEventListener('statechange', on); res(); }
+            });
+          }),
+          wait(10000),
+        ]);
+        worker = reg.active || worker;
+      }
+      if (worker) {
+        worker.postMessage({ type: 'trainingapp-relay-port' }, [relayB.port2]);
+        r.routeB = 'posted';
+        await Promise.race([relayB.attached, wait(5000)]);
+      }
+    } catch (e) { r.routeB = 'threw:' + name(e); }
+  }
+  // The injected relay now answers the worker's open: the document is served
+  // (200, hostile body — proof the injected relay served it) and its response
+  // CSP is read back for the forced-CSP assertion.
+  try {
+    var res = await fetch(MINTED, { cache: 'no-store' });
+    r.mintedStatus = res.status;
+    r.mintedCsp = res.headers.get('content-security-policy');
+    r.mintedBody = await res.text();
+  } catch (e) { r.mintedStatus = 'threw:' + name(e); }
+  // Frame the minted document (the course CSP's frame-src 'self' admits it:
+  // same origin), let its egress probes run, then read its record back.
+  var f = document.createElement('iframe');
+  var loaded = new Promise(function (res) { f.addEventListener('load', res, { once: true }); });
+  f.src = MINTED;
+  document.body.appendChild(f);
+  await Promise.race([loaded, wait(10000)]);
+  // Poll for the minted record instead of a fixed settle: the minted script
+  // serializes only after its attempts land (bounded 10s).
+  var mintedText = null;
+  for (var readDeadline = Date.now() + 12000; mintedText === null && Date.now() < readDeadline;) {
+    await wait(250);
+    try {
+      var pre = f.contentDocument && f.contentDocument.getElementById('minted-probe');
+      if (pre && pre.textContent && pre.textContent !== 'running') mintedText = pre.textContent;
+    } catch (e) { r.minted = 'unreadable:' + name(e); break; }
+  }
+  try {
+    r.minted = mintedText !== null ? JSON.parse(mintedText) : null;
+  } catch (e) { r.minted = 'unreadable:' + name(e); }
+  await wait(500);
+  document.getElementById('relay-probe').textContent = JSON.stringify(r);
+  report('relay-probe', JSON.stringify(r));
+})();`;
+  return `<!doctype html><html><head><title>relay probe</title></head><body><pre id="relay-probe"></pre><script>${script}</script></body></html>`;
+}
+
+test('relay-port injection: a course-supplied relay cannot weaken the forced course CSP (#145)', async ({ page, browserName }) => {
+  // The course probe alone waits up to 90 s for its report; the default 30 s budget would cut it short.
+  test.setTimeout(240_000);
+  await page.goto('/');
+  const appOrigin = new URL(page.url()).origin;
+  await installReportCollector(page);
+  // The local cross-origin egress sink: every request that reaches it is an escape.
+  const hits: string[] = [];
+  await page.route(`${appOrigin}/__relay-sink/**`, (route) => {
+    hits.push(new URL(route.request().url()).pathname);
+    return route.fulfill({ status: 204, headers: { 'cross-origin-resource-policy': 'cross-origin' } });
+  });
+  await page.getByRole('button', { name: 'Documents', exact: true }).click();
+  await expect(page.getByTestId('packs-panel')).toBeVisible({ timeout: 45_000 });
+  await install(page, await packZip(RELAY_PACK, '1.0.0', { 'story.html': relayInjectStoryHtml(appOrigin) }), 'relay.zip', RELAY_PACK, '1.0.0');
+  await page.getByRole('button', { name: 'Training', exact: true }).click();
+  const option = page.getByTestId('training-pack-select').locator('option', { hasText: RELAY_PACK });
+  await expect(option).toHaveCount(1, { timeout: 30_000 });
+  await page.getByTestId('training-pack-select').selectOption((await option.getAttribute('value')) ?? '');
+  const r = await courseReport<{
+    ancestorOrigin: string | null;
+    relayServed: string[];
+    controllerReady: boolean;
+    routeA: string;
+    afterRouteA: number | string;
+    bootFrame: string;
+    routeB: string;
+    mintedStatus: number | string;
+    mintedCsp: string | null;
+    mintedBody: string;
+    minted: { violations: string[]; attempts: Record<string, string> } | string | null;
+  }>(page, 'relay-probe', appOrigin, 90_000);
+  await expectFrameRecordMatches(page, browserName, '#relay-probe', r);
+  expect(r.ancestorOrigin, 'fixture fidelity: embedder origin').toBe(appOrigin);
+  test.info().annotations.push({ type: 'relay-probe', description: `${JSON.stringify(r)} sink hits: ${JSON.stringify(hits)}` });
+
+  // Non-vacuous: the course ran controlled, reached the boot frame, and BOTH
+  // injection routes were exercised.
+  expect(r.controllerReady, 'the course document is controlled by /training/sw.js').toBe(true);
+  expect(r.bootFrame, 'the sibling boot frame was reachable from the course').toBe('found');
+  expect(r.routeA, 'route (a): the course posted a relay port to its controller').toBe('posted');
+  expect(r.routeB, 'route (b): the course posted a relay port through the boot frame realm').toBe('posted');
+  // Route (a) was refused (defense in depth): the real relay still answered,
+  // and minted.html — not in the pack — stayed 404.
+  expect(r.afterRouteA, 'route (a) refused: the real relay still answers 404').toBe(404);
+  // Route (b) attached the hostile relay and it answered the worker's open.
+  expect(r.relayServed, 'the injected relay answered the worker\'s open').toContain(`/training/${RELAY_PACK}/minted.html`);
+  expect(r.mintedStatus, 'the injected relay served the minted document').toBe(200);
+  expect(r.mintedBody, 'the minted body came from the injected relay, not the pack').toContain('MINTED-BY-INJECTED-RELAY');
+  // THE mitigation (NC1): the response carries the FORCED course CSP — built
+  // by the worker, in lockstep with buildBrowserTrainingCsp — never the
+  // relay-supplied `default-src *`. This is the assertion the AC2 mutation
+  // (restoring header passthrough in sw.js buildResponse) must turn red.
+  expect(r.mintedCsp, 'the FORCED course CSP, not the relay-supplied one').toBe(
+    buildBrowserTrainingCsp(appOrigin, playerOriginOf(appOrigin), RELAY_PACK),
+  );
+  // The FRAMED minted document ran under that same forced CSP: every egress
+  // channel was refused with a CSP violation naming it.
+  const mintedRecord = r.minted !== null && typeof r.minted !== 'string' ? r.minted : null;
+  expect(mintedRecord, 'the framed minted document reported its record').not.toBeNull();
+  const violations = mintedRecord?.violations ?? [];
+  expect(violations, 'connect-src / form-action / img-src / frame-src violations in the minted document').toEqual(
+    expect.arrayContaining([
+      expect.stringMatching(/^connect-src /),
+      expect.stringMatching(/^form-action /),
+      expect.stringMatching(/^img-src /),
+      expect.stringMatching(/^frame-src /),
+    ]),
+  );
+  // ...and nothing reached the sink from anywhere (course, minted document or
+  // its child frame).
+  await page.waitForTimeout(1000);
+  expect(hits, 'egress from a document served by the injected relay').toEqual([]);
 });
 
 /**

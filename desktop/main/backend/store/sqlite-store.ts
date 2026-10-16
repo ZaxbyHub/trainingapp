@@ -35,13 +35,32 @@ export const DEFAULT_EMBEDDING_DIMS = 384;
 export const EMBEDDING_DIMS_TOKEN = '__EMBEDDING_DIMS__';
 
 const require = createRequire(import.meta.url);
-// eslint-disable-next-line @typescript-eslint/no-var-requires -- native addons resolved at runtime (see file header)
-const Database = require('better-sqlite3') as new (path: string) => BetterSqlite3Db;
-// eslint-disable-next-line @typescript-eslint/no-var-requires -- see above
-const sqliteVec = require('sqlite-vec') as {
-  load(db: BetterSqlite3Db): void;
-  getLoadablePath(): string;
-};
+
+// Native addons resolve LAZILY on first openStore call, never at module
+// import: a machine without staged native deps must still be able to
+// IMPORT this module (and everything that transitively imports it), so
+// gated suites can evaluate their skip/fail policy before any native
+// require happens (issue #193 D2 — a top-level require made that gate
+// unreachable: the suite died at import with MODULE_NOT_FOUND instead of
+// skipping with the staging instruction).
+let nativeAddons: {
+  Database: new (path: string) => BetterSqlite3Db;
+  sqliteVec: { load(db: BetterSqlite3Db): void; getLoadablePath(): string };
+} | null = null;
+
+function loadNativeAddons(): NonNullable<typeof nativeAddons> {
+  if (nativeAddons === null) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires -- native addons resolved at runtime (see file header)
+    const Database = require('better-sqlite3') as new (path: string) => BetterSqlite3Db;
+    // eslint-disable-next-line @typescript-eslint/no-var-requires -- see above
+    const sqliteVec = require('sqlite-vec') as {
+      load(db: BetterSqlite3Db): void;
+      getLoadablePath(): string;
+    };
+    nativeAddons = { Database, sqliteVec };
+  }
+  return nativeAddons;
+}
 
 /** Structural subset of a better-sqlite3 Database this module uses. */
 interface BetterSqlite3Db {
@@ -155,6 +174,7 @@ export function openStore(options: StoreOptions): StoreHandle {
   const schemaSql = loadSchemaSql(repoRoot, dims);
 
   fs.mkdirSync(path.dirname(options.dbPath), { recursive: true });
+  const { Database, sqliteVec } = loadNativeAddons();
   const db = new Database(options.dbPath);
   try {
     // issue #100 item 2: explicit connection pragmas, then READ BACK the

@@ -1095,14 +1095,17 @@ export class SidecarBackendHost implements BackendHost {
  * Module-level BY DESIGN: the b3 duck-type pin requires both host prototypes
  * to expose exactly start/stop, so node-only helpers stay off the prototype.
  */
-async function recoverOrDegradeStore(
+export async function recoverOrDegradeStore(
   config: BackendHostConfig,
   openError: unknown,
 ): Promise<StoreHandle | null> {
   const dbPath = config.storePath as string;
   // Degradation (not recovery) applies when the file was never created or the
-  // failure is not integrity corruption (dims mismatch, locked file...).
-  if (!fs.existsSync(dbPath) || checkStoreIntegrity(dbPath).ok) {
+  // failure is not integrity corruption (dims mismatch, locked file, or a
+  // native addon that could not be LOADED — PRR-001: recovery deletes the
+  // store on its fresh path, so a load failure must never reach it).
+  const integrity = checkStoreIntegrity(dbPath);
+  if (!fs.existsSync(dbPath) || integrity.ok || integrity.loadFailure === true) {
     console.error(
       `[trainingapp-backend] store init failed (continuing without store): ${openError instanceof Error ? openError.message : String(openError)}`,
     );

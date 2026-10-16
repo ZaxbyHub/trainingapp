@@ -19,12 +19,23 @@ record a fresh weighted run per eval/README.md, refresh
 eval/samples/report-devstation-weighted.json alongside the floor rows and
 the pins in this file (floor values must stay <= that recorded run's
 metrics), and re-run this test.
+
+Cluster-B additions (test-batch-oct2026, issues #170/#186): the fast
+weights-free ``test_retrieval_config_pinned`` pins the recorded
+retrieval-geometry defaults the floors were measured under (config drift
+must fail on ANY box, never skip); ``test_backend_stats_document_count``
+pins the report's ``backend_stats.document_count`` against the seeded count
+(sharing the parity run, weights-gated like its siblings); and
+``test_embed_threads_seam_shape`` pins the default-OFF
+``TRAININGAPP_DESKTOP_EMBED_THREADS`` determinism seam (issue #170 D1),
+which ``_sanitized_env()`` sets to 1 on the measured path.
 """
 
 import http.client
 import http.server
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -46,7 +57,7 @@ WEIGHTS_MIN_BYTES = 10 * 1024 * 1024
 
 EMBED_ONNX = REPO_ROOT / "models" / "bge-small-en-v1.5" / "onnx" / "model.onnx"
 # The host loads the q8/QUANTIZED artifact: the reranker worker hardcodes
-# dtype 'q8' (rerank-worker.ts:74), whose suffix maps to model_quantized.onnx,
+# dtype 'q8' (rerank-worker.ts:78), whose suffix maps to model_quantized.onnx,
 # and bench/fetch_models.py stages/downloads exactly that file first for
 # ettin (candidates[0]) — gating on the full model would skip every correctly
 # staged box and never match what the recorded floors were measured with.
@@ -215,7 +226,174 @@ def _sanitized_env() -> dict:
     )
     env["TRAININGAPP_DESKTOP_EMBEDDER"] = ""
     env["TRAININGAPP_DESKTOP_REPO_ROOT"] = ""
+    # D1 (issue #170): pin ONNX session threading to 1 intra-op thread on the
+    # measured path (seed ingest embeds, host query embeds, rerank worker
+    # sessions) — parallel intra-op float reduction reorders accumulation, so
+    # the default multithreaded sessions are not run-to-run deterministic.
+    # The TRAININGAPP_DESKTOP_EMBED_THREADS seam (ingest/embed-threads.ts) is
+    # default-OFF for production; this is the parity host opting in. Being an
+    # explicit SET, it also wins over any ambient value on this box.
+    env["TRAININGAPP_DESKTOP_EMBED_THREADS"] = "1"
     return env
+
+
+# --- AC12 (issue #170): weights-free retrieval-geometry config pin ----------
+
+RETRIEVAL_CONFIG_TS = (
+    REPO_ROOT / "desktop" / "main" / "backend" / "retrieval" / "config.ts"
+)
+
+# The recorded defaults the desktop-retrieval-eval floors were measured under
+# (config.ts DEFAULT_RETRIEVAL_CONFIG; relevanceFloor resolves to the
+# ADR-0007 calibrated floor). Values are pinned as the SOURCE literals the
+# parser extracts, so any drift in the declared defaults trips the pin.
+_PINNED_RETRIEVAL_DEFAULTS = {
+    "topK": "10",
+    "candidateMultiplier": "3",
+    "rerank": "true",
+    "rrfK": "60",
+}
+_PINNED_RELEVANCE_FLOOR_EXPR = "CALIBRATED_RELEVANCE_FLOOR"
+_PINNED_CALIBRATED_RELEVANCE_FLOOR = 0.569387  # ADR-0007 `floor:` line
+
+
+def _config_drift_message(key: str, got: object, pinned: object) -> str:
+    """Re-derive-style failure naming the drifted key and both values."""
+    return (
+        f"retrieval config drift: {key} is {got!r}, the recorded default is "
+        f"{pinned!r} — the desktop-retrieval-eval floors were measured under "
+        "the recorded geometry. Re-derive: record a fresh weighted run per "
+        "eval/README.md, refresh eval/samples/report-devstation-weighted.json "
+        "and the bench/RESULTS.md floor rows alongside the pins in this file, "
+        "then re-run this test."
+    )
+
+
+def _parse_retrieval_config_defaults() -> dict:
+    """Deterministically parse config.ts's exported frozen defaults.
+
+    No cross-language constants seam exists between tests/ and the desktop
+    TS sources, so the values are parsed from the config SOURCE the host
+    resolves its env-independent defaults from (deterministic regex parse of
+    the two exported declarations, the same pattern as
+    tests/test_issue156_llm_swap.py) — never a parallel hand-typed copy that
+    can drift.
+    """
+    assert (
+        RETRIEVAL_CONFIG_TS.is_file()
+    ), f"required surface missing: {RETRIEVAL_CONFIG_TS.relative_to(REPO_ROOT)}"
+    text = RETRIEVAL_CONFIG_TS.read_text(encoding="utf-8")
+    floor_decl = re.search(
+        r"export const CALIBRATED_RELEVANCE_FLOOR\s*=\s*([0-9]+(?:\.[0-9]+)?)\s*;",
+        text,
+    )
+    assert (
+        floor_decl
+    ), "CALIBRATED_RELEVANCE_FLOOR export not found in retrieval/config.ts"
+    defaults_decl = re.search(
+        r"export const DEFAULT_RETRIEVAL_CONFIG[^=]*=\s*Object\.freeze\(\s*\{",
+        text,
+    )
+    assert (
+        defaults_decl
+    ), "DEFAULT_RETRIEVAL_CONFIG export not found in retrieval/config.ts"
+    rest = text[defaults_decl.end() :]
+    close = rest.find("})")
+    assert close != -1, "DEFAULT_RETRIEVAL_CONFIG literal is not terminated by })"
+    fields: dict = {}
+    for match in re.finditer(r"(\w+)\s*:\s*([^,\n]+)", rest[:close]):
+        fields[match.group(1)] = match.group(2).strip()
+    assert fields, "DEFAULT_RETRIEVAL_CONFIG parsed to an empty object literal"
+    return {"calibrated_floor": float(floor_decl.group(1)), "fields": fields}
+
+
+def test_retrieval_config_pinned() -> None:
+    """AC12 (issue #170): the effective retrieval configuration equals the
+    recorded defaults the floors were measured under.
+
+    Weights-free and gate-free BY DESIGN: geometry drift must fail on any
+    box (CI included), never ride a weights-gated skip.
+    """
+    parsed = _parse_retrieval_config_defaults()
+    fields = parsed["fields"]
+    for key, pinned in _PINNED_RETRIEVAL_DEFAULTS.items():
+        assert fields.get(key) == pinned, _config_drift_message(
+            key, fields.get(key), pinned
+        )
+    floor_expr = fields.get("relevanceFloor")
+    assert floor_expr == _PINNED_RELEVANCE_FLOOR_EXPR, _config_drift_message(
+        "relevanceFloor", floor_expr, _PINNED_RELEVANCE_FLOOR_EXPR
+    )
+    floor = parsed["calibrated_floor"]
+    assert floor == pytest.approx(
+        _PINNED_CALIBRATED_RELEVANCE_FLOOR, rel=1e-9
+    ), _config_drift_message(
+        "CALIBRATED_RELEVANCE_FLOOR", floor, _PINNED_CALIBRATED_RELEVANCE_FLOOR
+    )
+
+
+# --- D1 seam unit pin (issue #170) -------------------------------------------
+
+_SEAM_PROBE_SCRIPT = r"""
+const { embedSessionOptions } = await import(process.env.SEAM_MODULE_URL);
+const shape = (value) => (value === undefined ? null : value);
+process.stdout.write(JSON.stringify({
+  set1: shape(embedSessionOptions({ TRAININGAPP_DESKTOP_EMBED_THREADS: '1' })),
+  set2: shape(embedSessionOptions({ TRAININGAPP_DESKTOP_EMBED_THREADS: '2' })),
+  unset: shape(embedSessionOptions({})),
+  empty: shape(embedSessionOptions({ TRAININGAPP_DESKTOP_EMBED_THREADS: '' })),
+  zero: shape(embedSessionOptions({ TRAININGAPP_DESKTOP_EMBED_THREADS: '0' })),
+  junk: shape(embedSessionOptions({ TRAININGAPP_DESKTOP_EMBED_THREADS: 'abc' })),
+}));
+"""
+
+
+@pytest.mark.skipif(
+    not DEV_SERVER.is_file(),
+    reason=f"desktop dist not built: {DEV_SERVER.relative_to(REPO_ROOT)} - {_COMPILE_HINT}",
+)
+def test_embed_threads_seam_shape() -> None:
+    """D1 seam unit pin (issue #170): embedSessionOptions returns the pinned
+    session shape when TRAININGAPP_DESKTOP_EMBED_THREADS is a positive
+    integer and NOTHING (undefined) when unset/empty/invalid — the
+    default-OFF contract keeping production behavior byte-identical without
+    the env var."""
+    _assert_dist_fresh()
+    module_url = (
+        REPO_ROOT
+        / "desktop"
+        / "dist"
+        / "main"
+        / "backend"
+        / "ingest"
+        / "embed-threads.js"
+    ).as_uri()
+    with tempfile.TemporaryDirectory(prefix="i103-seam-") as tmp:
+        script = Path(tmp) / "seam-probe.mjs"
+        script.write_text(_SEAM_PROBE_SCRIPT, encoding="utf-8")
+        env = {**os.environ, "SEAM_MODULE_URL": module_url}
+        proc = _run_node(script, env, timeout=60)
+    assert (
+        proc.returncode == 0
+    ), f"seam probe failed exit={proc.returncode}\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    results = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert results["set1"] == {
+        "intraOpNumThreads": 1,
+        "interOpNumThreads": 1,
+        "executionMode": "sequential",
+    }
+    assert results["set2"] == {
+        "intraOpNumThreads": 2,
+        "interOpNumThreads": 1,
+        "executionMode": "sequential",
+    }
+    for unset_key in ("unset", "empty", "zero", "junk"):
+        assert results[unset_key] is None, (
+            f"embedSessionOptions leaked a session_options object for a "
+            f"{unset_key!r} env: {results[unset_key]!r} — the seam must stay "
+            "default-OFF (no session_options key when the env var does not "
+            "name a positive integer)"
+        )
 
 
 _SEED_SCRIPT = r"""
@@ -246,15 +424,6 @@ try {
 }
 process.exit(code);
 """
-
-
-def _host_stderr(work: Path) -> str:
-    """Tail of the captured host stderr (exists while the tempdir is alive)."""
-    err = work / "host.err"
-    if not err.is_file():
-        return "(no host stderr captured)"
-    text = err.read_text(encoding="utf-8", errors="replace")
-    return "--- host stderr (tail) ---\n" + text[-4000:]
 
 
 def _rederive_message(what: str) -> str:
@@ -566,12 +735,28 @@ def _run_eval(work: Path, env: dict, proxy_port: int) -> dict:
     return json.loads(json_out.read_text(encoding="utf-8"))
 
 
-@_SKIP_GATES[0]
-@_SKIP_GATES[1]
-@_SKIP_GATES[2]
-@_SKIP_GATES[3]
-def test_desktop_retrieval_eval_parity() -> None:
-    """Desktop host retrieval stays at parity with the recorded weighted run."""
+# The parity flow is expensive (weights-gated seed + host boot + full
+# 60-question eval), so it runs ONCE per process and the parsed report is
+# cached: the metric pins and the AC14 backend_stats pin share one measured
+# run (test-batch-oct2026 cluster B).
+_PARITY_RUN: dict = {}
+
+
+def _cached_host_stderr_tail() -> str:
+    text = _PARITY_RUN.get("host_err", "")
+    return "--- host stderr (tail) ---\n" + text[-4000:]
+
+
+def _parity_report() -> dict:
+    """Execute the seeded parity flow once and return the parsed report.
+
+    The host stderr TEXT is captured while the tempdir still exists: the
+    cached report outlives it, and the metric assertions quote that stderr
+    as their diagnostic — the same reason every assertion originally lived
+    inside the tempdir block.
+    """
+    if "report" in _PARITY_RUN:
+        return _PARITY_RUN["report"]
     _assert_floors_armed()
     _assert_dist_fresh()
     with tempfile.TemporaryDirectory(prefix="i103-parity-") as tmp:
@@ -589,40 +774,84 @@ def test_desktop_retrieval_eval_parity() -> None:
             finally:
                 proxy.shutdown()
                 proxy.server_close()
-
-            # All assertions run INSIDE the tempdir block so host.out/host.err
-            # (the only host-side diagnostics) still exist when a metric
-            # failure is reported — deleting them first destroyed the cause.
-            assert (
-                report.get("error_count") == 0
-            ), f"eval run had errors: {report.get('error_count')}\n{_host_stderr(work)}"
-            question_count = report.get("question_count")
-            assert question_count == EXPECTED_QUESTIONS, _rederive_message(
-                f"question_count={question_count!r}, pinned {EXPECTED_QUESTIONS}"
-            )
-            in_corpus = report.get("in_corpus_count")
-            assert in_corpus == EXPECTED_IN_CORPUS, _rederive_message(
-                f"in_corpus_count={in_corpus!r}, pinned {EXPECTED_IN_CORPUS} "
-                "(the denominator recall@5 and MRR divide over)"
-            )
-            # Silent-degrade detector: a run that reaches the metric asserts
-            # must not have logged the rerank degrade — otherwise a fused-
-            # ordering host could satisfy the floors unnoticed.
             host_err = (work / "host.err").read_text(encoding="utf-8", errors="replace")
-            assert "reranker unavailable" not in host_err, (
-                "host logged a rerank degrade during a passing run — "
-                f"the floors were measured without the reranker:\n{host_err}"
-            )
-            metrics = report["metrics"]
-            recall5 = float(metrics["recall_at_k"]["5"])
-            mrr = float(metrics["mrr"])
-            assert recall5 >= float(_FLOOR_RECALL5), (
-                f"recall@5={recall5} below floor {float(_FLOOR_RECALL5)} — "
-                f"retrieval parity regressed\n{_host_stderr(work)}"
-            )
-            assert mrr >= float(_FLOOR_MRR), (
-                f"mrr={mrr} below floor {float(_FLOOR_MRR)} — "
-                f"retrieval parity regressed\n{_host_stderr(work)}"
-            )
         finally:
             host.kill_tree()
+    _PARITY_RUN["report"] = report
+    _PARITY_RUN["host_err"] = host_err
+    return report
+
+
+@_SKIP_GATES[0]
+@_SKIP_GATES[1]
+@_SKIP_GATES[2]
+@_SKIP_GATES[3]
+def test_desktop_retrieval_eval_parity() -> None:
+    """Desktop host retrieval stays at parity with the recorded weighted run."""
+    report = _parity_report()
+    # All assertions consume the cached run (host stderr captured during it),
+    # so a metric failure still reports the host-side cause.
+    assert (
+        report.get("error_count") == 0
+    ), f"eval run had errors: {report.get('error_count')}\n{_cached_host_stderr_tail()}"
+    question_count = report.get("question_count")
+    assert question_count == EXPECTED_QUESTIONS, _rederive_message(
+        f"question_count={question_count!r}, pinned {EXPECTED_QUESTIONS}"
+    )
+    in_corpus = report.get("in_corpus_count")
+    assert in_corpus == EXPECTED_IN_CORPUS, _rederive_message(
+        f"in_corpus_count={in_corpus!r}, pinned {EXPECTED_IN_CORPUS} "
+        "(the denominator recall@5 and MRR divide over)"
+    )
+    # Silent-degrade detector: a run that reaches the metric asserts
+    # must not have logged the rerank degrade — otherwise a fused-
+    # ordering host could satisfy the floors unnoticed.
+    assert "reranker unavailable" not in _PARITY_RUN["host_err"], (
+        "host logged a rerank degrade during a passing run — "
+        f"the floors were measured without the reranker:\n{_PARITY_RUN['host_err']}"
+    )
+    metrics = report["metrics"]
+    recall5 = float(metrics["recall_at_k"]["5"])
+    mrr = float(metrics["mrr"])
+    assert recall5 >= float(_FLOOR_RECALL5), (
+        f"recall@5={recall5} below floor {float(_FLOOR_RECALL5)} — "
+        f"retrieval parity regressed\n{_cached_host_stderr_tail()}"
+    )
+    assert mrr >= float(_FLOOR_MRR), (
+        f"mrr={mrr} below floor {float(_FLOOR_MRR)} — "
+        f"retrieval parity regressed\n{_cached_host_stderr_tail()}"
+    )
+
+
+@_SKIP_GATES[0]
+@_SKIP_GATES[1]
+@_SKIP_GATES[2]
+@_SKIP_GATES[3]
+def test_backend_stats_document_count() -> None:
+    """AC14 (issue #186): the report's backend_stats block carries the host's
+    real /stats document count for the seeded store.
+
+    Shares the parity run (seeded machinery + ``_run_eval``'s parsed report);
+    weights-gated skip preserved like its siblings — a skip at head is the
+    sanctioned shape on weightless boxes.
+    """
+    report = _parity_report()
+    stats = report.get("backend_stats")
+    assert isinstance(stats, dict), (
+        "eval report is missing backend_stats — eval/runner.py's report "
+        f"assembly dropped it (got {stats!r}); the parity report must carry "
+        "the host's GET /stats snapshot"
+    )
+    document_count = stats.get("document_count")
+    assert document_count is not None, (
+        "backend_stats.document_count is null: the eval runner could not fetch "
+        "/stats (transport/runner failure) or the route returned no count — "
+        "this is NOT a floor drift; re-run the parity suite and, if it persists, "
+        "check the host /stats route and eval/runner.py best-effort fetch"
+    )
+    assert document_count == EXPECTED_DOCUMENTS, _rederive_message(
+        f"backend_stats.document_count={document_count!r}, seeded (and "
+        f"pinned) {EXPECTED_DOCUMENTS} — the host's /stats document count "
+        "must equal the ingest seed count (GET /stats -> engine.getStats -> "
+        "store counts)"
+    )

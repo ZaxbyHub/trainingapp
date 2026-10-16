@@ -63,11 +63,26 @@ type ReadonlyIndexDb = {
   loadExtension(path: string): void;
   close(): void;
 };
-const IndexDatabase = require('better-sqlite3') as new (
-  path: string,
-  options?: { readonly?: boolean },
-) => ReadonlyIndexDb;
-const indexSqliteVec = require('sqlite-vec') as { getLoadablePath(): string };
+// Lazy (first prebuilt-index read, never import): importing this module must
+// stay safe on machines without the staged native addon (issue #193 D2 gate
+// wiring — server.ts imports this module for PackManagerError alone).
+let nativeIndexAddons: {
+  IndexDatabase: new (path: string, options?: { readonly?: boolean }) => ReadonlyIndexDb;
+  indexSqliteVec: { getLoadablePath(): string };
+} | null = null;
+function loadNativeIndexAddons(): NonNullable<typeof nativeIndexAddons> {
+  if (nativeIndexAddons === null) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires -- native addons resolved at runtime
+    const IndexDatabase = require('better-sqlite3') as new (
+      path: string,
+      options?: { readonly?: boolean },
+    ) => ReadonlyIndexDb;
+    // eslint-disable-next-line @typescript-eslint/no-var-requires -- see above
+    const indexSqliteVec = require('sqlite-vec') as { getLoadablePath(): string };
+    nativeIndexAddons = { IndexDatabase, indexSqliteVec };
+  }
+  return nativeIndexAddons;
+}
 
 /** One doc->slide link row as shipped inside a prebuilt pack index. */
 interface PrebuiltLinkRow {
@@ -1133,6 +1148,7 @@ export class PackManager {
    * under a different model must never silently mix embedding spaces (an
    * empty store adopts the pack's model). */
   private readPrebuiltIndex(indexPath: string, manifest: PackManifest): ImportedPrebuilt {
+    const { IndexDatabase, indexSqliteVec } = loadNativeIndexAddons();
     const db = new IndexDatabase(indexPath, { readonly: true });
     try {
       // Asar-safe native load (#133): same redirect as the live store — the

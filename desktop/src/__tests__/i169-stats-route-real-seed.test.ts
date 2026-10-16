@@ -9,8 +9,9 @@
 // StoreDocumentSurface over temp sqlite (seeded through the real
 // ingest pipeline with the deterministic HashEmbedder — no model needed)
 // and the HTTP GET /stats route itself (b3-server harness idiom).
-// Native-deps gate mirrors b6-supplementary: better-sqlite3 is a compiled
-// addon, so the spec skips (not fails) where it is absent.
+// Native-deps gate follows the #193 D2 decision: better-sqlite3 is a
+// compiled addon, so the real-seed suite FAILS under CI when it is absent
+// (never a silent CI skip) and skips locally with the staging instruction.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,9 +24,14 @@ import { HashEmbedder } from '../../main/backend/ingest/embedder.js';
 import { DEFAULT_INGEST_CONFIG } from '../../main/backend/ingest/config.js';
 import { StoreDocumentSurface } from '../../main/backend/store/document-surface.js';
 import { openStore, type StoreHandle } from '../../main/backend/store/sqlite-store.js';
+// Shared fake-surface fixture (issue #193 AC19 / #200 AC2) for the AC15
+// out-of-scope-fields pin below, and the #193 D2 native-deps gate policy.
+import { makeFakeSurface } from './fixtures/document-surface-fake.js';
+import { nativeDepsGate } from './fixtures/native-deps-gate.js';
 
 const TOKEN = 'i169-route-spec-token';
 const TOKEN_HEADER = 'x-desktop-token';
+const STUB_MARKER = 'desktop-stub (B5 #63)';
 const DIMS = 8;
 const SEEDED_DOCS = 3;
 // Two of the three docs exceed the default chunkWordCount (256, overlap
@@ -48,10 +54,31 @@ function findRepoRoot(dir: string): string {
 }
 
 const REPO_ROOT = findRepoRoot(THIS_DIR);
-const NATIVE_DEPS_PRESENT = fs.existsSync(
-  path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'),
-);
-const describeReal = NATIVE_DEPS_PRESENT ? describe : describe.skip;
+// TRAININGAPP_TEST_FORCE_NATIVE_DEPS_ABSENT lets the AC21 wiring checks
+// (i193) exercise the skip/fail branches end-to-end without uninstalling
+// the addon; production runs never set it.
+const NATIVE_DEPS_PRESENT =
+  process.env.TRAININGAPP_TEST_FORCE_NATIVE_DEPS_ABSENT === '1'
+    ? false
+    : fs.existsSync(path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'));
+// issue #193 D2 (trace test-batch-oct2026 Cluster A, AC21): the native-deps
+// decision is made by the shared policy predicate — 'run' when
+// better-sqlite3 is present; 'skip' locally when absent (the repo's
+// sanctioned staged-deps skip, preserved from the original gate); 'fail'
+// under CI when absent (a silent CI skip is the silent-degrade class this
+// batch exists to kill). The suite-scoped beforeAll inside describeReal
+// executes the 'fail' branch; the skip branch carries the staging
+// instruction in the skipped suite title (AC21: "skip with the staging
+// instruction").
+const NATIVE_DEPS_GATE = nativeDepsGate({
+  ci: Boolean(process.env.CI),
+  nativeDepsPresent: NATIVE_DEPS_PRESENT,
+});
+const DESCRIBE_REAL_TITLE =
+  NATIVE_DEPS_GATE === 'skip'
+    ? 'issue #169: /stats over a REAL seeded store [SKIPPED: desktop/node_modules/better-sqlite3 absent — run `npm --prefix desktop ci` to stage it (issue #193 D2: local skip)]'
+    : 'issue #169: /stats over a REAL seeded store';
+const describeReal = NATIVE_DEPS_GATE === 'skip' ? describe.skip : describe;
 
 function words(n: number, prefix: string): string {
   return Array.from({ length: n }, (_, i) => `${prefix}${i}`).join(' ');
@@ -108,7 +135,19 @@ afterAll(async () => {
   if (tempDir !== undefined) fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-describeReal('issue #169: /stats over a REAL seeded store', () => {
+describeReal(DESCRIBE_REAL_TITLE, () => {
+  beforeAll(() => {
+    // issue #193 D2: under CI with the native deps missing the suite FAILS
+    // loudly with the staging instruction — never a silent skip. (The local
+    // 'skip' branch is handled by describe.skip above.)
+    if (NATIVE_DEPS_GATE === 'fail') {
+      throw new Error(
+        'native deps missing under CI: desktop/node_modules/better-sqlite3 absent — ' +
+          'run `npm --prefix desktop ci` to stage it (issue #193 D2: fail, never silently skip)',
+      );
+    }
+  });
+
   it('GET /stats counts equal the engine listDocuments totals equal the seeded truth', async () => {
     const listed = await engine.listDocuments();
     expect(listed.total).toBe(SEEDED_DOCS);
@@ -149,5 +188,68 @@ describeReal('issue #169: /stats over a REAL seeded store', () => {
     expect(rawChunks).toBeGreaterThan(0);
     expect(payload.document_count).toBe(rawDocs);
     expect(payload.chunk_count).toBe(rawChunks);
+  });
+
+  // issue #200 AC18 (trace test-batch-oct2026 Cluster A): the base spec above
+  // TYPES embedding_model in its payload but never asserts it. Through the
+  // REAL StoreDocumentSurface (HashEmbedder), /stats must report the real
+  // embedder id — NOT the no-surface stub marker.
+  it('real-embedder-id', async () => {
+    const response = await fetch(url('/stats'), { headers: { [TOKEN_HEADER]: TOKEN } });
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as { embedding_model: string };
+    // The attached surface's real embedder id (HashEmbedder.modelId === 'hash').
+    expect(payload.embedding_model).toBe(surface.embedderModelId);
+    expect(payload.embedding_model).toBe('hash');
+    // Explicitly not the no-surface stub marker.
+    expect(payload.embedding_model).not.toBe(STUB_MARKER);
+  });
+});
+
+// issue #190 AC15, reworded per #197 (trace test-batch-oct2026 Cluster A):
+// the OUT-OF-SCOPE /stats fields on the attached-surface path. Top level on
+// purpose — the fake surface and the stub-engine route need no native deps,
+// so this pin runs even where better-sqlite3 is absent (describeReal above
+// gates only the real-store suite). Post-PR-#194 the attached path reports
+// the surface's embedderModelId; the 'desktop-stub (B5 #63)' marker belongs
+// to the NO-surface path only (pinned in i175).
+describe('GET /stats out-of-scope fields on the attached-surface path (issue #190 AC15)', () => {
+  it('out-of-scope-fields', async () => {
+    const engine = new StubEngine();
+    engine.attachDocumentSurface(makeFakeSurface('route-fake-a'));
+    const server = createBackendServer({
+      guard: createLoopbackGuard({ token: TOKEN }),
+      tokenHeaderName: 'X-Desktop-Token',
+      engine,
+    });
+    const routePort = await listenOnRandomPort(server);
+    try {
+      const response = await fetch(`http://127.0.0.1:${routePort}/stats`, {
+        headers: { [TOKEN_HEADER]: TOKEN },
+      });
+      expect(response.status).toBe(200);
+      const payload = (await response.json()) as {
+        document_count: number;
+        chunk_count: number;
+        embedding_model: string;
+        llm_backend: string | null;
+        documents: string[];
+      };
+      // The counts payload itself (already pinned engine-side by i103c /
+      // i169-llama) — the DEFAULT_DOCS corpus through the shared fixture.
+      expect(payload.document_count).toBe(2);
+      expect(payload.chunk_count).toBe(5);
+      // The out-of-scope fields this AC pins:
+      // documents stays an EMPTY array (it is not the document listing).
+      expect(payload.documents).toEqual([]);
+      // llm_backend is null on the stub engine.
+      expect(payload.llm_backend).toBeNull();
+      // embedding_model is the attached surface's embedderModelId — per
+      // #197's rewording of #190 AC1, NOT the no-surface stub marker.
+      expect(payload.embedding_model).toBe('route-fake-a');
+      expect(payload.embedding_model).not.toBe(STUB_MARKER);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });

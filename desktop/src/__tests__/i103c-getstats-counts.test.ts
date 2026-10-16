@@ -21,33 +21,12 @@
 //      no-store contract is preserved; detach restores it).
 import { describe, expect, it } from 'vitest';
 import { StubEngine } from '../../main/backend/engine.js';
-import type { DocumentSurface } from '../../main/backend/types.js';
-
-/** Minimal fake surface: two documents, 2 + 3 chunks, everything else no-op. */
-function makeFakeSurface(): DocumentSurface {
-  return {
-    async listDocuments() {
-      return {
-        documents: [
-          { id: 'a.md', chunk_count: 2 },
-          { id: 'b.md', chunk_count: 3 },
-        ],
-        total: 2,
-      };
-    },
-    async clearDocuments() {},
-    async ingestDirectory() {
-      return { success: true, documents: 0, chunks_added: 0, message: null };
-    },
-    async ingestFile() {
-      return { success: true, documents: 0, chunks_added: 0, message: null };
-    },
-    async ingestBatch() {
-      return { total_files: 0, successful: 0, failed: 0, results: [] };
-    },
-    embedderModelId: 'test-embedder',
-  };
-}
+// The fake surface factory lives in ./fixtures/document-surface-fake.ts —
+// ONE fixture source shared by i103c/i169-llama/i175/i185 (issue #193 AC19 /
+// #200 AC2; previously copy-pasted here). The zero-arg form preserves this
+// spec's historical payload exactly: 'test-embedder' + the 2-doc (2+3
+// chunks) DEFAULT_DOCS corpus.
+import { makeFakeSurface } from './fixtures/document-surface-fake.js';
 
 describe('StubEngine.getStats document/chunk counts (i103c)', () => {
   it('with a surface attached, getStats reports the surface total as document_count and the summed per-document chunk counts as chunk_count', async () => {
@@ -69,7 +48,11 @@ describe('StubEngine.getStats document/chunk counts (i103c)', () => {
     expect(stats.chunk_count).toBe(5);
 
     // Agreement pin: /stats equals what the surface itself reports, read
-    // directly (independent of the listDocuments delegation path).
+    // directly — independent of the delegation path, not of the fixture
+    // (PRR-008 F-1: both reads derive from the same shared factory, so this
+    // block cannot fail independently of it; the redundant asserts are kept
+    // deliberately as belt-and-suspenders - a NON-discriminating consistency
+    // check, PRR-034).
     const surfaceView = await makeFakeSurface().listDocuments();
     expect(stats.document_count).toBe(surfaceView.total);
     expect(stats.chunk_count).toBe(
@@ -91,5 +74,26 @@ describe('StubEngine.getStats document/chunk counts (i103c)', () => {
     const detached = await engine.getStats();
     expect(detached.document_count).toBe(0);
     expect(detached.chunk_count).toBe(0);
+  });
+});
+
+// issue #190 AC16 (trace test-batch-oct2026 Cluster A, additive to the frozen
+// i103c spec above — closed trace 169, blob f7041ec): the single-call
+// invariant the engine.ts production comment claims ("a single
+// listDocuments() call derives BOTH counts so a concurrent ingest cannot
+// skew them apart") was prose-only; this pin makes it executable. The shared
+// factory exposes listDocumentsCalls for exactly this purpose.
+describe('StubEngine.getStats calls listDocuments exactly once (issue #190 AC16)', () => {
+  it('single-listDocuments', async () => {
+    const engine = new StubEngine();
+    const surface = makeFakeSurface();
+    engine.attachDocumentSurface(surface);
+    expect(surface.listDocumentsCalls).toBe(0);
+
+    await engine.getStats();
+
+    // Both counts derive from ONE surface read; a second listDocuments()
+    // call (the skew the engine.ts comment warns about) must fail here.
+    expect(surface.listDocumentsCalls).toBe(1);
   });
 });

@@ -14,6 +14,10 @@
  *
  * Every scan first waits for web fonts and two animation frames
  * (settleFontsAndFrames), so axe sees settled, font-swapped layout (PRR-151-073).
+ * Every scan is WHOLE-PAGE (issue #146): the viewport is grown until nothing
+ * scrolls (e2e/visual/axe-full-page.ts fitViewportToContent) before axe runs,
+ * because axe defers offscreen nodes to `incomplete` and never reports them as
+ * violations — a fixed 900px pass was blind to everything below the first fold.
  * Surfaces other than 'overlay' and 'drawer' are scanned with the model gate hidden
  * and the chat inert lifted for the rest of the page (e2e/model-gate.ts
  * hideModelGate); its post-condition is re-checked right before each such scan
@@ -21,15 +25,14 @@
  */
 
 import { createHash } from 'node:crypto';
-import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import JSZip from 'jszip';
+import { wholePageAxeExpectClean } from './axe-full-page';
 import {
   assertOverlayOptOutAllowed,
   expectModelGateHidden,
   hideModelGate,
   requireModelGate,
-  settleFontsAndFrames,
 } from '../model-gate';
 
 // PRR-151-054: the LUMEN_ALLOW_NO_OVERLAY opt-out is refused under CI.
@@ -157,24 +160,18 @@ async function bootWithInstalledCourse(page: Page, theme: string): Promise<void>
 
 /**
  * Zero serious/critical nodes allowed: no key is baselined. Waits for fonts and two
- * frames first (PRR-151-073). Callers scanning a surface UNDER a hidden gate call
+ * frames first (PRR-151-073), then grows the viewport until nothing scrolls so the
+ * scan is whole-page (#146 — offscreen nodes are `incomplete`, never violations).
+ * Callers scanning a surface UNDER a hidden gate call
  * expectModelGateHidden right before this.
  */
 async function expectAxeClean(page: Page, key: string, excludeSelector?: string): Promise<void> {
-  await page.waitForTimeout(500);
-  await settleFontsAndFrames(page);
-  let builder = new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22a', 'wcag22aa']);
-  if (excludeSelector !== undefined) builder = builder.exclude(excludeSelector);
-  const results = await builder.analyze();
-  const found = results.violations
-    .filter((v) => v.impact === 'serious' || v.impact === 'critical')
-    .flatMap((v) => v.nodes.map((n) => `${v.id} | ${n.target.join(' ')}`))
-    .sort();
-  if (process.env.LUMEN_AXE_INVENTORY) {
-    console.info(`AXE ${key} ${JSON.stringify(found)}`);
-  }
-  expect(KNOWN_BASELINE[key], `${key} must never be baselined`).toBeUndefined();
-  expect(found, `serious/critical axe nodes on ${key}`).toEqual([]);
+  // The whole-page scan semantics (settle -> grow -> scan -> fail loud) live
+  // in axe-full-page.ts wholePageAxeExpectClean (#146). This delegation is
+  // itself pinned: lumen-axe-below-fold.spec.ts's gate-wiring source row goes
+  // red if it is removed — deleting it silently reverts every surface scan
+  // below to a viewport-only pass.
+  await wholePageAxeExpectClean(page, { key, knownBaseline: KNOWN_BASELINE, excludeSelector });
 }
 
 for (const theme of THEMES) {

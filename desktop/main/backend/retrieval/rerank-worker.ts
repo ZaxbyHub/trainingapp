@@ -30,6 +30,7 @@
 // semantics (reranker.ts:7-13, 312-320). ADR-0001 (#55) may re-pin the
 // models; that is a modelDir/config change, not a protocol change.
 import { parentPort, workerData } from 'node:worker_threads';
+import { embedSessionOptions, type EmbedSessionThreadOptions } from '../ingest/embed-threads.js';
 
 type WorkerJob =
   | { kind: 'rerank'; jobId: number; query: string; candidates: string[] }
@@ -69,10 +70,20 @@ async function loadRerank(modelDir: string): Promise<{ tokenizer: Tokenizer; mod
   if (rerankPromise === null) {
     rerankPromise = (async () => {
       const transformers = await import('@huggingface/transformers');
+      // Determinism seam (issue #170 D1): this worker inherits process.env
+      // from the spawning thread (WorkerReranker passes no env option), so
+      // TRAININGAPP_DESKTOP_EMBED_THREADS pins this session too; unset keeps
+      // the options object byte-identical to the pre-seam call.
+      const sessionOptions = embedSessionOptions();
+      const modelOptions: { dtype: 'q8'; session_options?: EmbedSessionThreadOptions } =
+        sessionOptions === undefined
+          ? { dtype: 'q8' }
+          : { dtype: 'q8', session_options: sessionOptions };
       const tokenizer = (await transformers.AutoTokenizer.from_pretrained(modelDir)) as unknown as Tokenizer;
-      const model = (await transformers.AutoModelForSequenceClassification.from_pretrained(modelDir, {
-        dtype: 'q8',
-      })) as unknown as RerankModel;
+      const model = (await transformers.AutoModelForSequenceClassification.from_pretrained(
+        modelDir,
+        modelOptions,
+      )) as unknown as RerankModel;
       return { tokenizer, model };
     })();
     rerankPromise.catch(() => {
@@ -90,9 +101,16 @@ async function loadEmbed(modelDir: string): Promise<EmbedPipeline> {
       const createPipeline = transformers.pipeline as unknown as (
         task: 'feature-extraction',
         modelPath: string,
-        options: { dtype: string },
+        options: { dtype: string; session_options?: EmbedSessionThreadOptions },
       ) => Promise<EmbedPipeline>;
-      return createPipeline('feature-extraction', modelDir, { dtype: 'fp32' });
+      // Determinism seam (issue #170 D1): same shared pin as embedder.ts —
+      // see ingest/embed-threads.ts (unset env = no session_options key).
+      const sessionOptions = embedSessionOptions();
+      const pipelineOptions =
+        sessionOptions === undefined
+          ? { dtype: 'fp32' }
+          : { dtype: 'fp32', session_options: sessionOptions };
+      return createPipeline('feature-extraction', modelDir, pipelineOptions);
     })();
     embedPromise.catch(() => {
       embedPromise = null;
