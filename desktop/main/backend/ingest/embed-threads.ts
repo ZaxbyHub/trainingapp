@@ -15,8 +15,17 @@
 // when this returns undefined (never pass `session_options: undefined`), so
 // production embed cost is unchanged unless the env var opts in.
 //
-// This is the ONE shared definition (all three session sites import it) so
-// the seam cannot drift between embedder.ts and rerank-worker.ts.
+// This is the ONE shared definition of the desktop retrieval session knobs
+// (all three desktop session call sites import it) so the seam cannot drift
+// between embedder.ts and rerank-worker.ts.
+//
+// Scope of that claim: the desktop retrieval path only. packtool's build
+// embedder (packtool/build/embedder.ts) deliberately carries its own pinned
+// session literal — always 1-thread, under its reproducible-build contract —
+// across the package boundary, and the two definitions are locked together
+// by the drift pin in desktop/src/__tests__/embed-seam-contract.test.ts
+// (issue #211), which goes red unless both sides are reconciled in the same
+// change.
 
 /** The env var key (positive integer = pin sessions to n intra-op threads). */
 export const EMBED_THREADS_ENV = 'TRAININGAPP_DESKTOP_EMBED_THREADS';
