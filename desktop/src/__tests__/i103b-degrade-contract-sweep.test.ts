@@ -15,7 +15,8 @@
 //
 // SELECTOR CONTRACT (frozen -t drivers): the four suite titles below carry
 // the tokens warmup / degrade / lifecycle / refusal and those tokens appear
-// in NO other suite or test title in this file, so
+// in NO other GROUP title in this file (row titles inside a group may echo
+// their group token), so
 //   vitest run <this-file> -t <token>
 // selects exactly one group. The tokens are file-scoped: the frozen i103
 // C3/C4 drivers always pass their own file path, so this file never leaks

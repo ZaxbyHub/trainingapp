@@ -2,7 +2,7 @@
  * lumen-axe-below-fold.spec.ts — the tripwire for the whole-page scan geometry
  * of the Lumen axe gates (issue #146).
  *
- * lumen-axe.spec.ts scans each surface from a 900px-tall viewport, and
+ * lumen-axe.spec.ts historically scanned each surface from a 900px-tall viewport, and
  * axe-core reports offscreen nodes as `incomplete`, never as violations: any
  * contrast failure below the first fold passed CI. The surface scans now grow
  * the viewport until nothing scrolls before axe runs (e2e/visual/

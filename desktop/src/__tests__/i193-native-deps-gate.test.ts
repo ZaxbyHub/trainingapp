@@ -60,13 +60,14 @@ describe('native-deps-gate WIRING (issue #193 AC21: the gate must be reachable)'
     // Named mutant: restore a top-level native require/import in any of these
     // files — this row must go red. The shapes covered: the CJS spelling AND
     // the ESM spellings (this package is `"type": "module"`, so a real revert
-    // would compile to an import). (The empirical twin is the hide-deps
+    // would compile to an import, including the awaited dynamic form). (The empirical twin is the hide-deps
     // transcript in the trace: with the addon absent the gated spec loads and
     // skips instead of dying at MODULE_NOT_FOUND.)
     const topLevelRequire = [
       /^const\s+\w+\s*=\s*require\(['"](?:better-sqlite3|sqlite-vec)['"]\)/m,
       /^import\s+[^\n]*from\s+['"](?:better-sqlite3|sqlite-vec)['"]/m,
       /^import\s*\(\s*['"](?:better-sqlite3|sqlite-vec)['"]\s*\)/m,
+      /await\s+import\(\s*['"](?:better-sqlite3|sqlite-vec)['"]\s*\)/m,
     ];
     const lazyMarkers: Array<[string, string]> = [
       ['desktop/main/backend/store/sqlite-store.ts', 'function loadNativeAddons'],
@@ -80,6 +81,7 @@ describe('native-deps-gate WIRING (issue #193 AC21: the gate must be reachable)'
       expect(source, `${rel} top-level-requires a native addon`).not.toMatch(topLevelRequire[0]);
       expect(source, `${rel} top-level-imports a native addon`).not.toMatch(topLevelRequire[1]);
       expect(source, `${rel} top-level-dynamic-imports a native addon`).not.toMatch(topLevelRequire[2]);
+      expect(source, `${rel} await-imports a native addon`).not.toMatch(topLevelRequire[3]);
     }
   });
 
