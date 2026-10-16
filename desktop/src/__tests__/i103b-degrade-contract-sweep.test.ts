@@ -64,7 +64,7 @@ const REPO_ROOT = (() => {
 })();
 
 // Artifact-guarded skip (b5/b6/i103 convention): the native store addon must
-// exist; CI always installs it. Ungated groups below import no native deps.
+// exist; CI always installs it. This suite keeps the repo-sanctioned artifact-skip shape (b5/b6 family); repo-wide adoption of the D2 fail-under-CI gate is tracked separately - a silent CI skip here is a known residual. Ungated groups below import no native deps.
 const NATIVE_DEPS_PRESENT = fs.existsSync(path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'));
 const itReal = NATIVE_DEPS_PRESENT ? it : it.skip;
 
@@ -192,7 +192,7 @@ describe('i103b warmup contract sweep (#167)', () => {
   );
 
   it(
-    'an unloadable model logs the llama warmup-failed line and stays idle for the first /ask retry',
+    'an unloadable model logs the llama warmup-failed line (with the offending dir) and leaves the engine idle',
     async () => {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       const dir = makeTempDir('i103b-warmup-llama-');
@@ -207,7 +207,8 @@ describe('i103b warmup contract sweep (#167)', () => {
         '[trainingapp-backend] model warmup failed (the first /ask will retry the load): ',
       );
       // The dynamic suffix names the actual load failure (non-empty).
-      expect(line.length).toBeGreaterThan('[trainingapp-backend] model warmup failed (the first /ask will retry the load): '.length);
+      expect(line, 'the pinned precondition is the unloadable model dir, not any warmup failure').toContain('no-such-model-dir');
+    expect(line.length).toBeGreaterThan('[trainingapp-backend] model warmup failed (the first /ask will retry the load): '.length);
       // Degraded outcome: load state falls back to idle — the first /ask retries the load lazily.
       expect(engine.residentLoadStatus().state).toBe('idle');
     },
@@ -313,7 +314,8 @@ describe('i103b lifecycle contract sweep (#167)', () => {
       // The refused patch was dropped: /settings answers engine defaults only.
       const settings = await getJson(handle.port, '/settings');
       expect(settings.status).toBe(200);
-      expect(Object.keys(settings.json ?? {})).not.toContain('zz_unrecognized_setting');
+      expect(settings.json, 'a real settings body is required for the refused-patch check').not.toBeNull();
+    expect(Object.keys(settings.json as Record<string, unknown>)).not.toContain('zz_unrecognized_setting');
       await host.stop();
     },
     60_000,

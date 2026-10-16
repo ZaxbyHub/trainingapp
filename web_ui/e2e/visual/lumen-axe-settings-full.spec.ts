@@ -64,8 +64,6 @@ async function configureExternal(page: Page): Promise<void> {
   await expect(page.getByRole('switch', { name: 'Use external model' })).toBeChecked();
 }
 
-/** Grow the viewport until nothing scrolls: the shared full-page scan geometry (axe-full-page.ts). */
-
 for (const state of STATES) {
   for (const theme of THEMES) {
     for (const width of WIDTHS) {

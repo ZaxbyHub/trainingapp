@@ -23,6 +23,15 @@ export interface IntegrityResult {
   ok: boolean;
   /** integrity_check output or the open failure message; never empty when !ok. */
   message: string;
+  /**
+   * True when the failure is that the NATIVE ADDON could not be loaded
+   * (MODULE_NOT_FOUND / ABI mismatch) — an environment failure, NOT file
+   * corruption. Callers must degrade ("continuing without store"), never run
+   * the corruption-recovery policy: recovery's auto path deletes the store
+   * file, and an addon-load failure must never destroy user data (PRR-001,
+   * found by the PR #202 review — the lazy addon load made this reachable).
+   */
+  loadFailure?: boolean;
 }
 
 type RawDatabaseConstructor = new (
@@ -50,9 +59,22 @@ export function checkStoreIntegrity(dbPath: string): IntegrityResult {
   if (!fs.existsSync(dbPath)) {
     return { ok: false, message: `store file does not exist: ${dbPath}` };
   }
+  // Load the addon OUTSIDE the corruption catch: a load failure is an
+  // environment failure (see IntegrityResult.loadFailure), and folding it
+  // into the corruption verdict drove recoverStore to delete the store.
+  let ctor: RawDatabaseConstructor;
+  try {
+    ctor = rawDatabase();
+  } catch (err) {
+    return {
+      ok: false,
+      loadFailure: true,
+      message: `native addon unavailable: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
   let db: InstanceType<RawDatabaseConstructor> | null = null;
   try {
-    db = new (rawDatabase())(dbPath, { readonly: true, fileMustExist: true });
+    db = new ctor(dbPath, { readonly: true, fileMustExist: true });
     const row = db.prepare('PRAGMA integrity_check').get() as unknown;
     // integrity_check returns one column named like the pragma; both drivers
     // expose it as the first property of the row object.
@@ -112,6 +134,15 @@ export function reinitializeStore(opts: { dbPath: string; repoRoot?: string; dim
 export async function recoverStore(opts: RecoverStoreOptions): Promise<RecoverStoreResult> {
   const integrity = checkStoreIntegrity(opts.dbPath);
   if (integrity.ok) return { action: 'none' };
+  // Defense in depth (PRR-001): recovery DELETES the store on the fresh path.
+  // A native-addon load failure is not corruption — refuse loudly rather than
+  // let any direct caller destroy data over a missing/broken addon.
+  if (integrity.loadFailure === true) {
+    throw new Error(
+      `store recovery refused: the native addon could not be loaded (${integrity.message}); ` +
+        'this is an environment failure, not store corruption — the store was left untouched',
+    );
+  }
 
   const choice = opts.choose
     ? await opts.choose({ dbPath: opts.dbPath, message: integrity.message })

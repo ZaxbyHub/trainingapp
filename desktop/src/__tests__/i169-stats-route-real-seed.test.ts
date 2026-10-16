@@ -9,8 +9,9 @@
 // StoreDocumentSurface over temp sqlite (seeded through the real
 // ingest pipeline with the deterministic HashEmbedder — no model needed)
 // and the HTTP GET /stats route itself (b3-server harness idiom).
-// Native-deps gate mirrors b6-supplementary: better-sqlite3 is a compiled
-// addon, so the spec skips (not fails) where it is absent.
+// Native-deps gate follows the #193 D2 decision: better-sqlite3 is a
+// compiled addon, so the real-seed suite FAILS under CI when it is absent
+// (never a silent CI skip) and skips locally with the staging instruction.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

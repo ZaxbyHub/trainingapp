@@ -57,11 +57,17 @@ describe('native-deps-gate policy (issue #193 D2: CI fails, local skips)', () =>
 
 describe('native-deps-gate WIRING (issue #193 AC21: the gate must be reachable)', () => {
   it('store stack is import-safe: native addons resolve lazily, never at module import', () => {
-    // Named mutant: restore a top-level `const X = require('better-sqlite3')`
-    // in any of these files — this row must go red. (The empirical twin is
-    // the hide-deps transcript in the trace: with the addon absent the gated
-    // spec loads and skips instead of dying at MODULE_NOT_FOUND.)
-    const topLevelRequire = /^const\s+\w+\s*=\s*require\(['"](?:better-sqlite3|sqlite-vec)['"]\)/m;
+    // Named mutant: restore a top-level native require/import in any of these
+    // files — this row must go red. The shapes covered: the CJS spelling AND
+    // the ESM spellings (this package is `"type": "module"`, so a real revert
+    // would compile to an import). (The empirical twin is the hide-deps
+    // transcript in the trace: with the addon absent the gated spec loads and
+    // skips instead of dying at MODULE_NOT_FOUND.)
+    const topLevelRequire = [
+      /^const\s+\w+\s*=\s*require\(['"](?:better-sqlite3|sqlite-vec)['"]\)/m,
+      /^import\s+[^\n]*from\s+['"](?:better-sqlite3|sqlite-vec)['"]/m,
+      /^import\s*\(\s*['"](?:better-sqlite3|sqlite-vec)['"]\s*\)/m,
+    ];
     const lazyMarkers: Array<[string, string]> = [
       ['desktop/main/backend/store/sqlite-store.ts', 'function loadNativeAddons'],
       ['desktop/main/backend/store/recovery.ts', 'function rawDatabase'],
@@ -71,7 +77,9 @@ describe('native-deps-gate WIRING (issue #193 AC21: the gate must be reachable)'
     for (const [rel, marker] of lazyMarkers) {
       const source = fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
       expect(source, `${rel} lost its lazy native loader`).toContain(marker);
-      expect(source, `${rel} top-level-requires a native addon`).not.toMatch(topLevelRequire);
+      expect(source, `${rel} top-level-requires a native addon`).not.toMatch(topLevelRequire[0]);
+      expect(source, `${rel} top-level-imports a native addon`).not.toMatch(topLevelRequire[1]);
+      expect(source, `${rel} top-level-dynamic-imports a native addon`).not.toMatch(topLevelRequire[2]);
     }
   });
 

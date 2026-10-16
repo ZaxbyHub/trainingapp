@@ -152,6 +152,11 @@ profile auto-selection.
   (quality|fast|auto; invalid values fall back to auto) and
   `TRAININGAPP_DESKTOP_INFERENCE_THREADS` (same 1..64 integer gate as the
   settings key; invalid values fall back to the min(cores, 8) default).
+  Determinism seam: `TRAININGAPP_DESKTOP_EMBED_THREADS` (positive integer)
+  pins ONNX session threading (intra-op n, inter-op 1, sequential) at the
+  retrieval-path embed/rerank session sites so embeddings are run-to-run
+  byte-deterministic; unset/invalid keeps the default behavior (no
+  `session_options` at all). Default OFF.
 - **Packaged installs**: `electron-builder.yml` pins
   `@node-llama-cpp/win-x64-vulkan` and `@node-llama-cpp/win-x64` in
   `asarUnpack`, so the compute backends are always on disk rather than

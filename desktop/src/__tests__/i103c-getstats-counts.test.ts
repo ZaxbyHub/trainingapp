@@ -51,7 +51,8 @@ describe('StubEngine.getStats document/chunk counts (i103c)', () => {
     // directly — independent of the delegation path, not of the fixture
     // (PRR-008 F-1: both reads derive from the same shared factory, so this
     // block cannot fail independently of it; the redundant asserts are kept
-    // deliberately as belt-and-suspenders).
+    // deliberately as belt-and-suspenders - a NON-discriminating consistency
+    // check, PRR-034).
     const surfaceView = await makeFakeSurface().listDocuments();
     expect(stats.document_count).toBe(surfaceView.total);
     expect(stats.chunk_count).toBe(

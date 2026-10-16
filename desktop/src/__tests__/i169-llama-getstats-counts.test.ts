@@ -142,7 +142,7 @@ describe('issue #169: LlamaEngine.getStats reads the attached document surface',
     expect(stats.embedding_model).toBe('test-embedder');
   });
 
-  it('tmp-cleanup: staged dummy-model directories are drained by the suite cleanup', () => {
+  it('tmp-cleanup: drainTempDirs() removes the staged dummy-model directories', () => {
     // issue #189: every stageDummyModels() dir is tracked; drainTempDirs()
     // (wired into afterAll) removes each one so repeated runs leave no
     // i169-dummy-models-* litter in os.tmpdir().

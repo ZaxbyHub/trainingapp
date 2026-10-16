@@ -57,7 +57,7 @@ WEIGHTS_MIN_BYTES = 10 * 1024 * 1024
 
 EMBED_ONNX = REPO_ROOT / "models" / "bge-small-en-v1.5" / "onnx" / "model.onnx"
 # The host loads the q8/QUANTIZED artifact: the reranker worker hardcodes
-# dtype 'q8' (rerank-worker.ts:74), whose suffix maps to model_quantized.onnx,
+# dtype 'q8' (rerank-worker.ts:78), whose suffix maps to model_quantized.onnx,
 # and bench/fetch_models.py stages/downloads exactly that file first for
 # ettin (candidates[0]) — gating on the full model would skip every correctly
 # staged box and never match what the recorded floors were measured with.
@@ -843,6 +843,12 @@ def test_backend_stats_document_count() -> None:
         "the host's GET /stats snapshot"
     )
     document_count = stats.get("document_count")
+    assert document_count is not None, (
+        "backend_stats.document_count is null: the eval runner could not fetch "
+        "/stats (transport/runner failure) or the route returned no count — "
+        "this is NOT a floor drift; re-run the parity suite and, if it persists, "
+        "check the host /stats route and eval/runner.py best-effort fetch"
+    )
     assert document_count == EXPECTED_DOCUMENTS, _rederive_message(
         f"backend_stats.document_count={document_count!r}, seeded (and "
         f"pinned) {EXPECTED_DOCUMENTS} — the host's /stats document count "
