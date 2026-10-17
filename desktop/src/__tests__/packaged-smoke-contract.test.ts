@@ -201,6 +201,24 @@ describe('packaged-smoke driver contract (batch packaged-smoke-cdp)', () => {
     }
     expect(process.listeners('SIGINT').length).toBe(sigintBefore);
     expect(process.listeners('SIGTERM').length).toBe(sigtermBefore);
+
+    // Failures out-rank INFRA on the signal path too (plan contract 8).
+    const sigintBefore2 = process.listeners('SIGINT').length;
+    const exits3: number[] = [];
+    const state3 = createRunState();
+    state3.failures.push('step 1');
+    state3.activeChild = { pid: 101, exitCode: 7, signalCode: null }; // exited: no kill
+    const reg3 = registerSignalHandlers(
+      { log: () => {}, removeWs: () => {}, exit: (c) => exits3.push(c) },
+      state3,
+      { runTaskkill: () => ({ status: 0, error: null }), log: () => {} },
+    );
+    try {
+      (process.listeners('SIGINT').slice(sigintBefore2)[0] as () => void)();
+      expect(exits3).toEqual([1]);
+    } finally {
+      reg3.dispose();
+    }
   });
 
   it('close-idempotent: the second close is a no-op and a survived close keeps the assertion-failure verdict', async () => {

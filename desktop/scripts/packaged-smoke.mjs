@@ -23,6 +23,18 @@
 //     on GitHub windows runners (#135: both websockets connect, then
 //     electron.launch times out — app healthy, harness broken).
 //
+// First-boot attach wedge (issue #177 investigation note): CI run 38474570960
+// showed attach attempt 1 timing out at 60s on the FIRST boot after "ws
+// connected", with the relaunch attaching first try — a first-boot stall the
+// single-instance story does not cover. Cause remains INFERENCE: first-boot
+// contention (freshly built exe under antivirus/cold cache) is the leading
+// candidate, renderer preparation (#135 class) the alternative. The driver
+// bounds the class instead of claiming a cause: the attach binds to this
+// child's own parsed DevTools endpoint, every timed-out attempt is counted
+// and printed on every exit path (SMOKE: attach attempts timed out: N), the
+// run watchdog bounds any wedge below the job wall, and per-boot captures
+// with both-boots dumps preserve the evidence.
+//
 // Flags/env (contracts pinned by the frozen C2/C3 checks of trace
 // 131-e1-followups and by the packaged-smoke-cdp batch checks):
 //   --driver <playwright|cdp>   transport selection (default playwright)
@@ -222,7 +234,8 @@ export function registerSignalHandlers(io, state, deps) {
     if (state.activeChild !== null) killTree(state.activeChild, deps);
     emitAttachSummary(io.log, state);
     io.removeWs();
-    io.exit(2);
+    // Failures out-rank INFRA on the signal path too (plan contract 8).
+    io.exit(verdictCode(state.failures));
   };
   process.on('SIGINT', reap);
   process.on('SIGTERM', reap);
