@@ -4,8 +4,8 @@
  * Pins the shared checked kill wrapper (scripts/kill-guard.mjs) and its
  * adoption across the five P1 raw-taskkill sites: the wrapper's liveness
  * predicate refuses to kill an exited child, taskkill results are checked and
- * logged, and the harness files route every tree kill through it — raw
- * `spawnSync('taskkill'` remains confined to the wrapper module and the
+ * logged, and the harness files route every tree kill through it — a raw
+ * taskkill spawn remains confined to the wrapper module and the
  * packaged-smoke batch's own shipped site.
  */
 import { describe, it, expect } from 'vitest';
@@ -125,6 +125,9 @@ describe('harness kill-guard contract (issue #216 AC1)', () => {
     for (const rel of listed.split(/\r?\n/)) {
       if (rel === '') continue;
       if (/\.(mjs|ts|js|cjs)$/.test(rel) === false) continue;
+      // Self-exclusion: this census file quotes the pattern it searches for
+      // (the regex constant above), which would otherwise self-match.
+      if (rel.endsWith('harness-kill-guard-contract.test.ts')) continue;
       const source = readRel(rel);
       if (RAW_TASKKILL.test(source)) offenders.push(rel);
     }
