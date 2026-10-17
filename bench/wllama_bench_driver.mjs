@@ -22,7 +22,7 @@
  *   node bench/wllama_bench_driver.mjs --list-modes
  *   node bench/wllama_bench_driver.mjs --run --model models/lfm2.5-vl-450m/model.gguf \
  *     --browser "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe" \
- *     --prompt-tokens 256 --max-tokens 16 --json
+ *     --prompt-tokens 256 --max-tokens 16
  */
 import http from 'node:http';
 import { spawn } from 'node:child_process';
