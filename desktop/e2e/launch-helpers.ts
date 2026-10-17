@@ -18,11 +18,11 @@
  * it while it runs. Processes are only ever addressed by the PID Playwright
  * launched, never by image name (other Electron apps may be running).
  */
-import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { _electron, type ElectronApplication, type Page } from '@playwright/test';
+import { killProcessTree } from '../../scripts/kill-guard.mjs';
 
 /** A fresh directory under the OS temp dir. */
 export function makeTempDir(prefix: string): string {
@@ -75,7 +75,12 @@ export async function closeApp(app: ElectronApplication): Promise<void> {
   await Promise.race([app.close().catch(() => undefined), new Promise((resolve) => setTimeout(resolve, 8_000))]);
   try {
     if (child !== undefined && child.exitCode === null && child.signalCode === null && child.pid !== undefined) {
-      spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+      // Checked/liveness-guarded tree kill (issue #216 AC1): routes through
+      // the shared wrapper — raw taskkill lives only in scripts/kill-guard.mjs.
+      killProcessTree(child.pid, {
+        isAlive: (pid) => pid === child.pid && child.exitCode === null && child.signalCode === null,
+        log: (msg) => console.warn(`launch-helpers: ${msg}`),
+      });
       await new Promise((resolve) => setTimeout(resolve, 3_000));
     }
   } catch {

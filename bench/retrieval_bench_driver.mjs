@@ -21,13 +21,23 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { pathToFileURL, fileURLToPath } from 'node:url';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { killProcessTree } from '../scripts/kill-guard.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const IS_WIN = process.platform === 'win32';
 const P95_BUDGET_MS = 1500;
 
-function parseArgs(argv) {
+function isMain(metaUrl) {
+  if (process.argv[1] === undefined) return false;
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(metaUrl));
+  } catch {
+    return false;
+  }
+}
+
+export function parseArgs(argv) {
   const args = {};
   for (let i = 0; i < argv.length; i += 1) {
     switch (argv[i]) {
@@ -65,11 +75,16 @@ function loadInCorpusQuestions() {
 }
 
 const children = [];
-function killChildren() {
+export function killChildren() {
   for (const child of children.splice(0).reverse()) {
     try { child.kill(); } catch { /* gone */ }
     if (IS_WIN && child.pid && child.exitCode === null) {
-      try { spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' }); } catch { /* best effort */ }
+      // Checked/liveness-guarded tree kill (issue #216 AC1): routes through
+      // the shared wrapper — raw taskkill lives only in scripts/kill-guard.mjs.
+      killProcessTree(child.pid, {
+        isAlive: (pid) => pid === child.pid && child.exitCode === null,
+        log: (msg) => console.error(`[retrieval_bench_driver] ${msg}`),
+      });
     }
   }
 }
@@ -86,14 +101,14 @@ function waitForPortFile(portFile, timeoutMs) {
   }
 }
 
-async function fetchJson(url, opts) {
+export async function fetchJson(url, opts) {
   // Per-request deadline (PRR-012, PR #102 review): a hung /search must not
   // stall the driver past this bound now that startup itself is bounded.
   const res = await fetch(url, { ...opts, signal: AbortSignal.timeout(30000) });
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 
-async function main() {
+export async function main() {
   const args = parseArgs(process.argv.slice(2));
 
   // Resolve weights the same way the host's resolvers do: explicit env first,
@@ -147,7 +162,9 @@ async function main() {
     const deadline = Date.now() + 30000;
     for (;;) {
       try {
-        const res = await fetch(`${base}/health`, { headers });
+        // Same-line bound (issue #216 AC2): the per-call await is bounded even
+        // though the loop carries its own deadline between iterations.
+        const res = await fetch(`${base}/health`, { headers, signal: AbortSignal.timeout(30000) });
         if (res.status === 200) break;
       } catch { /* not accepting yet */ }
       if (Date.now() > deadline) throw new Error('host did not become healthy within 30s');
@@ -225,15 +242,19 @@ async function main() {
   }
 }
 
-main().then(
-  () => {
-    // onnxruntime-node may keep the child's worker threads alive past kill;
-    // the child is force-killed above, so just make sure WE exit.
-    setTimeout(() => process.exit(process.exitCode ?? 0), 250).unref();
-  },
-  (err) => {
-    console.error(`[retrieval_bench_driver] FAILED: ${err instanceof Error ? err.message : err}`);
-    process.exitCode = 1;
-    setTimeout(() => process.exit(1), 250).unref();
-  },
-);
+// Entry guard (issue #216 AC5): importing this module must not run the
+// benchmark; only direct execution drives the CLI (packaged-smoke pattern).
+if (isMain(import.meta.url)) {
+  main().then(
+    () => {
+      // onnxruntime-node may keep the child's worker threads alive past kill;
+      // the child is force-killed above, so just make sure WE exit.
+      setTimeout(() => process.exit(process.exitCode ?? 0), 250).unref();
+    },
+    (err) => {
+      console.error(`[retrieval_bench_driver] FAILED: ${err instanceof Error ? err.message : err}`);
+      process.exitCode = 1;
+      setTimeout(() => process.exit(1), 250).unref();
+    },
+  );
+}

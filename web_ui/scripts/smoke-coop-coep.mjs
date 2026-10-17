@@ -23,6 +23,10 @@
  *
  * Usage:  node scripts/smoke-coop-coep.mjs   (run after `npm run build`)
  * Exit code is non-zero on any failure.
+ *
+ * Import-safe (issue #216 AC5): importing this module executes nothing — the
+ * seams (`createSmokeServer`, `checkIndexHtml`, `run`) are exported and only
+ * direct execution drives the CLI.
  */
 
 import { createServer } from 'node:http';
@@ -34,22 +38,17 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const WEB_UI = resolve(__dirname, '..');
 const DIST = join(WEB_UI, 'dist');
 
-const errors = [];
-function fail(msg) { errors.push(msg); }
-
-// Pre-flight: dist must exist.
-if (!existsSync(join(DIST, 'index.html'))) {
-  console.error('[smoke] dist/index.html missing — run `npm run build` first.');
-  process.exit(1);
+function isMain(metaUrl) {
+  if (process.argv[1] === undefined) return false;
+  try {
+    return existsSync(process.argv[1]) &&
+      resolve(process.argv[1]) === resolve(fileURLToPath(metaUrl));
+  } catch {
+    return false;
+  }
 }
 
-// Read index.html once to assert it references an assets chunk.
-const indexHtml = readFileSync(join(DIST, 'index.html'), 'utf8');
-if (!/\/assets\/[^"']+\.js/.test(indexHtml)) {
-  fail('dist/index.html does not reference any /assets/*.js chunk — the Vite build emitted no JavaScript entry.');
-}
-
-const MIME_TYPES = {
+export const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8',
@@ -63,37 +62,76 @@ const MIME_TYPES = {
   '.woff2': 'font/woff2',
 };
 
-// Minimal static server that sets the SAME COOP/COEP headers the production
-// servers (vite.config, api_server.py, serve-offline.mjs) set, so the smoke
-// validates the real production response shape.
-const PORT = 4321 + Math.floor(Math.random() * 1000);
-const server = createServer((req, res) => {
-  const url = new URL(req.url || '/', `http://127.0.0.1:${PORT}`);
-  let pathname = normalize(decodeURIComponent(url.pathname));
-  if (pathname === '/' || pathname === '') pathname = '/index.html';
-  let filePath = join(DIST, pathname);
-  // Path traversal guard.
-  if (!filePath.startsWith(DIST)) {
-    res.writeHead(403);
-    res.end('forbidden');
-    return;
+/** Returns an error message when index.html references no /assets/*.js chunk. */
+export function checkIndexHtml(indexHtml) {
+  if (!/\/assets\/[^"']+\.js/.test(indexHtml)) {
+    return 'dist/index.html does not reference any /assets/*.js chunk — the Vite build emitted no JavaScript entry.';
   }
-  if (!existsSync(filePath) || statSync(filePath).isDirectory()) {
-    // SPA fallback.
-    filePath = join(DIST, 'index.html');
-  }
-  const body = readFileSync(filePath);
-  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-  res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
-  res.setHeader('Content-Type', MIME_TYPES[extname(filePath)] ?? 'application/octet-stream');
-  res.writeHead(200);
-  res.end(body);
-});
+  return null;
+}
 
-async function run() {
-  await new Promise((r) => server.listen(PORT, '127.0.0.1', r));
+/**
+ * Minimal static server that sets the SAME COOP/COEP headers the production
+ * servers (vite.config, api_server.py, serve-offline.mjs) set, so the smoke
+ * validates the real production response shape.
+ */
+export function createSmokeServer(distDir, port) {
+  return createServer((req, res) => {
+    const url = new URL(req.url || '/', `http://127.0.0.1:${port}`);
+    let pathname = normalize(decodeURIComponent(url.pathname));
+    if (pathname === '/' || pathname === '') pathname = '/index.html';
+    let filePath = join(distDir, pathname);
+    // Path traversal guard.
+    if (!filePath.startsWith(distDir)) {
+      res.writeHead(403);
+      res.end('forbidden');
+      return;
+    }
+    if (!existsSync(filePath) || statSync(filePath).isDirectory()) {
+      // SPA fallback.
+      filePath = join(distDir, 'index.html');
+    }
+    const body = readFileSync(filePath);
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+    res.setHeader('Content-Type', MIME_TYPES[extname(filePath)] ?? 'application/octet-stream');
+    res.writeHead(200);
+    res.end(body);
+  });
+}
+
+export function pickPort() {
+  return 4321 + Math.floor(Math.random() * 1000);
+}
+
+export async function run({
+  distDir = DIST,
+  port = pickPort(),
+  fetch = globalThis.fetch,
+  log = console.log,
+  logError = console.error,
+} = {}) {
+  const errors = [];
+  const fail = (msg) => errors.push(msg);
+
+  // Pre-flight: dist must exist.
+  if (!existsSync(join(distDir, 'index.html'))) {
+    logError('[smoke] dist/index.html missing — run `npm run build` first.');
+    return 1;
+  }
+
+  // Read index.html once to assert it references an assets chunk.
+  const indexHtml = readFileSync(join(distDir, 'index.html'), 'utf8');
+  const chunkError = checkIndexHtml(indexHtml);
+  if (chunkError) fail(chunkError);
+
+  const server = createSmokeServer(distDir, port);
+  await new Promise((r) => server.listen(port, '127.0.0.1', r));
   try {
-    const res = await fetch(`http://127.0.0.1:${PORT}/`, { method: 'GET' });
+    // Bounded readiness probe (issue #216 AC2): the same-line AbortSignal bound
+    // is the census marker (check-census.sh fetch-bound is a same-line rule) —
+    // a server that accepts but never answers cannot hang the smoke past it.
+    const res = await fetch(`http://127.0.0.1:${port}/`, { method: 'GET', signal: AbortSignal.timeout(30000) });
     await res.arrayBuffer(); // drain
     if (res.status !== 200) {
       fail(`expected HTTP 200 from server root, got ${res.status}.`);
@@ -113,12 +151,15 @@ async function run() {
   }
 
   if (errors.length > 0) {
-    console.error('[smoke] FAILED — offline artifact is not correctly configured:');
-    for (const e of errors) console.error(`  - ${e}`);
-    process.exit(1);
+    logError('[smoke] FAILED — offline artifact is not correctly configured:');
+    for (const e of errors) logError(`  - ${e}`);
+    return 1;
   }
-  console.log('[smoke] OK — dist/ served with COOP/COEP and a valid JS entry chunk.');
-  process.exit(0);
+  log('[smoke] OK — dist/ served with COOP/COEP and a valid JS entry chunk.');
+  return 0;
 }
 
-run();
+// Entry guard (issue #216 AC5): only direct execution drives the CLI.
+if (isMain(import.meta.url)) {
+  process.exit(await run());
+}

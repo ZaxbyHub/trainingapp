@@ -18,45 +18,73 @@
  * `--airgap` flag (which `build:offline`'s hardcoded `validate-build` does not).
  * The child inherits stdio so build output streams normally and the exit code
  * propagates.
+ *
+ * Import-safe (issue #216 AC5): importing this module executes nothing — the
+ * steps/runner are exported seams and only direct execution drives the build.
  */
 import { spawnSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WEB_UI = resolve(__dirname, '..');
 
-const env = { ...process.env, VITE_AIRGAP: '1' };
-const isWin = process.platform === 'win32';
-const npm = isWin ? 'npm.cmd' : 'npm';
-const node = process.execPath;
-
-function run(label, args, opts = {}) {
-  const result = spawnSync(args[0], args.slice(1), {
-    cwd: WEB_UI,
-    stdio: 'inherit',
-    env,
-    ...opts,
-  });
-  if (result.error) {
-    console.error(`[build:airgap] ${label} failed to spawn: ${result.error.message}`);
-    process.exit(1);
-  }
-  if (result.status !== 0) {
-    console.error(`[build:airgap] ${label} exited with status ${result.status}`);
-    process.exit(result.status ?? 1);
+function isMain(metaUrl) {
+  if (process.argv[1] === undefined) return false;
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(metaUrl));
+  } catch {
+    return false;
   }
 }
 
-// 1. Stage model weights (operator-acquired; airgap build still expects them).
-run('prepare-models', [npm, 'run', 'prepare-models']);
+/** The airgap build plan: exactly these steps, in order (contract-pinned). */
+export function airgapSteps({ npm, node }) {
+  return [
+    // 1. Stage model weights (operator-acquired; airgap build still expects them).
+    { label: 'prepare-models', args: [npm, 'run', 'prepare-models'] },
+    // 2. Vite build under VITE_AIRGAP=1 (Rollup tree-shakes @mlc-ai/web-llm).
+    { label: 'build', args: [npm, 'run', 'build'] },
+    // 3. Validate WITH --airgap so the WebLLM-exclusion check fires. This is
+    //    the load-bearing difference vs `build:offline` (which runs
+    //    validate-build with no flags and would skip the airgap symbol scan).
+    { label: 'validate-build --airgap', args: [node, 'scripts/validate-build.mjs', '--airgap'] },
+  ];
+}
 
-// 2. Vite build under VITE_AIRGAP=1 (Rollup tree-shakes @mlc-ai/web-llm).
-run('build', [npm, 'run', 'build']);
+/** Run one step with VITE_AIRGAP=1; returns an exit code (0 = OK). */
+export function runStep(step, { env, cwd = WEB_UI, spawnSyncImpl = spawnSync, logError = console.error } = {}) {
+  const result = spawnSyncImpl(step.args[0], step.args.slice(1), {
+    cwd,
+    stdio: 'inherit',
+    env,
+  });
+  if (result.error) {
+    logError(`[build:airgap] ${step.label} failed to spawn: ${result.error.message}`);
+    return 1;
+  }
+  if (result.status !== 0) {
+    logError(`[build:airgap] ${step.label} exited with status ${result.status}`);
+    return result.status ?? 1;
+  }
+  return 0;
+}
 
-// 3. Validate WITH --airgap so the WebLLM-exclusion check fires. This is the
-//    load-bearing difference vs `build:offline` (which runs validate-build
-//    with no flags and would skip the airgap symbol scan).
-run('validate-build --airgap', [node, 'scripts/validate-build.mjs', '--airgap']);
+export function main({ spawnSyncImpl, log = console.log, logError = console.error } = {}) {
+  const env = { ...process.env, VITE_AIRGAP: '1' };
+  const isWin = process.platform === 'win32';
+  const npm = isWin ? 'npm.cmd' : 'npm';
+  const node = process.execPath;
+  for (const step of airgapSteps({ npm, node })) {
+    const code = runStep(step, { env, spawnSyncImpl, logError });
+    if (code !== 0) return code;
+  }
+  log('[build:airgap] OK — air-gapped artifact built and validated.');
+  return 0;
+}
 
-console.log('[build:airgap] OK — air-gapped artifact built and validated.');
+// Entry guard (issue #216 AC5): only direct execution drives the build.
+if (isMain(import.meta.url)) {
+  process.exit(main());
+}

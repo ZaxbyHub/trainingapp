@@ -20,7 +20,16 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const distModule = (...segments) =>
   pathToFileURL(path.join(repoRoot, 'desktop', 'dist', ...segments)).href;
 
-function parseArgs(argv) {
+function isMain(metaUrl) {
+  if (process.argv[1] === undefined) return false;
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(metaUrl));
+  } catch {
+    return false;
+  }
+}
+
+export function parseArgs(argv) {
   const args = {};
   for (let i = 0; i < argv.length; i += 1) {
     switch (argv[i]) {
@@ -117,7 +126,7 @@ function buildBenchPdf(pageCount) {
   return parts.join('') + xref + `trailer\n<< /Size ${totalObjects + 1} /Root 1 0 R >>\nstartxref\n${xrefPos}\n%%EOF\n`;
 }
 
-async function main() {
+export async function main() {
   const args = parseArgs(process.argv.slice(2));
   const machine = process.env.BENCH_MACHINE_TAG ?? 'devstation';
 
@@ -231,11 +240,15 @@ function scheduleForcedExit() {
   setTimeout(() => process.exit(process.exitCode ?? 0), 250).unref();
 }
 
-main().then(
-  () => scheduleForcedExit(),
-  (err) => {
-    console.error(`[ingest_bench_driver] FAILED: ${err instanceof Error ? err.message : err}`);
-    process.exitCode = 1;
-    scheduleForcedExit();
-  },
-);
+// Entry guard (issue #216 AC5): importing this module must not run the
+// benchmark; only direct execution drives the CLI.
+if (isMain(import.meta.url)) {
+  main().then(
+    () => scheduleForcedExit(),
+    (err) => {
+      console.error(`[ingest_bench_driver] FAILED: ${err instanceof Error ? err.message : err}`);
+      process.exitCode = 1;
+      scheduleForcedExit();
+    },
+  );
+}

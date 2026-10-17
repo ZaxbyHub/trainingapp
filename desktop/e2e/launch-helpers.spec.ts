@@ -12,12 +12,12 @@
  */
 import * as fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test, expect } from '@playwright/test';
 import playwrightConfig from '../playwright.config.js';
 import { SOURCE_FILE_PATTERN, SPEC_FILE_PATTERN } from './spec-pattern.js';
 import { closeAllApps, closeApp, isProcessAlive, launchElectron, makeTempDir, makeUserDataDir, removeTempDir } from './launch-helpers.js';
+import { killProcessTree } from '../../scripts/kill-guard.mjs';
 
 const roots: string[] = [];
 
@@ -214,7 +214,9 @@ test('closeApp still kills the Electron tree when close() fails and disposes the
     await closeApp(app);
     expect(isProcessAlive(pid), `Electron PID ${pid} survived closeApp after a failed close()`).toBe(false);
   } finally {
-    if (isProcessAlive(pid)) spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
+    // Checked/liveness-guarded tree kill (issue #216 AC1): routes through the
+    // shared wrapper — raw taskkill lives only in scripts/kill-guard.mjs.
+    if (isProcessAlive(pid)) killProcessTree(pid, { isAlive: isProcessAlive, log: (m) => console.warn(m) });
   }
 });
 
@@ -229,7 +231,7 @@ for (const step of ['firstWindow', 'waitForLoadState'] as const) {
       expect(fs.existsSync(root)).toBe(false);
     } finally {
       // Never leak from the probe itself, whatever the helper did (this PID only).
-      if (isProcessAlive(pid)) spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
+      if (isProcessAlive(pid)) killProcessTree(pid, { isAlive: isProcessAlive, log: (m) => console.warn(m) });
     }
   });
 }

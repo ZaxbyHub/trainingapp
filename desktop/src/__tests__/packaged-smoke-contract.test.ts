@@ -62,6 +62,38 @@ function findRepoRoot(dir: string): string {
 const REPO_ROOT = findRepoRoot(THIS_DIR);
 const SMOKE_PATH = path.join(REPO_ROOT, 'desktop', 'scripts', 'packaged-smoke.mjs');
 
+/**
+ * Published test inventory (issue #219 AC8 / batch AC8): the exact names of
+ * every test in this file. The acceptance-precision contract
+ * (`acceptance-precision-contract.test.ts` `-t inventory`) asserts this list
+ * equals the actual test set and equals the frozen closed set union the
+ * declared extras — so a test added outside both lists, or a rename that
+ * drifts the inventory, is rejected by an executable guard instead of a note.
+ * Test names are a frozen contract: the packaged-smoke-cdp batch's
+ * check-unit.sh probes address them by -t filter (closed set = the 10 filter
+ * names; extras = the 6 non-filter tests).
+ */
+export const TEST_INVENTORY: readonly string[] = [
+  // Closed set (each name is the unique match of exactly one frozen -t filter):
+  'watchdog-exit2: dumps all captures, kills the tree, cleans the workspace, and exits 2 (1 when failures are recorded)',
+  'attach-timeout-count: records outcomes per boot and reports them in the summary',
+  'kill-guard: kills only a live child and keeps the wrapper as the single taskkill site',
+  'taskkill-status: checks and logs taskkill results',
+  'signal-reap: the registered SIGINT and SIGTERM listeners reap the spawned tree',
+  'close-idempotent: per-session guards make a second close a no-op while each boot closes its own child',
+  'graceful-window: waits for child exit before the forced kill, logs the exit code, and drives the watchdog window',
+  'endpoint-bind: refuses non-loopback, portless, unparseable, and mismatched endpoints',
+  'per-boot-buffers: each boot captures its own output',
+  'buffer-cap: the capture keeps only the bounded tail and caps line size',
+  // Declared extras (no frozen filter selects these; run only by the full suite):
+  'watchdog-arm-latch: fires when armed, stays off while suspended, and latches after firing',
+  'close-survived-verdict: a survived close keeps the assertion-failure verdict and resumes the watchdog',
+  'buffer-chunk-lines: chunk-boundary appends keep lines intact',
+  'bound-evaluate-rejects: the bound fires when the inner evaluate hangs',
+  'parse seams stay pinned (parseDriver / parseDevToolsEndpoint / redact)',
+  'spawn-failure-verdict: the dedicated spawn exit honors both verdict poles and cleans up',
+];
+
 describe('packaged-smoke driver contract (batch packaged-smoke-cdp + PR217 review fixes)', () => {
   it('watchdog-exit2: dumps all captures, kills the tree, cleans the workspace, and exits 2 (1 when failures are recorded)', () => {
     // The calibrated constant sits at the stacked-phase ceiling and below the
@@ -113,7 +145,7 @@ describe('packaged-smoke driver contract (batch packaged-smoke-cdp + PR217 revie
     expect(exits2).toEqual([1]);
   });
 
-  it('watchdog-exit2 arm semantics: fires when armed, stays off while suspended, and latches after firing', async () => {
+  it('watchdog-arm-latch: fires when armed, stays off while suspended, and latches after firing', async () => {
     // Armed and NOT suspended: the watchdog must actually fire (M-C3 kills).
     let fired = 0;
     const wd = armWatchdog(20, { fire: () => { fired += 1; } });
@@ -349,7 +381,7 @@ describe('packaged-smoke driver contract (batch packaged-smoke-cdp + PR217 revie
     expect(verdictCode([])).toBe(2);
   });
 
-  it('close-idempotent: a survived close keeps the assertion-failure verdict and resumes the watchdog', async () => {
+  it('close-survived-verdict: a survived close keeps the assertion-failure verdict and resumes the watchdog', async () => {
     const child = { pid: 7, exitCode: null, signalCode: null }; // never dies
     const resumeCalls: number[] = [];
     const session = { closeAttempted: false };
@@ -455,7 +487,7 @@ describe('packaged-smoke driver contract (batch packaged-smoke-cdp + PR217 revie
     expect(src.includes("t !== null && typeof t === 'object' && t.type === 'page'")).toBe(true);
   });
 
-  it('per-boot-buffers: chunk-boundary appends keep lines intact', () => {
+  it('buffer-chunk-lines: chunk-boundary appends keep lines intact', () => {
     const capture = createConsoleCapture(10);
     capture.append('par');
     capture.append('tial line\nsecond');

@@ -103,3 +103,31 @@ The core is the required minimum. For issues whose fix has real design surface, 
 - **Contract triplication**: any issue that adds or changes a REST route touches the frozen three-way contract (contracts/api.openapi.yaml + desktop Node CONTRACT_ROUTES + FastAPI) and fans out to four CI workflows — such issues MUST say so in Scope and budget the parity work.
 - **CI is path-scoped with fail-open buckets** — a new top-level tree runs everything on first touch.
 - A `NEW-SURFACE` argv naming a spec absent at base fails with vitest's `No test files found` or pytest's file-not-found — write the real signature verbatim in `expect`.
+
+## Trace evidence and acceptance-check conventions
+
+Two conventions govern how this repository keeps issue-tracer evidence honest
+(established by the `packaged-smoke-cdp` batch; issue #219 AC5 records them
+in-repo so they are not tribal knowledge):
+
+1. **`.agents/issue-traces/` evidence is local-only by convention.** Trace
+   directories hold frozen check drivers, red-checkpoint manifests, anchor
+   receipts, and replay logs. They are git-excluded (`.gitignore`) and are NOT
+   reproducible from a clone. Issues and PR bodies that cite trace files carry
+   a local-artifact disclaimer; anything a reviewer must be able to re-run or
+   verify from the repo itself — acceptance specs, pin records, guard scripts —
+   is committed to the repository, and the external anchor receipt is
+   published in the issue/PR thread (outside the writable trace) precisely so
+   the trace cannot self-attest.
+
+2. **The packaged-smoke contract spec's extras-outside-frozen-set split is a
+   deliberate design decision.** `desktop/src/__tests__/packaged-smoke-contract.test.ts`
+   publishes `TEST_INVENTORY`, and its test names are a frozen contract: the
+   acceptance battery's `-t` filters (the "closed set") name exactly one test
+   each (enforced by `acceptance-precision-contract.test.ts` `-t
+   filter-uniqueness`), while the remaining tests are an explicit "declared
+   extras" list (enforced by `-t inventory`). The rationale: the frozen battery
+   must stay name-stable (its checks select tests by filter), yet precision
+   probes that strengthen the same surface should not be blocked from landing —
+   so they are declared, inventoried, and covered by the full suite instead of
+   silently riding a filter or silently sitting outside every check.
