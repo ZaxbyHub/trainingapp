@@ -352,7 +352,9 @@ async function bootCdp(ctx) {
     log(`SMOKE: INFRA - packaged exe failed to spawn: ${msg}`);
     emitAttachSummary(log, state);
     io.removeWs();
-    io.exit(2);
+    // The dedicated spawn verdict exits 2 with no recorded failures (AC5/C5);
+    // if a boot's steps already failed, failures out-rank INFRA (verdictCode).
+    io.exit(verdictCode(state.failures));
   };
 
   let child;
