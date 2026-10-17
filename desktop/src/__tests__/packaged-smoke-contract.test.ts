@@ -413,6 +413,12 @@ describe('packaged-smoke driver contract (batch packaged-smoke-cdp + PR217 revie
       .toThrow(/no usable port|not usable/);
     // Unparseable endpoint refuses.
     expect(() => verifyEndpointPort('not a url', 9300)).toThrow(/not a parseable URL/);
+    // Wiring pin (final-critic C1): the production call site must pass the
+    // INDEPENDENTLY discovered port — a regression to the self-comparison
+    // shape (the PRR-004 tautology) must kill this.
+    const src = fs.readFileSync(SMOKE_PATH, 'utf8');
+    expect(src.includes('verifyEndpointPort(endpoint, discoveredPort);')).toBe(true); // call shape, not the definition
+    expect(src.includes('webSocketDebuggerUrl')).toBe(true);
     // Non-ws protocol refuses.
     expect(() => verifyEndpointPort('http://127.0.0.1:9300/devtools/browser/abc', 9300))
       .toThrow(/not a ws/);
