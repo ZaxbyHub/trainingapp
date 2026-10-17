@@ -120,7 +120,7 @@ jobs:
       # Playwright transport stays the local default with NO packaged CI gate —
       # the #135 runner handshake flake is exactly why the CDP driver exists.
       # The shared parse/selection paths ARE CI-gated (the Driver selftest
-      # step above and desktop/src/__tests__/packaged-smoke-contract.test.ts); the
+      # step below and desktop/src/__tests__/packaged-smoke-contract.test.ts); the
       # windowed launch path itself is exercised unpackaged by renderer-e2e.
       # AC18 (issue #180): the driver parse/plumbing selftest — cheap, spawns
       # nothing. Placed AFTER the installer build and immediately BEFORE the
@@ -149,9 +149,6 @@ jobs:
           path: desktop/desktop-release/*.exe
           if-no-files-found: error
 
-      # AC21 (issue #182): publish the fixture installer only AFTER the
-      # packaged-boot smoke has passed — a red smoke must not publish an
-      # artifact that looks shippable.
   renderer-e2e:
     name: "Playwright under Electron (issue #67 AC1 smoke)"
     runs-on: windows-latest

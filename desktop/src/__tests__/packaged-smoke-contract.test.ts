@@ -74,6 +74,7 @@ describe('packaged-smoke driver contract (batch packaged-smoke-cdp + PR217 revie
     const exits: number[] = [];
     const kills: unknown[] = [];
     const cleanups: number[] = [];
+    const disarms: number[] = [];
     const { boot1, boot2, captures } = createBootCaptures();
     boot1.append('boot1 tail line\n');
     boot2.append('boot2 tail line\n');
@@ -87,10 +88,12 @@ describe('packaged-smoke driver contract (batch packaged-smoke-cdp + PR217 revie
       state,
       ms: 1234,
       cleanup: () => cleanups.push(1),
+      watchdog: { disarm: () => disarms.push(1) },
     });
     expect(exits).toEqual([2]);
     expect(kills.length).toBe(1);
     expect(cleanups.length).toBe(1); // PRR-003: watchdog exits clean up too
+    expect(disarms.length).toBe(1); // and disarm the fired handle
     expect(logs.some((l) => l.includes('SMOKE: watchdog fired after 1234ms'))).toBe(true);
     // BOTH boots' tails are dumped with labels (the relaunch wedge evidence).
     expect(logs.some((l) => l.includes('boot1 tail line'))).toBe(true);
@@ -123,27 +126,28 @@ describe('packaged-smoke driver contract (batch packaged-smoke-cdp + PR217 revie
     wd.disarm();
     // Suspended across the (bounded) close window: no fire.
     let fired2 = 0;
-    const wd2 = armWatchdog(200, { fire: () => { fired2 += 1; } });
+    const wd2 = armWatchdog(600, { fire: () => { fired2 += 1; } });
     wd2.suspend();
-    await new Promise((r) => setTimeout(r, 60));
+    await new Promise((r) => setTimeout(r, 150));
     expect(fired2).toBe(0);
-    // Resume restores the ORIGINAL deadline (never a fresh budget): 60ms of
-    // the 200 already elapsed while suspended, so the fire lands ~140ms after
-    // resume — not a fresh 200ms, and not immediately.
+    // Resume restores the ORIGINAL deadline (never a fresh budget): 150ms of
+    // the 600 already elapsed while suspended, so the fire lands ~450ms after
+    // resume — not a fresh 600ms, and not immediately. Wide margins keep the
+    // real-timer test off the flake line.
     wd2.resume();
-    await new Promise((r) => setTimeout(r, 90));
-    expect(fired2).toBe(0); // 150ms of the original 200ms budget: not yet
-    await new Promise((r) => setTimeout(r, 120));
+    await new Promise((r) => setTimeout(r, 250));
+    expect(fired2).toBe(0); // 400ms of the original 600ms budget: not yet
+    await new Promise((r) => setTimeout(r, 350));
     expect(fired2).toBe(1); // original deadline reached
     // An EXPIRED budget must fire promptly on resume (total budget exhausted).
     let fired3 = 0;
-    const wd3 = armWatchdog(30, { fire: () => { fired3 += 1; } });
+    const wd3 = armWatchdog(50, { fire: () => { fired3 += 1; } });
     wd3.suspend();
-    await new Promise((r) => setTimeout(r, 90));
+    await new Promise((r) => setTimeout(r, 200));
     expect(fired3).toBe(0);
     wd3.resume();
-    await new Promise((r) => setTimeout(r, 60));
-    expect(fired3).toBe(1);
+    await new Promise((r) => setTimeout(r, 150));
+    expect(fired3).toBe(1); // expired budget fires promptly on resume
     wd3.disarm();
   });
 
@@ -217,8 +221,9 @@ describe('packaged-smoke driver contract (batch packaged-smoke-cdp + PR217 revie
     const state = createRunState();
     const child = { pid: 99, exitCode: null, signalCode: null };
     state.activeChild = child;
+    const dumps: number[] = [];
     const reg = registerSignalHandlers(
-      { log: (l) => logs.push(l), removeWs: () => cleanups.push(1), exit: (c) => exits.push(c) },
+      { log: (l) => logs.push(l), removeWs: () => cleanups.push(1), exit: (c) => exits.push(c), dump: () => dumps.push(1) },
       state,
       { runTaskkill: (args: string[]) => { calls.push(args); return { status: 0, error: null }; }, log: (l) => logs.push(l) },
     );
@@ -234,6 +239,7 @@ describe('packaged-smoke driver contract (batch packaged-smoke-cdp + PR217 revie
       expect(calls).toEqual([['/PID', '99', '/T', '/F']]);
       expect(exits).toEqual([2]);
       expect(cleanups.length).toBe(1); // PRR-029: reap cleans the workspace
+      expect(dumps.length).toBe(1); // PRR-007: the reap preserves the evidence
       expect(logs.some((l) => l.includes('SMOKE: attach attempts timed out: 0'))).toBe(true);
 
       calls.length = 0;
@@ -434,6 +440,24 @@ describe('packaged-smoke driver contract (batch packaged-smoke-cdp + PR217 revie
     expect(captures.get('boot-1')).toBe(boot1);
     expect(captures.get('boot-2')).toBe(boot2);
     expect(boot1).not.toBe(boot2);
+    // Call-site census: main must boot each capture under its own tag
+    // (a boot(boot1, 'boot-2') reuse — the base defect shape — kills this).
+    const src = fs.readFileSync(SMOKE_PATH, 'utf8');
+    expect(src.includes("boot(boot2, 'boot-2')")).toBe(true);
+    expect(src.includes("boot(boot1, 'boot-1')")).toBe(true);
+    // PRR-013: the /json/list page predicate is null-safe.
+    expect(src.includes("t !== null && typeof t === 'object' && t.type === 'page'")).toBe(true);
+  });
+
+  it('per-boot-buffers: chunk-boundary appends keep lines intact', () => {
+    const capture = createConsoleCapture(10);
+    capture.append('par');
+    capture.append('tial line\nsecond');
+    capture.append(' line\n');
+    const out: string[] = [];
+    capture.dump((l) => out.push(l), 'chunk dump');
+    expect(out.some((l) => l.includes('partial line'))).toBe(true);
+    expect(out.some((l) => l.includes('second line'))).toBe(true);
   });
 
   it('buffer-cap: the capture keeps only the bounded tail and caps line size', () => {
@@ -486,12 +510,27 @@ describe('packaged-smoke driver contract (batch packaged-smoke-cdp + PR217 revie
     const exits: number[] = [];
     const logs: string[] = [];
     const cleanups: number[] = [];
+    const disarms: number[] = [];
+    const disposes: number[] = [];
+    const { boot1, captures } = createBootCaptures();
+    boot1.append('spawn-fail evidence\n');
     emitSpawnFailure(
-      { log: (l) => logs.push(l), state: createRunState(), cleanup: () => cleanups.push(1), exit: (c) => exits.push(c) },
+      {
+        log: (l) => logs.push(l), state: createRunState(), cleanup: () => cleanups.push(1),
+        exit: (c) => exits.push(c),
+        watchdog: { disarm: () => disarms.push(1) },
+        signals: { dispose: () => disposes.push(1) },
+        captures,
+      },
       new Error('spawn UNKNOWN'),
     );
     expect(exits).toEqual([2]);
     expect(cleanups.length).toBe(1);
+    // PRR-003: full exit parity with final() — evidence dumped, watchdog
+    // disarmed, listeners disposed.
+    expect(logs.some((l) => l.includes('spawn-fail evidence'))).toBe(true);
+    expect(disarms.length).toBe(1);
+    expect(disposes.length).toBe(1);
     expect(logs.some((l) => l.includes('SMOKE: INFRA - packaged exe failed to spawn'))).toBe(true);
     expect(logs.some((l) => l.includes('SMOKE: attach attempts timed out: 0'))).toBe(true);
     // Recorded assertion failures out-rank (the 5fb05d2/PRR-016 pole).

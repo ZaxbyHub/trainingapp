@@ -312,6 +312,10 @@ export function killTree(child, deps) {
 export function registerSignalHandlers(io, state, deps) {
   const reap = () => {
     if (state.activeChild !== null) killTree(state.activeChild, deps);
+    // Evidence preservation on cancellation (review PRR-007): the wedged-run
+    // diagnostics must survive a Ctrl-C / graceful cancel, not only the
+    // watchdog path.
+    if (io.dump) io.dump();
     emitAttachSummary(io.log, state);
     io.removeWs();
     // Failures out-rank INFRA on the signal path too (plan contract 8).
@@ -363,12 +367,14 @@ export function armWatchdog(ms, hooks) {
 /** The watchdog exit path: dump every capture with its label, kill the tree,
  *  clean the workspace, emit the attach summary, then the verdict (failures
  *  out-rank INFRA) — the same exit contract as final() (review PRR-003). */
-export function watchdogExit({ captures, child, kill, log, exit, state, ms, cleanup }) {
+export function watchdogExit({ captures, child, kill, log, exit, state, ms, cleanup, watchdog, signals }) {
   log(`SMOKE: watchdog fired after ${ms}ms`);
   dumpAllCaptures(log, captures, 'SMOKE: watchdog fired');
   if (child) kill(child);
   emitAttachSummary(log, state);
   log(`SMOKE: INFRA - watchdog budget exceeded (${ms}ms)`);
+  if (watchdog) watchdog.disarm();
+  if (signals) signals.dispose();
   if (cleanup) cleanup();
   exit(verdictCode(state.failures));
 }
@@ -376,10 +382,15 @@ export function watchdogExit({ captures, child, kill, log, exit, state, ms, clea
 /** The dedicated spawn-failure exit (AC5, review PRR-003/TC-04): shared by
  *  the synchronous throw and the async 'error' event; both poles of the
  *  failures-out-rank rule are pinned by the spec. */
-export function emitSpawnFailure({ log, state, cleanup, exit }, err) {
+export function emitSpawnFailure({ log, state, cleanup, exit, watchdog, signals, captures }, err) {
   const msg = err instanceof Error ? err.message : String(err);
   log(`SMOKE: INFRA - packaged exe failed to spawn: ${redact(msg)}`);
+  // Exit parity with final() (review PRR-003): dump the evidence, disarm the
+  // watchdog, dispose the listeners, then clean up and exit.
+  if (captures) dumpAllCaptures(log, captures, 'SMOKE: spawn failed');
   emitAttachSummary(log, state);
+  if (watchdog) watchdog.disarm();
+  if (signals) signals.dispose();
   if (cleanup) cleanup();
   // The dedicated spawn verdict exits 2 with no recorded failures (AC5/C5);
   // if a boot's steps already failed, failures out-rank INFRA (verdictCode).
@@ -478,9 +489,9 @@ async function bootPlaywright(ctx) {
 }
 
 async function bootCdp(ctx) {
-  const { exe, userDataDir, storePath, packsDir, capture, state, io, watchdog, log, cleanup } = ctx;
+  const { exe, userDataDir, storePath, packsDir, capture, captures, state, io, watchdog, signals, log, cleanup } = ctx;
   const killDeps = { runTaskkill: makeTaskkillRunner(), log };
-  const failSpawn = (err) => emitSpawnFailure({ log, state, cleanup, exit: io.exit }, err);
+  const failSpawn = (err) => emitSpawnFailure({ log, state, cleanup, exit: io.exit, watchdog, signals, captures }, err);
 
   let child;
   try {
@@ -538,6 +549,11 @@ async function bootCdp(ctx) {
       throw new Error('DevTools stderr line never appeared within 120s (endpoint parser found nothing)');
     }
 
+    // Structural verification FIRST (review PRR-004): a portless, non-ws, or
+    // non-loopback endpoint must be refused immediately — no 120s burn — and
+    // the refusal must surface as a loud error, not vanish into the poll.
+    verifyEndpointPort(endpoint, Number(new URL(endpoint).port));
+
     const deadline = Date.now() + 120_000;
     let serverUp = false;
     let pageReady = false;
@@ -560,6 +576,8 @@ async function bootCdp(ctx) {
             if (discovered === null) {
               throw new Error('/json/version carried no webSocketDebuggerUrl; refusing the attach');
             }
+            // The agreement check sits OUTSIDE the swallow-catch below: a
+            // real mismatch is a refusal, not a "not up yet" condition.
             discoveredPort = Number(new URL(discovered).port);
             verifyEndpointPort(endpoint, discoveredPort);
             serverUp = true;
@@ -575,7 +593,11 @@ async function bootCdp(ctx) {
             }
           }
         }
-      } catch { /* not up yet */ }
+      } catch (err) {
+        // Structural refusals must surface loudly (review PRR-004): only
+        // connection noise is "not up yet".
+        if (err instanceof Error && /refusing the attach/.test(err.message)) throw err;
+      }
       await new Promise((r) => setTimeout(r, 500));
     }
     if (!pageReady) {
@@ -706,10 +728,10 @@ export async function main(argv, env, io) {
   const state = createRunState();
   const { boot1, boot2, captures } = createBootCaptures();
 
-  // Workspace ownership lives HERE (review PRR-002): every exit path —
-  // final, spawn failure, watchdog, signals, the entry-guard catch — reaches
-  // this real cleanup, never a stub. TDZ-safe: declared before any final()
-  // can run and a no-op until the workspace exists.
+  // Workspace ownership lives HERE (review PRR-002): every run-path exit —
+  // final, spawn failure, watchdog, signals — reaches this real cleanup,
+  // never a stub. TDZ-safe: declared before any final() can run and a no-op
+  // until the workspace exists (pre-workspace exits have nothing to clean).
   let wsDir = null;
   const removeWs = () => {
     if (wsDir === null) return;
@@ -812,25 +834,32 @@ export async function main(argv, env, io) {
   // (review PRR-008) — an Infinity/huge probe value used to overflow
   // setTimeout into an instant bogus kill.
   const rawWatchdog = Number(env.TRAININGAPP_SMOKE_WATCHDOG_MS);
-  const watchdogMs = Number.isFinite(rawWatchdog) && rawWatchdog >= WATCHDOG_MIN_MS && rawWatchdog <= WATCHDOG_MAX_MS
-    ? rawWatchdog
-    : WATCHDOG_DEFAULT_MS;
+  const watchdogOverrideValid = Number.isFinite(rawWatchdog) && rawWatchdog >= WATCHDOG_MIN_MS && rawWatchdog <= WATCHDOG_MAX_MS;
+  if (env.TRAININGAPP_SMOKE_WATCHDOG_MS !== undefined && env.TRAININGAPP_SMOKE_WATCHDOG_MS !== '' && !watchdogOverrideValid) {
+    log(`SMOKE: watchdog override rejected (TRAININGAPP_SMOKE_WATCHDOG_MS=${String(env.TRAININGAPP_SMOKE_WATCHDOG_MS)} outside [${WATCHDOG_MIN_MS}, ${WATCHDOG_MAX_MS}]); using the default`);
+  }
+  const watchdogMs = watchdogOverrideValid ? rawWatchdog : WATCHDOG_DEFAULT_MS;
   const killDeps = { runTaskkill: makeTaskkillRunner(), log };
   watchdog = armWatchdog(watchdogMs, {
     now: () => Date.now(),
     fire: () => watchdogExit({
       captures, child: state.activeChild, kill: (c) => killTree(c, killDeps),
       log, exit: io.exit, state, ms: watchdogMs, cleanup: removeWs,
+      watchdog: null, signals: null,
     }),
   });
 
-  signals = registerSignalHandlers({ log, removeWs, exit: io.exit }, state, killDeps);
+  signals = registerSignalHandlers(
+    { log, removeWs, exit: io.exit, dump: () => dumpAllCaptures(log, captures, 'SMOKE: signal exit') },
+    state,
+    killDeps,
+  );
 
   const boot = async (capture, bootTag) => {
     state.bootTag = bootTag;
     log(`SMOKE: booting packaged exe (driver=${driver}, exe ${exe}, hash embedder, isolated store ${storePath})`);
     return driver === 'cdp'
-      ? bootCdp({ exe, userDataDir, storePath, packsDir, capture, state, io, watchdog, log, cleanup: removeWs })
+      ? bootCdp({ exe, userDataDir, storePath, packsDir, capture, captures, state, io, watchdog, signals, log, cleanup: removeWs })
       : bootPlaywright({ exe, userDataDir, storePath, packsDir, capture, log, state });
   };
 
