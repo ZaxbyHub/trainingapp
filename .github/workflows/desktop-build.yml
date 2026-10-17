@@ -123,16 +123,6 @@ jobs:
       # step above and desktop/src/__tests__/packaged-smoke-contract.test.ts); the
       # windowed launch path itself is exercised unpackaged by renderer-e2e.
       # AC18 (issue #180): the driver parse/plumbing selftest — cheap, spawns
-      # nothing — so a driver-selection regression turns CI red even where the
-      # ladder job is path-skipped. Placed AFTER the installer build and
-      # immediately BEFORE the smoke: the 133-trace check-c7 contract requires
-      # the first packaged-smoke.mjs mention to follow the fixture build, and
-      # the smoke run line below stays exactly `--driver cdp` (131-trace C7;
-      # appending --driver-selftest here would skip the ladder entirely).
-      - name: Driver selftest (packaged-smoke parse contract)
-        run: node desktop/scripts/packaged-smoke.mjs --driver cdp --driver-selftest
-
-      # AC18 (issue #180): the driver parse/plumbing selftest — cheap, spawns
       # nothing. Placed AFTER the installer build and immediately BEFORE the
       # smoke step below: the 133-trace check-c7 contract requires the first
       # packaged-smoke.mjs mention to follow the fixture build, and the smoke

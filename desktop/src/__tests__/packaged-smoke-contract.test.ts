@@ -276,18 +276,20 @@ describe('packaged-smoke driver contract (batch packaged-smoke-cdp + PR217 revie
 
   it('close-idempotent: per-session guards make a second close a no-op while each boot closes its own child', async () => {
     const kills: unknown[] = [];
+    const closeCalls: number[] = [];
+    const suspendCalls: number[] = [];
     const makeChild = (pid: number) => ({ pid, exitCode: null, signalCode: null });
     // Boot 1: a child that dies inside the graceful window.
     const session1 = { closeAttempted: false };
     const child1 = makeChild(5);
     let ticks1 = 0;
     const baseOpts = {
-      browser: { close: () => Promise.resolve() },
+      browser: { close: () => { closeCalls.push(1); return Promise.resolve(); } },
       page: { evaluate: () => Promise.resolve() },
       kill: (c: unknown) => kills.push(c),
       now: () => Date.now(),
       log: () => {},
-      watchdog: null,
+      watchdog: { suspend: () => suspendCalls.push(1), resume: () => {} },
       settleMs: 1,
     };
     await closeCdpSession({
@@ -300,7 +302,13 @@ describe('packaged-smoke driver contract (batch packaged-smoke-cdp + PR217 revie
     });
     expect(session1.closeAttempted).toBe(true);
     expect(kills.length).toBe(0);
-    // Second close of the SAME session: strict no-op.
+    // Second close of the SAME session: strict no-op — none of the close
+    // machinery may run again (M-C9 kills: a removed idempotence guard
+    // re-invokes browser.close and the watchdog window).
+    const closesAfterFirst = closeCalls.length;
+    const suspendsAfterFirst = suspendCalls.length;
+    expect(closesAfterFirst).toBe(1);
+    expect(suspendsAfterFirst).toBe(1);
     await closeCdpSession({
       ...baseOpts,
       session: session1,
@@ -310,6 +318,8 @@ describe('packaged-smoke driver contract (batch packaged-smoke-cdp + PR217 revie
       gracefulMs: 1,
     });
     expect(kills.length).toBe(0);
+    expect(closeCalls.length).toBe(closesAfterFirst);
+    expect(suspendCalls.length).toBe(suspendsAfterFirst);
 
     // Cross-boot (PRR-001): a FRESH session must close ITS OWN child even
     // though boot 1 already closed. The fake kill marks the child dead, as a
