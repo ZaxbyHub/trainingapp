@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+- **Packaged-boot smoke hardening and CI wiring (issues #177, #178, #179,
+  #180, #182)**: `desktop/scripts/packaged-smoke.mjs` is now an import-safe,
+  unit-tested driver — bounded evaluates on one helper line, a 30-minute run
+  watchdog (failures out-rank infra on every exit path), a checked/logged
+  taskkill wrapper under a liveness-predicated kill, OS-assigned CDP port
+  with the attach bound to the child's own loopback-verified,
+  identity-cross-checked DevTools endpoint, per-boot capped console captures
+  with both-boots dumps, a derived driver selftest, per-boot attach-outcome
+  counts printed on every exit, and real temp-workspace cleanup on every exit
+  path. `desktop-build.yml` SHA-pins all actions, declares
+  `permissions: contents: read`, publishes the fixture installer only after a
+  green smoke, runs the driver selftest in CI, and sizes the job/step walls so
+  a wedged smoke always yields a verdict. Contract pins:
+  `desktop/src/__tests__/packaged-smoke-contract.test.ts`.
 - **Opt-in embedding determinism seam (issue #170, D1)**:
   `TRAININGAPP_DESKTOP_EMBED_THREADS=<n>` pins ONNX session threading
   (intra-op `n`, inter-op 1, sequential execution) at all three

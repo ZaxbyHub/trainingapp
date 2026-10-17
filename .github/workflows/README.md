@@ -53,9 +53,9 @@ Informational (never blocks merge): the 3-leg Tests matrix, `perf-thresholds` (f
 - `pack-fixture-build` — packtool fixture packs: `build-docs` from `contracts/fixtures/source-docs/` (issue #73 leg, moved from desktop-build.yml) AND `build-storyline` against an assembled publish dir (`tests/fixtures/storyline-mini` + the committed `story.html` stub), each followed by `verify`; uploads both pack artifacts. Runs on `packtool/**`, `contracts/pack.schema.json`, `contracts/fixtures/**`, `contracts/validate_pack.py`.
 - The Electron-backend conformance leg (issue #61/B3) stays in `desktop-build.yml` (`backend-conformance` job) — informational.
 
-### 4. Desktop Build (`desktop-build.yml`) — workflow-level path filter (`desktop/**`, `web_ui/**`, `contracts/**`, `packtool/**`) — informational
+### 4. Desktop Build (`desktop-build.yml`) — workflow-level path filter (`desktop/**`, `web_ui/**`, `contracts/**`, `packtool/**`, `.github/workflows/desktop-build.yml`) — informational
 
-**Jobs:** Electron shell build (unsigned NSIS, fixture models, E1 manifest gate, packaged-boot smoke per #133/#131; also typechecks the `desktop/e2e` specs, `npm --prefix desktop run typecheck:e2e`), renderer Playwright-under-Electron (#67), Electron-backend conformance (#61), store interop + pack schema/parity (#63/#68/#70). Its workflow-level `paths:` filter is safe because none of its checks are required.
+**Jobs:** Electron shell build (unsigned NSIS, fixture models, E1 manifest gate, driver selftest + packaged-boot smoke per #133/#131/#177-#182 — the smoke runs `--driver cdp` behind its own 32-min step timeout, and the fixture installer uploads only AFTER a green smoke; also typechecks the `desktop/e2e` specs, `npm --prefix desktop run typecheck:e2e`), renderer Playwright-under-Electron (#67), Electron-backend conformance (#61), store interop + pack schema/parity (#63/#68/#70). Least-privilege: the workflow declares `permissions: contents: read`; all third-party actions are SHA-pinned with version comments. Its workflow-level `paths:` filter is safe because none of its checks are required.
 
 ### 5. Security Scan (`security.yml`) — unfiltered — required
 

@@ -421,7 +421,14 @@ windows runners (#135); the default `--driver playwright` keeps the
 windowed path for local runs. `--driver-selftest` exercises the driver
 selection/endpoint parsing without spawning anything, and
 `TRAININGAPP_SMOKE_EXE=<path>` points the smoke at an explicit exe
-(skipping the stale-build guard — operator assertion, logged at boot).
+(skipping the stale-build guard — operator assertion, the resolved path is
+logged at boot). `TRAININGAPP_SMOKE_WATCHDOG_MS=<ms>` overrides the run
+watchdog budget (clamped to 1-60 minutes; default 30 — the last-resort bound
+below the step/job walls). Exit codes: `0` all-pass, `1` any ladder assertion
+failed (assertion failures out-rank later infra errors), `2` harness infra
+failure; every boot-run exit prints `SMOKE: attach attempts timed out: N
+(boot-1: a, boot-2: b, other failures: m)` first so attach outcomes survive
+wedged runs.
 
 ## Ingestion, profiles, backup and recovery (B6, issue #64)
 
