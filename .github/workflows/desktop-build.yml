@@ -17,18 +17,27 @@ on:
       - 'packtool/**'
       - '.github/workflows/desktop-build.yml'
 
+# AC22 (issue #182): least-privilege token for the whole workflow — the
+# jobs only read the repository and upload artifacts.
+permissions:
+  contents: read
+
 jobs:
   desktop-build:
     name: Electron shell (unsigned NSIS x64)
     runs-on: windows-latest
-    # 30 was measured too tight once the smoke's worst-case budgets stack
-    # (both boots x [page-target wait + attach retries + renderer wait],
-    # PR-#172 review PRR-012); 35 keeps a verdict inside the wall clock.
-    timeout-minutes: 35
+    # The smoke's worst-case internal stack is ~30-31 min (both boots x
+    # [DevTools wait + page-target wait + attach retries + renderer wait],
+    # the ladder polls/evaluates, the relaunch poll, and the close windows).
+    # 40 gives the ~8-min build prefix plus the smoke step's own 32-min
+    # timeout room to land a VERDICT inside the wall (review PRR-007: with
+    # the old 35-min job wall the wall beat the watchdog and killed the run
+    # without dumps).
+    timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 'lts/*'
           cache: 'npm'
@@ -94,13 +103,6 @@ jobs:
       - name: Runtime preload smoke (real Electron, sandboxed bridge attach)
         run: npx --prefix desktop electron desktop/scripts/preload-runtime-smoke.cjs
 
-      - name: Upload installer artifact (fixture models - synthetic weights)
-        uses: actions/upload-artifact@v4
-        with:
-          name: trainingapp-desktop-windows-installer-fixture
-          path: desktop/desktop-release/*.exe
-          if-no-files-found: error
-
       # Issue #133 (AC7, cf. #131 item 2): the only committed gate that boots
       # the PACKAGED app — win-unpacked from this job's fixture build, hash
       # embedder seam, isolated store — asserting the first-run ladder
@@ -113,17 +115,48 @@ jobs:
       # runners (both websockets connect, then launch times out — harness,
       # not app); the CDP transport drives the identical ladder over
       # --remote-debugging-port instead. Local runs keep the windowed default.
+      #
+      # Windowed-driver CI-gate decision (issue #180 AC19): the windowed
+      # Playwright transport stays the local default with NO packaged CI gate —
+      # the #135 runner handshake flake is exactly why the CDP driver exists.
+      # The shared parse/selection paths ARE CI-gated (the Driver selftest
+      # step below and desktop/src/__tests__/packaged-smoke-contract.test.ts); the
+      # windowed launch path itself is exercised unpackaged by renderer-e2e.
+      # AC18 (issue #180): the driver parse/plumbing selftest — cheap, spawns
+      # nothing. Placed AFTER the installer build and immediately BEFORE the
+      # smoke step below: the 133-trace check-c7 contract requires the first
+      # packaged-smoke.mjs mention to follow the fixture build, and the smoke
+      # run line stays exactly `--driver cdp` (131-trace C7; appending
+      # --driver-selftest to it would skip the ladder entirely).
+      - name: Driver selftest (packaged-smoke parse contract)
+        run: node desktop/scripts/packaged-smoke.mjs --driver cdp --driver-selftest
+        timeout-minutes: 5
+
       - name: Packaged-boot smoke (win-unpacked, hash embedder)
         run: node desktop/scripts/packaged-smoke.mjs --driver cdp
+        # PRR-007: the step-level wall sits 2 min above the driver's 30-min
+        # watchdog so a wedged run yields the driver's own verdict (summary +
+        # both-boots dumps) instead of a wall cancellation with no evidence.
+        timeout-minutes: 32
+
+      # AC21 (issue #182): publish the fixture installer only AFTER the
+      # packaged-boot smoke has passed — a red smoke must not publish an
+      # artifact that looks shippable.
+      - name: Upload installer artifact (fixture models - synthetic weights)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: trainingapp-desktop-windows-installer-fixture
+          path: desktop/desktop-release/*.exe
+          if-no-files-found: error
 
   renderer-e2e:
     name: "Playwright under Electron (issue #67 AC1 smoke)"
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 'lts/*'
           cache: 'npm'
@@ -153,7 +186,7 @@ jobs:
 
       - name: Upload traces on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: renderer-e2e-traces
           path: |
@@ -168,20 +201,20 @@ jobs:
     # bounds anything that slips through (runner hangs, child not reaped).
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 'lts/*'
           cache: 'npm'
           cache-dependency-path: desktop/package-lock.json
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.11'
 
       - name: Cache pip packages
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~\AppData\Local\pip\Cache
           key: ${{ runner.os }}-backend-conformance-${{ hashFiles('contracts/tests/run_conformance.py') }}
@@ -210,20 +243,20 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 'lts/*'
           cache: 'npm'
           cache-dependency-path: desktop/package-lock.json
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.11'
 
       - name: Cache pip packages
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~\AppData\Local\pip\Cache
           key: ${{ runner.os }}-store-interop-${{ hashFiles('requirements.txt') }}
