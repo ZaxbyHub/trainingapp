@@ -76,7 +76,7 @@ export async function closeApp(app: ElectronApplication): Promise<void> {
   try {
     if (child !== undefined && child.exitCode === null && child.signalCode === null && child.pid !== undefined) {
       // Checked/liveness-guarded tree kill (issue #216 AC1): routes through
-      // the shared wrapper — raw taskkill lives only in scripts/kill-guard.mjs.
+      // the shared wrapper — raw taskkill lives only in the two allowed sites (scripts/kill-guard.mjs and the shipped packaged-smoke.mjs).
       killProcessTree(child.pid, {
         isAlive: (pid) => pid === child.pid && child.exitCode === null && child.signalCode === null,
         log: (msg) => console.warn(`launch-helpers: ${msg}`),

@@ -38,7 +38,11 @@ const SPEC_PATH = path.join(REPO_ROOT, 'desktop', 'src', '__tests__', 'packaged-
 const WORKFLOWS_DIR = path.join(REPO_ROOT, '.github', 'workflows');
 const PINS_PATH = path.join(WORKFLOWS_DIR, 'pins.json');
 
-/** The 10 frozen battery filter names (packaged-smoke-cdp batch's closed set). */
+/** The 10 frozen battery filter names (packaged-smoke-cdp batch's closed set).
+ *  Uniqueness is asserted WITHIN packaged-smoke-contract.test.ts — the battery's
+ *  frozen checks invoke `-t` file-scoped (PR #220 review PRR-003). Suite-wide
+ *  `-t kill-guard` also matches the harness-kill-guard contract family by
+ *  design (the C1 frozen filter `harness-kill-guard` contains it). */
 const FROZEN_FILTERS = [
   'watchdog-exit2',
   'attach-timeout-count',
@@ -66,29 +70,32 @@ function readSpecSource(): string {
   return fs.readFileSync(SPEC_PATH, 'utf8');
 }
 
-/** Every it()/test() name literal in the spec source. */
+/** Every it()/test() name literal in the spec source (any quote style — PR #220
+ *  review PRR-001: single-quote-only scraping let double-quoted/backtick names
+ *  evade both guards). A name with an escaped quote still parses loudly wrong
+ *  (set inequality fails), never silently invisible. */
 function parseTestNames(source: string): string[] {
   const names: string[] = [];
-  const re = /\b(?:it|test)(?:\.\w+)?\(\s*'([^']*)'/g;
+  const re = /\b(?:it|test)(?:\.\w+)?\(\s*(['"`])([^'"`]*)\1/g;
   for (;;) {
     const m = re.exec(source);
     if (m === null) break;
-    names.push(m[1]);
+    names.push(m[2]);
   }
   return names;
 }
 
-/** The published TEST_INVENTORY string literals in the spec source. */
+/** The published TEST_INVENTORY string literals in the spec source (any quote style). */
 function parsePublishedInventory(source: string): string[] {
   const start = source.indexOf('export const TEST_INVENTORY');
   expect(start, 'packaged-smoke-contract.test.ts must publish export const TEST_INVENTORY').toBeGreaterThanOrEqual(0);
   const block = source.slice(start, source.indexOf('];', start) + 2);
   const names: string[] = [];
-  const re = /'([^']*)'/g;
+  const re = /(['"`])([^'"`]*)\1/g;
   for (;;) {
     const m = re.exec(block);
     if (m === null) break;
-    names.push(m[1]);
+    names.push(m[2]);
   }
   return names;
 }
@@ -102,10 +109,23 @@ interface PinRecordEntry {
 function readPinRecord(): PinRecordEntry[] {
   const raw = JSON.parse(fs.readFileSync(PINS_PATH, 'utf8')) as { entries: PinRecordEntry[] };
   expect(Array.isArray(raw.entries), 'pins.json must carry an entries array').toBe(true);
+  // PR #220 review PRR-009b: the record validates its own shape — well-typed
+  // entries, no duplicate action@sha (first-match shadowing), no unused rows.
+  const seen = new Set<string>();
+  for (const entry of raw.entries) {
+    expect(typeof entry.action, 'pin entry action must be a string').toBe('string');
+    expect(typeof entry.sha, 'pin entry sha must be a string').toBe('string');
+    expect(Array.isArray(entry.versions), `pin entry ${entry.action} versions must be an array`).toBe(true);
+    for (const v of entry.versions) expect(typeof v, 'pin version labels must be strings').toBe('string');
+    const key = `${entry.action}@${entry.sha}`;
+    expect(seen.has(key), `duplicate pin record entry: ${key}`).toBe(false);
+    seen.add(key);
+  }
   return raw.entries;
 }
 
 const USES_LINE = /^\s*(?:-\s+)?uses:\s*(\S+)(.*)$/;
+const USES_KEY_SHAPE = /^\s*(?:-\s+)?["']?uses["']?\s*:/;
 const SHA_REF = /^([\w-]+\/[\w.-]+)@([0-9a-f]{40})$/;
 const COMMENT_LABEL = /^#\s*(\S+)\s*$/;
 const LABEL_SHAPE = /^v\d+(?:\.\d+)*$/;
@@ -114,11 +134,19 @@ describe('acceptance precision contract (issue #219)', () => {
   it('pin-comments: every third-party uses line is sha-pinned with a pin-record-agreeing version comment', () => {
     const record = readPinRecord();
     const problems: string[] = [];
+    const usedPairs = new Set<string>();
     let usesLines = 0;
     for (const file of fs.readdirSync(WORKFLOWS_DIR)) {
       if (!file.endsWith('.yml') && !file.endsWith('.yaml')) continue;
       const source = fs.readFileSync(path.join(WORKFLOWS_DIR, file), 'utf8');
       for (const line of source.split(/\r?\n/)) {
+        // Fail closed on `uses`-key spellings the strict parser cannot read
+        // (PR #220 review PRR-022: `uses : x` and `"uses": x` are the same
+        // YAML key and must not silently escape the pin check).
+        if (USES_KEY_SHAPE.test(line) && !USES_LINE.test(line)) {
+          problems.push(`${file}: unrecognized uses line spelling: ${line.trim()}`);
+          continue;
+        }
         const m = USES_LINE.exec(line);
         if (m === null) continue;
         const ref = m[1];
@@ -148,16 +176,22 @@ describe('acceptance precision contract (issue #219)', () => {
           problems.push(`${file}: action@sha absent from pins.json: ${ref}`);
           continue;
         }
+        usedPairs.add(`${action}@${sha}`);
         if (!entry.versions.includes(label)) {
           problems.push(`${file}: comment '${label}' disagrees with pins.json versions ${JSON.stringify(entry.versions)} for ${ref}`);
         }
       }
     }
+    // PRR-009b: a record entry no line uses is stale — flag it.
+    for (const entry of record) {
+      const key = `${entry.action}@${entry.sha}`;
+      if (!usedPairs.has(key)) problems.push(`pins.json entry is unused/stale: ${key}`);
+    }
     expect(problems, `pin-comment problems:\n${problems.join('\n')}`).toEqual([]);
     expect(usesLines, 'the workflows must carry third-party uses lines to validate').toBeGreaterThan(0);
   });
 
-  it('filter-uniqueness: each frozen battery filter matches exactly one test name', () => {
+  it('filter-uniqueness: each frozen battery filter matches exactly one test name in the battery spec', () => {
     const names = parseTestNames(readSpecSource());
     const problems: string[] = [];
     for (const filter of FROZEN_FILTERS) {

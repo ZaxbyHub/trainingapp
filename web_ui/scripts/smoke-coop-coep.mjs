@@ -30,7 +30,7 @@
  */
 
 import { createServer } from 'node:http';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync as fsRealpathSync, statSync } from 'node:fs';
 import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -41,8 +41,11 @@ const DIST = join(WEB_UI, 'dist');
 function isMain(metaUrl) {
   if (process.argv[1] === undefined) return false;
   try {
-    return existsSync(process.argv[1]) &&
-      resolve(process.argv[1]) === resolve(fileURLToPath(metaUrl));
+    // realpathSync on BOTH sides (PR #220 review PRR-005): lexical resolve()
+    // keeps a Windows junction/short-name path while the ESM loader
+    // canonicalizes import.meta.url, so a resolve()-based guard goes false
+    // through a junction and the CLI silently no-ops with exit 0.
+    return fsRealpathSync(process.argv[1]) === fsRealpathSync(fileURLToPath(metaUrl));
   } catch {
     return false;
   }
@@ -126,7 +129,10 @@ export async function run({
   if (chunkError) fail(chunkError);
 
   const server = createSmokeServer(distDir, port);
-  await new Promise((r) => server.listen(port, '127.0.0.1', r));
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', resolve);
+  });
   try {
     // Bounded readiness probe (issue #216 AC2): the same-line AbortSignal bound
     // is the census marker (check-census.sh fetch-bound is a same-line rule) —

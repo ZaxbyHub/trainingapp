@@ -68,24 +68,27 @@ describe('harness runner contracts A (issue #216 AC5)', () => {
   it('runner-contract: verify-preload-format pins the CommonJS sandbox preload shape', () => {
     expect(typeof verifyPreloadMain).toBe('function');
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-preload-'));
+    try {
+      // OK fixture: CommonJS content requiring electron.
+      fs.writeFileSync(path.join(tmp, 'index.cjs'), "const { contextBridge } = require('electron');\nmodule.exports = { contextBridge };\n");
+      expect(verifyPreloadFormat(tmp)).toEqual([]);
 
-    // OK fixture: CommonJS content requiring electron.
-    fs.writeFileSync(path.join(tmp, 'index.cjs'), "const { contextBridge } = require('electron');\nmodule.exports = { contextBridge };\n");
-    expect(verifyPreloadFormat(tmp)).toEqual([]);
+      // ESM syntax in the preload must be rejected (PRR95-001).
+      fs.writeFileSync(path.join(tmp, 'index.cjs'), "import { contextBridge } from 'electron';\nconst electron = require('electron');\n");
+      const esmErrors = verifyPreloadFormat(tmp);
+      expect(esmErrors.length).toBe(1);
+      expect(esmErrors[0]).toContain('ESM syntax');
 
-    // ESM syntax in the preload must be rejected (PRR95-001).
-    fs.writeFileSync(path.join(tmp, 'index.cjs'), "import { contextBridge } from 'electron';\nconst electron = require('electron');\n");
-    const esmErrors = verifyPreloadFormat(tmp);
-    expect(esmErrors.length).toBe(1);
-    expect(esmErrors[0]).toContain('ESM syntax');
-
-    // Missing index.cjs (with a stray index.js) must name the rename hint.
-    fs.rmSync(path.join(tmp, 'index.cjs'));
-    fs.writeFileSync(path.join(tmp, 'index.js'), "const electron = require('electron');\n");
-    const missingErrors = verifyPreloadFormat(tmp);
-    expect(missingErrors.length).toBe(1);
-    expect(missingErrors[0]).toContain('missing');
-    fs.rmSync(tmp, { recursive: true, force: true });
+      // Missing index.cjs (with a stray index.js) must name the rename hint.
+      fs.rmSync(path.join(tmp, 'index.cjs'));
+      fs.writeFileSync(path.join(tmp, 'index.js'), "const electron = require('electron');\n");
+      const missingErrors = verifyPreloadFormat(tmp);
+      expect(missingErrors.length).toBe(1);
+      expect(missingErrors[0]).toContain('missing');
+    } finally {
+      // PR #220 review PRR-014: never leak the fixture on an assertion failure.
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it('runner-contract: build-airgap runs exactly the airgap plan with VITE_AIRGAP=1 and an injected spawn seam', () => {
@@ -95,23 +98,41 @@ describe('harness runner contracts A (issue #216 AC5)', () => {
     // The load-bearing difference vs build:offline: the validate step carries --airgap.
     expect(steps[2].args).toEqual(['node', 'scripts/validate-build.mjs', '--airgap']);
 
-    const seen: Array<{ cmd: string; args: string[]; env: Record<string, string> }> = [];
-    const spawnSyncImpl = ((cmd: string, args: string[], opts: { env: Record<string, string> }) => {
-      seen.push({ cmd, args, env: opts.env });
+    const seen: Array<{ cmd: string; args: string[]; env: Record<string, string>; cwd: unknown; stdio: unknown }> = [];
+    const spawnSyncImpl = ((cmd: string, args: string[], opts: { env: Record<string, string>; cwd: unknown; stdio: unknown }) => {
+      seen.push({ cmd, args, env: opts.env, cwd: opts.cwd, stdio: opts.stdio });
       return { status: 0, error: null };
     }) as unknown as typeof import('node:child_process').spawnSync;
     const code = airgapMain({ spawnSyncImpl, log: () => {}, logError: () => {} });
     expect(code).toBe(0);
     expect(seen.length).toBe(3);
-    for (const call of seen) expect(call.env.VITE_AIRGAP).toBe('1');
+    for (const call of seen) {
+      expect(call.env.VITE_AIRGAP).toBe('1');
+      // PR #220 review PRR-011: the plan's load-bearing spawn options are
+      // asserted, not assumed (cwd must be web_ui, stdio must stream).
+      expect(call.cwd, 'airgap steps must run in the web_ui directory').toBeTruthy();
+      expect(call.stdio).toBe('inherit');
+    }
 
-    // A failing step stops the chain and propagates its exit code.
-    const failing = ((cmd: string, args: string[]) => {
-      seen.push({ cmd, args, env: {} });
+    // Chain-stop (PRR-011): a failing step must abort the chain — routed
+    // through airgapMain (not runStep), so deleting the early return kills
+    // this test.
+    const failFirst = ((cmd: string, args: string[]) => {
+      seen.push({ cmd, args, env: {}, cwd: undefined, stdio: undefined });
       return { status: 7, error: null };
     }) as unknown as typeof import('node:child_process').spawnSync;
-    const failedCode = runStep(steps[0], { env: { VITE_AIRGAP: '1' }, spawnSyncImpl: failing, logError: () => {} });
-    expect(failedCode).toBe(7);
+    const before = seen.length;
+    const failedCode = airgapMain({ spawnSyncImpl: failFirst, log: () => {}, logError: () => {} });
+    expect(failedCode, 'the failing step must propagate its exit code').toBe(7);
+    expect(seen.length - before, 'the chain must stop at the failing step').toBe(1);
+
+    // runStep itself still maps a nonzero spawn to its exit code.
+    const failing = ((cmd: string, args: string[]) => {
+      seen.push({ cmd, args, env: {}, cwd: undefined, stdio: undefined });
+      return { status: 7, error: null };
+    }) as unknown as typeof import('node:child_process').spawnSync;
+    const stepCode = runStep(steps[0], { env: { VITE_AIRGAP: '1' }, spawnSyncImpl: failing, logError: () => {} });
+    expect(stepCode).toBe(7);
   });
 
   it('runner-contract: smoke-coop-coep serves COOP/COEP from a fixture dist and rejects an unchunked index', async () => {
@@ -121,17 +142,21 @@ describe('harness runner contracts A (issue #216 AC5)', () => {
     expect(checkIndexHtml('<html></html>')).toContain('assets');
 
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'smoke-coop-'));
-    fs.mkdirSync(path.join(tmp, 'assets'));
-    fs.writeFileSync(path.join(tmp, 'index.html'), '<script src="/assets/index-abc.js"></script>');
-    fs.writeFileSync(path.join(tmp, 'assets', 'index-abc.js'), 'console.log(1);\n');
+    try {
+      fs.mkdirSync(path.join(tmp, 'assets'));
+      fs.writeFileSync(path.join(tmp, 'index.html'), '<script src="/assets/index-abc.js"></script>');
+      fs.writeFileSync(path.join(tmp, 'assets', 'index-abc.js'), 'console.log(1);\n');
 
-    const code = await smokeRun({ distDir: tmp, port: 4700 + Math.floor(Math.random() * 200), log: () => {}, logError: () => {} });
-    expect(code).toBe(0);
+      const code = await smokeRun({ distDir: tmp, port: 4700 + Math.floor(Math.random() * 200), log: () => {}, logError: () => {} });
+      expect(code).toBe(0);
 
-    // A missing index.html fails loud with exit 1.
-    const missingCode = await smokeRun({ distDir: path.join(tmp, 'nope'), port: 4900 + Math.floor(Math.random() * 200), log: () => {}, logError: () => {} });
-    expect(missingCode).toBe(1);
-    fs.rmSync(tmp, { recursive: true, force: true });
+      // A missing index.html fails loud with exit 1.
+      const missingCode = await smokeRun({ distDir: path.join(tmp, 'nope'), port: 4900 + Math.floor(Math.random() * 200), log: () => {}, logError: () => {} });
+      expect(missingCode).toBe(1);
+    } finally {
+      // PR #220 review PRR-014: never leak the fixture on an assertion failure.
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
 
     // The readiness fetch stays bounded (issue #216 AC2) on the fetch( line.
     const source = readRel('web_ui/scripts/smoke-coop-coep.mjs');

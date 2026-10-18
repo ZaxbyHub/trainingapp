@@ -123,11 +123,15 @@ in-repo so they are not tribal knowledge):
 2. **The packaged-smoke contract spec's extras-outside-frozen-set split is a
    deliberate design decision.** `desktop/src/__tests__/packaged-smoke-contract.test.ts`
    publishes `TEST_INVENTORY`, and its test names are a frozen contract: the
-   acceptance battery's `-t` filters (the "closed set") name exactly one test
-   each (enforced by `acceptance-precision-contract.test.ts` `-t
-   filter-uniqueness`), while the remaining tests are an explicit "declared
-   extras" list (enforced by `-t inventory`). The rationale: the frozen battery
-   must stay name-stable (its checks select tests by filter), yet precision
-   probes that strengthen the same surface should not be blocked from landing —
-   so they are declared, inventoried, and covered by the full suite instead of
-   silently riding a filter or silently sitting outside every check.
+   acceptance battery's `-t` filters (the "closed set") select exactly one test
+   each **within that spec file** — the battery's frozen checks invoke `-t`
+   file-scoped, enforced by `acceptance-precision-contract.test.ts` `-t
+   filter-uniqueness` — while the remaining tests are an explicit "declared
+   extras" list (enforced by `-t inventory`). Suite-wide `-t` filters are
+   substring matches and may also select the harness contract family (the
+   frozen `harness-kill-guard` filter intentionally contains `kill-guard`);
+   the closed-set guarantee is the file-scoped one. The rationale: the frozen
+   battery must stay name-stable (its checks select tests by filter), yet
+   precision probes that strengthen the same surface should not be blocked from
+   landing — so they are declared, inventoried, and covered by the full suite
+   instead of silently riding a filter or silently sitting outside every check.

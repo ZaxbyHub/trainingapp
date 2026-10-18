@@ -215,7 +215,7 @@ test('closeApp still kills the Electron tree when close() fails and disposes the
     expect(isProcessAlive(pid), `Electron PID ${pid} survived closeApp after a failed close()`).toBe(false);
   } finally {
     // Checked/liveness-guarded tree kill (issue #216 AC1): routes through the
-    // shared wrapper — raw taskkill lives only in scripts/kill-guard.mjs.
+    // shared wrapper — raw taskkill lives only in the two allowed sites (scripts/kill-guard.mjs and the shipped packaged-smoke.mjs).
     if (isProcessAlive(pid)) killProcessTree(pid, { isAlive: isProcessAlive, log: (m) => console.warn(m) });
   }
 });

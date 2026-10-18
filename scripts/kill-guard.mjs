@@ -32,6 +32,7 @@ export function defaultRunTaskkill(args) {
  */
 export function killProcessTree(pid, { runTaskkill = defaultRunTaskkill, isAlive, log = () => {} } = {}) {
   if (!Number.isInteger(pid) || pid <= 0) {
+    log(`kill-guard: refusing invalid pid: ${String(pid)}`);
     return { skipped: true, status: null, error: new Error(`invalid pid: ${String(pid)}`) };
   }
   if (typeof isAlive === 'function' && !isAlive(pid)) {

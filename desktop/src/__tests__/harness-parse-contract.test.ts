@@ -63,7 +63,7 @@ describe('harness parse contract (issue #216 AC4)', () => {
     expect(resolveKnowledgePackVersion(['--version', '2.0.0'])).toBe('2.0.0');
     // CLI-level fail-loud: a bare --version exits 2 before any build work.
     const script = path.join(REPO_ROOT, 'desktop', 'scripts', 'build-knowledge-pack.mjs');
-    const res = spawnSync(process.execPath, [script, '--version'], { encoding: 'utf8' });
+    const res = spawnSync(process.execPath, [script, '--version'], { encoding: 'utf8', timeout: 30_000 });
     expect(res.status).toBe(2);
     expect(res.stderr).toContain('--version requires a value');
   });
@@ -75,7 +75,7 @@ describe('harness parse contract (issue #216 AC4)', () => {
     expect(TRAINING_DEFAULT).toBe('1.0.1');
     expect(resolveTrainingPackVersion(['--version', '1.2.3'])).toBe('1.2.3');
     const script = path.join(REPO_ROOT, 'desktop', 'scripts', 'build-training-pack.mjs');
-    const res = spawnSync(process.execPath, [script, '--version'], { encoding: 'utf8' });
+    const res = spawnSync(process.execPath, [script, '--version'], { encoding: 'utf8', timeout: 30_000 });
     expect(res.status).toBe(2);
     expect(res.stderr).toContain('--version requires a value');
   });
@@ -87,7 +87,7 @@ describe('harness parse contract (issue #216 AC4)', () => {
     expect(resolveTrainingPackPublish([])).toBeUndefined();
     expect(resolveTrainingPackPublish(['--publish', 'D:/course'])).toBe('D:/course');
     const script = path.join(REPO_ROOT, 'desktop', 'scripts', 'build-training-pack.mjs');
-    const res = spawnSync(process.execPath, [script, '--publish'], { encoding: 'utf8' });
+    const res = spawnSync(process.execPath, [script, '--publish'], { encoding: 'utf8', timeout: 30_000 });
     expect(res.status).toBe(2);
     expect(res.stderr).toContain('--publish requires a value');
   });

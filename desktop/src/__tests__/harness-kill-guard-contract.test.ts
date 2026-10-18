@@ -115,25 +115,29 @@ describe('harness kill-guard contract (issue #216 AC1)', () => {
   }
 
   it('harness-kill-guard: raw taskkill sites are confined to the wrapper and packaged-smoke across the tracked harness trees', () => {
-    // Census scope (plan-critic R1 finding 3): git-tracked files under bench/,
-    // desktop/, web_ui/ — never trace docs, never .worktrees/ stale copies.
-    const listed = execFileSync('git', ['ls-files', 'bench', 'desktop', 'web_ui'], {
+    // Census scope (plan-critic R1 finding 3; tightened at PR #220 review
+    // PRR-008): git-tracked files under bench/, desktop/, web_ui/ AND scripts/
+    // — never trace docs, never .worktrees/ stale copies. The wrapper itself
+    // (scripts/kill-guard.mjs) and the packaged-smoke batch's shipped site are
+    // the two ALLOWED raw sites; any other hit is an offender.
+    const listed = execFileSync('git', ['ls-files', 'bench', 'desktop', 'web_ui', 'scripts'], {
       cwd: REPO_ROOT,
       encoding: 'utf8',
     });
+    const allowed = ['desktop/scripts/packaged-smoke.mjs', 'scripts/kill-guard.mjs'];
     const offenders: string[] = [];
     for (const rel of listed.split(/\r?\n/)) {
       if (rel === '') continue;
-      if (/\.(mjs|ts|js|cjs)$/.test(rel) === false) continue;
-      // Self-exclusion: this census file quotes the pattern it searches for
-      // (the regex constant above), which would otherwise self-match.
-      if (rel.endsWith('harness-kill-guard-contract.test.ts')) continue;
+      if (/\.(mjs|ts|js|cjs|mts)$/.test(rel) === false) continue;
       const source = readRel(rel);
       if (RAW_TASKKILL.test(source)) offenders.push(rel);
     }
+    // This census file quotes the pattern in its regex constant — the regex
+    // must not self-match (the literal text never satisfies it).
+    expect(RAW_TASKKILL.test(readRel('desktop/src/__tests__/harness-kill-guard-contract.test.ts'))).toBe(false);
     expect(
-      offenders,
+      offenders.sort(),
       `raw taskkill outside the allowed sites: ${JSON.stringify(offenders)}`,
-    ).toEqual(['desktop/scripts/packaged-smoke.mjs']);
+    ).toEqual(allowed.sort());
   });
 });

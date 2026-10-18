@@ -54,7 +54,7 @@ function cleanup() {
     }
     if (IS_WIN && child.pid && child.exitCode === null) {
       // Checked/liveness-guarded tree kill (issue #216 AC1): routes through
-      // the shared wrapper — raw taskkill lives only in scripts/kill-guard.mjs.
+      // the shared wrapper — raw taskkill lives only in the two allowed sites (scripts/kill-guard.mjs and the shipped packaged-smoke.mjs).
       killProcessTree(child.pid, {
         isAlive: (pid) => pid === child.pid && child.exitCode === null,
         log: (msg) => console.error(`run-conformance-host: ${msg}`),
