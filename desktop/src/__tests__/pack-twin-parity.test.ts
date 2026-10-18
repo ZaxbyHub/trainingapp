@@ -187,15 +187,22 @@ describe('pack twin parity (issue #213)', () => {
     // side-vs-side): entry-name/duplicate refusals and symlink refusal happen
     // strictly BEFORE the manifest-presence check, so a hostile archive is
     // refused on its shape regardless of what it packs.
+    //
+    // Anchored on the ordered CALL occurrences inside the extraction flow
+    // (reviewer round-1 critical: first-occurrence indexOf on bare names
+    // anchored to the function DEFINITIONS, so reversing the phases inside
+    // the extractor survived — the call-form literals below appear only in
+    // the flow). Named mutant: move the manifest-presence check above the
+    // entry-shape loop in either implementation -> this row must go red.
     const js = fs.readFileSync(PACK_EXTRACT_SRC, 'utf8');
-    const jsName = js.indexOf('safeEntryName(');
-    const jsSymlink = js.indexOf('isSymlinkEntry(');
-    const jsManifest = js.indexOf('missingManifestMessage(');
-    expect(jsName, 'js: entry-name refusal present').toBeGreaterThan(-1);
-    expect(jsSymlink, 'js: symlink refusal present').toBeGreaterThan(-1);
-    expect(jsManifest, 'js: manifest-presence check present').toBeGreaterThan(-1);
-    expect(jsName, 'js: entry-name refusal precedes manifest presence').toBeLessThan(jsManifest);
-    expect(jsSymlink, 'js: symlink refusal precedes manifest presence').toBeLessThan(jsManifest);
+    const jsName = js.indexOf('safeEntryName(entry.name)');
+    const jsSymlink = js.indexOf('isSymlinkEntry(unixPermissions)');
+    const jsManifest = js.indexOf('missingManifestMessage(filename)');
+    expect(jsName, 'js: entry-name refusal call present').toBeGreaterThan(-1);
+    expect(jsSymlink, 'js: symlink refusal call present').toBeGreaterThan(-1);
+    expect(jsManifest, 'js: manifest-presence call present').toBeGreaterThan(-1);
+    expect(jsName, 'js: entry-name refusal call precedes manifest presence').toBeLessThan(jsManifest);
+    expect(jsSymlink, 'js: symlink refusal call precedes manifest presence').toBeLessThan(jsManifest);
     // The shared rules module owns the JS duplicate-name refusal and is
     // reached through safeEntryName.
     const sharedRules = fs.readFileSync(
@@ -208,13 +215,13 @@ describe('pack twin parity (issue #213)', () => {
     expect(safeEntryName('pack.json'), 'sanity: the rules are reachable from the extractor').toBe('pack.json');
 
     const py = fs.readFileSync(PY_EXTRACT_SRC, 'utf8');
-    const pyName = py.indexOf('safe_entry_name(');
+    const pyName = py.indexOf('safe_entry_name(info.filename)');
     const pyDup = py.indexOf('duplicate archive entry');
-    const pySymlink = py.indexOf('_is_symlink_entry(');
+    const pySymlink = py.indexOf('_is_symlink_entry(info)');
     const pyManifest = py.indexOf('no pack.json manifest');
-    expect(pyName, 'py: entry-name refusal present').toBeGreaterThan(-1);
+    expect(pyName, 'py: entry-name refusal call present').toBeGreaterThan(-1);
     expect(pyDup, 'py: duplicate refusal present').toBeGreaterThan(-1);
-    expect(pySymlink, 'py: symlink refusal present').toBeGreaterThan(-1);
+    expect(pySymlink, 'py: symlink refusal call present').toBeGreaterThan(-1);
     expect(pyManifest, 'py: manifest-presence check present').toBeGreaterThan(-1);
     expect(pyName, 'py: entry-name refusal precedes manifest presence').toBeLessThan(pyManifest);
     expect(pyDup, 'py: duplicate refusal precedes manifest presence').toBeLessThan(pyManifest);

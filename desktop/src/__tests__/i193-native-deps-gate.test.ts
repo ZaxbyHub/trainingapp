@@ -181,6 +181,12 @@ describe('native-deps gate ADOPTION (issue #203)', () => {
     ]);
     const gateTernary =
       /\?\s*(?:it|describe)(?:\.skip)?\s*:\s*(?:it|describe)\.skip\b|\?\s*(?:it|describe)\.skip\s*:\s*(?:it|describe)\b/;
+    // Bare it.skip/describe.skip token ban (reviewer round-1 finding: an
+    // indirect `if (!existsSync(...)) itReal = it.skip` gate carries no flag
+    // token, no probed addon name, and no ternary — the token ban is the
+    // clause that catches it). it.skipIf is vitest's VISIBLE conditional skip
+    // and is deliberately allowed (it shows in the runner counts).
+    const skipToken = /\bit\.skip\b|\bdescribe\.skip\b/;
     const probeConstruction = /\bNATIVE_DEPS_PRESENT\b|fs\.existsSync\([^)]*better-sqlite3/;
     const factoryUse = /\bnativeDeps(?:It|DescribeGroup|Decision|Present)\s*\(/;
     const offenders: string[] = [];
@@ -210,6 +216,11 @@ describe('native-deps gate ADOPTION (issue #203)', () => {
         if (reason === undefined) {
           offenders.push(`${rel}: bare skip-gate ternary (use nativeDepsIt / nativeDepsDescribeGroup)`);
         }
+      }
+      if (skipToken.test(source) && !ternaryExempt.has(rel)) {
+        offenders.push(
+          `${rel}: bare it.skip/describe.skip outside the factory (use nativeDepsIt / nativeDepsDescribeGroup)`,
+        );
       }
       if (factoryUse.test(source) && !source.includes("from './fixtures/native-deps-gate.js'")) {
         offenders.push(`${rel}: calls the gate factory without importing it from './fixtures/native-deps-gate.js'`);

@@ -102,8 +102,8 @@ describe('ci gate required wiring (issue #215 AC13)', () => {
     expect(security, 'the security workflow must keep an unscoped pull_request trigger').not.toMatch(
       /^\s{4,}(paths|paths-ignore):/m,
     );
-    expect(security, 'the security job must carry no job-level if: or needs:').not.toMatch(
-      /^    (if|needs):/m,
+    expect(security, 'the security job must carry no job-level if:, needs:, or continue-on-error').not.toMatch(
+      /^    (if|needs|continue-on-error):/m,
     );
 
     // (4) Structural roster rule: every convention match is either rostered
