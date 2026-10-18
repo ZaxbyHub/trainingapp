@@ -108,9 +108,10 @@ describe('harness runner contracts A (issue #216 AC5)', () => {
     expect(seen.length).toBe(3);
     for (const call of seen) {
       expect(call.env.VITE_AIRGAP).toBe('1');
-      // PR #220 review PRR-011: the plan's load-bearing spawn options are
-      // asserted, not assumed (cwd must be web_ui, stdio must stream).
-      expect(call.cwd, 'airgap steps must run in the web_ui directory').toBeTruthy();
+      // PR #220 review PRR-011 + final-critic: the plan's load-bearing spawn
+      // options are asserted, not assumed (cwd must be the web_ui dir, stdio
+      // must stream).
+      expect(String(call.cwd), 'airgap steps must run in the web_ui directory').toMatch(/[\\/]web_ui$/);
       expect(call.stdio).toBe('inherit');
     }
 
@@ -167,5 +168,12 @@ describe('harness runner contracts A (issue #216 AC5)', () => {
     }
     // createSmokeServer is a real exported seam.
     expect(typeof createSmokeServer).toBe('function');
+    // PRR-005 regression pin (final-critic): the entry guard must canonicalize
+    // BOTH sides with realpathSync — a resolve()-based guard silently no-ops
+    // through a Windows junction (false-green CLI). Alias-tolerant shape match.
+    const guardSource = readRel('web_ui/scripts/smoke-coop-coep.mjs');
+    expect(guardSource, 'entry guard must realpath both sides').toMatch(
+      /ealpathSync\(process\.argv\[1\]\) === [A-Za-z]*ealpathSync\(fileURLToPath/,
+    );
   });
 });

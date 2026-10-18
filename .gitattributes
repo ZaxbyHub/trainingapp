@@ -23,17 +23,20 @@ contracts/fixtures/source-docs/** -text
 # CRLF without an eol rule. LF everywhere, no exceptions.
 desktop/scripts/*.mjs text eol=lf
 
-# Harness runners (issue #216 AC5; PR #220 review PRR-017): the bench and
-# web_ui script runners carry #!/usr/bin/env node shebangs and are now
-# dynamically imported by desktop vitest specs (harness-runner-contract-*.test.ts)
-# — the same shebang + CRLF SyntaxError surface as the E1 staging scripts
-# above. The shared kill wrapper (scripts/kill-guard.mjs) is imported by the
-# specs and e2e helpers too. Globs below cover the top-level and nested script
-# trees these specs import; LF everywhere in them.
+# Harness runners (issue #216 AC5; PR #220 review PRR-017 + final-critic):
+# the bench and web_ui script runners carry #!/usr/bin/env node shebangs and
+# are now dynamically imported by desktop vitest specs
+# (harness-runner-contract-*.test.ts) — the same shebang + CRLF SyntaxError
+# surface as the E1 staging scripts above. The shared kill wrapper
+# (scripts/kill-guard.mjs) is imported by the specs and e2e helpers too, and
+# its .d.mts declaration is covered for checkout byte-stability. Globs below
+# cover the top-level and nested script trees these specs import; LF
+# everywhere in them.
 bench/*.mjs text eol=lf
 web_ui/scripts/*.mjs text eol=lf
 web_ui/scripts/**/*.mjs text eol=lf
 scripts/*.mjs text eol=lf
+scripts/*.mts text eol=lf
 
 # Twinned pack archive rules (trace browser-training-parity, ADR-0012): the
 # desktop and browser copies are compared byte-for-byte by

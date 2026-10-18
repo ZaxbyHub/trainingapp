@@ -70,33 +70,49 @@ function readSpecSource(): string {
   return fs.readFileSync(SPEC_PATH, 'utf8');
 }
 
-/** Every it()/test() name literal in the spec source. Each quote style is
- *  matched by its own alternative (PR #220 review PRR-001 round 2), so a
- *  double-quoted name containing apostrophes (`it("won't boot")`) is visible
- *  too. Escaped-quote names still parse loudly wrong (set inequality fails),
- *  never silently invisible. */
+/** Unescape a quoted literal body (`\'` -> `'`) so escaped-quote names parse
+ *  to their real test names. */
+function unescapeQuoteBody(body: string): string {
+  return body.replace(/\\(.)/g, '$1');
+}
+
+/** Every it()/test() name literal in the spec source: per-quote-style
+ *  alternation with escaped-quote support, and the `it.each(...)(...)` call
+ *  shape (PR #220 review rounds 1-2 + final-critic). A name written as any
+ *  quote literal — including apostrophes inside double quotes and escaped
+ *  quotes inside single quotes — is visible to both guards. Known residual
+ *  (recorded, not claimed): a first it.each argument containing nested
+ *  parentheses is not matched. */
+const NAME_CALL =
+  /\b(?:it|test)(?:\.\w+)?(?:\((?:[^()]*)\))?\(\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"|`((?:[^`\\]|\\.)*)`)/g;
+
 function parseTestNames(source: string): string[] {
   const names: string[] = [];
-  const re = /\b(?:it|test)(?:\.\w+)?\(\s*(?:'([^']*)'|"([^"]*)"|`([^`]*)`)/g;
+  const re = new RegExp(NAME_CALL.source, 'g');
   for (;;) {
     const m = re.exec(source);
     if (m === null) break;
-    names.push(m[1] ?? m[2] ?? m[3]);
+    names.push(unescapeQuoteBody(m[1] ?? m[2] ?? m[3]));
   }
   return names;
 }
 
-/** The published TEST_INVENTORY string literals in the spec source (any quote style). */
+/** The published TEST_INVENTORY string literals in the spec source. Line and
+ *  block comments are stripped first so a comment apostrophe cannot fabricate
+ *  a phantom entry (final-critic probe). */
 function parsePublishedInventory(source: string): string[] {
   const start = source.indexOf('export const TEST_INVENTORY');
   expect(start, 'packaged-smoke-contract.test.ts must publish export const TEST_INVENTORY').toBeGreaterThanOrEqual(0);
   const block = source.slice(start, source.indexOf('];', start) + 2);
+  const uncommented = block
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
   const names: string[] = [];
-  const re = /'([^']*)'|"([^"]*)"|`([^`]*)`/g;
+  const re = /'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"|`((?:[^`\\]|\\.)*)`/g;
   for (;;) {
-    const m = re.exec(block);
+    const m = re.exec(uncommented);
     if (m === null) break;
-    names.push(m[1] ?? m[2] ?? m[3]);
+    names.push(unescapeQuoteBody(m[1] ?? m[2] ?? m[3]));
   }
   return names;
 }

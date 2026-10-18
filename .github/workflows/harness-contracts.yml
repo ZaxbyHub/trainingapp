@@ -58,4 +58,6 @@ jobs:
         run: npm --prefix desktop ci --no-audit --no-fund
 
       - name: Harness contract guards (kill wrapper, parse, runner seams, pin precision)
-        run: npm --prefix desktop test -- src/__tests__/acceptance-precision-contract.test.ts src/__tests__/harness-kill-guard-contract.test.ts src/__tests__/harness-parse-contract.test.ts src/__tests__/harness-runner-contract-a.test.ts src/__tests__/harness-runner-contract-b.test.ts
+        # Filename filters, not a fixed file list (final-critic): any future
+        # harness-*.test.ts triggers AND runs here.
+        run: npm --prefix desktop test -- src/__tests__/harness- src/__tests__/acceptance-precision-contract.test.ts
