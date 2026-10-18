@@ -28,6 +28,27 @@ function isMain(metaUrl) {
   }
 }
 
+/** Issue #221: a value-requiring flag present without a value fails loud. */
+function readValueArgv(argv, i, flag) {
+  const value = argv[i + 1];
+  if (value === undefined || value.startsWith('--')) {
+    throw new Error(`${flag} requires a value`);
+  }
+  return value;
+}
+
+/** Issue #221: numeric bench flags must be positive integers — a bare or
+ *  non-numeric value used to flow NaN into the row and prompt sizing
+ *  (PR #220 review PRR-010). */
+function readPositiveInt(argv, i, flag) {
+  const raw = readValueArgv(argv, i, flag);
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) {
+    throw new Error(`${flag} must be a positive integer`);
+  }
+  return n;
+}
+
 export function parseArgs(argv) {
   const args = { 'max-tokens': 128, threads: 8, 'prompt-tokens': 64 };
   for (let i = 0; i < argv.length; i += 1) {
@@ -35,9 +56,9 @@ export function parseArgs(argv) {
       case '--model': args.model = argv[++i]; break;
       case '--gguf': args.gguf = argv[++i]; break;
       case '--quant': args.quant = argv[++i]; break;
-      case '--threads': args.threads = Number.parseInt(argv[++i], 10); break;
-      case '--max-tokens': args['max-tokens'] = Number.parseInt(argv[++i], 10); break;
-      case '--prompt-tokens': args['prompt-tokens'] = Number.parseInt(argv[++i], 10); break;
+      case '--threads': args.threads = readPositiveInt(argv, i, '--threads'); i += 1; break;
+      case '--max-tokens': args['max-tokens'] = readPositiveInt(argv, i, '--max-tokens'); i += 1; break;
+      case '--prompt-tokens': args['prompt-tokens'] = readPositiveInt(argv, i, '--prompt-tokens'); i += 1; break;
       case '--json': args.json = argv[++i]; break;
       case '--profile': args.profile = argv[++i]; break;
       default: throw new Error(`unknown argument: ${argv[i]}`);
@@ -50,7 +71,15 @@ export function parseArgs(argv) {
 }
 
 export async function main() {
-  const args = parseArgs(process.argv.slice(2));
+  let args;
+  try {
+    args = parseArgs(process.argv.slice(2));
+  } catch (err) {
+    // Issue #221: CLI parse errors fail loud with exit 2 (the batch
+    // convention); runtime failures keep the exit-1 path below.
+    console.error(`[node_bench_driver] ${err instanceof Error ? err.message : String(err)}`);
+    return 2;
+  }
   const { LlamaEngine } = await import(
     pathToFileURL(path.join(repoRoot, 'desktop', 'dist', 'main', 'backend', 'inference', 'llama-engine.js')).href
   );
@@ -130,8 +159,13 @@ export async function main() {
 // Entry guard (issue #216 AC5): importing this module must not run the
 // benchmark; only direct execution drives the CLI.
 if (isMain(import.meta.url)) {
-  main().catch((err) => {
-    console.error(`[node_bench_driver] FAILED: ${err instanceof Error ? err.message : err}`);
-    process.exit(1);
-  });
+  main().then(
+    (code) => {
+      if (code !== undefined) process.exit(code);
+    },
+    (err) => {
+      console.error(`[node_bench_driver] FAILED: ${err instanceof Error ? err.message : err}`);
+      process.exit(1);
+    },
+  );
 }

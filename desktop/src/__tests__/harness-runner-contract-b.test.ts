@@ -70,6 +70,39 @@ describe('harness runner contracts B (issue #216 AC5)', () => {
     expect(source).toMatch(/if \(isMain\(import\.meta\.url\)\)/);
   });
 
+  it('runner-contract: node_bench_driver node-bench-flags-validate rejects non-integer, NaN, and sub-1 values', () => {
+    // Issue #221 AC2: a present but non-numeric or non-positive value fails
+    // loud — it must never flow NaN into the row or prompt sizing.
+    expect(() => nodeBenchParseArgs(['--model', 'm', '--gguf', 'g', '--threads', 'abc'])).toThrow(
+      '--threads must be a positive integer',
+    );
+    expect(() => nodeBenchParseArgs(['--model', 'm', '--gguf', 'g', '--threads', '0'])).toThrow(
+      '--threads must be a positive integer',
+    );
+    expect(() => nodeBenchParseArgs(['--model', 'm', '--gguf', 'g', '--threads', '-1'])).toThrow(
+      '--threads must be a positive integer',
+    );
+    expect(() => nodeBenchParseArgs(['--model', 'm', '--gguf', 'g', '--max-tokens', '1.5'])).toThrow(
+      '--max-tokens must be a positive integer',
+    );
+    expect(() => nodeBenchParseArgs(['--model', 'm', '--gguf', 'g', '--prompt-tokens', 'NaN'])).toThrow(
+      '--prompt-tokens must be a positive integer',
+    );
+  });
+
+  it('runner-contract: node_bench_driver node-bench-flags-defaults keeps documented defaults and explicit values', () => {
+    // Issue #221 AC3: absent numeric flags keep their documented defaults
+    // (8/128/64); explicit positive integers are taken as-is.
+    const defaults = nodeBenchParseArgs(['--model', 'm', '--gguf', 'g']);
+    expect(defaults.threads).toBe(8);
+    expect(defaults['max-tokens']).toBe(128);
+    expect(defaults['prompt-tokens']).toBe(64);
+    const explicit = nodeBenchParseArgs(['--model', 'm', '--gguf', 'g', '--threads', '4', '--max-tokens', '256', '--prompt-tokens', '32']);
+    expect(explicit.threads).toBe(4);
+    expect(explicit['max-tokens']).toBe(256);
+    expect(explicit['prompt-tokens']).toBe(32);
+  });
+
   it('runner-contract: retrieval_bench_driver pins bounded fetches and wrapper-routed kills', () => {
     expect(typeof retrievalMain).toBe('function');
     expect(typeof fetchJson).toBe('function');
