@@ -5,7 +5,8 @@
  * value-requiring flag present without a value fails loud (never a silent
  * default), while documented boolean flags and documented absent-flag defaults
  * keep their semantics. One test per site; every name carries the frozen
- * `parse-missing-value` filter.
+ * `parse-missing-value` filter. Also covers the issue #221 node_bench numeric
+ * flag surface (bare flags), which shares the same fail-loud contract.
  */
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
@@ -26,6 +27,7 @@ import {
   resolvePublishArgv as resolveTrainingPackPublish,
   DEFAULT_PACK_VERSION as TRAINING_DEFAULT,
 } from '../../../desktop/scripts/build-training-pack.mjs';
+import { parseArgs as nodeBenchParseArgs } from '../../../bench/node_bench_driver.mjs';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -103,5 +105,32 @@ describe('harness parse contract (issue #216 AC4)', () => {
     const valued = wllamaParseArgs(['--model', 'm.gguf', '--prompt-tokens', '64']);
     expect(valued.model).toBe('m.gguf');
     expect(valued['prompt-tokens']).toBe('64');
+  });
+
+  it('parse-missing-value: node-bench-flags-parse bare numeric flags fail loud (unit + CLI exit 2)', () => {
+    // Issue #221 AC1: each numeric flag, bare at end-of-argv and bare before
+    // another flag, throws "<flag> requires a value" (never a silent NaN).
+    for (const flag of ['--threads', '--max-tokens', '--prompt-tokens']) {
+      expect(() => nodeBenchParseArgs(['--model', 'm', '--gguf', 'g', flag])).toThrow(`${flag} requires a value`);
+      expect(() => nodeBenchParseArgs([flag, '--model', 'm', '--gguf', 'g'])).toThrow(`${flag} requires a value`);
+    }
+    // CLI-level fail-loud: every bare numeric flag exits 2 with the AC1
+    // message through main()'s exit-2 path, and an invalid value exits 2
+    // with the AC2 message (both parse classes pinned at the process level).
+    const script = path.join(REPO_ROOT, 'bench', 'node_bench_driver.mjs');
+    for (const flag of ['--threads', '--max-tokens', '--prompt-tokens']) {
+      const res = spawnSync(process.execPath, [script, '--model', 'm', '--gguf', 'g', flag], {
+        encoding: 'utf8',
+        timeout: 30_000,
+      });
+      expect(res.status).toBe(2);
+      expect(res.stderr).toContain(`${flag} requires a value`);
+    }
+    const invalid = spawnSync(process.execPath, [script, '--model', 'm', '--gguf', 'g', '--threads', 'abc'], {
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    expect(invalid.status).toBe(2);
+    expect(invalid.stderr).toContain('--threads must be a positive integer');
   });
 });

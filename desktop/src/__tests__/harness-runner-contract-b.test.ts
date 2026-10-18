@@ -3,8 +3,10 @@
  * the four bench harness runners. Part A covers desktop/web_ui runners.
  *
  * Each runner is import-safe (the packaged-smoke entry-guard pattern) and
- * pins its parse/kill/fetch contract. One test per runner, each named
- * `runner-contract: <key>` exactly as the frozen check enumerates.
+ * pins its parse/kill/fetch contract. Each runner's core contract test is
+ * named `runner-contract: <key>` exactly as the frozen check enumerates;
+ * node_bench_driver carries two extra issue-#221 flag-validation tests under
+ * the same key prefix.
  */
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
@@ -68,6 +70,43 @@ describe('harness runner contracts B (issue #216 AC5)', () => {
     expect(() => nodeBenchParseArgs(['--bogus'])).toThrow(/unknown argument/);
     const source = readRel('bench/node_bench_driver.mjs');
     expect(source).toMatch(/if \(isMain\(import\.meta\.url\)\)/);
+  });
+
+  it('runner-contract: node_bench_driver node-bench-flags-validate rejects non-integer, NaN, and sub-1 values', async () => {
+    // Issue #221 AC2: a present but non-numeric or non-positive value fails
+    // loud — it must never flow NaN into the row or prompt sizing. Full
+    // matrix: every invalid class on every flag, so a per-flag divergence in
+    // readPositiveInt cannot survive. The hex/exponent/padded spellings pin
+    // the decimal-only grammar (PR #222 review PRR-002).
+    for (const flag of ['--threads', '--max-tokens', '--prompt-tokens']) {
+      for (const bad of ['abc', 'NaN', '1.5', '0', '-1', '0x10', '1e3', ' 8']) {
+        expect(() => nodeBenchParseArgs(['--model', 'm', '--gguf', 'g', flag, bad])).toThrow(
+          `${flag} must be a positive integer`,
+        );
+      }
+    }
+    // A parse failure resolves main() with 2 (never rejects): the exit-2
+    // contract pinned without spawning a process (PR #222 review PRR-004).
+    const origArgv = process.argv;
+    try {
+      process.argv = [process.execPath, 'node_bench_driver.mjs', '--model', 'm', '--gguf', 'g', '--threads', 'abc'];
+      await expect(nodeBenchMain()).resolves.toBe(2);
+    } finally {
+      process.argv = origArgv;
+    }
+  });
+
+  it('runner-contract: node_bench_driver node-bench-flags-defaults keeps documented defaults and explicit values', () => {
+    // Issue #221 AC3: absent numeric flags keep their documented defaults
+    // (8/128/64); explicit positive integers are taken as-is.
+    const defaults = nodeBenchParseArgs(['--model', 'm', '--gguf', 'g']);
+    expect(defaults.threads).toBe(8);
+    expect(defaults['max-tokens']).toBe(128);
+    expect(defaults['prompt-tokens']).toBe(64);
+    const explicit = nodeBenchParseArgs(['--model', 'm', '--gguf', 'g', '--threads', '4', '--max-tokens', '256', '--prompt-tokens', '32']);
+    expect(explicit.threads).toBe(4);
+    expect(explicit['max-tokens']).toBe(256);
+    expect(explicit['prompt-tokens']).toBe(32);
   });
 
   it('runner-contract: retrieval_bench_driver pins bounded fetches and wrapper-routed kills', () => {
