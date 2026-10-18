@@ -22,7 +22,7 @@
  *   node bench/wllama_bench_driver.mjs --list-modes
  *   node bench/wllama_bench_driver.mjs --run --model models/lfm2.5-vl-450m/model.gguf \
  *     --browser "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe" \
- *     --prompt-tokens 256 --max-tokens 16 --json
+ *     --prompt-tokens 256 --max-tokens 16
  */
 import http from 'node:http';
 import { spawn } from 'node:child_process';
@@ -59,13 +59,26 @@ function log(msg) {
   process.stderr.write(`[wllama-bench] ${msg}\n`);
 }
 
-function parseArgs(argv) {
+// Issue #216 AC4: value-requiring flags fail loud when present without a
+// value; boolean flags are named here so their bare form is documented.
+export const VALUE_FLAGS = new Set(['model', 'browser', 'prompt-tokens', 'max-tokens']);
+export const BOOLEAN_FLAGS = new Set(['run', 'chat', 'list-modes']);
+
+export function parseArgs(argv) {
   const args = { _: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a.startsWith('--')) {
       const key = a.slice(2);
-      if (argv[i + 1] && !argv[i + 1].startsWith('--')) {
+      const next = argv[i + 1];
+      const hasValue = next !== undefined && !next.startsWith('--');
+      if (VALUE_FLAGS.has(key)) {
+        if (!hasValue) {
+          // Bare value-requiring flag: fail loud, never a silent default.
+          throw new Error(`--${key} requires a value`);
+        }
+        args[key] = argv[++i];
+      } else if (hasValue) {
         args[key] = argv[++i];
       } else {
         args[key] = true;
@@ -508,8 +521,14 @@ async function runBothModes(opts) {
   return rows;
 }
 
-function main() {
-  const args = parseArgs(process.argv.slice(2));
+export function main() {
+  let args;
+  try {
+    args = parseArgs(process.argv.slice(2));
+  } catch (err) {
+    process.stderr.write(`[wllama-bench] ${err instanceof Error ? err.message : String(err)}\n`);
+    return 2;
+  }
   if (args['list-modes']) {
     process.stdout.write(JSON.stringify({ modes: MODES }, null, 2) + '\n');
     return 0;
@@ -556,11 +575,23 @@ function main() {
       });
     return undefined;
   }
-  process.stdout.write('usage: wllama_bench_driver.mjs --list-modes | --run --model <gguf> --browser <exe> [--prompt-tokens N] [--max-tokens N] [--chat (diagnostic only; rows are NOT for bench/RESULTS.md)] [--json]\n');
+  process.stdout.write('usage: wllama_bench_driver.mjs --list-modes | --run --model <gguf> --browser <exe> [--prompt-tokens N] [--max-tokens N] [--chat (diagnostic only; rows are NOT for bench/RESULTS.md)]\n');
   return 2;
 }
 
-// entry
-const code = main();
-if (code !== undefined) process.exit(code);
+function isMain(metaUrl) {
+  if (process.argv[1] === undefined) return false;
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(metaUrl));
+  } catch {
+    return false;
+  }
+}
+
+// Entry guard (issue #216 AC5): importing this module must not run the
+// benchmark; only direct execution drives the CLI.
+if (isMain(import.meta.url)) {
+  const code = main();
+  if (code !== undefined) process.exit(code);
+}
 void crypto; void machineTuple;

@@ -17,7 +17,7 @@
 // Requires the desktop package to be compiled first:
 //   npm --prefix desktop ci && npm --prefix desktop run compile
 // Requires python with httpx on PATH (override with --python / PYTHON env).
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -25,6 +25,7 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { killProcessTree } from '../../scripts/kill-guard.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const hostEntry = path.join(repoRoot, 'desktop', 'dist', 'main', 'backend', 'dev-server.js');
@@ -52,11 +53,12 @@ function cleanup() {
       /* already gone */
     }
     if (IS_WIN && child.pid && child.exitCode === null) {
-      try {
-        spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-      } catch {
-        /* best effort */
-      }
+      // Checked/liveness-guarded tree kill (issue #216 AC1): routes through
+      // the shared wrapper — raw taskkill lives only in the two allowed sites (scripts/kill-guard.mjs and the shipped packaged-smoke.mjs).
+      killProcessTree(child.pid, {
+        isAlive: (pid) => pid === child.pid && child.exitCode === null,
+        log: (msg) => console.error(`run-conformance-host: ${msg}`),
+      });
     }
   }
   for (const socket of sockets) {

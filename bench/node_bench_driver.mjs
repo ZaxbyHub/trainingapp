@@ -10,7 +10,7 @@
 //     --gguf models/gemma-4-e2b-it/model.gguf --threads 8 \
 //     [--quant Q4_K_M] [--max-tokens 128] [--json row.json]
 // Machine tag: BENCH_MACHINE_TAG env (default devstation).
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, realpathSync } from 'node:fs';
 import { performance } from 'node:perf_hooks';
 import path from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -19,7 +19,16 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-function parseArgs(argv) {
+function isMain(metaUrl) {
+  if (process.argv[1] === undefined) return false;
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(metaUrl));
+  } catch {
+    return false;
+  }
+}
+
+export function parseArgs(argv) {
   const args = { 'max-tokens': 128, threads: 8, 'prompt-tokens': 64 };
   for (let i = 0; i < argv.length; i += 1) {
     switch (argv[i]) {
@@ -40,7 +49,7 @@ function parseArgs(argv) {
   return args;
 }
 
-async function main() {
+export async function main() {
   const args = parseArgs(process.argv.slice(2));
   const { LlamaEngine } = await import(
     pathToFileURL(path.join(repoRoot, 'desktop', 'dist', 'main', 'backend', 'inference', 'llama-engine.js')).href
@@ -118,7 +127,11 @@ async function main() {
   console.log(line);
 }
 
-main().catch((err) => {
-  console.error(`[node_bench_driver] FAILED: ${err instanceof Error ? err.message : err}`);
-  process.exit(1);
-});
+// Entry guard (issue #216 AC5): importing this module must not run the
+// benchmark; only direct execution drives the CLI.
+if (isMain(import.meta.url)) {
+  main().catch((err) => {
+    console.error(`[node_bench_driver] FAILED: ${err instanceof Error ? err.message : err}`);
+    process.exit(1);
+  });
+}

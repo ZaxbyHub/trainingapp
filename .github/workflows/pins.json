@@ -1,0 +1,60 @@
+{
+  "$comment": "Committed action pin record (issue #219 AC1). Every third-party `uses:` line in .github/workflows/*.yml must pin one of these action@sha pairs and carry a version comment whose label is in that pair's versions list (labels in use across the repo; the SHA is the binding, labels are human aliases). Validated offline by desktop/src/__tests__/acceptance-precision-contract.test.ts -t pin-comments. Adding a new pinned action requires a record entry here; changing a pin requires updating the entry's sha and versions together.",
+  "entries": [
+    {
+      "action": "actions/checkout",
+      "sha": "11bd71901bbe5b1630ceea73d27597364c9af683",
+      "versions": ["v4.2.2"]
+    },
+    {
+      "action": "actions/checkout",
+      "sha": "11d5960a326750d5838078e36cf38b85af677262",
+      "versions": ["v4"]
+    },
+    {
+      "action": "actions/setup-python",
+      "sha": "a26af69be951a213d495a4c3e4e4022e16d87065",
+      "versions": ["v5", "v5.6.0"]
+    },
+    {
+      "action": "actions/setup-node",
+      "sha": "49933ea5288caeca8642d1e84afbd3f7d6820020",
+      "versions": ["v4", "v4.4.0"]
+    },
+    {
+      "action": "actions/upload-artifact",
+      "sha": "ea165f8d65b6e75b540449e92b4886f43607fa02",
+      "versions": ["v4", "v4.6.2"]
+    },
+    {
+      "action": "actions/cache",
+      "sha": "5a3ec84eff668545956fd18022155c47e93e2684",
+      "versions": ["v4.2.3"]
+    },
+    {
+      "action": "actions/cache",
+      "sha": "0057852bfaa89a56745cba8c7296529d2fc39830",
+      "versions": ["v4"]
+    },
+    {
+      "action": "actions/cache",
+      "sha": "6f8efc29b200d32929f49075959781ed54ec270c",
+      "versions": ["v3"]
+    },
+    {
+      "action": "codecov/codecov-action",
+      "sha": "cb6530fbecd68d5f1ee7a3dcd113450ea8d5d6d4",
+      "versions": ["v5.1.2"]
+    },
+    {
+      "action": "softprops/action-gh-release",
+      "sha": "de2c0eb89ae2a093876385947365aca7b0e5f844",
+      "versions": ["v1"]
+    },
+    {
+      "action": "benc-uk/workflow-dispatch",
+      "sha": "d004979be141727c7a17c28f603e2facc40d0855",
+      "versions": ["v1"]
+    }
+  ]
+}
