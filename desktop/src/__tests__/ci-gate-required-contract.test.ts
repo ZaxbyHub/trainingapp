@@ -121,7 +121,9 @@ describe('ci gate required wiring (issue #215 AC13)', () => {
     // Includes the `contract-spec-` prefix family members adopt
     // (contract-spec-conventions.test.ts and its successors): a successor
     // named after the family's own precedent must not escape the roster net.
-    const convention = /(^contract-spec-|-contract|-parity|-conventions)\.test\.ts$/;
+    // (The prefix arm needs its own `.*\.test\.ts$` tail — inside a shared
+    // group it would only match the degenerate `contract-spec-.test.ts`.)
+    const convention = /^contract-spec-.*\.test\.ts$|(-contract|-parity|-conventions)\.test\.ts$/;
     const unclassified: string[] = [];
     for (const file of files.sort()) {
       const base = path.basename(file);
