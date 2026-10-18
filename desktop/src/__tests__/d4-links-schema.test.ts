@@ -14,11 +14,12 @@
 // RED AT BASE: the columns are missing and the version seed is '1'; both
 // assertions fail after the [D4SCHEMA] marker line. Requires
 // desktop/node_modules (better-sqlite3); CI always has it.
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { nativeDepsIt } from './fixtures/native-deps-gate.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -35,8 +36,7 @@ function findRepoRoot(dir: string): string {
 }
 
 const REPO_ROOT = findRepoRoot(THIS_DIR);
-const NATIVE_DEPS_PRESENT = fs.existsSync(path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'));
-const itReal = NATIVE_DEPS_PRESENT ? it : it.skip;
+const itReal = nativeDepsIt('d4-links-schema');
 
 /** Temp dirs created by the current test; removed in afterEach. */
 const tempDirs: string[] = [];

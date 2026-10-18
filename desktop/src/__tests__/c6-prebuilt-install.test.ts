@@ -15,8 +15,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect } from 'vitest';
 import JSZip from 'jszip';
+import { nativeDepsIt } from './fixtures/native-deps-gate.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -38,10 +39,7 @@ const PACKTOOL_CLI = path.join(REPO_ROOT, 'packtool', 'dist', 'cli.js');
 const desktopRequire = createRequire(path.join(REPO_ROOT, 'desktop', 'package.json'));
 
 const FIXTURES = path.join(REPO_ROOT, 'contracts', 'fixtures', 'packs');
-const NATIVE_DEPS_PRESENT = fs.existsSync(
-  path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'),
-);
-const itReal = NATIVE_DEPS_PRESENT ? it : it.skip;
+const itReal = nativeDepsIt('c6-prebuilt-install');
 
 const tempDirs: string[] = [];
 const openStores: Array<{ close(): void }> = [];

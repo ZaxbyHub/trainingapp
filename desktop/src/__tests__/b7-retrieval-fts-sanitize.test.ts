@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { openStore } from '../../main/backend/store/sqlite-store.js';
 import { HashEmbedder } from '../../main/backend/ingest/embedder.js';
 import { hybridRetrieve, sanitizeFtsQuery } from '../../main/backend/retrieval/hybrid.js';
+import { nativeDepsIt } from './fixtures/native-deps-gate.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -25,8 +26,7 @@ function findRepoRoot(dir: string): string {
 }
 
 const REPO_ROOT = findRepoRoot(THIS_DIR);
-const NATIVE_DEPS_PRESENT = fs.existsSync(path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'));
-const itReal = NATIVE_DEPS_PRESENT ? it : it.skip;
+const itReal = nativeDepsIt('b7-retrieval-fts-sanitize');
 const DIMS = 8;
 
 const tempDirs: string[] = [];

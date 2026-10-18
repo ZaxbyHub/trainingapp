@@ -3,13 +3,14 @@
 // the c3 fixture conventions (HashEmbedder dims 8 + contracts fixture packs,
 // rewritten manifests) and the b3 server conventions (loopback guard + token
 // header on a random port).
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect } from 'vitest';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+import { nativeDepsIt } from './fixtures/native-deps-gate.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -26,10 +27,7 @@ function findRepoRoot(dir: string): string {
 
 const REPO_ROOT = findRepoRoot(THIS_DIR);
 const FIXTURES = path.join(REPO_ROOT, 'contracts', 'fixtures', 'packs');
-const NATIVE_DEPS_PRESENT = fs.existsSync(
-  path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'),
-);
-const itReal = NATIVE_DEPS_PRESENT ? it : it.skip;
+const itReal = nativeDepsIt('c7-packs-api');
 
 const TOKEN = 'c7-packs-api-token';
 const TOKEN_HEADER = 'x-desktop-token';

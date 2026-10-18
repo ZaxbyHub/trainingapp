@@ -38,6 +38,7 @@ import type {
   PackFeedDocument,
   TrustedKey,
 } from '../../main/update-checker.js';
+import { nativeDepsIt } from './fixtures/native-deps-gate.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -65,10 +66,7 @@ function findRepoRoot(dir: string): string {
 
 const REPO_ROOT = findRepoRoot(THIS_DIR);
 const FIXTURES = path.join(REPO_ROOT, 'contracts', 'fixtures', 'packs');
-const NATIVE_DEPS_PRESENT = fs.existsSync(
-  path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'),
-);
-const itReal = NATIVE_DEPS_PRESENT ? it : it.skip;
+const itReal = nativeDepsIt('e5-update-checker');
 
 /** Temp dirs created per test; removed in afterEach (after stores close — an
  * open better-sqlite3 handle makes rmSync EPERM on Windows). */

@@ -27,6 +27,8 @@ pack-fixture-build
 
 Informational (never blocks merge): the 3-leg Tests matrix, `perf-thresholds` (floors-or-stated-skip-reasons signal), `eval-report`, the whole Desktop Build workflow, and `doc-accuracy` (issue #89: documentation-vs-code drift guardrail — deliberately unscoped so docs-only PRs get a signal; informational tier is a deliberate choice, not an omission — promote it to required by adding the `doc-accuracy` context to branch protection if the maintainers want it gating). Note for PRs opened BEFORE a required check existed (e.g. #48): the new checks stay "Pending" on the old head until the PR is pushed again or closed/reopened.
 
+The `security` job (required, unbucketed — it reports on every PR) additionally runs the **contract-spec family** (`embed-seam-contract`, `embed-threads-clamp-contract`, `embed-constants-parity`, `pack-twin-parity`, `ci-gate-required-contract`, `contract-spec-conventions`) as its final step (issue #215): a red contract pin fails this required context, so it blocks the merge. The roster is closed and pinned by `ci-gate-required-contract.test.ts`; new contract-family specs must be added to that step's run line and the roster.
+
 ## Workflows
 
 ### 1. Tests (`test.yml`) — path-scoped (`python`, `eval` buckets)

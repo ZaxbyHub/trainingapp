@@ -26,8 +26,21 @@ import { embedSessionOptions } from '../../main/backend/ingest/embed-threads.js'
 import { PACK_EMBED_SESSION_OPTIONS } from '../../../packtool/build/embedder.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-// desktop/src/__tests__ -> desktop -> repo root
-const REPO_ROOT = path.resolve(here, '..', '..', '..');
+// Marker-walk root resolution (issue #215 AC14, the 43-sibling convention):
+// walk up to the repo root by probing a real marker, with an explicit
+// diagnosable failure — never a fixed-depth path.resolve (moving this spec
+// one directory deeper would silently re-point its source reads).
+function findRepoRoot(dir: string): string {
+  let current = dir;
+  for (let i = 0; i < 32; i += 1) {
+    if (fs.existsSync(path.join(current, 'contracts', 'api.openapi.yaml'))) return current;
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  throw new Error('could not locate the repo root (marker contracts/api.openapi.yaml not found)');
+}
+const REPO_ROOT = findRepoRoot(here);
 const SEAM_SOURCE = path.join(REPO_ROOT, 'desktop', 'main', 'backend', 'ingest', 'embed-threads.ts');
 const PACKTOOL_EMBEDDER_SOURCE = path.join(REPO_ROOT, 'packtool', 'build', 'embedder.ts');
 const DESKTOP_BACKEND_DIR = path.join(REPO_ROOT, 'desktop', 'main', 'backend');
@@ -83,8 +96,11 @@ describe('packtool-drift', () => {
   });
 
   it('pins the seam mapping at n=2 and n=3 (interOp stays 1, sequential)', () => {
-    expect(embedSessionOptions({ TRAININGAPP_DESKTOP_EMBED_THREADS: '2' })).toEqual(FROZEN_TWO_THREAD);
-    expect(embedSessionOptions({ TRAININGAPP_DESKTOP_EMBED_THREADS: '3' })).toEqual({
+    // Explicit coreCount (issue #204 AC6): the seam clamps to the host's
+    // parallelism, so the mapping pin injects a fixed coreCount — otherwise
+    // these rows would fail on a 1–2 core host.
+    expect(embedSessionOptions({ TRAININGAPP_DESKTOP_EMBED_THREADS: '2' }, 8)).toEqual(FROZEN_TWO_THREAD);
+    expect(embedSessionOptions({ TRAININGAPP_DESKTOP_EMBED_THREADS: '3' }, 8)).toEqual({
       intraOpNumThreads: 3,
       interOpNumThreads: 1,
       executionMode: 'sequential',
@@ -223,11 +239,70 @@ describe('default-off-contract', () => {
   });
 
   it('trims and accepts normalized digit forms (the seam parser contract)', () => {
-    expect(embedSessionOptions({ TRAININGAPP_DESKTOP_EMBED_THREADS: ' 2 ' })).toEqual(FROZEN_TWO_THREAD);
-    expect(embedSessionOptions({ TRAININGAPP_DESKTOP_EMBED_THREADS: '007' })).toEqual({
+    expect(embedSessionOptions({ TRAININGAPP_DESKTOP_EMBED_THREADS: ' 2 ' }, 8)).toEqual(FROZEN_TWO_THREAD);
+    expect(embedSessionOptions({ TRAININGAPP_DESKTOP_EMBED_THREADS: '007' }, 8)).toEqual({
       intraOpNumThreads: 7,
       interOpNumThreads: 1,
       executionMode: 'sequential',
     });
+  });
+});
+
+describe('session-call-sites (issue #204)', () => {
+  it('session-options-call-sites: every desktop session site binds the seam behind the default-OFF guard', () => {
+    // Positive presence pin (issue #204 AC5): each named call site must bind
+    // sessionOptions from a bare embedSessionOptions(...) call (single-token
+    // args, so the declaration regex above keeps its pin power) and guard with
+    // sessionOptions === undefined before omitting the key. The forbidden
+    // shape (session_options: undefined / inline literals) stays pinned by the
+    // packtool-drift row above; this row polices the DROP-THE-SEAM half.
+    // Named mutant: delete the seam binding at rerank-worker.ts (one of its
+    // two sites) — this row must go red.
+    const sites: Array<[string, string, number]> = [
+      ['desktop/main/backend/ingest/embedder.ts', 'embedSessionOptions(this.env)', 1],
+      ['desktop/main/backend/retrieval/rerank-worker.ts', 'embedSessionOptions(seamEnv)', 2],
+    ];
+    for (const [rel, call, expected] of sites) {
+      const stripped = stripComments(fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8'));
+      const occurrences = stripped.split(call).length - 1;
+      expect(occurrences, `${rel} must bind the seam exactly ${expected}x via ${call}`).toBe(expected);
+      expect(
+        stripped,
+        `${rel} must keep the default-OFF omit-key guard`,
+      ).toContain('sessionOptions === undefined');
+    }
+  });
+
+  it('env-injection: the seam reads the injected host record, never ambient process.env', () => {
+    // Issue #204 AC7. Named mutant: restore the ambient read
+    // (embedSessionOptions()) at embedder.ts:122 — this row must go red.
+    // Raw-source matching (comment-tolerant patterns): index.ts carries
+    // strings with `/*` globs, which defeat naive block-comment stripping.
+    const stripLine = (rel: string): string =>
+      fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8').replace(/\/\/[^\n]*/g, '');
+    const embedder = stripLine('desktop/main/backend/ingest/embedder.ts');
+    expect(embedder, 'the embedder seam call must take the injected env record').toContain(
+      'embedSessionOptions(this.env)',
+    );
+    expect(embedder, 'no ambient seam read may remain in the embedder').not.toMatch(/embedSessionOptions\(\s*\)/);
+    expect(embedder, 'resolveEmbedder must pass the resolved env record to OnnxEmbedder').toContain(
+      'new OnnxEmbedder(staged, env)',
+    );
+
+    const worker = stripLine('desktop/main/backend/retrieval/rerank-worker.ts');
+    expect(worker, 'the worker seam calls must take the injected workerData env record').toContain(
+      'embedSessionOptions(seamEnv)',
+    );
+    expect(worker, 'no ambient seam read may remain in the worker').not.toMatch(/embedSessionOptions\(\s*\)/);
+
+    const reranker = stripLine('desktop/main/backend/retrieval/reranker.ts');
+    expect(reranker, 'WorkerReranker must forward the injected record through workerData').toMatch(
+      /env:\s*this\.env\s*\?\?\s*null/,
+    );
+
+    const index = fs.readFileSync(path.join(REPO_ROOT, 'desktop/main/backend/index.ts'), 'utf8');
+    expect(index, 'the host must inject config.env into the reranker options').toMatch(
+      /new ResumableReranker\(\{[\s\S]{0,400}?\benv,/,
+    );
   });
 });

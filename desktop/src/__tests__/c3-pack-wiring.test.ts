@@ -10,11 +10,12 @@
 // fields are the sanctioned extension shape, and TS `private` is compile-time
 // only) and drives the full lifecycle through THAT object — the same instance
 // the engine and API layer receive.
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { nativeDepsIt } from './fixtures/native-deps-gate.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -31,10 +32,7 @@ function findRepoRoot(dir: string): string {
 
 const REPO_ROOT = findRepoRoot(THIS_DIR);
 const FIXTURES = path.join(REPO_ROOT, 'contracts', 'fixtures', 'packs');
-const NATIVE_DEPS_PRESENT = fs.existsSync(
-  path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'),
-);
-const itReal = NATIVE_DEPS_PRESENT ? it : it.skip;
+const itReal = nativeDepsIt('c3-pack-wiring');
 
 const tempDirs: string[] = [];
 const startedHosts: Array<{ stop(): Promise<void> }> = [];

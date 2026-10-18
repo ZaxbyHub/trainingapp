@@ -9,7 +9,7 @@
 //   - cancelled terminals resolve "general" (nothing was delivered)
 //   - engine doubles without a grounding stamp serialize "general"
 //   - the learn assembler suppresses to [] when grounding is "general"
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -27,6 +27,7 @@ import {
 } from '../../main/backend/retrieval/hybrid';
 import { CALIBRATED_RELEVANCE_FLOOR } from '../../main/backend/retrieval/config';
 import type { EngineQueryResult, Grounding } from '../../main/backend/types';
+import { nativeDepsIt } from './fixtures/native-deps-gate.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -42,10 +43,7 @@ function findRepoRoot(dir: string): string {
 }
 
 const REPO_ROOT = findRepoRoot(THIS_DIR);
-const NATIVE_DEPS_PRESENT = fs.existsSync(
-  path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'),
-);
-const itReal = NATIVE_DEPS_PRESENT ? it : it.skip;
+const itReal = nativeDepsIt('c5-ask-grounding');
 const DIMS = 8;
 const TOKEN = 'c5-grounding-spec-token';
 const SEEDED_TEXT = 'groundingzebra pack ledger reimbursement quantum falcon';

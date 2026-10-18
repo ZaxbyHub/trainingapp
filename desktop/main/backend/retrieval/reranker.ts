@@ -26,6 +26,8 @@ export interface RerankerRunnerOptions {
   modelDir?: string;
   /** Forwarded via workerData: the bge-small model dir for embed jobs. */
   embedModelDir?: string;
+  /** Forwarded via workerData: the injectable env record for the determinism seam (issue #204 AC7). */
+  env?: Record<string, string | undefined>;
 }
 
 interface RerankJob {
@@ -127,6 +129,7 @@ export class WorkerReranker {
   private workerPath: string;
   private modelDir?: string;
   private embedModelDir?: string;
+  private env?: Record<string, string | undefined>;
   private nextJobId = 1;
   private pending = new Map<number, PendingJob>();
   private disposed = false;
@@ -135,6 +138,7 @@ export class WorkerReranker {
     this.workerPath = options.workerPath ?? defaultWorkerPath();
     this.modelDir = options.modelDir;
     this.embedModelDir = options.embedModelDir;
+    this.env = options.env;
   }
 
   private ensureWorker(): Worker {
@@ -143,7 +147,11 @@ export class WorkerReranker {
     }
     if (this.worker === null) {
       const worker = new Worker(this.workerPath, {
-        workerData: { modelDir: this.modelDir ?? null, embedModelDir: this.embedModelDir ?? null },
+        workerData: {
+          modelDir: this.modelDir ?? null,
+          embedModelDir: this.embedModelDir ?? null,
+          env: this.env ?? null,
+        },
       });
       worker.on('message', (raw: unknown) => {
         const message = raw as WorkerResponse;

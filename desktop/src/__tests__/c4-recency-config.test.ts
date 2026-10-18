@@ -13,6 +13,7 @@ import { recencyMultiplier } from '../../main/backend/retrieval/recency';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { nativeDepsIt } from './fixtures/native-deps-gate.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 function findRepoRoot(dir: string): string {
@@ -26,10 +27,7 @@ function findRepoRoot(dir: string): string {
   throw new Error('could not locate the repo root');
 }
 const REPO_ROOT = findRepoRoot(THIS_DIR);
-const NATIVE_DEPS_PRESENT = fs.existsSync(
-  path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'),
-);
-const itReal = NATIVE_DEPS_PRESENT ? it : it.skip;
+const itReal = nativeDepsIt('c4-recency-config');
 
 describe('c4 packs.recency.* config keys (issue #71)', () => {
   it('defaults to floor 0.85 / floorMonths 18 / halfLifeMonths 9', () => {

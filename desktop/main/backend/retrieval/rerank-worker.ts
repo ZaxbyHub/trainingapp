@@ -62,6 +62,12 @@ interface EmbedPipeline {
 let rerankPromise: Promise<{ tokenizer: Tokenizer; model: RerankModel }> | null = null;
 let embedPromise: Promise<EmbedPipeline> | null = null;
 
+// Determinism seam (issue #204 AC7): the worker reads its env record from
+// workerData (WorkerReranker forwards the injected host record); when the
+// host injects none, this falls back to process.env as before.
+const seamEnv: Record<string, string | undefined> =
+  ((workerData ?? {}) as { env?: Record<string, string | undefined> | null }).env ?? process.env;
+
 function sigmoid(logit: number): number {
   return 1 / (1 + Math.exp(-logit));
 }
@@ -70,11 +76,11 @@ async function loadRerank(modelDir: string): Promise<{ tokenizer: Tokenizer; mod
   if (rerankPromise === null) {
     rerankPromise = (async () => {
       const transformers = await import('@huggingface/transformers');
-      // Determinism seam (issue #170 D1): this worker inherits process.env
-      // from the spawning thread (WorkerReranker passes no env option), so
-      // TRAININGAPP_DESKTOP_EMBED_THREADS pins this session too; unset keeps
-      // the options object byte-identical to the pre-seam call.
-      const sessionOptions = embedSessionOptions();
+      // Determinism seam (issue #170 D1): TRAININGAPP_DESKTOP_EMBED_THREADS
+      // pins this session too — read from the injected workerData env record
+      // (issue #204 AC7); unset keeps the options object byte-identical to
+      // the pre-seam call.
+      const sessionOptions = embedSessionOptions(seamEnv);
       const modelOptions: { dtype: 'q8'; session_options?: EmbedSessionThreadOptions } =
         sessionOptions === undefined
           ? { dtype: 'q8' }
@@ -104,8 +110,9 @@ async function loadEmbed(modelDir: string): Promise<EmbedPipeline> {
         options: { dtype: string; session_options?: EmbedSessionThreadOptions },
       ) => Promise<EmbedPipeline>;
       // Determinism seam (issue #170 D1): same shared pin as embedder.ts —
-      // see ingest/embed-threads.ts (unset env = no session_options key).
-      const sessionOptions = embedSessionOptions();
+      // see ingest/embed-threads.ts (unset env = no session_options key);
+      // env read from the injected workerData record (issue #204 AC7).
+      const sessionOptions = embedSessionOptions(seamEnv);
       const pipelineOptions =
         sessionOptions === undefined
           ? { dtype: 'fp32' }

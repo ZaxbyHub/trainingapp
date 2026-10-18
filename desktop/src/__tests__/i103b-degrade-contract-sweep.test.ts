@@ -26,6 +26,7 @@
 // substring pattern and its vi.doMock + vi.resetModules scoped-mock pattern
 // (pack-manager / memory-telemetry), and b6/b7's real-store fixtures.
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -51,6 +52,7 @@ import {
   DEFAULT_PACKS_MAX_COMPRESSION_RATIO,
 } from '../../main/backend/packs/pack-extract.js';
 import type { CitedChunk } from '../../main/backend/types.js';
+import { nativeDepsIt, NATIVE_DEPS_SKIP_MARKER, STAGING_INSTRUCTION } from './fixtures/native-deps-gate.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = (() => {
@@ -64,10 +66,11 @@ const REPO_ROOT = (() => {
   throw new Error('could not locate the repo root (marker contracts/api.openapi.yaml not found)');
 })();
 
-// Artifact-guarded skip (b5/b6/i103 convention): the native store addon must
-// exist; CI always installs it. This suite keeps the repo-sanctioned artifact-skip shape (b5/b6 family); repo-wide adoption of the D2 fail-under-CI gate is tracked separately - a silent CI skip here is a known residual. Ungated groups below import no native deps.
-const NATIVE_DEPS_PRESENT = fs.existsSync(path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'));
-const itReal = NATIVE_DEPS_PRESENT ? it : it.skip;
+// Real-store rows go through the shared D2 gate factory (issue #203): the
+// native store addon must exist; missing deps FAIL under CI and SKIP locally
+// with the staging instruction — never a silent skip. Ungated groups below
+// import no native deps.
+const itReal = nativeDepsIt('i103b-degrade-contract-sweep');
 
 const TOKEN = 'i103b-contract-token';
 const DIMS = 8;
@@ -611,4 +614,39 @@ describe('i103b refusal contract sweep (#167)', () => {
     },
     30_000,
   );
+});
+
+// ---------------------------------------------------------------------------
+// Issue #203 AC4 (batch-143-203-204-212-213-215): UNGATED adoption row — the
+// real-store groups must take the shared skip path (staging instruction in the
+// skip titles) when the native addon is absent. Named mutant: restore a bare
+// `? it : it.skip` gate (or strip the staging instruction from the factory's
+// skip message) and this row must go red.
+// ---------------------------------------------------------------------------
+const GATE_PROBE_ENV = 'TRAININGAPP_TEST_GATE_PROBE';
+
+describe('native-deps gate adoption (issue #203)', () => {
+  it('gate-adoption-real-store: forced-absent skips the real-store rows with the shared staging instruction', () => {
+    // Nested-run self-exclusion: this row IS the probe, so the nested run
+    // (which sets GATE_PROBE_ENV) must not spawn another nested run.
+    if (process.env[GATE_PROBE_ENV] === '1') return;
+    const env = {
+      ...process.env,
+      TRAININGAPP_TEST_FORCE_NATIVE_DEPS_ABSENT: '1',
+      [GATE_PROBE_ENV]: '1',
+    };
+    delete env.CI;
+    const result = spawnSync(
+      `npm --prefix desktop test -- src/__tests__/i103b-degrade-contract-sweep.test.ts --reporter=verbose`,
+      { shell: true, cwd: REPO_ROOT, env, encoding: 'utf8', timeout: 240_000 },
+    );
+    const out = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+    // Every real-store row took the shared skip path (same message i169 produces).
+    expect(out, out).toContain(NATIVE_DEPS_SKIP_MARKER);
+    expect(out, out).toContain(STAGING_INSTRUCTION);
+    expect(out, out).toMatch(/[1-9][0-9]* skipped/);
+    // The ungated groups keep running on a deps-less box, and the run is green.
+    expect(out, out).toMatch(/[1-9][0-9]* passed/);
+    expect(result.status, out).toBe(0);
+  });
 });

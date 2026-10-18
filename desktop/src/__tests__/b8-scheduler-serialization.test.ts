@@ -46,6 +46,7 @@ import { fileURLToPath } from 'node:url';
 import { ConcurrencyScheduler } from '../../main/backend/memory/scheduler.js';
 import { IngestPipeline } from '../../main/backend/ingest/pipeline.js';
 import { openStore, type StoreHandle } from '../../main/backend/store/sqlite-store.js';
+import { nativeDepsIt } from './fixtures/native-deps-gate.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -62,8 +63,7 @@ function findRepoRoot(dir: string): string {
 }
 
 const REPO_ROOT = findRepoRoot(THIS_DIR);
-const NATIVE_DEPS_PRESENT = fs.existsSync(path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'));
-const itReal = NATIVE_DEPS_PRESENT ? it : it.skip;
+const itReal = nativeDepsIt('b8-scheduler-serialization');
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

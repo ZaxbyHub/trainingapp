@@ -27,6 +27,8 @@
 // (issue #211), which goes red unless both sides are reconciled in the same
 // change.
 
+import os from 'node:os';
+
 /** The env var key (positive integer = pin sessions to n intra-op threads). */
 export const EMBED_THREADS_ENV = 'TRAININGAPP_DESKTOP_EMBED_THREADS';
 
@@ -46,13 +48,26 @@ export interface EmbedSessionThreadOptions {
  * process.env). Returns the options object when EMBED_THREADS_ENV is a
  * positive integer, otherwise undefined — the caller then omits the
  * `session_options` key entirely (see the header contract).
+ *
+ * Issue #204 AC6: the requested count is CLAMPED to the host's parallelism
+ * (floor 1 — a container can report 0 available processors), so an oversized
+ * TRAININGAPP_DESKTOP_EMBED_THREADS can never overflow the ONNX threadpool.
+ * `coreCount` is injectable for tests; it defaults to os.availableParallelism()
+ * (cgroup-aware). Values at or below the core count pass through unchanged.
  */
 export function embedSessionOptions(
   env: Record<string, string | undefined> = process.env,
+  coreCount: number = defaultCoreCount(),
 ): EmbedSessionThreadOptions | undefined {
   const raw = (env[EMBED_THREADS_ENV] ?? '').trim();
   if (!/^\d+$/.test(raw)) return undefined;
   const threads = Number.parseInt(raw, 10);
   if (!Number.isSafeInteger(threads) || threads < 1) return undefined;
-  return { intraOpNumThreads: threads, interOpNumThreads: 1, executionMode: 'sequential' };
+  const cores = Number.isSafeInteger(coreCount) && coreCount >= 1 ? coreCount : 1;
+  const clamped = Math.max(1, Math.min(threads, cores));
+  return { intraOpNumThreads: clamped, interOpNumThreads: 1, executionMode: 'sequential' };
+}
+
+function defaultCoreCount(): number {
+  return Math.max(1, os.availableParallelism());
 }

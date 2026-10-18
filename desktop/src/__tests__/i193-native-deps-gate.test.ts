@@ -19,7 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { nativeDepsGate } from './fixtures/native-deps-gate.js';
+import { nativeDepsGate, STAGING_INSTRUCTION } from './fixtures/native-deps-gate.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -35,7 +35,6 @@ function findRepoRoot(dir: string): string {
 }
 
 const REPO_ROOT = findRepoRoot(THIS_DIR);
-const STAGING_INSTRUCTION = 'npm --prefix desktop ci';
 
 describe('native-deps-gate policy (issue #193 D2: CI fails, local skips)', () => {
   it('deps present -> run, regardless of CI', () => {
@@ -122,5 +121,106 @@ describe('native-deps-gate WIRING (issue #193 AC21: the gate must be reachable)'
     expect(out, out).toContain('native deps missing under CI');
     expect(out, out).toContain('fail, never silently skip');
     expect(out, out).toContain(STAGING_INSTRUCTION);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #203 AC3 (batch-143-203-204-212-213-215): the structural adoption net.
+// Every native-deps gate in the corpus goes through the shared factory in
+// ./fixtures/native-deps-gate.ts — no private presence probe and no bare
+// skip-gate ternary anywhere else. Named mutants: revert one migrated suite
+// to the bare ternary, rename/bypass the factory call, or move the probe out
+// of the fixture — this row must go red.
+// ---------------------------------------------------------------------------
+describe('native-deps gate ADOPTION (issue #203)', () => {
+  it('gate-adoption-scan: the shared factory owns every native-deps gate', () => {
+    const scanRoot = path.join(REPO_ROOT, 'desktop', 'src', '__tests__');
+    const stripCommentsForScan = (source: string): string => {
+      let out = '';
+      let i = 0;
+      let state: 'code' | 'line' | 'block' | 'sq' | 'dq' | 'template' = 'code';
+      while (i < source.length) {
+        const c = source[i];
+        const next = source[i + 1];
+        if (state === 'code') {
+          if (c === '/' && next === '/') { state = 'line'; i += 2; continue; }
+          if (c === '/' && next === '*') { state = 'block'; i += 2; continue; }
+          if (c === "'" || c === '"' || c === '`') {
+            state = c === "'" ? 'sq' : c === '"' ? 'dq' : 'template';
+            out += c; i += 1; continue;
+          }
+          out += c; i += 1; continue;
+        }
+        if (state === 'line') {
+          if (c === '\n') { state = 'code'; out += c; }
+          i += 1; continue;
+        }
+        if (state === 'block') {
+          if (c === '*' && next === '/') { state = 'code'; i += 2; continue; }
+          if (c === '\n') out += c;
+          i += 1; continue;
+        }
+        if (c === '\\') { out += c + (next ?? ''); i += 2; continue; }
+        out += c;
+        if ((state === 'sq' && c === "'") || (state === 'dq' && c === '"') || (state === 'template' && c === '`')) {
+          state = 'code';
+        }
+        i += 1;
+      }
+      return out;
+    };
+    const policyHome = 'fixtures/native-deps-gate.ts';
+    const netHome = 'i193-native-deps-gate.test.ts';
+    // Skip-gate ternary exemption (outbound-guardrail allowlist pattern):
+    // b4-llama-engine's REAL_FAST_MODEL gate is a deliberately-unstaged
+    // devstation-only real-model artifact group (failing under CI would redden
+    // every run permanently; its inline guard names the exact missing
+    // artifact). Dispositioned in the batch's Phase 4.2 sweep (P2).
+    const ternaryExempt = new Map<string, string>([
+      ['b4-llama-engine.test.ts', 'REAL_FAST_MODEL devstation-only real-model gate (deliberately unstaged artifact)'],
+    ]);
+    const gateTernary =
+      /\?\s*(?:it|describe)(?:\.skip)?\s*:\s*(?:it|describe)\.skip\b|\?\s*(?:it|describe)\.skip\s*:\s*(?:it|describe)\b/;
+    const probeConstruction = /\bNATIVE_DEPS_PRESENT\b|fs\.existsSync\([^)]*better-sqlite3/;
+    const factoryUse = /\bnativeDeps(?:It|DescribeGroup|Decision|Present)\s*\(/;
+    const offenders: string[] = [];
+
+    const files: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.isFile() && entry.name.endsWith('.ts')) files.push(full);
+      }
+    };
+    walk(scanRoot);
+
+    for (const file of files.sort()) {
+      const rel = path.relative(scanRoot, file).split(path.sep).join('/');
+      if (rel === policyHome || rel === netHome) continue;
+      // Comment-stripped with a state machine (strings kept): a comment may
+      // quote the bare-gate shape while documenting it, and a naive block
+      // strip would swallow code at glob text like `main/**`.
+      const source = stripCommentsForScan(fs.readFileSync(file, 'utf8'));
+      if (probeConstruction.test(source)) {
+        offenders.push(`${rel}: constructs the native-deps presence probe (use the factory)`);
+      }
+      if (gateTernary.test(source)) {
+        const reason = ternaryExempt.get(rel);
+        if (reason === undefined) {
+          offenders.push(`${rel}: bare skip-gate ternary (use nativeDepsIt / nativeDepsDescribeGroup)`);
+        }
+      }
+      if (factoryUse.test(source) && !source.includes("from './fixtures/native-deps-gate.js'")) {
+        offenders.push(`${rel}: calls the gate factory without importing it from './fixtures/native-deps-gate.js'`);
+      }
+    }
+    expect(
+      offenders,
+      'every native-deps gate must go through the shared factory (no private probes, no bare skip ternaries)',
+    ).toEqual([]);
+    // The one documented ternary exemption must still be the only one.
+    const exemptFiles = [...ternaryExempt.keys()];
+    expect(exemptFiles).toEqual(['b4-llama-engine.test.ts']);
   });
 });

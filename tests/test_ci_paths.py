@@ -287,12 +287,26 @@ EXPECTED_WIRING = {
     "web-ui.yml": {
         "web-ui": "webui",
         "web-ui-e2e": "webui",
+        # issue #215 batch: pre-existing unmapped job, now classified (its
+        # real wiring is needs: changes + the webui bucket) so the
+        # completeness assertion below passes without pinning a falsehood.
+        "web-ui-visual-baseline": "webui",
     },
     "conformance.yml": {
         "python-conformance": "conformance",
         "pack-fixture-build": "pack",
     },
 }
+
+# Explicit unbucketed class (issue #215 batch): jobs in the bucketed workflows
+# that deliberately carry NO bucket gate. Today: none. Kept explicit and
+# disjoint from EXPECTED_WIRING so the wiring pin cannot under-cover a job.
+UNBUCKETED_JOBS: dict[str, list[str]] = {
+    "test.yml": [],
+    "web-ui.yml": [],
+    "conformance.yml": [],
+}
+
 
 import yaml  # noqa: E402
 
@@ -391,6 +405,23 @@ def test_job_wiring_and_polarity(name):
             assert (
                 expected in cond and "||" not in cond
             ), f"{name}/{job_id}: expected exactly {expected}"
+
+
+def test_expected_wiring_is_complete():
+    """Every non-changes job in the bucketed workflows is mapped or declared
+    unbucketed (issue #215 batch: closes this pin's own fail-open hole — an
+    unmapped job silently escapes the wiring assertions above)."""
+    for name, mapped in EXPECTED_WIRING.items():
+        wf = _load_workflow(name)
+        unbucketed = set(UNBUCKETED_JOBS.get(name, []))
+        assert unbucketed.isdisjoint(mapped), f"{name}: job both mapped and unbucketed"
+        for job_id in wf["jobs"]:
+            if job_id == "changes":
+                continue
+            assert job_id in mapped or job_id in unbucketed, (
+                f"{name}: job {job_id} is neither in EXPECTED_WIRING nor "
+                f"declared unbucketed - classify it"
+            )
 
 
 # ---------------------------------------------------------------------------
