@@ -59,8 +59,10 @@ describe('harness kill-guard contract (issue #216 AC1)', () => {
 
   it('harness-kill-guard: an invalid pid is refused without spawning taskkill', () => {
     const calls: string[][] = [];
+    const logs: string[] = [];
     for (const pid of [0, -1, 1.5, Number.NaN]) {
       const result = killProcessTree(pid as number, {
+        log: (m) => logs.push(m),
         runTaskkill: (args) => {
           calls.push(args);
           return { status: 0 };
@@ -69,6 +71,8 @@ describe('harness kill-guard contract (issue #216 AC1)', () => {
       expect(result.skipped).toBe(true);
     }
     expect(calls).toEqual([]);
+    // The skip is logged, not silent (PR #220 review PRR-015).
+    expect(logs.filter((l) => l.includes('refusing invalid pid')).length).toBe(4);
   });
 
   it('harness-kill-guard: taskkill results are checked and failures are logged', () => {

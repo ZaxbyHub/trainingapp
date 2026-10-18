@@ -89,7 +89,6 @@ export function main(argv) {
     // Issue #216 AC4: a valueless value-requiring flag fails loud (exit 2),
     // never a silent default.
     die(err instanceof Error ? err.message : String(err), 2);
-    return 2;
   }
 
   const here = path.dirname(fileURLToPath(import.meta.url));
@@ -162,5 +161,5 @@ export function main(argv) {
 
 // Entry guard (issue #216 AC5): only direct execution drives the build.
 if (isMain(import.meta.url)) {
-  process.exit(main(process.argv.slice(2)) ?? 0);
+  process.exit(main(process.argv.slice(2)));
 }

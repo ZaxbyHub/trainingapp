@@ -70,17 +70,18 @@ function readSpecSource(): string {
   return fs.readFileSync(SPEC_PATH, 'utf8');
 }
 
-/** Every it()/test() name literal in the spec source (any quote style — PR #220
- *  review PRR-001: single-quote-only scraping let double-quoted/backtick names
- *  evade both guards). A name with an escaped quote still parses loudly wrong
- *  (set inequality fails), never silently invisible. */
+/** Every it()/test() name literal in the spec source. Each quote style is
+ *  matched by its own alternative (PR #220 review PRR-001 round 2), so a
+ *  double-quoted name containing apostrophes (`it("won't boot")`) is visible
+ *  too. Escaped-quote names still parse loudly wrong (set inequality fails),
+ *  never silently invisible. */
 function parseTestNames(source: string): string[] {
   const names: string[] = [];
-  const re = /\b(?:it|test)(?:\.\w+)?\(\s*(['"`])([^'"`]*)\1/g;
+  const re = /\b(?:it|test)(?:\.\w+)?\(\s*(?:'([^']*)'|"([^"]*)"|`([^`]*)`)/g;
   for (;;) {
     const m = re.exec(source);
     if (m === null) break;
-    names.push(m[2]);
+    names.push(m[1] ?? m[2] ?? m[3]);
   }
   return names;
 }
@@ -91,11 +92,11 @@ function parsePublishedInventory(source: string): string[] {
   expect(start, 'packaged-smoke-contract.test.ts must publish export const TEST_INVENTORY').toBeGreaterThanOrEqual(0);
   const block = source.slice(start, source.indexOf('];', start) + 2);
   const names: string[] = [];
-  const re = /(['"`])([^'"`]*)\1/g;
+  const re = /'([^']*)'|"([^"]*)"|`([^`]*)`/g;
   for (;;) {
     const m = re.exec(block);
     if (m === null) break;
-    names.push(m[2]);
+    names.push(m[1] ?? m[2] ?? m[3]);
   }
   return names;
 }

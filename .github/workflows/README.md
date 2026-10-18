@@ -142,3 +142,7 @@ Add these to your README.md:
 ### doc-accuracy (issue #89)
 
 Always-run documentation-accuracy guardrail. No `paths:` filter and no bucket gate — by design: the path-scoped model above skips docs-only diffs, and doc drift is exactly what this check polices. Runs `tests/test_doc_accuracy.py` (stdlib-only) on `ubuntu-latest`; informational tier (see Required checks above).
+
+### harness-contracts (issues #216/#219)
+
+Contract guards for the harness runners and the action-pin record (`harness-contracts.yml`). Workflow-level `paths:` filter on the surfaces the guards govern — `bench/**`, `scripts/**`, `web_ui/scripts/**`, `.github/workflows/**` (incl. `pins.json`) and the contract specs themselves — because `desktop-build.yml`'s filter does not trigger on those trees, leaving the guards inert on their own subjects (PR #220 review PRR-002). Runs exactly the five contract specs (kill wrapper, parse fail-loud, runner seams, pin-comment/filter-uniqueness/inventory precision) on `windows-latest`; informational tier (see Required checks above — merge-blocking promotion of the contract suite is issue #215's decision).

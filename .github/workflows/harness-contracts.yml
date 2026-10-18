@@ -8,7 +8,7 @@
 #
 # Informational-tier today: the desktop suite runs in desktop-build's
 # informational workflow, and merge-blocking promotion of the contract suite
-# is issue #215's decision. This file's own `uses:` lines are SHA-pinned with
+# is issue #215's decision. This file's own action references are SHA-pinned with
 # version comments per the pin record (.github/workflows/pins.json).
 name: Harness Contracts
 
