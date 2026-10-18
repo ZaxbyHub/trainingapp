@@ -187,7 +187,10 @@ describe('native-deps gate ADOPTION (issue #203)', () => {
     // clause that catches it). it.skipIf is vitest's VISIBLE conditional skip
     // and is deliberately allowed (it shows in the runner counts).
     const skipToken = /\bit\.skip\b|\bdescribe\.skip\b/;
-    const probeConstruction = /\bNATIVE_DEPS_PRESENT\b|fs\.existsSync\([^)]*better-sqlite3/;
+    // Also bans calling the exported nativeDepsPresent probe from a suite
+    // (e.g. it.skipIf(!nativeDepsPresent())(...) is a silent-skip gate in a
+    // visible-form disguise); only the factory may consult the probe.
+    const probeConstruction = /\bNATIVE_DEPS_PRESENT\b|fs\.existsSync\([^)]*better-sqlite3|\bnativeDepsPresent\s*\(/;
     const factoryUse = /\bnativeDeps(?:It|DescribeGroup|Decision|Present)\s*\(/;
     const offenders: string[] = [];
 

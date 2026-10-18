@@ -46,7 +46,12 @@ import {
   DEFAULT_PACKS_MAX_COMPRESSION_RATIO,
   RATIO_FLOOR_BYTES as DESKTOP_RATIO_FLOOR,
 } from '../../main/backend/packs/pack-archive-rules.js';
-import { safeEntryName } from '../../main/backend/packs/pack-extract.js';
+import {
+  safeEntryName,
+  DEFAULT_PACKS_MAX_UNCOMPRESSED_BYTES as EXTRACT_MAX_UNCOMPRESSED_BYTES,
+  DEFAULT_PACKS_MAX_ENTRIES as EXTRACT_MAX_ENTRIES,
+  DEFAULT_PACKS_MAX_COMPRESSION_RATIO as EXTRACT_MAX_COMPRESSION_RATIO,
+} from '../../main/backend/packs/pack-extract.js';
 import {
   canonicalManifestBytes as desktopCanonical,
   verifyPackSignature as desktopVerify,
@@ -111,6 +116,20 @@ describe('pack twin parity (issue #213)', () => {
     expect(pyEntries, 'entry cap: python vs desktop').toBe(DEFAULT_PACKS_MAX_ENTRIES);
     expect(pyUncompressed, 'byte cap: python vs desktop').toBe(DEFAULT_PACKS_MAX_UNCOMPRESSED_BYTES);
     expect(pyRatio, 'ratio cap: python vs desktop').toBe(DEFAULT_PACKS_MAX_COMPRESSION_RATIO);
+
+    // The AC's named third home is the pack-extract.ts re-export layer
+    // (issue #213 claim 1) — pin the re-exported values themselves, so a
+    // divergence authored AT the alias line (e.g. re-exporting a different
+    // number) reddens here; the literal-home reads above cannot see it.
+    expect(EXTRACT_MAX_ENTRIES, 'entry cap: pack-extract re-export vs rules home').toBe(
+      DEFAULT_PACKS_MAX_ENTRIES,
+    );
+    expect(EXTRACT_MAX_UNCOMPRESSED_BYTES, 'byte cap: pack-extract re-export vs rules home').toBe(
+      DEFAULT_PACKS_MAX_UNCOMPRESSED_BYTES,
+    );
+    expect(EXTRACT_MAX_COMPRESSION_RATIO, 'ratio cap: pack-extract re-export vs rules home').toBe(
+      DEFAULT_PACKS_MAX_COMPRESSION_RATIO,
+    );
 
     // The ratio-floor trio governs WHEN the ratio cap engages — a one-sided
     // change alters enforcement and must go red here.

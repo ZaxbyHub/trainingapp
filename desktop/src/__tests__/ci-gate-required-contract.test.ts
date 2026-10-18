@@ -118,7 +118,10 @@ describe('ci gate required wiring (issue #215 AC13)', () => {
       }
     };
     walk(SPEC_DIR);
-    const convention = /(-contract|-parity|-conventions)\.test\.ts$/;
+    // Includes the `contract-spec-` prefix family members adopt
+    // (contract-spec-conventions.test.ts and its successors): a successor
+    // named after the family's own precedent must not escape the roster net.
+    const convention = /(^contract-spec-|-contract|-parity|-conventions)\.test\.ts$/;
     const unclassified: string[] = [];
     for (const file of files.sort()) {
       const base = path.basename(file);
