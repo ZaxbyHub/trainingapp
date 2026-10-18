@@ -24,7 +24,7 @@
 //                         while python loops every trusted key sharing the
 //                         key_id. Scope: issue #213 says "Out: changing any
 //                         limit value or gate semantics", so reconciliation is
-//                         filed as the closeout follow-up ("Follow-up from the
+//                         filed at closeout as the follow-up ("Follow-up from the
 //                         batch PR: reconcile the TS signature gates to
 //                         python's all-keys-per-key_id verification"); first-
 //                         match is the false-reject side, so TS adopts
