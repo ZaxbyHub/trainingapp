@@ -77,14 +77,14 @@ function unescapeQuoteBody(body: string): string {
 }
 
 /** Every it()/test() name literal in the spec source: per-quote-style
- *  alternation with escaped-quote support, and the `it.each(...)(...)` call
- *  shape (PR #220 review rounds 1-2 + final-critic). A name written as any
- *  quote literal — including apostrophes inside double quotes and escaped
- *  quotes inside single quotes — is visible to both guards. Known residual
+ *  alternation with escaped-quote support, and the it.each call shapes
+ *  (PR #220 review rounds 1-3 + final-critic): parenthesized-argument,
+ *  tagged-template, and multi-modifier chains (`it.skip.each(...)`). A name
+ *  written as any quote literal is visible to both guards. Known residual
  *  (recorded, not claimed): a first it.each argument containing nested
  *  parentheses is not matched. */
 const NAME_CALL =
-  /\b(?:it|test)(?:\.\w+)?(?:\((?:[^()]*)\))?\(\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"|`((?:[^`\\]|\\.)*)`)/g;
+  /\b(?:it|test)(?:\.\w+)*(?:\((?:[^()]*)\)|`[^`]*`)?\(\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"|`((?:[^`\\]|\\.)*)`)/g;
 
 function parseTestNames(source: string): string[] {
   const names: string[] = [];
@@ -97,16 +97,17 @@ function parseTestNames(source: string): string[] {
   return names;
 }
 
-/** The published TEST_INVENTORY string literals in the spec source. Line and
- *  block comments are stripped first so a comment apostrophe cannot fabricate
- *  a phantom entry (final-critic probe). */
+/** The published TEST_INVENTORY string literals in the spec source. Line
+ *  comments (full-line AND trailing) and block comments are stripped first so
+ *  a comment apostrophe cannot fabricate a phantom entry (final-critic rounds
+ *  1-2). */
 function parsePublishedInventory(source: string): string[] {
   const start = source.indexOf('export const TEST_INVENTORY');
   expect(start, 'packaged-smoke-contract.test.ts must publish export const TEST_INVENTORY').toBeGreaterThanOrEqual(0);
   const block = source.slice(start, source.indexOf('];', start) + 2);
   const uncommented = block
     .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\/\/.*$/gm, '');
+    .replace(/\/\/.*$/gm, '');
   const names: string[] = [];
   const re = /'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"|`((?:[^`\\]|\\.)*)`/g;
   for (;;) {
