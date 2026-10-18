@@ -114,13 +114,23 @@ describe('harness parse contract (issue #216 AC4)', () => {
       expect(() => nodeBenchParseArgs(['--model', 'm', '--gguf', 'g', flag])).toThrow(`${flag} requires a value`);
       expect(() => nodeBenchParseArgs([flag, '--model', 'm', '--gguf', 'g'])).toThrow(`${flag} requires a value`);
     }
-    // CLI-level fail-loud: a bare numeric flag exits 2 with the same message.
+    // CLI-level fail-loud: every bare numeric flag exits 2 with the AC1
+    // message through main()'s exit-2 path, and an invalid value exits 2
+    // with the AC2 message (both parse classes pinned at the process level).
     const script = path.join(REPO_ROOT, 'bench', 'node_bench_driver.mjs');
-    const res = spawnSync(process.execPath, [script, '--model', 'm', '--gguf', 'g', '--threads'], {
+    for (const flag of ['--threads', '--max-tokens', '--prompt-tokens']) {
+      const res = spawnSync(process.execPath, [script, '--model', 'm', '--gguf', 'g', flag], {
+        encoding: 'utf8',
+        timeout: 30_000,
+      });
+      expect(res.status).toBe(2);
+      expect(res.stderr).toContain(`${flag} requires a value`);
+    }
+    const invalid = spawnSync(process.execPath, [script, '--model', 'm', '--gguf', 'g', '--threads', 'abc'], {
       encoding: 'utf8',
       timeout: 30_000,
     });
-    expect(res.status).toBe(2);
-    expect(res.stderr).toContain('--threads requires a value');
+    expect(invalid.status).toBe(2);
+    expect(invalid.stderr).toContain('--threads must be a positive integer');
   });
 });

@@ -9,6 +9,9 @@
 //   node bench/node_bench_driver.mjs --model gemma-4-e2b-it \
 //     --gguf models/gemma-4-e2b-it/model.gguf --threads 8 \
 //     [--quant Q4_K_M] [--max-tokens 128] [--json row.json]
+// Numeric flags (--threads, --max-tokens, --prompt-tokens) require
+// positive decimal integers; a bare or invalid value fails loud and
+// the CLI exits 2 (parse errors) vs 1 (runtime failures).
 // Machine tag: BENCH_MACHINE_TAG env (default devstation).
 import { writeFileSync, realpathSync } from 'node:fs';
 import { performance } from 'node:perf_hooks';
@@ -37,12 +40,18 @@ function readValueArgv(argv, i, flag) {
   return value;
 }
 
-/** Issue #221: numeric bench flags must be positive integers — a bare or
- *  non-numeric value used to flow NaN into the row and prompt sizing
+/** Issue #221: numeric bench flags must be positive decimal integers — a
+ *  bare or non-numeric value used to flow NaN into the row and prompt sizing
  *  (PR #220 review PRR-010). */
 function readPositiveInt(argv, i, flag) {
   const raw = readValueArgv(argv, i, flag);
-  const n = Number(raw);
+  // Decimal digits only (issue #221 Design: mirror the sibling parseInt
+  // contracts): hex, exponent, and padded spellings must never be silently
+  // reinterpreted into a different measurement value.
+  if (!/^[0-9]+$/.test(raw)) {
+    throw new Error(`${flag} must be a positive integer`);
+  }
+  const n = Number.parseInt(raw, 10);
   if (!Number.isInteger(n) || n < 1) {
     throw new Error(`${flag} must be a positive integer`);
   }
