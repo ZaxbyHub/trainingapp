@@ -89,6 +89,10 @@ PYTHON_POSITIVE = [
     # the required-checks table the provenance guardrail reads
     # (implementation-review round 1 F3)
     ".github/workflows/README.md",
+    # CI-only llama-cpp-python pin the python jobs install under: a pin-only
+    # diff must run the jobs that consume it
+    ".github/ci/llama-cpp-constraints.txt",
+    ".github/ci/llama-cpp-wheel.txt",
     "scripts/ci_paths.py",
     "tests/test_ci_paths.py",
 ]
@@ -121,6 +125,8 @@ _PYTHON_EXCEPTIONS = {
     # the required-checks table the provenance guardrail reads
     # (implementation-review round 1 F3)
     ".github/workflows/readme.md",
+    ".github/ci/llama-cpp-constraints.txt",
+    ".github/ci/llama-cpp-wheel.txt",
 }
 
 # --- scoped buckets: plain any-match -----------------------------------------
@@ -170,6 +176,9 @@ _EVAL = [
     "query_transformer.py",
     "reranking.py",
     "recency.py",
+    # pins the eval-report job installs under
+    ".github/ci/llama-cpp-constraints.txt",
+    ".github/ci/llama-cpp-wheel.txt",
 ]
 
 _PYTHON_POSITIVE_RE = [_translate(p) for p in PYTHON_POSITIVE]

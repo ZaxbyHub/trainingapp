@@ -7,7 +7,7 @@ Pins three things the frozen acceptance checks cannot see on their own
    (positive / safe-false / unknown->true) and the mixed-set rule.
 2. Workflow wiring: every non-``changes`` job in test.yml, web-ui.yml and
    conformance.yml carries the fail-safe condition
-   ``if: always() && needs.changes.outputs.<exact bucket> != 'false'``
+   ``if: ${{ !cancelled() && needs.changes.outputs.<exact bucket> != 'false' }}``
    with the bucket this map expects.
 3. Required-context provenance: every context listed in the README's
    required-checks table equals a job name in one of the unfiltered
@@ -74,6 +74,9 @@ PYTHON_TRUE = [
     ".github/workflows/test.yml",
     ".github/workflows/web-ui.yml",
     ".github/workflows/conformance.yml",
+    # CI-only llama-cpp-python pin consumed by the python jobs' install steps
+    ".github/ci/llama-cpp-constraints.txt",
+    ".github/ci/llama-cpp-wheel.txt",
     "scripts/ci_paths.py",
     "tests/test_ci_paths.py",
     # unknown files fail open, alone or mixed with safe-false files (M1)
@@ -214,6 +217,9 @@ def test_python_empty_diff_fails_open():
         ("eval", ["EVAL/runner.py"], True),
         ("eval", ["eval/runner.py", "rag_engine.py"], True),
         ("eval", ["web_ui/src/lib/x.ts"], False),
+        # CI llama-cpp pins feed the eval-report job's install step
+        ("eval", [".github/ci/llama-cpp-constraints.txt"], True),
+        ("eval", [".github/ci/llama-cpp-wheel.txt"], True),
     ],
 )
 def test_scoped_buckets(bucket, files, expected):
@@ -280,7 +286,7 @@ def test_cli_rejects_unknown_bucket():
 # 2. Workflow wiring pins
 # ---------------------------------------------------------------------------
 
-FAIL_SAFE = "always() && needs.changes.outputs."
+FAIL_SAFE = "!cancelled() && needs.changes.outputs."
 
 # workflow file -> job id -> single bucket, or a tuple of buckets joined by
 # an OR the wiring must carry verbatim.
@@ -326,7 +332,12 @@ def _load_workflow(name: str) -> dict:
 
 
 def _condition(job: dict) -> str:
-    return str(job.get("if", ""))
+    """The job ``if:`` with the ``${{ }}`` wrapper removed (a leading ``!``
+    is a YAML tag indicator, so ``!cancelled()`` conditions must be wrapped)."""
+    cond = str(job.get("if", "")).strip()
+    if cond.startswith("${{") and cond.endswith("}}"):
+        cond = cond[3:-2].strip()
+    return cond
 
 
 def test_changes_job_exists_and_invokes_classifier():
@@ -402,8 +413,8 @@ def test_job_wiring_and_polarity(name):
         assert "changes" in needs_list, f"{name}/{job_id}: does not need changes"
         cond = _condition(job).replace(" ", "")
         assert cond.startswith(
-            "always()&&"
-        ), f"{name}/{job_id}: condition is not fail-safe (missing always())"
+            "!cancelled()&&"
+        ), f"{name}/{job_id}: condition is not fail-safe (missing !cancelled())"
         if isinstance(bucket, tuple):
             ors = [f"needs.changes.outputs.{b}!='false'" for b in bucket]
             assert (
@@ -544,3 +555,41 @@ def test_no_truncated_issue_job_names(name):
         assert not display.rstrip().endswith(
             "(issue"
         ), f"{name}/{job_id}: display name truncated at '(issue' — quote it"
+
+
+# ---------------------------------------------------------------------------
+# 4. llama-cpp CI pin files stay in lockstep
+# ---------------------------------------------------------------------------
+
+_PIN_DIR = REPO_ROOT / ".github" / "ci"
+
+
+def _pinned_version(text: str) -> str:
+    m = re.search(r"(?m)^llama-cpp-python==(\S+)", text)
+    assert m, "no llama-cpp-python== pin line"
+    return m.group(1)
+
+
+def _pin_files_consistent(constraints: str, wheel: str) -> None:
+    assert _pinned_version(constraints) == _pinned_version(
+        wheel
+    ), "constraints and wheel files pin different llama-cpp-python versions"
+    assert re.search(
+        r"(?m)^llama-cpp-python==\S+\s+--hash=sha256:[0-9a-f]{64}\s*$", wheel
+    ), "wheel pin line must carry --hash=sha256:<64 hex>"
+
+
+def test_llama_cpp_pin_files_consistent():
+    _pin_files_consistent(
+        (_PIN_DIR / "llama-cpp-constraints.txt").read_text(encoding="utf-8"),
+        (_PIN_DIR / "llama-cpp-wheel.txt").read_text(encoding="utf-8"),
+    )
+
+
+def test_llama_cpp_pin_check_detects_drift():
+    constraints = (_PIN_DIR / "llama-cpp-constraints.txt").read_text(encoding="utf-8")
+    wheel = (_PIN_DIR / "llama-cpp-wheel.txt").read_text(encoding="utf-8")
+    with pytest.raises(AssertionError):
+        _pin_files_consistent(constraints.replace("==", "==9."), wheel)
+    with pytest.raises(AssertionError):
+        _pin_files_consistent(constraints, re.sub(r"[0-9a-f]{64}", "abc", wheel))

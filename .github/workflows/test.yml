@@ -7,9 +7,11 @@ on:
     branches: [ main, master ]
 
 # Cancel superseded PR runs (force-push iterations replace stale runs);
-# never cancel mainline pushes so master signal is always preserved.
+# never cancel mainline pushes so master signal is always preserved. Non-PR
+# events get a unique group (run_id) so a newer queued run never supersedes an
+# older pending master run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Issue #87 (E4): the trigger stays UNFILTERED (a workflow-level paths filter
@@ -20,6 +22,7 @@ jobs:
   changes:
     name: "path-scope classification (issue #87)"
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       python: ${{ steps.buckets.outputs.python }}
       webui: ${{ steps.buckets.outputs.webui }}
@@ -73,7 +76,7 @@ jobs:
 
   test:
     needs: [changes]
-    if: always() && needs.changes.outputs.python != 'false'
+    if: ${{ !cancelled() && needs.changes.outputs.python != 'false' }}
     runs-on: windows-latest
     timeout-minutes: 180
     strategy:
@@ -101,15 +104,24 @@ jobs:
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: ~\AppData\Local\pip\Cache
-          key: ${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/requirements.txt') }}
+          key: ${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/requirements.txt', '.github/ci/llama-cpp-constraints.txt', '.github/ci/llama-cpp-wheel.txt') }}
           restore-keys: |
             ${{ runner.os }}-${{ matrix.python-version }}-
+
+      # llama-cpp-python publishes only sdists on PyPI; an unpinned range floats
+      # to a release with no cached wheel and compiles from source (~8 min).
+      # Install the pinned prebuilt wheel from the project's CPU wheel index
+      # FIRST (index scoped to this one command, never the requirements install).
+      - name: Install prebuilt llama-cpp-python wheel
+        run: |
+          python -m pip install --no-deps --only-binary=:all: --require-hashes --index-url https://abetlen.github.io/llama-cpp-python/whl/cpu -r .github/ci/llama-cpp-wheel.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt -c .github/ci/llama-cpp-constraints.txt
           pip install pytest pytest-cov pytest-asyncio pytest-timeout
+          python -m pip check
 
       - name: Run tests
         # -q + -ra: quiet output with a skip/fail summary (full -v logs of a
@@ -136,7 +148,7 @@ jobs:
   perf-thresholds:
     name: perf-thresholds
     needs: [changes]
-    if: always() && (needs.changes.outputs.python != 'false' || needs.changes.outputs.pack != 'false')
+    if: ${{ !cancelled() && (needs.changes.outputs.python != 'false' || needs.changes.outputs.pack != 'false') }}
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -151,15 +163,24 @@ jobs:
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: ~\AppData\Local\pip\Cache
-          key: ${{ runner.os }}-perf-thresholds-${{ hashFiles('**/requirements.txt') }}
+          key: ${{ runner.os }}-perf-thresholds-${{ hashFiles('**/requirements.txt', '.github/ci/llama-cpp-constraints.txt', '.github/ci/llama-cpp-wheel.txt') }}
           restore-keys: |
             ${{ runner.os }}-perf-thresholds-
+
+      # llama-cpp-python publishes only sdists on PyPI; an unpinned range floats
+      # to a release with no cached wheel and compiles from source (~8 min).
+      # Install the pinned prebuilt wheel from the project's CPU wheel index
+      # FIRST (index scoped to this one command, never the requirements install).
+      - name: Install prebuilt llama-cpp-python wheel
+        run: |
+          python -m pip install --no-deps --only-binary=:all: --require-hashes --index-url https://abetlen.github.io/llama-cpp-python/whl/cpu -r .github/ci/llama-cpp-wheel.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt -c .github/ci/llama-cpp-constraints.txt
           pip install pytest pytest-asyncio pytest-timeout
+          python -m pip check
 
       # Step-level continue-on-error (matching eval-report): the job stays
       # green in the checks UI when the informational signal fails.
@@ -173,7 +194,7 @@ jobs:
   # (issue #87: gated on the eval bucket).
   eval-report:
     needs: [changes]
-    if: always() && needs.changes.outputs.eval != 'false'
+    if: ${{ !cancelled() && needs.changes.outputs.eval != 'false' }}
     runs-on: windows-latest
     timeout-minutes: 20
     env:
@@ -190,9 +211,17 @@ jobs:
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: ~\AppData\Local\pip\Cache
-          key: ${{ runner.os }}-eval-report-${{ hashFiles('**/requirements.txt') }}
+          key: ${{ runner.os }}-eval-report-${{ hashFiles('**/requirements.txt', '.github/ci/llama-cpp-constraints.txt', '.github/ci/llama-cpp-wheel.txt') }}
           restore-keys: |
             ${{ runner.os }}-eval-report-
+
+      # llama-cpp-python publishes only sdists on PyPI; an unpinned range floats
+      # to a release with no cached wheel and compiles from source (~8 min).
+      # Install the pinned prebuilt wheel from the project's CPU wheel index
+      # FIRST (index scoped to this one command, never the requirements install).
+      - name: Install prebuilt llama-cpp-python wheel
+        run: |
+          python -m pip install --no-deps --only-binary=:all: --require-hashes --index-url https://abetlen.github.io/llama-cpp-python/whl/cpu -r .github/ci/llama-cpp-wheel.txt
 
       # pytest is installed here (issue #87 closeout): the pre-#87 job never
       # installed it, so the integration-test step below silently errored
@@ -200,8 +229,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt -c .github/ci/llama-cpp-constraints.txt
           pip install httpx pytest pytest-asyncio pytest-timeout
+          python -m pip check
 
       # Informational per issue #87's split: step-level continue-on-error (as
       # pre-#87) keeps the job green for the merge report even when the

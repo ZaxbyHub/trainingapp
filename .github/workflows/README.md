@@ -8,7 +8,7 @@ This project uses GitHub Actions for continuous integration and deployment. All 
 
 PR feedback time must match diff size, and every PR that touches a contract or a pack format must get a conformance/pack signal without paying for unrelated jobs. Two rules make that work:
 
-1. **Workflows whose checks are required never use workflow-level `paths:` filters.** GitHub reports a workflow skipped by path filtering as never having run, so its required checks would sit "Pending" forever and block merging (GitHub docs, "Handling skipped but required checks"). Path scoping therefore lives at JOB level: a `changes` job classifies the diff via `scripts/ci_paths.py` into buckets (`python`, `webui`, `conformance`, `pack`, `eval`), and each real job runs `if: always() && needs.changes.outputs.<bucket> != 'false'`. A job skipped by that conditional reports Success, so required checks stay satisfiable.
+1. **Workflows whose checks are required never use workflow-level `paths:` filters.** GitHub reports a workflow skipped by path filtering as never having run, so its required checks would sit "Pending" forever and block merging (GitHub docs, "Handling skipped but required checks"). Path scoping therefore lives at JOB level: a `changes` job classifies the diff via `scripts/ci_paths.py` into buckets (`python`, `webui`, `conformance`, `pack`, `eval`), and each real job runs `if: ${{ !cancelled() && needs.changes.outputs.<bucket> != 'false' }}` (`!cancelled()`, not `always()`: `always()` keeps jobs running after a run is cancelled, defeating the PR concurrency cancel, while `!cancelled()` is still true when `changes` fails, so the gate stays fail-open). A job skipped by that conditional reports Success, so required checks stay satisfiable.
 2. **Everything fails open.** The classifier treats unknown paths as `python=true` (a new module never silently skips the matrix), the `changes` job never fails (errors emit all-true), and the consumer polarity `!= 'false'` runs jobs when the output is missing. A broken gate can only make CI run more, never silently less.
 
 `tests/test_ci_paths.py` pins the bucket decisions, the per-job wiring and polarity, and the required-checks provenance below. Fork PRs work too: the `changes` job diffs against `origin/$GITHUB_BASE_REF` with a full checkout.
@@ -37,7 +37,7 @@ The `security` job (required, unbucketed — it reports on every PR) additionall
 **Jobs:**
 
 - `changes` — diff → bucket outputs.
-- `test` — Python 3.10/3.11/3.12 matrix on Windows, pytest with coverage on the 3.11 leg; runs when the diff touches the Python surface (`tests/**`, root `*.py`, `bench/**`, `eval/**`, `contracts` fixtures/schema, ADR docs, `requirements.txt`, `pytest.ini`, `packtool/storyline/transcribe.py`, the three gated workflow files, and anything unclassified — fail-open).
+- `test` — Python 3.10/3.11/3.12 matrix on Windows, pytest with coverage on the 3.11 leg; runs when the diff touches the Python surface (`tests/**`, root `*.py`, `bench/**`, `eval/**`, `contracts` fixtures/schema, ADR docs, `requirements.txt`, `pytest.ini`, `.github/ci/llama-cpp-constraints.txt`, `.github/ci/llama-cpp-wheel.txt`, `packtool/storyline/transcribe.py`, the three gated workflow files, and anything unclassified — fail-open).
 - `perf-thresholds` — informational (issue #87): runs the evidence-conditional perf suites (`test_rag_performance.py`, `test_low_end_hardware.py`) plus their guardrails; asserts against `bench/RESULTS.md` machine-tagged floors where the machine has a floors row, else skips with a named per-artifact reason (issue #52 conversion). `continue-on-error`.
 - `eval-report` — informational (issue #54): tier-0 eval harness against the deterministic no-weights backend; posts `eval-report/REPORT.md` + `report.json` artifacts; gated on the `eval` bucket (retrieval surface). `continue-on-error`.
 
@@ -115,7 +115,7 @@ No secrets required for basic operation. The `GITHUB_TOKEN` is automatically pro
 
 ## Caching
 
-The following are cached for faster builds: pip packages (per job key), npm caches (per lockfile), PyInstaller build cache.
+The following are cached for faster builds: pip packages (per job key), npm caches (per lockfile), PyInstaller build cache. The Windows Python jobs in `test.yml` and `conformance.yml` install a hash-pinned prebuilt `llama-cpp-python` wheel (`.github/ci/llama-cpp-wheel.txt`, from the project's CPU wheel index, `--require-hashes`) before `pip install -r requirements.txt -c .github/ci/llama-cpp-constraints.txt`, so PyPI's sdist is never compiled; both files are part of the pip cache keys. `build.yml` and `nightly.yml` are unchanged.
 
 ## Troubleshooting
 
