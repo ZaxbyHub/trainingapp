@@ -16,8 +16,12 @@
   encoded outside any guard (a lone surrogate raised `UnicodeEncodeError`);
   neither is a `PackExtractError`, so the install route answered 500 instead of
   the documented 409. Both are now typed refusals, as the Node twin already were.
-  The same class is closed at its choke point for pack doc text and for the
-  managed-registry write. Contract:
+  The same class is closed at its choke point for pack doc text, for the
+  managed-registry write, and for manifest strings that a refusal message would
+  interpolate — the last of those because `docs[].path` carrying the same escape
+  made the typed `doc unreadable` refusal echo it, and the route renders refusal
+  text with `ensure_ascii=False`, so the echo raised during serialisation and
+  answered 500 on the default (signature-gate-off) configuration. Contract:
   `tests/test_pack_extract_error_contract.py`.
 - **Packaged-boot smoke hardening and CI wiring (issues #177, #178, #179,
   #180, #182)**: `desktop/scripts/packaged-smoke.mjs` is now an import-safe,
