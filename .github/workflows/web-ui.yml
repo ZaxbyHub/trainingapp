@@ -14,14 +14,17 @@ on:
     branches: [main, master]
   pull_request:
 
+# Cancel superseded PR runs. Non-PR events get a unique group (run_id) so a newer
+# queued run never supersedes an older pending master run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:
     name: "path-scope classification (issue #87)"
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       python: ${{ steps.buckets.outputs.python }}
       webui: ${{ steps.buckets.outputs.webui }}
@@ -78,8 +81,9 @@ jobs:
     # required-check context (issue #87).
     name: web-ui (typecheck + build + test + packaging)
     needs: [changes]
-    if: always() && needs.changes.outputs.webui != 'false'
+    if: ${{ !cancelled() && needs.changes.outputs.webui != 'false' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: web_ui
@@ -198,8 +202,9 @@ jobs:
   web-ui-e2e:
     name: web-ui e2e (browser-mode pack gate, Playwright)
     needs: [changes]
-    if: always() && needs.changes.outputs.webui != 'false'
+    if: ${{ !cancelled() && needs.changes.outputs.webui != 'false' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: web_ui
@@ -265,8 +270,9 @@ jobs:
   web-ui-visual-baseline:
     name: web-ui visual baselines (Windows pixel spec, non-required)
     needs: [changes]
-    if: always() && needs.changes.outputs.webui != 'false'
+    if: ${{ !cancelled() && needs.changes.outputs.webui != 'false' }}
     runs-on: windows-latest
+    timeout-minutes: 15
     defaults:
       run:
         shell: bash

@@ -14,14 +14,17 @@ on:
   pull_request:
     branches: [ main, master ]
 
+# Cancel superseded PR runs. Non-PR events get a unique group (run_id) so a newer
+# queued run never supersedes an older pending master run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:
     name: "path-scope classification (issue #87)"
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       python: ${{ steps.buckets.outputs.python }}
       webui: ${{ steps.buckets.outputs.webui }}
@@ -78,7 +81,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 20
     needs: [changes]
-    if: always() && needs.changes.outputs.conformance != 'false'
+    if: ${{ !cancelled() && needs.changes.outputs.conformance != 'false' }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -91,15 +94,24 @@ jobs:
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: ~\AppData\Local\pip\Cache
-          key: ${{ runner.os }}-conformance-${{ hashFiles('**/requirements.txt') }}
+          key: ${{ runner.os }}-conformance-${{ hashFiles('**/requirements.txt', '.github/ci/llama-cpp-constraints.txt', '.github/ci/llama-cpp-wheel.txt') }}
           restore-keys: |
             ${{ runner.os }}-conformance-
+
+      # llama-cpp-python publishes only sdists on PyPI; an unpinned range floats
+      # to a release with no cached wheel and compiles from source (~8 min).
+      # Install the pinned prebuilt wheel from the project's CPU wheel index
+      # FIRST (index scoped to this one command, never the requirements install).
+      - name: Install prebuilt llama-cpp-python wheel
+        run: |
+          python -m pip install --no-deps --only-binary=:all: --require-hashes --index-url https://abetlen.github.io/llama-cpp-python/whl/cpu -r .github/ci/llama-cpp-wheel.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt -c .github/ci/llama-cpp-constraints.txt
           pip install httpx
+          python -m pip check
 
       - name: "Check test collection completeness (issue #51 guardrail)"
         run: python scripts/check_test_collection.py
@@ -112,7 +124,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: [changes]
-    if: always() && needs.changes.outputs.pack != 'false'
+    if: ${{ !cancelled() && needs.changes.outputs.pack != 'false' }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 

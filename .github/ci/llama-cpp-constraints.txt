@@ -1,0 +1,4 @@
+# CI-only pin: keeps the prebuilt wheel (installed from the llama-cpp-python CPU
+# wheel index before requirements.txt) in place so pip never compiles it from the
+# PyPI sdist. requirements.txt keeps its range; bump this deliberately.
+llama-cpp-python==0.3.36

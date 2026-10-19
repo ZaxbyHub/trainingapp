@@ -1,0 +1,4 @@
+# CI-only hash-pinned prebuilt wheel (py3-none-win_amd64) installed with
+# --require-hashes from the llama-cpp-python CPU wheel index before requirements.txt.
+# Bump version and hash together with llama-cpp-constraints.txt.
+llama-cpp-python==0.3.36 --hash=sha256:ae5e88a2cf464e5a2dde7c8898c2d5c71cc24d03cac6396bf7509456bde0b9fb
