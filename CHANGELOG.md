@@ -21,7 +21,10 @@
   interpolate — the last of those because `docs[].path` carrying the same escape
   made the typed `doc unreadable` refusal echo it, and the route renders refusal
   text with `ensure_ascii=False`, so the echo raised during serialisation and
-  answered 500 on the default (signature-gate-off) configuration. Contract:
+  answered 500 on the default (signature-gate-off) configuration. Two further
+  malformed shapes are now refused typed as well: a `pack.json` whose top level is
+  not a JSON object, and one nested past CPython's json recursion limit. Both
+  predate this work and both produced the same 500. Contract:
   `tests/test_pack_extract_error_contract.py`.
 - **Packaged-boot smoke hardening and CI wiring (issues #177, #178, #179,
   #180, #182)**: `desktop/scripts/packaged-smoke.mjs` is now an import-safe,
