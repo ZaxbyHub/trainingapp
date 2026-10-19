@@ -431,17 +431,72 @@ def test_a_non_object_pack_json_is_refused_typed():
             canonical_manifest_bytes(raw)
 
 
+def _nest(depth: int) -> bytes:
+    payload = b'{"a":1}'
+    for _ in range(depth):
+        payload = b'{"x":' + payload + b"}"
+    return payload
+
+
 def test_a_pathologically_nested_manifest_is_refused_typed():
-    """Round-2 blocker. `json.loads` raises `RecursionError` past ~1000 nesting
-    levels; only `(UnicodeDecodeError, JSONDecodeError)` was caught, so the route
-    answered an unhandled 500."""
+    """Round-2 blocker, in its version-independent form.
+
+    Two correct guards can fire here and WHICH one does depends on the
+    interpreter: on CPython 3.11 `json.loads` itself raises `RecursionError` past
+    roughly 1000 levels, while 3.12's C scanner parses far deeper and the
+    overflow would otherwise land in the first pure-python traversal. The
+    contract is therefore asserted as "a typed refusal, naming the nesting", not
+    as one specific message — an earlier version of this row matched
+    `nested too deeply` and failed on 3.12 for exactly that reason.
+
+    (That failure is how the version dependence was found: the 3.12 CI leg.)
+    """
     from pack_extract import canonical_manifest_bytes
 
-    deep = b'{"a":1}'
-    for _ in range(1400):
-        deep = b'{"x":' + deep + b"}"
-    with pytest.raises(PackExtractError, match="nested too deeply"):
-        canonical_manifest_bytes(deep)
+    with pytest.raises(PackExtractError) as refusal:
+        canonical_manifest_bytes(_nest(1400))
+    message = str(refusal.value)
+    assert "nested" in message, message
+    assert "pack.json" in message, message
+
+
+def test_the_nesting_bound_does_not_refuse_a_manifest_inside_it():
+    """Over-refusal guard for the nesting bound. A bound set too low would refuse
+    legitimate deep-but-reasonable packs, and nothing else in the suite would
+    notice, because real manifests are only a few levels deep.
+
+    The bound itself is pinned to a sane ceiling first: without that, raising it
+    (the M11 mutation) makes this row try to BUILD a billion-deep payload and
+    hang rather than fail, which is a worse failure mode than a red test.
+    """
+    from pack_extract import (
+        MAX_MANIFEST_NESTING,
+        canonical_manifest_bytes,
+        manifest_nesting_depth,
+    )
+
+    assert 10 <= MAX_MANIFEST_NESTING <= 1000, MAX_MANIFEST_NESTING
+
+    just_inside = _nest(min(MAX_MANIFEST_NESTING - 2, 150))
+    payload = canonical_manifest_bytes(just_inside)
+    assert json.loads(payload.decode("utf-8"))
+    assert manifest_nesting_depth(json.loads(just_inside.decode("utf-8"))) <= (
+        MAX_MANIFEST_NESTING
+    )
+
+
+def test_the_nesting_depth_measurement_is_iterative_not_recursive():
+    """`manifest_nesting_depth` must survive input deep enough to overflow a
+    recursive walker -- it is the guard for exactly that input, so a recursive
+    implementation would be the bug."""
+    from pack_extract import manifest_nesting_depth
+
+    # ~100_000 levels: far past sys.getrecursionlimit(), so a recursive walker
+    # raises RecursionError here.
+    value = {"leaf": 1}
+    for _ in range(100_000):
+        value = {"x": value}
+    assert manifest_nesting_depth(value) == 100_001
 
 
 @pytest.mark.parametrize(

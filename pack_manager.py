@@ -442,6 +442,24 @@ class PackManager:
                 raise PackManagerError(
                     f"{pack_path}: pack.json is nested too deeply to parse"
                 ) from error
+            if isinstance(manifest, dict):
+                # The RecursionError clause above is not sufficient on its own:
+                # the recursion limit is not portable across CPython versions, so
+                # on 3.12 `json.loads` parses a manifest that would overflow the
+                # first pure-python traversal below (measured live: 1400 levels
+                # parse fine on 3.12, then `_refuse_unencodable_manifest_strings`
+                # and the schema validator both overflow). Refuse on an explicit
+                # bound so the outcome is the same on every supported interpreter.
+                from pack_extract import (  # lazy: keeps the import graph acyclic
+                    MAX_MANIFEST_NESTING,
+                    manifest_nesting_depth,
+                )
+
+                if manifest_nesting_depth(manifest) > MAX_MANIFEST_NESTING:
+                    raise PackManagerError(
+                        f"{pack_path}: pack.json is nested deeper than the supported"
+                        f" {MAX_MANIFEST_NESTING} levels"
+                    )
             if not isinstance(manifest, dict):
                 # `semantic_problems` below dereferences `manifest["docs"]`, so a
                 # non-object top level would escape as an AttributeError and answer

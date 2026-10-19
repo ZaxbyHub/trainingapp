@@ -43,6 +43,43 @@ DEFAULT_MAX_ENTRIES = 5000
 DEFAULT_MAX_COMPRESSION_RATIO = 100.0
 _RATIO_FLOOR_BYTES = 16 * 1024 * 1024
 
+#: Deepest manifest container nesting this module will process. Every consumer
+#: of a parsed manifest recurses — the float guard here, the canonical dump, the
+#: schema validator and the semantic checks in `pack_manager` — so the bound has
+#: to sit BELOW the recursion limit with room for the call stack above it.
+#:
+#: It cannot be left to CPython's own limit, because that is not portable: on
+#: 3.11 `json.loads` itself raises `RecursionError` past roughly 1000 levels,
+#: while on 3.12 its C scanner parses far deeper and the overflow lands in the
+#: first pure-python traversal instead (measured: 3.12 parses 1400 levels fine
+#: and then dies in `_refuse_non_integer_numbers`). An explicit bound makes the
+#: refusal land in the same place on every supported interpreter.
+MAX_MANIFEST_NESTING = 200
+
+
+def manifest_nesting_depth(node: Any) -> int:
+    """Deepest container nesting level in `node`, measured ITERATIVELY.
+
+    Iterative on purpose: a recursive walker here would be the very thing that
+    overflows the stack on the input we are trying to reject.
+    """
+    deepest = 0
+    stack = [(node, 1)]
+    while stack:
+        current, depth = stack.pop()
+        if isinstance(current, dict):
+            if depth > deepest:
+                deepest = depth
+            for value in current.values():
+                stack.append((value, depth + 1))
+        elif isinstance(current, list):
+            if depth > deepest:
+                deepest = depth
+            for value in current:
+                stack.append((value, depth + 1))
+    return deepest
+
+
 _DRIVE_PREFIX = re.compile(r"^[A-Za-z]:")
 
 
@@ -294,6 +331,18 @@ def canonical_manifest_bytes(manifest_bytes: bytes) -> bytes:
         ) from error
     if not isinstance(manifest, dict):
         raise PackExtractError("pack.json must be a JSON object")
+    if manifest_nesting_depth(manifest) > MAX_MANIFEST_NESTING:
+        # The `except RecursionError` above is NOT sufficient on its own. The
+        # recursion limit is not portable across CPython versions: 3.11's C
+        # json scanner raises past ~1000 levels, but 3.12's parses far deeper,
+        # so the overflow moves into the first pure-python traversal below
+        # (observed live on 3.12: json.loads fine at 1400, `_refuse_non_integer
+        # _numbers` and the unencodable-string walk both overflowed). An
+        # explicit bound makes the refusal deterministic on every supported
+        # interpreter instead of depending on where the stack happens to run out.
+        raise PackExtractError(
+            f"pack.json is nested deeper than the supported {MAX_MANIFEST_NESTING} levels"
+        )
     if "signature" in manifest:
         manifest = {key: value for key, value in manifest.items() if key != "signature"}
     _refuse_non_integer_numbers(manifest)
