@@ -118,7 +118,7 @@ describe('issue 199 backend surface lifecycle', () => {
       ).toBe('desktop-stub (B5 #63)');
       expect(stats.document_count, 'getStats reports zero document count after stop').toBe(0);
     },
-    60_000,
+    30_000,
   );
 
   it(

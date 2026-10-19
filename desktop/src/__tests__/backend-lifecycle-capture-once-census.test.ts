@@ -227,7 +227,7 @@ describe('guardrail: no engine method reads a mutable surface after its await', 
         'getStats must surface the surface rejection rather than a substituted default',
       ).toContain('worker exited');
     },
-    60_000,
+    30_000,
   );
 
   it(

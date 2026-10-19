@@ -103,7 +103,7 @@ describe('issue 229 injected env repo-root contract', () => {
         'the reranker resolver must receive the injected repo root',
       ).toEqual([INJECTED]);
     },
-    60_000,
+    30_000,
   );
 
   it(
@@ -155,6 +155,6 @@ describe('issue 229 injected env repo-root contract', () => {
         'an unset ambient repo root still resolves to no reranker repo root today',
       ).toEqual([undefined]);
     },
-    60_000,
+    30_000,
   );
 });
