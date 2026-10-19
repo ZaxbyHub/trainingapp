@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+- **Player-origin refusal and pack typed-refusal contract (issues #228, #226)**:
+  the ADR-0012 player-origin 404 now keys on `_route_path(request.scope)` — the
+  same string `StaticFiles` resolves — instead of `request.url.path`. Starlette
+  >= 1.9 percent-encodes backslashes when it rebuilds the URL from the ASGI
+  scope, so `/training%5Csw.js` reached the gate as a spelling its fold could
+  not undo and fell through to the archive mount, which served the course
+  worker with HTTP 200: a fail-open security boundary on a server that must
+  never answer as a player origin. No dependency pin — hardening the gate closes
+  the defect on every version the floating fastapi/starlette range can resolve
+  to. Separately, `verify_pack_signature` decoded a non-string signature `value`
+  (raising `TypeError` outside its `except`) and `canonical_manifest_bytes`
+  encoded outside any guard (a lone surrogate raised `UnicodeEncodeError`);
+  neither is a `PackExtractError`, so the install route answered 500 instead of
+  the documented 409. Both are now typed refusals, as the Node twin already were.
+  The same class is closed at its choke point for pack doc text and for the
+  managed-registry write. Contract:
+  `tests/test_pack_extract_error_contract.py`.
 - **Packaged-boot smoke hardening and CI wiring (issues #177, #178, #179,
   #180, #182)**: `desktop/scripts/packaged-smoke.mjs` is now an import-safe,
   unit-tested driver — bounded evaluates on one helper line, a 30-minute run
