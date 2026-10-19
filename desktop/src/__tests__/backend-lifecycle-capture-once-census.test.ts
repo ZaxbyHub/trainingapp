@@ -22,33 +22,35 @@ import { StubEngine } from '../../main/backend/engine.js';
 import type { DocumentSurface } from '../../main/backend/types.js';
 import type { RetrievalSurface } from '../../main/backend/retrieval/hybrid.js';
 
-/** A surface whose every call suspends until the test releases it. */
-function suspendingSurface(): { surface: DocumentSurface; release: () => void } {
+/**
+ * A document surface whose every call suspends until the test releases it and
+ * then REJECTS with a worker-exit style error.
+ *
+ * Rejecting (rather than resolving) is what makes the census discriminate: a
+ * "hardening" mutant that wraps the post-await surface read in try/catch and
+ * substitutes the no-surface default would otherwise resolve every row and
+ * leave the census green — the exact silent-truncation shape this guardrail
+ * exists to prevent (PRR review finding H3 / CAND-6, execution-proven). With a
+ * rejecting surface the unmutated code propagates the rejection, while the
+ * mutant resolves with the default id, and the identity assertion below tells
+ * them apart.
+ */
+function rejectingSurface(): { surface: DocumentSurface; release: () => void } {
   let release: (() => void) | null = null;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
+  const boom = async (): Promise<never> => {
+    await gate;
+    throw new Error('worker exited');
+  };
   const surface: DocumentSurface = {
     embedderModelId: 'census-embedder',
-    listDocuments: async () => {
-      await gate;
-      return { documents: [], total: 0 };
-    },
-    clearDocuments: async () => {
-      await gate;
-    },
-    ingestDirectory: async () => {
-      await gate;
-      return { ingested: 0, chunks: 0, skipped: 0 };
-    },
-    ingestFile: async () => {
-      await gate;
-      return { ingested: 0, chunks: 0, skipped: 0 };
-    },
-    ingestBatch: async () => {
-      await gate;
-      return { ingested: 0, chunks: 0, skipped: 0, results: [] };
-    },
+    listDocuments: boom,
+    clearDocuments: boom,
+    ingestDirectory: boom,
+    ingestFile: boom,
+    ingestBatch: boom,
   };
   return { surface, release: release ?? (() => {}) };
 }
@@ -85,18 +87,28 @@ async function censusRow(
   name: string,
   invoke: (engine: StubEngine) => Promise<unknown>,
   attach: (engine: StubEngine) => () => void,
-): Promise<{ name: string; result: string }> {
+): Promise<{ name: string; result: string; embeddingModel?: string }> {
   const engine = new StubEngine();
   const release = attach(engine);
-  const pending = outcome(invoke(engine));
+  const pending = invoke(engine).then(
+    (value) => ({ ok: true as const, value }),
+    (err: unknown) => ({ ok: false as const, message: err instanceof Error ? err.message : String(err) }),
+  );
   // Let the engine method reach its await inside the surface call.
   await new Promise((r) => setTimeout(r, 30));
   // Teardown lands in the await window.
   engine.attachDocumentSurface(null);
   engine.attachRetrievalSurface(null);
   release();
-  const result = await pending;
-  return { name, result };
+  const settled = await pending;
+  const result = settled.ok ? 'RESOLVED' : `THREW: ${settled.message}`;
+  // getStats() resolves to an object carrying the surface's embedder id, which
+  // is the positive identity witness for the document half of the census.
+  const embeddingModel =
+    settled.ok && settled.value && typeof settled.value === 'object' && 'embedding_model' in settled.value
+      ? String((settled.value as { embedding_model: unknown }).embedding_model)
+      : undefined;
+  return { name, result, embeddingModel };
 }
 
 describe('guardrail: no engine method reads a mutable surface after its await', () => {
@@ -122,7 +134,7 @@ describe('guardrail: no engine method reads a mutable surface after its await', 
           'getStats',
           (engine) => engine.getStats(),
           (engine) => {
-            const { surface, release } = suspendingSurface();
+            const { surface, release } = rejectingSurface();
             engine.attachDocumentSurface(surface);
             return release;
           },
@@ -134,7 +146,7 @@ describe('guardrail: no engine method reads a mutable surface after its await', 
           'clearDocuments',
           (engine) => engine.clearDocuments(),
           (engine) => {
-            const { surface, release } = suspendingSurface();
+            const { surface, release } = rejectingSurface();
             engine.attachDocumentSurface(surface);
             return release;
           },
@@ -146,7 +158,7 @@ describe('guardrail: no engine method reads a mutable surface after its await', 
           'ingestDirectory',
           (engine) => engine.ingestDirectory('/tmp/census'),
           (engine) => {
-            const { surface, release } = suspendingSurface();
+            const { surface, release } = rejectingSurface();
             engine.attachDocumentSurface(surface);
             return release;
           },
@@ -158,7 +170,7 @@ describe('guardrail: no engine method reads a mutable surface after its await', 
           'ingestFile',
           (engine) => engine.ingestFile({} as never),
           (engine) => {
-            const { surface, release } = suspendingSurface();
+            const { surface, release } = rejectingSurface();
             engine.attachDocumentSurface(surface);
             return release;
           },
@@ -170,7 +182,7 @@ describe('guardrail: no engine method reads a mutable surface after its await', 
           'ingestBatch',
           (engine) => engine.ingestBatch([]),
           (engine) => {
-            const { surface, release } = suspendingSurface();
+            const { surface, release } = rejectingSurface();
             engine.attachDocumentSurface(surface);
             return release;
           },
@@ -180,16 +192,40 @@ describe('guardrail: no engine method reads a mutable surface after its await', 
       // eslint-disable-next-line no-console
       console.log(`CENSUS ${JSON.stringify(rows)}`);
 
-      const threw = rows.filter((row) => row.result.startsWith('THREW'));
-      expect(
-        threw,
-        `no engine method may null-deref when a detach lands inside its await: ${JSON.stringify(threw)}`,
-      ).toEqual([]);
-
-      // The retrieval row must also report the CAPTURED surface's field, not a
-      // detached one — the positive half of the capture-once invariant.
+      // The retrieval row must resolve and report the CAPTURED surface's field,
+      // not a detached one — the positive half of the capture-once invariant.
       const retrieve = rows.find((row) => row.name === 'retrieveContext');
       expect(retrieve?.result, 'retrieveContext must resolve, not throw').toBe('RESOLVED');
+
+      // The document rows must PROPAGATE the surface's rejection (PRR review
+      // finding H3 / CAND-6). The fixture rejects with 'worker exited' after the
+      // gate, so unmutated code surfaces that error. A "hardening" mutant that
+      // wraps the post-await surface read in try/catch and substitutes the
+      // no-surface default resolves instead — which is the silent-truncation
+      // shape this guardrail exists to prevent, and which an
+      // absence-of-throw-only assertion cannot see (execution-proven: such a
+      // mutant left all five rows green before this assertion existed).
+      const documentRows = rows.filter((row) => row.name !== 'retrieveContext');
+      const swallowed = documentRows.filter((row) => !row.result.startsWith('THREW'));
+      expect(
+        swallowed,
+        `every document-surface row must propagate the surface rejection, not swallow it: ${JSON.stringify(swallowed)}`,
+      ).toEqual([]);
+      for (const row of documentRows) {
+        expect(
+          row.result,
+          `${row.name} must surface the surface's own error, not a substituted default`,
+        ).toContain('worker exited');
+      }
+
+      // The one document method whose output is observable must report the
+      // CAPTURED surface's identity when the surface is healthy. Driven by the
+      // second test below, which uses a resolving surface.
+      const statsRow = rows.find((row) => row.name === 'getStats');
+      expect(
+        statsRow?.result,
+        'getStats must surface the surface rejection rather than a substituted default',
+      ).toContain('worker exited');
     },
     60_000,
   );
