@@ -148,7 +148,16 @@ def _version_key(version: str) -> Tuple[int, int, int, Tuple[int, tuple]]:
 
 
 def extract_doc_text(raw: bytes, mime: str) -> str:
-    """Extract the chunkable text from a doc's raw bytes by declared mime."""
+    """Extract the chunkable text from a doc's raw bytes by declared mime.
+
+    Refuses text that is not encodable as UTF-8. A JSON doc's `text` field can
+    carry a lone-surrogate escape (`"\\ud800"`), which `json.loads` decodes to a
+    real surrogate character; everything downstream — the chunk-identity and
+    content-hash digests (`content_hash_of`, `chunk_id_of`) and the sqlite bind —
+    encodes that text, so letting it past this boundary turns a pack install into
+    an unhandled `UnicodeEncodeError` instead of the documented typed refusal
+    (issue #226, recurrence sweep).
+    """
     if mime == "application/json":
         try:
             data = json.loads(raw.decode("utf-8"))
@@ -156,15 +165,27 @@ def extract_doc_text(raw: bytes, mime: str) -> str:
             raise PackManagerError(f"doc is not valid JSON: {error}") from error
         if not isinstance(data, dict) or not isinstance(data.get("text"), str):
             raise PackManagerError("JSON doc must be an object with a string 'text'")
-        return data["text"]
+        return _require_encodable_text(data["text"])
     if mime.startswith("text/"):
         try:
-            return raw.decode("utf-8")
+            text = raw.decode("utf-8")
         except UnicodeDecodeError as error:
             raise PackManagerError(f"text doc is not valid UTF-8: {error}") from error
+        return _require_encodable_text(text)
     raise PackManagerError(
         f"unsupported doc mime {mime!r}; prebuilt-index packs are the C6 path"
     )
+
+
+def _require_encodable_text(text: str) -> str:
+    """Refuse a string that cannot round-trip through UTF-8, typed."""
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise PackManagerError(
+            f"doc text carries a string that is not encodable as UTF-8: {error}"
+        ) from error
+    return text
 
 
 def split_words(text: str, size: int, overlap: int) -> List[str]:
@@ -285,7 +306,7 @@ class PackManager:
                 json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
             )
             tmp.replace(self.registry_path)
-        except OSError as error:
+        except (OSError, UnicodeEncodeError) as error:
             raise PackManagerError(f"pack registry write failed: {error}") from error
 
     def _find(self, rows, pack_id: str, version: Optional[str] = None):

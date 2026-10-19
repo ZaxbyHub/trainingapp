@@ -275,6 +275,11 @@ def canonical_manifest_bytes(manifest_bytes: bytes) -> bytes:
     compact (",", ":") separators, and a FAIL-CLOSED refusal on any
     non-integer number (the pack schema permits integers only, so a float
     means the manifest is not canonicalizable).
+
+    `ensure_ascii=False` is what makes the trailing encode capable of failing on
+    a lone surrogate, so the encode is inside the typed-refusal contract too
+    (issue #226). `UnicodeEncodeError` is a `ValueError`, so wrapping it here is
+    what turns an unhandled 500 on the install route into the documented 409.
     """
     try:
         manifest = json.loads(manifest_bytes.decode("utf-8"))
@@ -285,9 +290,14 @@ def canonical_manifest_bytes(manifest_bytes: bytes) -> bytes:
     if "signature" in manifest:
         manifest = {key: value for key, value in manifest.items() if key != "signature"}
     _refuse_non_integer_numbers(manifest)
-    return json.dumps(
-        manifest, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    ).encode("utf-8")
+    try:
+        return json.dumps(
+            manifest, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise PackExtractError(
+            f"pack.json carries a string that is not encodable as UTF-8: {error}"
+        ) from error
 
 
 def _refuse_non_integer_numbers(node: Any) -> None:
@@ -308,7 +318,15 @@ def _refuse_non_integer_numbers(node: Any) -> None:
 def verify_pack_signature(
     manifest_bytes: bytes, signature: Any, trusted_keys: Tuple[TrustedKey, ...]
 ) -> None:
-    """Verify an ed25519 detached signature over the canonical manifest bytes."""
+    """Verify an ed25519 detached signature over the canonical manifest bytes.
+
+    Every refusal is a `PackExtractError`; nothing escapes as a bare builtin
+    exception (issue #226). `signature["value"]` is type-checked before decoding
+    for the same reason the Node twin does it
+    (`desktop/main/backend/packs/pack-extract.ts:361-363`): `b64decode` raises
+    `TypeError` for a non-string, which is outside `(binascii.Error, ValueError)`
+    and would otherwise bypass the typed contract entirely.
+    """
     if not isinstance(signature, dict):
         raise PackExtractError("pack signature block is missing or malformed")
     if signature.get("algorithm") != "ed25519":
@@ -321,8 +339,11 @@ def verify_pack_signature(
         raise PackExtractError(
             f"pack signature key_id {key_id!r} is not in packs.security.trustedKeys"
         )
+    value = signature.get("value")
+    if not isinstance(value, str) or not value:
+        raise PackExtractError("pack signature value is missing or not a string")
     try:
-        signature_value = base64.b64decode(signature.get("value", ""), validate=True)
+        signature_value = base64.b64decode(value, validate=True)
     except (binascii.Error, ValueError) as error:
         raise PackExtractError(
             f"pack signature value is not valid base64: {error}"
