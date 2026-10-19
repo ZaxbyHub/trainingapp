@@ -16,7 +16,7 @@
 //     meta.embedding_model_id.
 //
 // Requires desktop/node_modules (better-sqlite3, jszip, xlsx); CI has it.
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -28,6 +28,7 @@ import { DEFAULT_INGEST_CONFIG } from '../../main/backend/ingest/config.js';
 import { IngestPipeline } from '../../main/backend/ingest/pipeline.js';
 import { extractDocumentFromFile } from '../../main/backend/ingest/extractors.js';
 import { openStore, type StoreHandle } from '../../main/backend/store/sqlite-store.js';
+import { nativeDepsIt } from './fixtures/native-deps-gate.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -43,8 +44,7 @@ function findRepoRoot(dir: string): string {
 }
 
 const REPO_ROOT = findRepoRoot(THIS_DIR);
-const NATIVE_DEPS_PRESENT = fs.existsSync(path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'));
-const itReal = NATIVE_DEPS_PRESENT ? it : it.skip;
+const itReal = nativeDepsIt('b6-supplementary');
 
 const tempDirs: string[] = [];
 

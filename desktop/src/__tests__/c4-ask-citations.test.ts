@@ -4,7 +4,7 @@
 // rows + createRetrievalSurface + StubEngine exactly as d6-learn-server does,
 // then asserts the citations array crosses /ask and the stream done event
 // while the internal `cited` field never serializes.
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -18,6 +18,7 @@ import { openStore, type StoreHandle } from '../../main/backend/store/sqlite-sto
 import { HashEmbedder } from '../../main/backend/ingest/embedder';
 import { createRetrievalSurface } from '../../main/backend/retrieval/hybrid';
 import { CALIBRATED_RELEVANCE_FLOOR } from '../../main/backend/retrieval/config';
+import { nativeDepsIt } from './fixtures/native-deps-gate.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -33,10 +34,7 @@ function findRepoRoot(dir: string): string {
 }
 
 const REPO_ROOT = findRepoRoot(THIS_DIR);
-const NATIVE_DEPS_PRESENT = fs.existsSync(
-  path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'),
-);
-const itReal = NATIVE_DEPS_PRESENT ? it : it.skip;
+const itReal = nativeDepsIt('c4-ask-citations');
 const DIMS = 8;
 const TOKEN = 'c4-citations-spec-token';
 const PACK_PUBLISHED_AT = '2026-09-16T00:00:00.000Z';

@@ -14,12 +14,13 @@
 //        for builds where the conversion is refused silently;
 //   AC5: direct closeStore() contract pin + loadSchemaSql substitution pin;
 //   AC6: openStore throws on a relative dbPath.
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect } from 'vitest';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { nativeDepsIt } from './fixtures/native-deps-gate.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -34,12 +35,7 @@ function findRepoRoot(dir: string): string {
   throw new Error('repo root not found (marker contracts/api.openapi.yaml)');
 }
 const REPO_ROOT = findRepoRoot(path.join(THIS_DIR, '..', '..', '..'));
-// swarm-pr-review PRR-024: repo convention — skip (not hard-fail) when the
-// better-sqlite3 native addon is absent (CI always installs it). The frozen
-// acceptance probes deliberately do NOT use this guard; the permanent tests
-// follow the b5/b6 convention.
-const NATIVE_DEPS_PRESENT = fs.existsSync(path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'));
-const itReal = NATIVE_DEPS_PRESENT ? it : it.skip;
+const itReal = nativeDepsIt('i100-store-hardening');
 
 const tempDirs: string[] = [];
 const START_CWD = process.cwd();

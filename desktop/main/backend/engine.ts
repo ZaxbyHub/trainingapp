@@ -241,11 +241,16 @@ export class StubEngine implements EngineSurface {
     floorActive: boolean;
   } | null> {
     if (this.retrievalSurface === null) return null;
+    // Capture ONCE before the await (the issue #185 / getStats pattern at the
+    // bottom of this file): a detach landing inside the search await window
+    // must not null-deref, and the fields reported below must describe the
+    // surface that actually served the rows (issue #199 (e)).
+    const surface = this.retrievalSurface;
     const n = nResults ?? (Number(this.settings.rag_n_results) || 4);
     // settings-wiring-honesty: the REQUESTED rerank flag rides each query, so
     // a stored rag_reranking_enabled takes effect without a surface rebuild.
     const rerank = this.requestedRerank();
-    const allRows = await this.retrievalSurface.search(question, n, { rerank });
+    const allRows = await surface.search(question, n, { rerank });
     if (allRows.length === 0) return null;
     // Issue #157: budget at row level when the assembly site supplies a
     // ceiling; without one (stub path, pre-#157 callers) every row survives.
@@ -274,7 +279,7 @@ export class StubEngine implements EngineSurface {
       texts: survivors.map((row) => row.text),
       // Per-query (issue #72 contract): a rerank-off query skipped the
       // reranker, so its scores were never floor-gated.
-      floorActive: this.retrievalSurface.floorActive !== false && rerank,
+      floorActive: surface.floorActive !== false && rerank,
       // D6 (issue #82): cited chunk ids + scores for the learn assembler
       // (rows whose surface predates chunkId are simply absent from cited).
       cited: survivors

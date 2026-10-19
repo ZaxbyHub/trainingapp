@@ -43,6 +43,43 @@ DEFAULT_MAX_ENTRIES = 5000
 DEFAULT_MAX_COMPRESSION_RATIO = 100.0
 _RATIO_FLOOR_BYTES = 16 * 1024 * 1024
 
+#: Deepest manifest container nesting this module will process. Every consumer
+#: of a parsed manifest recurses — the float guard here, the canonical dump, the
+#: schema validator and the semantic checks in `pack_manager` — so the bound has
+#: to sit BELOW the recursion limit with room for the call stack above it.
+#:
+#: It cannot be left to CPython's own limit, because that is not portable: on
+#: 3.11 `json.loads` itself raises `RecursionError` past roughly 1000 levels,
+#: while on 3.12 its C scanner parses far deeper and the overflow lands in the
+#: first pure-python traversal instead (measured: 3.12 parses 1400 levels fine
+#: and then dies in `_refuse_non_integer_numbers`). An explicit bound makes the
+#: refusal land in the same place on every supported interpreter.
+MAX_MANIFEST_NESTING = 200
+
+
+def manifest_nesting_depth(node: Any) -> int:
+    """Deepest container nesting level in `node`, measured ITERATIVELY.
+
+    Iterative on purpose: a recursive walker here would be the very thing that
+    overflows the stack on the input we are trying to reject.
+    """
+    deepest = 0
+    stack = [(node, 1)]
+    while stack:
+        current, depth = stack.pop()
+        if isinstance(current, dict):
+            if depth > deepest:
+                deepest = depth
+            for value in current.values():
+                stack.append((value, depth + 1))
+        elif isinstance(current, list):
+            if depth > deepest:
+                deepest = depth
+            for value in current:
+                stack.append((value, depth + 1))
+    return deepest
+
+
 _DRIVE_PREFIX = re.compile(r"^[A-Za-z]:")
 
 
@@ -275,19 +312,48 @@ def canonical_manifest_bytes(manifest_bytes: bytes) -> bytes:
     compact (",", ":") separators, and a FAIL-CLOSED refusal on any
     non-integer number (the pack schema permits integers only, so a float
     means the manifest is not canonicalizable).
+
+    `ensure_ascii=False` is what makes the trailing encode capable of failing on
+    a lone surrogate, so the encode is inside the typed-refusal contract too
+    (issue #226). `UnicodeEncodeError` is a `ValueError`, so wrapping it here is
+    what turns an unhandled 500 on the install route into the documented 409.
     """
     try:
         manifest = json.loads(manifest_bytes.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise PackExtractError(f"pack.json is not valid UTF-8 JSON: {error}") from error
+    except RecursionError as error:
+        # A pathologically nested manifest exhausts CPython's json recursion
+        # limit; that is a malformed pack, not a server fault, so it belongs in
+        # the typed-refusal contract (issue #226).
+        raise PackExtractError(
+            f"pack.json is nested too deeply to parse: {error}"
+        ) from error
     if not isinstance(manifest, dict):
         raise PackExtractError("pack.json must be a JSON object")
+    if manifest_nesting_depth(manifest) > MAX_MANIFEST_NESTING:
+        # The `except RecursionError` above is NOT sufficient on its own. The
+        # recursion limit is not portable across CPython versions: 3.11's C
+        # json scanner raises past ~1000 levels, but 3.12's parses far deeper,
+        # so the overflow moves into the first pure-python traversal below
+        # (observed live on 3.12: json.loads fine at 1400, `_refuse_non_integer
+        # _numbers` and the unencodable-string walk both overflowed). An
+        # explicit bound makes the refusal deterministic on every supported
+        # interpreter instead of depending on where the stack happens to run out.
+        raise PackExtractError(
+            f"pack.json is nested deeper than the supported {MAX_MANIFEST_NESTING} levels"
+        )
     if "signature" in manifest:
         manifest = {key: value for key, value in manifest.items() if key != "signature"}
     _refuse_non_integer_numbers(manifest)
-    return json.dumps(
-        manifest, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    ).encode("utf-8")
+    try:
+        return json.dumps(
+            manifest, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise PackExtractError(
+            f"pack.json carries a string that is not encodable as UTF-8: {error}"
+        ) from error
 
 
 def _refuse_non_integer_numbers(node: Any) -> None:
@@ -308,7 +374,15 @@ def _refuse_non_integer_numbers(node: Any) -> None:
 def verify_pack_signature(
     manifest_bytes: bytes, signature: Any, trusted_keys: Tuple[TrustedKey, ...]
 ) -> None:
-    """Verify an ed25519 detached signature over the canonical manifest bytes."""
+    """Verify an ed25519 detached signature over the canonical manifest bytes.
+
+    Every refusal is a `PackExtractError`; nothing escapes as a bare builtin
+    exception (issue #226). `signature["value"]` is type-checked before decoding
+    for the same reason the Node twin does it
+    (`desktop/main/backend/packs/pack-extract.ts:361-363`): `b64decode` raises
+    `TypeError` for a non-string, which is outside `(binascii.Error, ValueError)`
+    and would otherwise bypass the typed contract entirely.
+    """
     if not isinstance(signature, dict):
         raise PackExtractError("pack signature block is missing or malformed")
     if signature.get("algorithm") != "ed25519":
@@ -321,8 +395,11 @@ def verify_pack_signature(
         raise PackExtractError(
             f"pack signature key_id {key_id!r} is not in packs.security.trustedKeys"
         )
+    value = signature.get("value")
+    if not isinstance(value, str) or not value:
+        raise PackExtractError("pack signature value is missing or not a string")
     try:
-        signature_value = base64.b64decode(signature.get("value", ""), validate=True)
+        signature_value = base64.b64decode(value, validate=True)
     except (binascii.Error, ValueError) as error:
         raise PackExtractError(
             f"pack signature value is not valid base64: {error}"

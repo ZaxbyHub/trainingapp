@@ -111,10 +111,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt -c .github/ci/llama-cpp-constraints.txt
           pip install httpx
+          pip install pytest
           python -m pip check
 
       - name: "Check test collection completeness (issue #51 guardrail)"
         run: python scripts/check_test_collection.py
+
+      - name: "Run the CI wiring guardrail (test_ci_paths.py)"
+        # Review PRR-003: the contract-family gate's external defender lives
+        # here, in a REQUIRED context, so a diff that deletes the contract
+        # step from security.yml (whose only other gate lives inside that
+        # very step) still gets a red required check. This suite also pins
+        # the bucket classifier and workflow wiring end to end.
+        run: python -m pytest tests/test_ci_paths.py -q
 
       - name: Run API contract conformance suite
         run: python contracts/tests/run_conformance.py --asgi api_server:app

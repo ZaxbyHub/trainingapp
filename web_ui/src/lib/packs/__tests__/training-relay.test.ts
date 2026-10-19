@@ -243,7 +243,7 @@ describe('relay helpers', () => {
         "default-src 'self'",
         "script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline'",
         "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' data:",
+        "img-src 'self' data: blob:",
         "font-src 'self' data:",
         "connect-src 'self'",
         `worker-src blob: ${PLAYER}/training/pack-a/ ${PLAYER}/training/sw.js`,

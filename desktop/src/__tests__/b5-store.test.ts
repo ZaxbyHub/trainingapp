@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { nativeDepsIt } from './fixtures/native-deps-gate.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -40,11 +41,7 @@ function findRepoRoot(dir: string): string {
 }
 
 const REPO_ROOT = findRepoRoot(THIS_DIR);
-const NATIVE_DEPS_PRESENT = fs.existsSync(path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'));
-// Inline artifact-guarded skip (never a blanket skip): without the native deps
-// these tests cannot run; CI always installs them.
-const itWithDeps = NATIVE_DEPS_PRESENT ? it : it.skip;
-const itReal = itWithDeps;
+const itReal = nativeDepsIt('b5-store'); const itWithDeps = itReal;
 
 function makeTempDbPath(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'b5-store-'));

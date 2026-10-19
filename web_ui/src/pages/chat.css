@@ -123,14 +123,27 @@
 .chat-learn__open { flex: none; }
 
 /* ---------------------------------------------------------- Markdown */
-/* Restyle only: the renderer's URL allowlist and no-raw-HTML rules are untouched. This
-   does not address #143 (remote images still render). */
+/* Restyle only: the renderer's URL allowlist and no-raw-HTML rules are untouched.
+   (Issue #143 IS addressed as of the silent-failure batch: remote images render
+   as non-fetching placeholders with a deliberate-open link.) */
 .chat-md { overflow-wrap: anywhere; }
 .chat-md > :first-child { margin-top: 0; }
 .chat-md > :last-child { margin-bottom: 0; }
 .chat-md__p { margin: var(--space-2) 0; }
 .chat-md__list { margin: var(--space-2) 0; padding-left: var(--space-6); }
 .chat-md__li { margin-bottom: var(--space-1); }
+/* Issue #143 / review PRR-027: the air-gap image placeholder is a real UI
+   surface (blocked/remote images), not stray inline text. */
+.chat-md__img-placeholder {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+.chat-md__img-url {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  word-break: break-all;
+}
+
 .chat-md__link { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
 .chat-md__link:hover { color: var(--accent-hover); }
 .chat-md__link:focus-visible { outline: var(--focus-outline-width) solid var(--focus-ring); outline-offset: var(--focus-outline-offset); border-radius: 2px; }

@@ -12,7 +12,7 @@
 //            in the response body, not just the status code.
 //   PRR-014  restoreBackup replaces a NON-EMPTY active store with the
 //            backup's content (no merge, no residue).
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect } from 'vitest';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -24,6 +24,7 @@ import { createBackup, latestBackup, restoreBackup } from '../../main/backend/st
 import { IngestPipeline } from '../../main/backend/ingest/pipeline.js';
 import { HashEmbedder } from '../../main/backend/ingest/embedder.js';
 import { resolveIngestLimits } from '../../main/backend/ingest/config.js';
+import { nativeDepsIt } from './fixtures/native-deps-gate.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -39,8 +40,7 @@ function findRepoRoot(dir: string): string {
 }
 
 const REPO_ROOT = findRepoRoot(THIS_DIR);
-const NATIVE_DEPS_PRESENT = fs.existsSync(path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'));
-const itReal = NATIVE_DEPS_PRESENT ? it : it.skip;
+const itReal = nativeDepsIt('b6-review-hardening');
 
 const TOKEN = 'b6-hardening-token';
 const CONFIG = { maxConcurrentFiles: 2, chunkWordCount: 256, chunkOverlapWords: 100 };

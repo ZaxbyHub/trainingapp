@@ -16,7 +16,7 @@ import unicodedata
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple
 from urllib.parse import unquote
 
 from fastapi import FastAPI, File, HTTPException, Request, Security, UploadFile
@@ -546,7 +546,35 @@ app.add_middleware(
 # this host. Static player hosts: web_ui/scripts/serve-offline.mjs, start.ps1
 # and vite preview (vite dev also answers the player origin, with a dev-only
 # /@fs and /api proxy residual).
+#
+# The refusal keys on `_route_path(request.scope)` — the same string the static
+# mount resolves — and NEVER on `request.url.path`. Starlette >= 1.9
+# percent-encodes backslashes when rebuilding the URL from the ASGI scope, so a
+# `request.url.path` key silently stops matching the spellings the mount really
+# serves (issue #228).
 TRAINING_PLAYER_PATHS = frozenset({"/training-boot.html", "/training-boot.js"})
+
+
+def _route_path(scope: Mapping[str, Any]) -> str:
+    """The exact path string the static archive mount resolves this request
+    against, i.e. `scope["path"]` minus any `root_path` prefix.
+
+    The player-origin refusal below and `StaticFiles` MUST read the same string.
+    Starlette >= 1.9 rebuilds `request.url.path` by percent-encoding `?`, `#` and
+    backslashes out of `scope["path"]` (see `starlette.datastructures.URL`), so a
+    gate keyed on `request.url.path` sees `/training%5Csw.js` while the mount still
+    resolves `/training\\sw.js` to the course worker — a fail-open player origin.
+    This mirrors `starlette._utils.get_route_path` in a few lines rather than
+    importing a private starlette symbol into a security gate, so a dependency
+    upgrade cannot turn the refusal into an ImportError at startup."""
+    path = scope.get("path", "")
+    root_path = scope.get("root_path", "")
+    if not root_path or not path.startswith(root_path):
+        return path
+    remainder = path[len(root_path) :]
+    if remainder == "" or remainder.startswith("/"):
+        return remainder
+    return path
 
 
 def _player_path_key(path: str) -> str:
@@ -572,7 +600,11 @@ def _player_path_key(path: str) -> str:
 
 def _is_player_path(path: str) -> bool:
     key = _player_path_key(path)
-    return key in TRAINING_PLAYER_PATHS or key == "/training" or key.startswith("/training/")
+    return (
+        key in TRAINING_PLAYER_PATHS
+        or key == "/training"
+        or key.startswith("/training/")
+    )
 
 
 def _resolves_to_player_file(archive_dir: Optional[Path], path: str) -> bool:
@@ -587,12 +619,16 @@ def _resolves_to_player_file(archive_dir: Optional[Path], path: str) -> bool:
         return False
     try:
         root = os.path.realpath(archive_dir)
-        candidate = os.path.normcase(os.path.realpath(os.path.join(root, path.lstrip("/\\"))))
+        candidate = os.path.normcase(
+            os.path.realpath(os.path.join(root, path.lstrip("/\\")))
+        )
         player_files = {
             os.path.normcase(os.path.realpath(os.path.join(root, name.lstrip("/"))))
             for name in TRAINING_PLAYER_PATHS
         }
-        training_dir = os.path.normcase(os.path.realpath(os.path.join(root, "training")))
+        training_dir = os.path.normcase(
+            os.path.realpath(os.path.join(root, "training"))
+        )
     except (OSError, ValueError):
         return False
     return (
@@ -611,7 +647,7 @@ async def cross_origin_isolation(request: Request, call_next):
     (`_web_archive_dir` resolved at startup). Pure API-only deployments don't
     need cross-origin isolation, and emitting COOP/COEP there would needlessly
     affect external API consumers and iframe embedders."""
-    path = request.url.path
+    path = _route_path(request.scope)
     if _web_archive_dir is not None and (
         _is_player_path(path) or _resolves_to_player_file(_web_archive_dir, path)
     ):
@@ -784,9 +820,7 @@ async def test_gpu_inference(auth: dict = Security(require_auth())):
     and always answers the documented unwired 503 - the path is known, never
     404-absent.
     """
-    raise HTTPException(
-        status_code=503, detail="GPU probing is not wired on this host"
-    )
+    raise HTTPException(status_code=503, detail="GPU probing is not wired on this host")
 
 
 # --- C7 (issue #74): knowledge pack lifecycle -------------------------------

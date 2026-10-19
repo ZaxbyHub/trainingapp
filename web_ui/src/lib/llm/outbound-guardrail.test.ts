@@ -50,6 +50,13 @@ const ALLOWLIST: Record<string, [number, string]> = {
   // preview was removed with the text-only LFM2 model swap. The bubble below
   // still renders images attached in conversations persisted before the swap.)
   'components/ChatMessageBubble.tsx': [1, '<img src> of a stored attached image data: URL (no network)'],
+  // Issue #143: the markdown img override renders ONLY data:/blob: sources
+  // inline (local bytes, no network); remote sources render as unfetched
+  // placeholders with a deliberate open link (and no nested anchors).
+  'components/MarkdownRenderer.tsx': [
+    1,
+    '<img src> of a data:/blob: markdown image source only (issue #143 air-gap img policy); remote sources render as unfetched placeholders',
+  ],
   'components/TrainingPlayer.tsx': [
     2,
     'course <iframe src> + its one same-element setAttribute("src") reload (browser-training-parity), both from trainingPlayerSrc: the app:// training-pack protocol in Electron (local), or in the browser app the dedicated player origin (player-origin.ts: the loopback alias of the app\'s own server, or an operator-configured bare https origin hosting the app\'s own static player files); course bytes come from the app page through the service-worker relay, so no user data leaves',

@@ -19,7 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { nativeDepsGate } from './fixtures/native-deps-gate.js';
+import { nativeDepsGate, NATIVE_DEPS_SKIP_MARKER, STAGING_INSTRUCTION } from './fixtures/native-deps-gate.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -35,7 +35,6 @@ function findRepoRoot(dir: string): string {
 }
 
 const REPO_ROOT = findRepoRoot(THIS_DIR);
-const STAGING_INSTRUCTION = 'npm --prefix desktop ci';
 
 describe('native-deps-gate policy (issue #193 D2: CI fails, local skips)', () => {
   it('deps present -> run, regardless of CI', () => {
@@ -96,7 +95,7 @@ describe('native-deps-gate WIRING (issue #193 AC21: the gate must be reachable)'
       { shell: true, cwd: REPO_ROOT, env, encoding: 'utf8', timeout: 180_000 },
     );
     const out = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
-    expect(out, out).toMatch(/SKIPPED: desktop\/node_modules\/better-sqlite3 absent/);
+    expect(out, out).toContain(NATIVE_DEPS_SKIP_MARKER);
     expect(out, out).toContain(STAGING_INSTRUCTION);
     expect(result.status, out).toBe(0);
     // The non-native AC15 row keeps running on a deps-less box.
@@ -118,9 +117,170 @@ describe('native-deps-gate WIRING (issue #193 AC21: the gate must be reachable)'
       { shell: true, cwd: REPO_ROOT, env, encoding: 'utf8', timeout: 180_000 },
     );
     const out = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+    // Exclude the null status (review PRR-006): spawnSync reports
+    // status: null on timeout or signal death, which would satisfy a bare
+    // not.toBe(0) — a killed run must never read as the loud failure.
+    expect(result.status, out).not.toBeNull();
     expect(result.status, out).not.toBe(0);
     expect(out, out).toContain('native deps missing under CI');
     expect(out, out).toContain('fail, never silently skip');
     expect(out, out).toContain(STAGING_INSTRUCTION);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #203 AC3 (batch-143-203-204-212-213-215): the structural adoption net.
+// Every native-deps gate in the corpus goes through the shared factory in
+// ./fixtures/native-deps-gate.ts — no private presence probe and no bare
+// skip-gate ternary anywhere else. Named mutants: revert one migrated suite
+// to the bare ternary, rename/bypass the factory call, or move the probe out
+// of the fixture — this row must go red.
+// ---------------------------------------------------------------------------
+describe('native-deps gate ADOPTION (issue #203)', () => {
+  it('gate-adoption-scan: the shared factory owns every native-deps gate', () => {
+    const scanRoot = path.join(REPO_ROOT, 'desktop', 'src', '__tests__');
+    const stripCommentsForScan = (source: string): string => {
+      let out = '';
+      let i = 0;
+      let state: 'code' | 'line' | 'block' | 'sq' | 'dq' | 'template' = 'code';
+      while (i < source.length) {
+        const c = source[i];
+        const next = source[i + 1];
+        if (state === 'code') {
+          if (c === '/' && next === '/') { state = 'line'; i += 2; continue; }
+          if (c === '/' && next === '*') { state = 'block'; i += 2; continue; }
+          if (c === "'" || c === '"' || c === '`') {
+            state = c === "'" ? 'sq' : c === '"' ? 'dq' : 'template';
+            out += c; i += 1; continue;
+          }
+          out += c; i += 1; continue;
+        }
+        if (state === 'line') {
+          if (c === '\n') { state = 'code'; out += c; }
+          i += 1; continue;
+        }
+        if (state === 'block') {
+          if (c === '*' && next === '/') { state = 'code'; i += 2; continue; }
+          if (c === '\n') out += c;
+          i += 1; continue;
+        }
+        if (c === '\\') { out += c + (next ?? ''); i += 2; continue; }
+        out += c;
+        if ((state === 'sq' && c === "'") || (state === 'dq' && c === '"') || (state === 'template' && c === '`')) {
+          state = 'code';
+        }
+        i += 1;
+      }
+      return out;
+    };
+    const policyHome = 'fixtures/native-deps-gate.ts';
+    const netHome = 'i193-native-deps-gate.test.ts';
+    // Skip-gate ternary exemption (outbound-guardrail allowlist pattern):
+    // b4-llama-engine's REAL_FAST_MODEL gate is a deliberately-unstaged
+    // devstation-only real-model artifact group (failing under CI would redden
+    // every run permanently; its inline guard names the exact missing
+    // artifact). Dispositioned in the batch's Phase 4.2 sweep (P2).
+    const ternaryExempt = new Map<string, string>([
+      ['b4-llama-engine.test.ts', 'REAL_FAST_MODEL devstation-only real-model gate (deliberately unstaged artifact)'],
+    ]);
+    const gateTernary =
+      /\?\s*(?:it|describe)(?:\.skip)?\s*:\s*(?:it|describe)\.skip\b|\?\s*(?:it|describe)\.skip\s*:\s*(?:it|describe)\b/;
+    // Bare it.skip/describe.skip token ban (reviewer round-1 finding: an
+    // indirect `if (!existsSync(...)) itReal = it.skip` gate carries no flag
+    // token, no probed addon name, and no ternary — the token ban is the
+    // clause that catches it). it.skipIf is vitest's VISIBLE conditional skip
+    // and is deliberately allowed (it shows in the runner counts).
+    // PRR-017: the token ban covers the aliases and bracket forms too, and
+    // the skipIf composition with an existence probe (a visible-form skip
+    // hiding a presence gate) is banned outright.
+    const skipToken = /\b(?:it|describe|test|suite)\.skip\b|\b(?:it|describe|test|suite)\s*\[\s*['"]skip/;
+    const skipIfProbe = /\bskipIf\s*\([^)]*existsSync/;
+    // Also bans calling the exported nativeDepsPresent probe from a suite
+    // (e.g. it.skipIf(!nativeDepsPresent())(...) is a silent-skip gate in a
+    // visible-form disguise); only the factory may consult the probe.
+    const probeConstruction = /\bNATIVE_DEPS_PRESENT\b|fs\.existsSync\([^)]*better-sqlite3|\bnativeDepsPresent\s*\(/;
+    const factoryUse = /\bnativeDeps(?:It|DescribeGroup|Decision|Present)\s*\(/;
+    const offenders: string[] = [];
+
+    const files: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.isFile() && entry.name.endsWith('.ts')) files.push(full);
+      }
+    };
+    walk(scanRoot);
+
+    for (const file of files.sort()) {
+      const rel = path.relative(scanRoot, file).split(path.sep).join('/');
+      if (rel === policyHome || rel === netHome) continue;
+      // Comment-stripped with a state machine (strings kept): a comment may
+      // quote the bare-gate shape while documenting it, and a naive block
+      // strip would swallow code at glob text like `main/**`.
+      const source = stripCommentsForScan(fs.readFileSync(file, 'utf8'));
+      if (probeConstruction.test(source)) {
+        offenders.push(`${rel}: constructs the native-deps presence probe (use the factory)`);
+      }
+      if (gateTernary.test(source)) {
+        const reason = ternaryExempt.get(rel);
+        if (reason === undefined) {
+          offenders.push(`${rel}: bare skip-gate ternary (use nativeDepsIt / nativeDepsDescribeGroup)`);
+        }
+      }
+      if (skipToken.test(source) && !ternaryExempt.has(rel)) {
+        offenders.push(
+          `${rel}: bare it.skip/describe.skip outside the factory (use nativeDepsIt / nativeDepsDescribeGroup)`,
+        );
+      }
+      if (skipIfProbe.test(source)) {
+        offenders.push(`${rel}: skipIf composed with an existsSync presence probe (use the factory)`);
+      }
+      if (factoryUse.test(source) && !source.includes("from './fixtures/native-deps-gate.js'")) {
+        offenders.push(`${rel}: calls the gate factory without importing it from './fixtures/native-deps-gate.js'`);
+      }
+    }
+    expect(
+      offenders,
+      'every native-deps gate must go through the shared factory (no private probes, no bare skip ternaries)',
+    ).toEqual([]);
+    // Positive presence (review PRR-005): the negative scan alone cannot see
+    // a suite whose gate was deleted entirely — the migration must still be
+    // there. Every file using a gate variable must be a factory consumer, and
+    // the consumer set cannot shrink below the migrated census.
+    const consumers: string[] = [];
+    const gateUsers: string[] = [];
+    for (const file of files.sort()) {
+      const rel = path.relative(scanRoot, file).split(path.sep).join('/');
+      if (rel === policyHome || rel === netHome) continue;
+      const stripped = stripCommentsForScan(fs.readFileSync(file, 'utf8'));
+      if (/\bnativeDeps(?:It|DescribeGroup|Decision|Present)\s*\(/.test(stripped)) consumers.push(rel);
+      if (/\b(?:itReal|itWithDeps|describeReal)\b/.test(stripped)) gateUsers.push(rel);
+    }
+    expect(
+      consumers.length,
+      `the factory consumer set shrank (${consumers.length}); every migrated suite must keep gating`,
+    ).toBeGreaterThanOrEqual(34);
+    for (const rel of gateUsers) {
+      if (ternaryExempt.has(rel)) continue; // documented exemption (its own gate)
+      expect(consumers, `${rel} uses a gate variable but no longer calls the factory`).toContain(rel);
+    }
+    for (const must of ['i169-stats-route-real-seed.test.ts', 'i103b-degrade-contract-sweep.test.ts', 'b5-store.test.ts']) {
+      expect(consumers, `${must} must keep gating through the factory`).toContain(must);
+    }
+    // The one documented ternary exemption must still be the only one — and
+    // must still describe reality: the exempt file must carry the gate it is
+    // exempt for, and exactly one bare skip gate (a second private gate in
+    // that file would otherwise ride the exemption).
+    const exemptFiles = [...ternaryExempt.keys()];
+    expect(exemptFiles).toEqual(['b4-llama-engine.test.ts']);
+    for (const [rel, reason] of ternaryExempt) {
+      const raw = fs.readFileSync(path.join(scanRoot, rel), 'utf8');
+      expect(raw, `${rel}: exemption reason no longer matches the file`).toContain('REAL_FAST_MODEL');
+      const strippedExempt = stripCommentsForScan(raw);
+      const gates = strippedExempt.match(/\b(?:it|describe)(?:\.skip)?\s*:\s*(?:it|describe)\.skip\b|\b(?:it|describe)\.skip\s*:\s*(?:it|describe)\b/g) ?? [];
+      expect(gates.length, `${rel}: the exemption covers ONE named gate, found ${gates.length}`).toBe(1);
+      expect(reason.length, `${rel}: exemption must carry a reason`).toBeGreaterThan(10);
+    }
   });
 });

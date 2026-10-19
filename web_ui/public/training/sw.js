@@ -144,7 +144,7 @@ function courseCsp(packId) {
     "default-src 'self'",
     "script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data:",
+    "img-src 'self' data: blob:",
     "font-src 'self' data:",
     "connect-src 'self'",
     'worker-src ' + (packId !== null ? 'blob: ' + PLAYER_ORIGIN + TRAINING_PREFIX + packId + '/ ' + PLAYER_ORIGIN + TRAINING_SW_PATH : 'blob:'),

@@ -1,6 +1,62 @@
 # Changelog
 
 ## [Unreleased]
+- **Desktop backend host lifecycle: generation-bound disposal, post-stop tick
+  invalidation, effective-env model roots, live surface detach (issues #199,
+  #229)**: five state-lifecycle defects in `desktop/main/backend/` are fixed
+  under one defect class — a host function reading mutable lifecycle state
+  where a concurrent transition can have replaced or nulled it, or from a
+  source other than the effective configuration record.
+  `ResumableReranker.runWithReloadTiming` now captures the runner a job
+  actually runs on before its await and disposes exactly that generation, so an
+  idle unload that published a replacement runner can no longer have the
+  replacement torn down by the stale job's rejection.
+  `NodeBackendHost.memoryTick` captures a generation counter at entry and
+  re-validates it after its await, and overlapping ticks are excluded rather
+  than interleaved, so a tick in flight across `stop()` writes no
+  `workerMemory`, latches no downgrade, flips no engine profile and emits no
+  event after teardown. Both model resolvers now read
+  `TRAININGAPP_DESKTOP_REPO_ROOT` from the effective `config.env` record
+  instead of the ambient `process.env`, so an injected value is honored; the
+  sibling whole-record substitution sites are unchanged by design.
+  `attachStoreSurface` returns the surface it attached so the host's mirror
+  field is real and `stop()`'s document-surface detach guard actually fires.
+  `StubEngine.retrieveContext` captures the retrieval surface once before its
+  await, closing the last holdout of the issue #185 capture-once invariant.
+  The in-flight exclusion is generation-bound, so a tick superseded by a
+  `stop()` -> `start()` cycle cannot release the exclusion a new generation's
+  tick holds. Contract pins:
+  `desktop/src/__tests__/reranker-generation-lifecycle.test.ts`,
+  `backend-memory-tick-lifecycle.test.ts`,
+  `backend-env-repo-root-contract.test.ts`,
+  `i199-backend-surface-lifecycle.test.ts`, and the class guardrail
+  `backend-lifecycle-capture-once-census.test.ts`. These pins run in the
+  desktop vitest suite; only the contract-family roster runs inside the
+  required `security` job, and none of these five is a roster member.
+- **Player-origin refusal and pack typed-refusal contract (issues #228, #226)**:
+  the ADR-0012 player-origin 404 now keys on `_route_path(request.scope)` — the
+  same string `StaticFiles` resolves — instead of `request.url.path`. Starlette
+  >= 1.9 percent-encodes backslashes when it rebuilds the URL from the ASGI
+  scope, so `/training%5Csw.js` reached the gate as a spelling its fold could
+  not undo and fell through to the archive mount, which served the course
+  worker with HTTP 200: a fail-open security boundary on a server that must
+  never answer as a player origin. No dependency pin — hardening the gate closes
+  the defect on every version the floating fastapi/starlette range can resolve
+  to. Separately, `verify_pack_signature` decoded a non-string signature `value`
+  (raising `TypeError` outside its `except`) and `canonical_manifest_bytes`
+  encoded outside any guard (a lone surrogate raised `UnicodeEncodeError`);
+  neither is a `PackExtractError`, so the install route answered 500 instead of
+  the documented 409. Both are now typed refusals, as the Node twin already were.
+  The same class is closed at its choke point for pack doc text, for the
+  managed-registry write, and for manifest strings that a refusal message would
+  interpolate — the last of those because `docs[].path` carrying the same escape
+  made the typed `doc unreadable` refusal echo it, and the route renders refusal
+  text with `ensure_ascii=False`, so the echo raised during serialisation and
+  answered 500 on the default (signature-gate-off) configuration. Two further
+  malformed shapes are now refused typed as well: a `pack.json` whose top level is
+  not a JSON object, and one nested past CPython's json recursion limit. Both
+  predate this work and both produced the same 500. Contract:
+  `tests/test_pack_extract_error_contract.py`.
 
 - **Packaged-boot smoke hardening and CI wiring (issues #177, #178, #179,
   #180, #182)**: `desktop/scripts/packaged-smoke.mjs` is now an import-safe,
@@ -18,7 +74,8 @@
   `desktop/src/__tests__/packaged-smoke-contract.test.ts`.
 - **Opt-in embedding determinism seam (issue #170, D1)**:
   `TRAININGAPP_DESKTOP_EMBED_THREADS=<n>` pins ONNX session threading
-  (intra-op `n`, inter-op 1, sequential execution) at all three
+  (intra-op `min(n, host cores)`, inter-op 1, sequential execution — the
+  count is clamped to the host's available parallelism, issue #204 AC6) at all three
   retrieval-path transformer session sites — the ingest/query embedder and
   the rerank worker's rerank and query-embed sessions — so embeddings and
   rerank scores are run-to-run byte-deterministic (a prior incident broke

@@ -21,8 +21,9 @@
 //     blob: URLs when wasm.numThreads > 1 (offline-env.ts gates numThreads on
 //     crossOriginIsolated, which protocol.ts's COOP/COEP headers enable).
 //     The embedding worker itself is a same-origin module worker ('self').
-//   - img-src/font-src data:: the offline data:-URI favicon and inline font
-//     fallbacks in web_ui/index.html.
+//   - img-src data: blob:: / font-src data:: the offline data:-URI favicon
+//     and inline font fallbacks in web_ui/index.html; blob: joins img-src
+//     only (issue #204 AC2: blob: images render inline).
 //   - connect-src http://127.0.0.1:*: the B3 loopback backend on its random
 //     free port. (PR #138's renderer-side loopback provider mode also used it;
 //     that mode is retired - external model endpoints are contacted by the
@@ -51,7 +52,7 @@ export function buildCspPolicy(): string {
     "default-src 'self' app:",
     `script-src 'self' app: 'wasm-unsafe-eval' '${INLINE_THEME_BOOTSTRAP_SHA256}'`,
     "style-src 'self' app:",
-    "img-src 'self' app: data:",
+    "img-src 'self' app: data: blob:",
     "font-src 'self' app:",
     // 127.0.0.1 ONLY: Chromium rejects http://[::1]:* as an invalid CSP
     // source-list entry (silently dropped - live-verified in the PR #138
@@ -104,7 +105,7 @@ export function buildTrainingCspPolicy(): string {
     "default-src 'self' app:",
     "script-src 'self' app: 'wasm-unsafe-eval' 'unsafe-inline'",
     "style-src 'self' app: 'unsafe-inline'",
-    "img-src 'self' app: data:",
+    "img-src 'self' app: data: blob:",
     "font-src 'self' app: data:",
     "connect-src 'self' app:",
     "worker-src 'self' app: blob:",

@@ -9,7 +9,7 @@
 // RED AT BASE: statically imports the not-yet-existing store modules wired
 // through the host — the intended failing-first state. Requires
 // desktop/node_modules (better-sqlite3); CI always has it.
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect } from 'vitest';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -17,6 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { NodeBackendHost } from '../../main/backend/index.js';
 import { openStore, type StoreHandle } from '../../main/backend/store/sqlite-store.js';
+import { nativeDepsIt } from './fixtures/native-deps-gate.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const TOKEN = 'b6-test-token';
@@ -33,8 +34,7 @@ function findRepoRoot(dir: string): string {
 }
 
 const REPO_ROOT = findRepoRoot(THIS_DIR);
-const NATIVE_DEPS_PRESENT = fs.existsSync(path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'));
-const itReal = NATIVE_DEPS_PRESENT ? it : it.skip;
+const itReal = nativeDepsIt('b6-clear-cache');
 
 const tempDirs: string[] = [];
 
