@@ -148,7 +148,16 @@ def _version_key(version: str) -> Tuple[int, int, int, Tuple[int, tuple]]:
 
 
 def extract_doc_text(raw: bytes, mime: str) -> str:
-    """Extract the chunkable text from a doc's raw bytes by declared mime."""
+    """Extract the chunkable text from a doc's raw bytes by declared mime.
+
+    Refuses text that is not encodable as UTF-8. A JSON doc's `text` field can
+    carry a lone-surrogate escape (`"\\ud800"`), which `json.loads` decodes to a
+    real surrogate character; everything downstream — the chunk-identity and
+    content-hash digests (`content_hash_of`, `chunk_id_of`) and the sqlite bind —
+    encodes that text, so letting it past this boundary turns a pack install into
+    an unhandled `UnicodeEncodeError` instead of the documented typed refusal
+    (issue #226, recurrence sweep).
+    """
     if mime == "application/json":
         try:
             data = json.loads(raw.decode("utf-8"))
@@ -156,15 +165,79 @@ def extract_doc_text(raw: bytes, mime: str) -> str:
             raise PackManagerError(f"doc is not valid JSON: {error}") from error
         if not isinstance(data, dict) or not isinstance(data.get("text"), str):
             raise PackManagerError("JSON doc must be an object with a string 'text'")
-        return data["text"]
+        return _require_encodable_text(data["text"])
     if mime.startswith("text/"):
         try:
-            return raw.decode("utf-8")
+            text = raw.decode("utf-8")
         except UnicodeDecodeError as error:
             raise PackManagerError(f"text doc is not valid UTF-8: {error}") from error
+        return _require_encodable_text(text)
     raise PackManagerError(
         f"unsupported doc mime {mime!r}; prebuilt-index packs are the C6 path"
     )
+
+
+def _require_encodable_text(text: str) -> str:
+    """Refuse a string that cannot round-trip through UTF-8, typed."""
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise PackManagerError(
+            f"doc text carries a string that is not encodable as UTF-8: {error}"
+        ) from error
+    return text
+
+
+def _find_unencodable_manifest_string(node: Any, trail: str = "") -> Optional[str]:
+    """First JSON-pointer-ish trail to a string in `node` that cannot round-trip
+    through UTF-8, or None. Recurses dicts and lists; keys are walked too."""
+    if isinstance(node, str):
+        try:
+            node.encode("utf-8")
+        except UnicodeEncodeError:
+            return trail or "<root>"
+        return None
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if isinstance(key, str):
+                try:
+                    key.encode("utf-8")
+                except UnicodeEncodeError:
+                    return f"{trail}/<key {key!r}>"
+            found = _find_unencodable_manifest_string(value, f"{trail}/{key}")
+            if found is not None:
+                return found
+        return None
+    if isinstance(node, list):
+        for index, value in enumerate(node):
+            found = _find_unencodable_manifest_string(value, f"{trail}/{index}")
+            if found is not None:
+                return found
+    return None
+
+
+def _refuse_unencodable_manifest_strings(manifest: Any) -> None:
+    """Refuse a manifest carrying a lone-surrogate string, before anything
+    interpolates one into a refusal message.
+
+    `json.loads` turns a six-character ASCII `\\ud800` escape into a real lone
+    surrogate, which is legal JSON on the wire and illegal UTF-8 to encode. Every
+    downstream refusal names a manifest string (`doc unreadable: {rel_path}`,
+    `duplicate docs[].path`), and the install route renders that message with
+    Starlette's `JSONResponse`, which serialises with `ensure_ascii=False` — so an
+    unencoded surrogate in the message raises `UnicodeEncodeError` during
+    rendering and the caller gets an unhandled 500 instead of the documented 409
+    (issue #226, adversarial-review blocker). The message must never carry the
+    value it is complaining about, so the refusal below names the field's trail
+    only. This runs before `schema_errors` and `semantic_problems`, which build
+    their own messages from the same strings.
+    """
+    trail = _find_unencodable_manifest_string(manifest)
+    if trail is not None:
+        raise PackManagerError(
+            "pack.json carries a string that is not encodable as UTF-8 at "
+            f"{trail}; refusing the pack"
+        )
 
 
 def split_words(text: str, size: int, overlap: int) -> List[str]:
@@ -285,7 +358,7 @@ class PackManager:
                 json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
             )
             tmp.replace(self.registry_path)
-        except OSError as error:
+        except (OSError, UnicodeEncodeError) as error:
             raise PackManagerError(f"pack registry write failed: {error}") from error
 
     def _find(self, rows, pack_id: str, version: Optional[str] = None):
@@ -361,6 +434,41 @@ class PackManager:
                 raise PackManagerError(
                     f"{pack_path}: pack.json is not valid UTF-8 JSON: {error}"
                 ) from error
+            except RecursionError as error:
+                # A pathologically nested manifest exhausts CPython's json
+                # recursion limit. That is a malformed pack, not a server fault,
+                # so it belongs in the typed-refusal contract the install route
+                # maps to 409 (issue #226).
+                raise PackManagerError(
+                    f"{pack_path}: pack.json is nested too deeply to parse"
+                ) from error
+            if isinstance(manifest, dict):
+                # The RecursionError clause above is not sufficient on its own:
+                # the recursion limit is not portable across CPython versions, so
+                # on 3.12 `json.loads` parses a manifest that would overflow the
+                # first pure-python traversal below (measured live: 1400 levels
+                # parse fine on 3.12, then `_refuse_unencodable_manifest_strings`
+                # and the schema validator both overflow). Refuse on an explicit
+                # bound so the outcome is the same on every supported interpreter.
+                from pack_extract import (  # lazy: keeps the import graph acyclic
+                    MAX_MANIFEST_NESTING,
+                    manifest_nesting_depth,
+                )
+
+                if manifest_nesting_depth(manifest) > MAX_MANIFEST_NESTING:
+                    raise PackManagerError(
+                        f"{pack_path}: pack.json is nested deeper than the supported"
+                        f" {MAX_MANIFEST_NESTING} levels"
+                    )
+            if not isinstance(manifest, dict):
+                # `semantic_problems` below dereferences `manifest["docs"]`, so a
+                # non-object top level would escape as an AttributeError and answer
+                # an unhandled 500 instead of the documented 409.
+                raise PackManagerError(
+                    f"{pack_path}: pack.json must be a JSON object, not a"
+                    f" {type(manifest).__name__}"
+                )
+            _refuse_unencodable_manifest_strings(manifest)
             problems: List[str] = list(schema_errors(manifest, self._validator_for()))
             problems.extend(semantic_problems(manifest, source))
         except UsageError as error:
