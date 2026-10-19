@@ -338,12 +338,14 @@ _SEAM_PROBE_SCRIPT = r"""
 const { embedSessionOptions } = await import(process.env.SEAM_MODULE_URL);
 const shape = (value) => (value === undefined ? null : value);
 process.stdout.write(JSON.stringify({
-  set1: shape(embedSessionOptions({ TRAININGAPP_DESKTOP_EMBED_THREADS: '1' })),
-  set2: shape(embedSessionOptions({ TRAININGAPP_DESKTOP_EMBED_THREADS: '2' })),
-  unset: shape(embedSessionOptions({})),
-  empty: shape(embedSessionOptions({ TRAININGAPP_DESKTOP_EMBED_THREADS: '' })),
-  zero: shape(embedSessionOptions({ TRAININGAPP_DESKTOP_EMBED_THREADS: '0' })),
-  junk: shape(embedSessionOptions({ TRAININGAPP_DESKTOP_EMBED_THREADS: 'abc' })),
+  set1: shape(embedSessionOptions({ TRAININGAPP_DESKTOP_EMBED_THREADS: '1' }, 4)),
+  set2: shape(embedSessionOptions({ TRAININGAPP_DESKTOP_EMBED_THREADS: '2' }, 4)),
+  unset: shape(embedSessionOptions({}, 4)),
+  empty: shape(embedSessionOptions({ TRAININGAPP_DESKTOP_EMBED_THREADS: '' }, 4)),
+  zero: shape(embedSessionOptions({ TRAININGAPP_DESKTOP_EMBED_THREADS: '0' }, 4)),
+  junk: shape(embedSessionOptions({ TRAININGAPP_DESKTOP_EMBED_THREADS: 'abc' }, 4)),
+  huge: shape(embedSessionOptions({ TRAININGAPP_DESKTOP_EMBED_THREADS: '999999999' }, 4)),
+  above: shape(embedSessionOptions({ TRAININGAPP_DESKTOP_EMBED_THREADS: '5' }, 4)),
 }));
 """
 
@@ -387,6 +389,16 @@ def test_embed_threads_seam_shape() -> None:
         "interOpNumThreads": 1,
         "executionMode": "sequential",
     }
+    # Issue #204 AC6 (secondary coverage of the clamp): oversized pins clamp
+    # to the injected coreCount and never forward the raw value to ORT.
+    assert results["huge"] == {
+        "intraOpNumThreads": 4,
+        "interOpNumThreads": 1,
+        "executionMode": "sequential",
+    }, f"999999999 must clamp to coreCount, got {results['huge']!r}"
+    assert (
+        results["above"]["intraOpNumThreads"] == 4
+    ), f"coreCount+1 must clamp to coreCount, got {results['above']!r}"
     for unset_key in ("unset", "empty", "zero", "junk"):
         assert results[unset_key] is None, (
             f"embedSessionOptions leaked a session_options object for a "

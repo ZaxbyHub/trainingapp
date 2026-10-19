@@ -5,12 +5,13 @@
 // reference suite (tests/test_pack_manager.py) run against the SQLite store:
 // openStore (B5) + the REAL PackManager with the deterministic HashEmbedder
 // (chunk ids never depend on embedder output, so the fixture is honest).
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+import { nativeDepsIt } from './fixtures/native-deps-gate.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -28,10 +29,7 @@ function findRepoRoot(dir: string): string {
 
 const REPO_ROOT = findRepoRoot(THIS_DIR);
 const FIXTURES = path.join(REPO_ROOT, 'contracts', 'fixtures', 'packs');
-const NATIVE_DEPS_PRESENT = fs.existsSync(
-  path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'),
-);
-const itReal = NATIVE_DEPS_PRESENT ? it : it.skip;
+const itReal = nativeDepsIt('c3-pack-manager');
 
 /** Temp dirs created per test; removed in afterEach (after stores close — an
  * open better-sqlite3 handle makes rmSync EPERM on Windows). */

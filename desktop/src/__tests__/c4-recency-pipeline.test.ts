@@ -9,7 +9,7 @@
 // gap (old pack = 36 months -> multiplier 0.85) flips the final order. That
 // flip IS the AC7 proof that the prior runs AFTER fusion on real fused
 // scores. Exclusion/precedence/orphan cases are invariant by construction.
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -22,6 +22,7 @@ import {
   hybridRetrieve,
   type RerankerSurface,
 } from '../../main/backend/retrieval/hybrid.js';
+import { nativeDepsIt } from './fixtures/native-deps-gate.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DIMS = 8;
@@ -38,10 +39,7 @@ function findRepoRoot(dir: string): string {
 }
 
 const REPO_ROOT = findRepoRoot(THIS_DIR);
-const NATIVE_DEPS_PRESENT = fs.existsSync(
-  path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'),
-);
-const itReal = NATIVE_DEPS_PRESENT ? it : it.skip;
+const itReal = nativeDepsIt('c4-recency-pipeline');
 
 const tempDirs: string[] = [];
 const stores: StoreHandle[] = [];

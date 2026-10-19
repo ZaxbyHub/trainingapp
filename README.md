@@ -287,7 +287,7 @@ The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, 
 | `ChatMessageList.tsx` | `src/components/` | Centered transcript (768px max-width), rich empty state with suggested prompts (Phase 2) |
 | `ChatMessageBubble.tsx` | `src/components/` | Role-based messages: assistant full-width prose, user 75% bubbles, action-row copy (Phase 2) |
 | `ChatInput.tsx` | `src/components/` | Raised card composer with focus feedback, elevation shadow, 20px radius (Phase 2) |
-| `MarkdownRenderer.tsx` | `src/components/` | react-markdown + remark-gfm renderer (CommonMark + GFM, URL allowlist) |
+| `MarkdownRenderer.tsx` | `src/components/` | react-markdown + remark-gfm renderer (CommonMark + GFM, URL allowlist, air-gap img policy: data:/blob: inline, remote = non-fetching placeholder) |
 | `SourceCitation.tsx` | `src/components/` | Expandable citation pills with copy-to-clipboard |
 | `InferenceModeToggle.tsx` | `src/components/` | Status dot (green/yellow/red) for browser-local vs API mode |
 | `StreamingIndicator.tsx` | `src/components/` | Bouncing dots animation during generation |

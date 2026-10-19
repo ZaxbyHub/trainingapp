@@ -11,6 +11,9 @@ on:
 jobs:
   security:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -28,6 +31,32 @@ jobs:
           bandit -r . -x tests/,__pycache__/,*.pyc,.swarm/,.pytest_cache/,doc_qa_db/ -f json -o bandit-report.json
           bandit -r . -x tests/,__pycache__/,*.pyc,.swarm/,.pytest_cache/,doc_qa_db/ -f screen
         continue-on-error: true
+
+      # Issue #215 (batch-143-203-204-212-213-215): the contract-spec family is
+      # MERGE-BLOCKING here — `security` is one of the five required contexts
+      # (see README's required-checks table) and this job reports on every PR,
+      # so a red contract pin cannot merge silently. The roster is the closed
+      # contract family (pinned by ci-gate-required-contract.test.ts, which
+      # also pins this step's unconditionality).
+      - name: Set up Node for the contract-spec family
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install desktop dev dependencies (contract specs)
+        run: npm --prefix desktop ci --no-audit --no-fund
+
+      - name: Run the contract-spec family (merge-blocking, issue #215)
+        run: >
+          npm --prefix desktop test --
+          src/__tests__/embed-seam-contract.test.ts
+          src/__tests__/embed-threads-clamp-contract.test.ts
+          src/__tests__/embed-constants-parity.test.ts
+          src/__tests__/pack-twin-parity.test.ts
+          src/__tests__/ci-gate-required-contract.test.ts
+          src/__tests__/contract-spec-conventions.test.ts
 
       - name: Run Safety
         run: |

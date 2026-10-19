@@ -754,6 +754,9 @@ export class NodeBackendHost implements BackendHost {
               const resumable = new ResumableReranker({
                 modelDir: rerankerModelDir,
                 embedModelDir: this.embedder.weightsDir,
+                // Issue #204 AC7: the determinism seam reads its pin from the
+                // injected host record, not ambient process.env.
+                env,
                 onUse: () => {
                   this.idle?.touch();
                 },

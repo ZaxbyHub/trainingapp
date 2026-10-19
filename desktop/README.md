@@ -153,9 +153,12 @@ profile auto-selection.
   `TRAININGAPP_DESKTOP_INFERENCE_THREADS` (same 1..64 integer gate as the
   settings key; invalid values fall back to the min(cores, 8) default).
   Determinism seam: `TRAININGAPP_DESKTOP_EMBED_THREADS` (positive integer)
-  pins ONNX session threading (intra-op n, inter-op 1, sequential) at the
-  retrieval-path embed/rerank session sites so embeddings are run-to-run
-  byte-deterministic; unset/invalid keeps the default behavior (no
+  pins ONNX session threading (intra-op min(n, host cores), inter-op 1,
+  sequential) at the retrieval-path embed/rerank session sites so embeddings
+  are run-to-run byte-deterministic within a host; values above the host's
+  available parallelism are clamped to it (floor 1, issue #204 AC6), so pin
+  at or below the smallest host's core count for cross-host byte-equality;
+  unset/invalid keeps the default behavior (no
   `session_options` at all). Default OFF.
 - **Packaged installs**: `electron-builder.yml` pins
   `@node-llama-cpp/win-x64-vulkan` and `@node-llama-cpp/win-x64` in

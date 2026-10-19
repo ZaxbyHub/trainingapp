@@ -20,7 +20,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ModelNotConfiguredError } from '../types.js';
-import { embedSessionOptions, type EmbedSessionThreadOptions } from './embed-threads.js';
+import {
+  embedSessionOptions,
+  seamEnvRecord,
+  type EmbedSessionThreadOptions,
+} from './embed-threads.js';
 
 export const EMBEDDER_ENV = 'TRAININGAPP_DESKTOP_EMBEDDER';
 export const EMBEDDING_MODEL_DIR_ENV = 'TRAININGAPP_EMBEDDING_MODEL_DIR';
@@ -91,7 +95,15 @@ export class OnnxEmbedder implements EmbeddingSurface {
   readonly modelId = DEFAULT_EMBEDDING_MODEL_SUBPATH;
   private pipelinePromise: Promise<FeatureExtractionPipeline> | null = null;
 
-  constructor(private readonly modelDir: string) {}
+  /**
+   * `env` is the injectable host record (issue #204 AC7): the determinism
+   * seam reads its pin from this record, not ambient process.env — the same
+   * treatment as the model-dir siblings in resolveEmbedder.
+   */
+  constructor(
+    private readonly modelDir: string,
+    private readonly env: Record<string, string | undefined> = process.env,
+  ) {}
 
   /** The resolved ONNX weights directory (B7 routes embeds through its worker). */
   get weightsDir(): string {
@@ -119,7 +131,8 @@ export class OnnxEmbedder implements EmbeddingSurface {
         // Determinism seam (issue #170 D1): TRAININGAPP_DESKTOP_EMBED_THREADS
         // pins ONNX session threading; unset/invalid keeps the options object
         // byte-identical to the pre-seam call (no session_options key at all).
-        const sessionOptions = embedSessionOptions();
+        // The pin is read from the injected host record (issue #204 AC7).
+        const sessionOptions = embedSessionOptions(this.env);
         const pipelineOptions =
           sessionOptions === undefined
             ? { dtype: 'fp32' }
@@ -194,7 +207,9 @@ export interface ResolveEmbedderOptions {
  * of a mid-write crash.
  */
 export function resolveEmbedder(opts: ResolveEmbedderOptions): EmbeddingSurface {
-  const env = opts.env ?? process.env;
+  // Per-key merge over ambient (review PRR-011): a partial injected record
+  // must not silently drop ambient pins — injected strings win per key.
+  const env = seamEnvRecord(opts.env);
   if (env[EMBEDDER_ENV] === 'hash') {
     return new HashEmbedder({ dims: opts.dims });
   }
@@ -214,7 +229,7 @@ export function resolveEmbedder(opts: ResolveEmbedderOptions): EmbeddingSurface 
         'Dev/CI can use the deterministic fixture via TRAININGAPP_DESKTOP_EMBEDDER=hash.',
     );
   }
-  return new OnnxEmbedder(staged);
+  return new OnnxEmbedder(staged, env);
 }
 
 /** Headless default when no userData is known (dev tooling, CI). */

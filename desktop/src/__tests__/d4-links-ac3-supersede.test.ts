@@ -15,7 +15,7 @@
 // RED AT BASE: the pipeline removes ch-old's chunk/embeddings/fts rows but
 // nothing removes its links row, so the orphan-count assertion prints 1 after
 // the [D4AC3] marker line. Requires desktop/node_modules (better-sqlite3).
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 import { DEFAULT_INGEST_CONFIG } from '../../main/backend/ingest/config.js';
 import type { EmbeddingSurface } from '../../main/backend/ingest/embedder.js';
 import { IngestPipeline } from '../../main/backend/ingest/pipeline.js';
+import { nativeDepsIt } from './fixtures/native-deps-gate.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -39,8 +40,7 @@ function findRepoRoot(dir: string): string {
 }
 
 const REPO_ROOT = findRepoRoot(THIS_DIR);
-const NATIVE_DEPS_PRESENT = fs.existsSync(path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'));
-const itReal = NATIVE_DEPS_PRESENT ? it : it.skip;
+const itReal = nativeDepsIt('d4-links-ac3-supersede');
 
 /** Temp dirs created by the current test; removed in afterEach. */
 const tempDirs: string[] = [];

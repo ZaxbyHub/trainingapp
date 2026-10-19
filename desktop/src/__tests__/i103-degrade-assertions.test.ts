@@ -20,11 +20,12 @@
 // module graph via vi.resetModules) so the AC4 test never sees it — the two
 // degrade contracts are asserted independently (AC4 also asserts the
 // reranker degrade line is ABSENT).
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { nativeDepsIt } from './fixtures/native-deps-gate.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = (() => {
@@ -38,12 +39,7 @@ const REPO_ROOT = (() => {
   throw new Error('could not locate the repo root (marker contracts/api.openapi.yaml not found)');
 })();
 
-// Artifact-guarded skip (b5 convention): the native store addon must exist;
-// CI always installs it.
-const NATIVE_DEPS_PRESENT = fs.existsSync(
-  path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'),
-);
-const itWithDeps = NATIVE_DEPS_PRESENT ? it : it.skip;
+const itWithDeps = nativeDepsIt('i103-degrade-assertions');
 
 /** Temp dirs created by the current test; removed in afterEach. */
 const tempDirs: string[] = [];

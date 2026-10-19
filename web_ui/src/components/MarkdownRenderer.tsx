@@ -8,6 +8,12 @@
  * preserved. No `rehype-raw` is used, so raw HTML in model output stays
  * escaped — the zero-HTML-injection property is preserved.
  *
+ * Issue #143 (air-gap img policy): images never trigger network requests.
+ * `data:`/`blob:` sources render inline (local bytes only); every other
+ * source renders a NON-FETCHING placeholder with a deliberate-open link (and
+ * no nested anchors). The outbound-guardrail allowlist records the single
+ * `<img src>` hit and its local-only reason.
+ *
  * Issue #36 Part 1: A1, N2, N3, A2, A3, A4, A5, A6, A8, N9, N10, N11, N12.
  */
 
@@ -24,12 +30,20 @@ import '../pages/chat.css';
 const ALLOWED_SCHEMES = /^(https?|mailto|tel):$/i;
 
 /**
- * react-markdown v9 `urlTransform`. Return the URL to keep it, or '' to strip
- * it (rendering the link text without an href). N10: reject scheme-less URLs
- * (which previously resolved against a placeholder base and became live links)
- * and non-allowlisted schemes.
+ * react-markdown v9 `urlTransform(url, key, node)`. Return the URL to keep it,
+ * or '' to strip it (rendering the link text without an href). N10: reject
+ * scheme-less URLs (which previously resolved against a placeholder base and
+ * became live links) and non-allowlisted schemes.
+ *
+ * Key-aware (issue #143): for `src` (image sources) `data:`/`blob:` are kept
+ * so the img override can render local bytes inline — they are never fetched.
+ * For `href` (and everything else) the full N10 strip applies, including
+ * data:/blob: (a data: link is a script-injection surface, not a resource).
  */
-function allowlistUrlTransform(url: string): string {
+function allowlistUrlTransform(url: string, key: string): string {
+  if (key === 'src' && (url.startsWith('data:') || url.startsWith('blob:'))) {
+    return url;
+  }
   // Reject protocol-relative (//host) and root-relative (/path) and relative
   // (path) URLs up front — they have no explicit allowlisted scheme.
   if (url.startsWith('//') || url.startsWith('/') || !url.includes(':')) {
@@ -45,6 +59,60 @@ function allowlistUrlTransform(url: string): string {
     return '';
   }
 }
+
+/**
+ * True while rendering the children of a kept link (`a` override below).
+ * The img override consults it so a placeholder can never nest its
+ * deliberate-open anchor inside another anchor (invalid HTML; issue #143).
+ */
+const InLinkContext = React.createContext(false);
+
+type ImageGuardProps = React.ImgHTMLAttributes<HTMLImageElement> & { node?: unknown };
+
+/**
+ * Issue #143 air-gap img policy over the POST-transform src: `data:`/`blob:`
+ * render inline (local bytes only — no network); every other source renders a
+ * NON-FETCHING placeholder with a deliberate-open link (suppressed inside a
+ * link so anchors never nest); a stripped/empty source renders a placeholder
+ * with no img element at all (an empty src would re-fetch the document URL).
+ */
+const ImageGuard: React.FC<React.ImgHTMLAttributes<HTMLImageElement>> = (props) => {
+  // react-markdown passes a hast `node` prop — destructure it away so it is
+  // never forwarded to the DOM.
+  const { src, alt, node: _node, ...rest } = props as ImageGuardProps;
+  const s = typeof src === 'string' ? src : '';
+  const inLink = React.useContext(InLinkContext);
+  // Review PRR-008: an empty alt string must fall back like a missing one
+  // (`??` alone produced an unnamed placeholder).
+  const label = typeof alt === 'string' && alt.trim() !== '' ? alt : 'remote image';
+  if (s.startsWith('data:') || s.startsWith('blob:')) {
+    return <img src={s} alt={alt ?? ''} {...rest} />;
+  }
+  // Placeholders carry NO role="img"/aria-label: role=img makes the subtree
+  // presentational and would hide the deliberate-open link from assistive
+  // tech, and an aria-label would discard the visible status text. The
+  // visible text IS the announcement (PRR-008, a11y-01/02/03).
+  if (!s) {
+    return (
+      <span className="chat-md__img-placeholder">
+        [image: {label} — no usable image source (blocked or unsafe)]
+      </span>
+    );
+  }
+  return (
+    <span className="chat-md__img-placeholder">
+      [image: {label} — remote image not loaded;{' '}
+      {inLink ? (
+        <span className="chat-md__img-url">{s}</span>
+      ) : (
+        <a href={s} target="_blank" rel="noopener noreferrer" className="chat-md__link">
+          open image: {label}
+        </a>
+      )}
+      ]
+    </span>
+  );
+};
 
 interface CodeBlockProps {
   language: string;
@@ -192,20 +260,23 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = React.memo(({ c
             // href is already sanitized by urlTransform (allowlist). Links
             // that were rejected have href === '' → render as plain text.
             if (!href) {
-              return <>{children}</>;
+              return <InLinkContext.Provider value={false}>{children}</InLinkContext.Provider>;
             }
             return (
-              <a
-                href={href}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="chat-md__link"
-                {...rest}
-              >
-                {children}
-              </a>
+              <InLinkContext.Provider value={true}>
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="chat-md__link"
+                  {...rest}
+                >
+                  {children}
+                </a>
+              </InLinkContext.Provider>
             );
           },
+          img: ImageGuard,
           table({ children, ...rest }) {
             return (
               <div className="chat-md__tablewrap">

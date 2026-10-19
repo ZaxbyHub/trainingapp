@@ -29,7 +29,7 @@
 //      surface must degrade to RRF-only retrieval WITHOUT applying the
 //      relevance floor to RRF-scale scores (an empty response would otherwise
 //      masquerade as the stub being gone).
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect } from 'vitest';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -44,6 +44,7 @@ import { openStore } from '../../main/backend/store/sqlite-store.js';
 import { HashEmbedder } from '../../main/backend/ingest/embedder.js';
 import { createRetrievalSurface } from '../../main/backend/retrieval/hybrid.js';
 import { LlamaEngine, type LlamaEngineBackend } from '../../main/backend/inference/llama-engine.js';
+import { nativeDepsIt } from './fixtures/native-deps-gate.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const TOKEN = 'b7-wiring-token';
@@ -63,8 +64,7 @@ function findRepoRoot(dir: string): string {
 }
 
 const REPO_ROOT = findRepoRoot(THIS_DIR);
-const NATIVE_DEPS_PRESENT = fs.existsSync(path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'));
-const itReal = NATIVE_DEPS_PRESENT ? it : it.skip;
+const itReal = nativeDepsIt('b7-wiring');
 
 const tempDirs: string[] = [];
 const openServers: Server[] = [];

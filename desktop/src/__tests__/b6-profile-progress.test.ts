@@ -30,6 +30,7 @@ import { extractDocumentFromFile, SUPPORTED_EXTENSIONS } from '../../main/backen
 import { TextChunker } from '../../main/backend/ingest/text-chunker.js';
 import { migrateLegacyStoreLayout, resolveProfileLayout } from '../../main/backend/store/profiles.js';
 import { openStore } from '../../main/backend/store/sqlite-store.js';
+import { nativeDepsIt } from './fixtures/native-deps-gate.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const TOKEN = 'b6-test-token';
@@ -46,8 +47,7 @@ function findRepoRoot(dir: string): string {
 }
 
 const REPO_ROOT = findRepoRoot(THIS_DIR);
-const NATIVE_DEPS_PRESENT = fs.existsSync(path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'));
-const itReal = NATIVE_DEPS_PRESENT ? it : it.skip;
+const itReal = nativeDepsIt('b6-profile-progress');
 
 const tempDirs: string[] = [];
 
