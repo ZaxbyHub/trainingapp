@@ -20,7 +20,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ModelNotConfiguredError } from '../types.js';
-import { embedSessionOptions, type EmbedSessionThreadOptions } from './embed-threads.js';
+import {
+  embedSessionOptions,
+  seamEnvRecord,
+  type EmbedSessionThreadOptions,
+} from './embed-threads.js';
 
 export const EMBEDDER_ENV = 'TRAININGAPP_DESKTOP_EMBEDDER';
 export const EMBEDDING_MODEL_DIR_ENV = 'TRAININGAPP_EMBEDDING_MODEL_DIR';
@@ -203,7 +207,9 @@ export interface ResolveEmbedderOptions {
  * of a mid-write crash.
  */
 export function resolveEmbedder(opts: ResolveEmbedderOptions): EmbeddingSurface {
-  const env = opts.env ?? process.env;
+  // Per-key merge over ambient (review PRR-011): a partial injected record
+  // must not silently drop ambient pins — injected strings win per key.
+  const env = seamEnvRecord(opts.env);
   if (env[EMBEDDER_ENV] === 'hash') {
     return new HashEmbedder({ dims: opts.dims });
   }

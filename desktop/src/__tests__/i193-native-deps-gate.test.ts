@@ -19,7 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { nativeDepsGate, STAGING_INSTRUCTION } from './fixtures/native-deps-gate.js';
+import { nativeDepsGate, NATIVE_DEPS_SKIP_MARKER, STAGING_INSTRUCTION } from './fixtures/native-deps-gate.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -95,7 +95,7 @@ describe('native-deps-gate WIRING (issue #193 AC21: the gate must be reachable)'
       { shell: true, cwd: REPO_ROOT, env, encoding: 'utf8', timeout: 180_000 },
     );
     const out = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
-    expect(out, out).toMatch(/SKIPPED: desktop\/node_modules\/better-sqlite3 absent/);
+    expect(out, out).toContain(NATIVE_DEPS_SKIP_MARKER);
     expect(out, out).toContain(STAGING_INSTRUCTION);
     expect(result.status, out).toBe(0);
     // The non-native AC15 row keeps running on a deps-less box.
@@ -117,6 +117,10 @@ describe('native-deps-gate WIRING (issue #193 AC21: the gate must be reachable)'
       { shell: true, cwd: REPO_ROOT, env, encoding: 'utf8', timeout: 180_000 },
     );
     const out = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+    // Exclude the null status (review PRR-006): spawnSync reports
+    // status: null on timeout or signal death, which would satisfy a bare
+    // not.toBe(0) — a killed run must never read as the loud failure.
+    expect(result.status, out).not.toBeNull();
     expect(result.status, out).not.toBe(0);
     expect(out, out).toContain('native deps missing under CI');
     expect(out, out).toContain('fail, never silently skip');
@@ -186,7 +190,11 @@ describe('native-deps gate ADOPTION (issue #203)', () => {
     // token, no probed addon name, and no ternary — the token ban is the
     // clause that catches it). it.skipIf is vitest's VISIBLE conditional skip
     // and is deliberately allowed (it shows in the runner counts).
-    const skipToken = /\bit\.skip\b|\bdescribe\.skip\b/;
+    // PRR-017: the token ban covers the aliases and bracket forms too, and
+    // the skipIf composition with an existence probe (a visible-form skip
+    // hiding a presence gate) is banned outright.
+    const skipToken = /\b(?:it|describe|test|suite)\.skip\b|\b(?:it|describe|test|suite)\s*\[\s*['"]skip/;
+    const skipIfProbe = /\bskipIf\s*\([^)]*existsSync/;
     // Also bans calling the exported nativeDepsPresent probe from a suite
     // (e.g. it.skipIf(!nativeDepsPresent())(...) is a silent-skip gate in a
     // visible-form disguise); only the factory may consult the probe.
@@ -225,6 +233,9 @@ describe('native-deps gate ADOPTION (issue #203)', () => {
           `${rel}: bare it.skip/describe.skip outside the factory (use nativeDepsIt / nativeDepsDescribeGroup)`,
         );
       }
+      if (skipIfProbe.test(source)) {
+        offenders.push(`${rel}: skipIf composed with an existsSync presence probe (use the factory)`);
+      }
       if (factoryUse.test(source) && !source.includes("from './fixtures/native-deps-gate.js'")) {
         offenders.push(`${rel}: calls the gate factory without importing it from './fixtures/native-deps-gate.js'`);
       }
@@ -233,8 +244,43 @@ describe('native-deps gate ADOPTION (issue #203)', () => {
       offenders,
       'every native-deps gate must go through the shared factory (no private probes, no bare skip ternaries)',
     ).toEqual([]);
-    // The one documented ternary exemption must still be the only one.
+    // Positive presence (review PRR-005): the negative scan alone cannot see
+    // a suite whose gate was deleted entirely — the migration must still be
+    // there. Every file using a gate variable must be a factory consumer, and
+    // the consumer set cannot shrink below the migrated census.
+    const consumers: string[] = [];
+    const gateUsers: string[] = [];
+    for (const file of files.sort()) {
+      const rel = path.relative(scanRoot, file).split(path.sep).join('/');
+      if (rel === policyHome || rel === netHome) continue;
+      const stripped = stripCommentsForScan(fs.readFileSync(file, 'utf8'));
+      if (/\bnativeDeps(?:It|DescribeGroup|Decision|Present)\s*\(/.test(stripped)) consumers.push(rel);
+      if (/\b(?:itReal|itWithDeps|describeReal)\b/.test(stripped)) gateUsers.push(rel);
+    }
+    expect(
+      consumers.length,
+      `the factory consumer set shrank (${consumers.length}); every migrated suite must keep gating`,
+    ).toBeGreaterThanOrEqual(34);
+    for (const rel of gateUsers) {
+      if (ternaryExempt.has(rel)) continue; // documented exemption (its own gate)
+      expect(consumers, `${rel} uses a gate variable but no longer calls the factory`).toContain(rel);
+    }
+    for (const must of ['i169-stats-route-real-seed.test.ts', 'i103b-degrade-contract-sweep.test.ts', 'b5-store.test.ts']) {
+      expect(consumers, `${must} must keep gating through the factory`).toContain(must);
+    }
+    // The one documented ternary exemption must still be the only one — and
+    // must still describe reality: the exempt file must carry the gate it is
+    // exempt for, and exactly one bare skip gate (a second private gate in
+    // that file would otherwise ride the exemption).
     const exemptFiles = [...ternaryExempt.keys()];
     expect(exemptFiles).toEqual(['b4-llama-engine.test.ts']);
+    for (const [rel, reason] of ternaryExempt) {
+      const raw = fs.readFileSync(path.join(scanRoot, rel), 'utf8');
+      expect(raw, `${rel}: exemption reason no longer matches the file`).toContain('REAL_FAST_MODEL');
+      const strippedExempt = stripCommentsForScan(raw);
+      const gates = strippedExempt.match(/\b(?:it|describe)(?:\.skip)?\s*:\s*(?:it|describe)\.skip\b|\b(?:it|describe)\.skip\s*:\s*(?:it|describe)\b/g) ?? [];
+      expect(gates.length, `${rel}: the exemption covers ONE named gate, found ${gates.length}`).toBe(1);
+      expect(reason.length, `${rel}: exemption must carry a reason`).toBeGreaterThan(10);
+    }
   });
 });

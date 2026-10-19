@@ -27,6 +27,9 @@ function findRepoRoot(dir: string): string {
   let current = dir;
   for (let i = 0; i < 32; i += 1) {
     if (fs.existsSync(path.join(current, 'contracts', 'api.openapi.yaml'))) return current;
+    // Review PRR-024/UCR-04: stop at the checkout root — a marker-less
+    // checkout must fail closed, never bind a foreign ancestor's marker.
+    if (fs.existsSync(path.join(current, '.git'))) break;
     const parent = path.dirname(current);
     if (parent === current) break;
     current = parent;
@@ -68,32 +71,84 @@ const ROSTER_EXCLUSIONS = new Map<string, string>([
 
 describe('ci gate required wiring (issue #215 AC13)', () => {
   it('required-wiring: the contract family runs in a required, always-reporting context', () => {
-    const security = fs.readFileSync(SECURITY_YML, 'utf8');
-    const readme = fs.readFileSync(WORKFLOWS_README, 'utf8');
+    // YAML comments stripped before any step-locating scan (critic round-1):
+    // commenting a step out keeps every string in the raw text, so a raw
+    // indexOf is satisfied by the comment. `#` only opens a comment at line
+    // start or after whitespace, never inside quotes.
+    const stripYamlComments = (text: string): string => {
+      let out = '';
+      for (const line of text.split('\n')) {
+        let inSingle = false;
+        let inDouble = false;
+        let cut = line.length;
+        for (let i = 0; i < line.length; i += 1) {
+          const ch = line[i];
+          if (ch === "'" && !inDouble) inSingle = !inSingle;
+          else if (ch === '"' && !inSingle && line[i - 1] !== '\\') inDouble = !inDouble;
+          else if (ch === '#' && !inSingle && !inDouble && (i === 0 || /\s/.test(line[i - 1]))) {
+            cut = i;
+            break;
+          }
+        }
+        out += `${line.slice(0, cut)}\n`;
+      }
+      return out;
+    };
+    const security = stripYamlComments(fs.readFileSync(SECURITY_YML, 'utf8'));
+    // The workflows README checks in with CRLF line endings; normalize so the
+    // fence and `$`-anchored multiline regexes below are checkout-format
+    // independent.
+    const readme = fs.readFileSync(WORKFLOWS_README, 'utf8').replace(/\r\n/g, '\n');
 
-    // (1) The `security` job name is a declared required context.
-    expect(readme, 'the required-checks list must name the security context').toMatch(
-      /## Required checks[\s\S]*?\bsecurity\b/,
-    );
+    // (1) The `security` job name is a declared required context — asserted
+    // against the FENCED required-checks list specifically: the prose below
+    // the list also names `security` and would satisfy an unanchored scan
+    // (review PRR-002).
+    const requiredList = /## Required checks[\s\S]*?```text\n([\s\S]*?)```/.exec(readme);
+    expect(requiredList, 'README must keep the fenced required-checks list').not.toBeNull();
+    expect(
+      requiredList?.[1] ?? '',
+      'the required-checks list must name the security context',
+    ).toMatch(/^security$/m);
 
-    // (2) The contract-family step runs in the security job and covers the
-    // closed roster (a future roster file must be added to the run line).
+    // (2) The contract-family step runs in the security job and its RUN
+    // SCALAR covers the closed roster (a future roster file must be added to
+    // the run line). Assertions are scoped to the run scalar on purpose:
+    // a whole-file scan is satisfied by YAML comments and prose and lets the
+    // pin delete itself (review PRR-001).
     const stepIdx = security.indexOf('embed-seam-contract.test.ts');
     expect(stepIdx, 'security.yml must run the contract-family specs').toBeGreaterThan(-1);
-    for (const name of FAMILY_ROSTER) {
-      expect(security, `the contract step must run ${name}`).toContain(name);
-    }
-    // The enclosing step is unconditional and fail-loud: no continue-on-error,
-    // no step-level if:.
     const stepStart = security.lastIndexOf('\n      - ', stepIdx);
     const stepEnd = security.indexOf('\n      - ', stepIdx);
     const stepBlock = security.slice(stepStart, stepEnd === -1 ? security.length : stepEnd);
+    const runIdx = stepBlock.indexOf('run:');
+    expect(runIdx, 'the contract step must carry a run scalar').toBeGreaterThan(-1);
+    const runScalar = stepBlock.slice(runIdx);
+    for (const name of FAMILY_ROSTER) {
+      expect(runScalar, `the contract run line must select ${name}`).toContain(name);
+    }
     expect(stepBlock, 'the contract step must not be continue-on-error').not.toContain('continue-on-error');
     expect(stepBlock, 'the contract step must be unconditional').not.toMatch(/\n\s+if:/);
     expect(
-      stepBlock,
+      runScalar,
       'the contract step must actually execute the family (a run that merely echoes the names is not a gate)',
     ).toMatch(/npm --prefix desktop test/);
+
+    // (2b) The dependency-install step the contract run relies on is present
+    // and equally unconditional (review PRR-003: breaking the install must
+    // not silently un-gate; and the step itself must not be skippable).
+    const installIdx = security.indexOf('npm --prefix desktop ci');
+    expect(installIdx, 'the contract family needs its desktop install step').toBeGreaterThan(-1);
+    const installStart = security.lastIndexOf('\n      - ', installIdx);
+    const installEnd = security.indexOf('\n      - ', installIdx);
+    const installBlock = security.slice(
+      installStart,
+      installEnd === -1 ? security.length : installEnd,
+    );
+    expect(installBlock, 'the install step must not be continue-on-error').not.toContain(
+      'continue-on-error',
+    );
+    expect(installBlock, 'the install step must be unconditional').not.toMatch(/\n\s+if:/);
 
     // (3) The load-bearing unconditionality facts stay true: the pull_request
     // trigger carries no paths scoping (a scoped trigger would leave the

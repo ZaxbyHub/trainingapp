@@ -39,6 +39,9 @@ function findRepoRoot(dir: string): string {
   let current = dir;
   for (let i = 0; i < 32; i += 1) {
     if (fs.existsSync(path.join(current, 'contracts', 'api.openapi.yaml'))) return current;
+    // Review PRR-024/UCR-04: stop at the checkout root — a marker-less
+    // checkout must fail closed, never bind a foreign ancestor's marker.
+    if (fs.existsSync(path.join(current, '.git'))) break;
     const parent = path.dirname(current);
     if (parent === current) break;
     current = parent;
@@ -57,22 +60,35 @@ const PY_PARITY_SRC = path.join(REPO_ROOT, 'tests', 'test_retrieval_eval_parity.
  * expression grammar is digits, whitespace, `*`, `+`, `(`, `)` only (every
  * real copy is `10 * 1024 * 1024`), so evaluating it is safe — and a copy
  * that changes to any other shape fails loudly here instead of silently
- * skipping the comparison.
+ * skipping the comparison. EVERY definition of the name in the file must
+ * agree (review PRR-025): a first-occurrence-only read would let a second
+ * definition site diverge invisibly.
  */
 function numericConst(sourcePath: string, name: string): number {
   const source = fs.readFileSync(sourcePath, 'utf8');
   // Accepts TS `const NAME = <expr>;` and the python mirror's bare
   // `NAME = <expr>` assignment (anchored at line start either way).
-  const match = new RegExp(`^(?:(?:const|let|var)\\s+)?${name}\\s*=\\s*([^;\\n]+)`, 'm').exec(source);
-  if (match === null) {
+  const matches = [
+    ...source.matchAll(new RegExp(`^(?:(?:const|let|var)\\s+)?${name}\\s*=\\s*([^;\\n]+)`, 'gm')),
+  ];
+  if (matches.length === 0) {
     throw new Error(`${name} not found in ${sourcePath}`);
   }
-  const expr = match[1].trim();
-  if (!/^[0-9\s*+()]+$/.test(expr)) {
-    throw new Error(`${name} in ${sourcePath} is not a plain numeric expression: ${expr}`);
+  const values = matches.map((m) => {
+    const expr = m[1].trim();
+    if (!/^[0-9\s*+()]+$/.test(expr)) {
+      throw new Error(`${name} in ${sourcePath} is not a plain numeric expression: ${expr}`);
+    }
+    // eslint-disable-next-line no-new-func
+    return Number(new Function(`return (${expr});`)());
+  });
+  const first = values[0];
+  for (const v of values) {
+    if (v !== first) {
+      throw new Error(`${name} in ${sourcePath} has divergent definitions: ${values.join(',')}`);
+    }
   }
-  // eslint-disable-next-line no-new-func
-  return Number(new Function(`return (${expr});`)());
+  return first;
 }
 
 describe('embed constants parity (issue #212)', () => {

@@ -70,6 +70,9 @@ function findRepoRoot(dir: string): string {
   let current = dir;
   for (let i = 0; i < 32; i += 1) {
     if (fs.existsSync(path.join(current, 'contracts', 'api.openapi.yaml'))) return current;
+    // Review PRR-024/UCR-04: stop at the checkout root — a marker-less
+    // checkout must fail closed, never bind a foreign ancestor's marker.
+    if (fs.existsSync(path.join(current, '.git'))) break;
     const parent = path.dirname(current);
     if (parent === current) break;
     current = parent;
@@ -87,16 +90,29 @@ const API_SERVER_SRC = path.join(REPO_ROOT, 'api_server.py');
 /** Numeric value of a `NAME = <expr>` declaration (TS const or python). */
 function numericConst(sourcePath: string, name: string): number {
   const source = fs.readFileSync(sourcePath, 'utf8');
-  const match = new RegExp(`^(?:(?:const|let|var)\\s+)?${name}\\s*=\\s*([^;\\n]+)`, 'm').exec(source);
-  if (match === null) {
+  const matches = [
+    ...source.matchAll(new RegExp(`^(?:(?:const|let|var)\\s+)?${name}\\s*=\\s*([^;\\n]+)`, 'gm')),
+  ];
+  if (matches.length === 0) {
     throw new Error(`${name} not found in ${sourcePath}`);
   }
-  const expr = match[1].trim();
-  if (!/^[0-9\s*+().]+$/.test(expr)) {
-    throw new Error(`${name} in ${sourcePath} is not a plain numeric expression: ${expr}`);
+  // Review PRR-025: EVERY definition must agree — first-occurrence-only
+  // would let a second definition site diverge invisibly.
+  const values = matches.map((m) => {
+    const expr = m[1].trim();
+    if (!/^[0-9.\s*+()]+$/.test(expr)) {
+      throw new Error(`${name} in ${sourcePath} is not a plain numeric expression: ${expr}`);
+    }
+    // eslint-disable-next-line no-new-func
+    return Number(new Function(`return (${expr});`)());
+  });
+  const first = values[0];
+  for (const v of values) {
+    if (v !== first) {
+      throw new Error(`${name} in ${sourcePath} has divergent definitions: ${values.join(',')}`);
+    }
   }
-  // eslint-disable-next-line no-new-func
-  return Number(new Function(`return (${expr});`)());
+  return first;
 }
 
 describe('pack twin parity (issue #213)', () => {
@@ -198,7 +214,19 @@ describe('pack twin parity (issue #213)', () => {
       /if not limits\.require_signature:\s*\n\s*return/,
     );
     const verifyTs = fs.readFileSync(path.join(REPO_ROOT, 'packtool', 'build', 'verify.ts'), 'utf8');
-    expect(verifyTs, "packtool's gate must key on requireSignature").toMatch(/requireSignature/);
+    // Review PRR-022 (+ critic round-1): pin the gate's exact CALL-FORM and
+    // the positive-polarity requireSignature guard — a looser pair of regexes
+    // is satisfied by an inverted condition (`!options?.requireSignature`)
+    // and by any argument list.
+    const verifyStripped = verifyTs.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    expect(
+      verifyStripped,
+      "packtool's gate must invoke verifyPackSignature with the manifest, signature and keys",
+    ).toMatch(/verifyPackSignature\(packJsonBytes, rawSignature, trustedKeys\)/);
+    expect(
+      verifyStripped,
+      "packtool's gate must guard the verification behind a positive requireSignature check",
+    ).toMatch(/if\s*\(\s*options\?\.requireSignature\s*===\s*true\)/);
   });
 
   it('ordering-twin: each side validates entry shape before manifest presence', () => {
@@ -213,7 +241,18 @@ describe('pack twin parity (issue #213)', () => {
     // the extractor survived — the call-form literals below appear only in
     // the flow). Named mutant: move the manifest-presence check above the
     // entry-shape loop in either implementation -> this row must go red.
-    const js = fs.readFileSync(PACK_EXTRACT_SRC, 'utf8');
+    // Comment-stripped slices anchored at the safest-first flow (review
+    // PRR-021): `safeEntryName(entry.name)` also appears in the earlier
+    // declared-metadata pre-filter, so a bare indexOf measured the wrong
+    // loop — and raw source is comment-satisfiable (the M-C12 class).
+    // Multi-syntax stripper (critic round-1: a `#`-only strip is a no-op on
+    // the TypeScript slice, whose comments are `//` and `/* */`).
+    const stripHash = (t: string): string =>
+      t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(\/\/|#)[^\n]*/g, '');
+    const rawJs = fs.readFileSync(PACK_EXTRACT_SRC, 'utf8');
+    const jsIdx = rawJs.indexOf('// Safest-first ordering');
+    expect(jsIdx, 'js: safest-first flow must exist').toBeGreaterThan(-1);
+    const js = stripHash(rawJs.slice(jsIdx));
     const jsName = js.indexOf('safeEntryName(entry.name)');
     const jsSymlink = js.indexOf('isSymlinkEntry(unixPermissions)');
     const jsManifest = js.indexOf('missingManifestMessage(filename)');
@@ -233,7 +272,10 @@ describe('pack twin parity (issue #213)', () => {
     );
     expect(safeEntryName('pack.json'), 'sanity: the rules are reachable from the extractor').toBe('pack.json');
 
-    const py = fs.readFileSync(PY_EXTRACT_SRC, 'utf8');
+    const rawPy = fs.readFileSync(PY_EXTRACT_SRC, 'utf8');
+    const pyIdx = rawPy.indexOf('# Safest-first ordering');
+    expect(pyIdx, 'py: safest-first flow must exist').toBeGreaterThan(-1);
+    const py = stripHash(rawPy.slice(pyIdx));
     const pyName = py.indexOf('safe_entry_name(info.filename)');
     const pyDup = py.indexOf('duplicate archive entry');
     const pySymlink = py.indexOf('_is_symlink_entry(info)');
@@ -266,14 +308,21 @@ describe('pack twin parity (issue #213)', () => {
     // Documented divergence (see the file header): NOT part of the frozen
     // battery; this is a change-detector so neither side can drift unnoticed.
     // Reconciliation follow-up: TS adopts python's all-keys-per-key_id loop
-    // (first-match is the false-reject side).
-    const py = fs.readFileSync(PY_EXTRACT_SRC, 'utf8');
+    // Review PRR-023: comment-stripped anchors (a doc comment naming the
+    // shape must not satisfy the pin) and the direction stated both ways:
+    // TS first-match is the FALSE-REJECT side (a second key under a shared
+    // key_id is refused); python's all-keys loop is the FALSE-ACCEPT side
+    // for a retired key that reuses a key_id. Neither side is silently
+    // tightened here — see the reconciliation follow-up.
+    const stripHash2 = (t: string): string =>
+      t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(\/\/|#)[^\n]*/g, '');
+    const py = stripHash2(fs.readFileSync(PY_EXTRACT_SRC, 'utf8'));
     expect(py, 'python collects every trusted key sharing the key_id').toMatch(
       /matching = \[key for key in trusted_keys if key\.key_id == key_id\]/,
     );
     expect(py, 'python verifies against each matching key in turn').toMatch(/for key in matching:/);
-    const packJson = fs.readFileSync(PACK_JSON_SRC, 'utf8');
-    const packExtract = fs.readFileSync(PACK_EXTRACT_SRC, 'utf8');
+    const packJson = stripHash2(fs.readFileSync(PACK_JSON_SRC, 'utf8'));
+    const packExtract = stripHash2(fs.readFileSync(PACK_EXTRACT_SRC, 'utf8'));
     expect(packJson, 'packtool takes the first matching trusted key').toMatch(/trustedKeys\.find\(/);
     expect(packExtract, 'the install-side gate takes the first matching trusted key').toMatch(
       /trustedKeys\.find\(/,

@@ -130,6 +130,11 @@ _CONFORMANCE_EXTRAS = [
     "api_server.py",
     "scripts/check_test_collection.py",
     ".github/workflows/conformance.yml",
+    # Review PRR-003: the contract-family gate's external defender
+    # (tests/test_ci_paths.py) must run in the required python-conformance
+    # context on security.yml-only diffs — a diff that deletes the contract
+    # step from security.yml has no other required signal.
+    ".github/workflows/security.yml",
 ]
 
 _WEBUI = [

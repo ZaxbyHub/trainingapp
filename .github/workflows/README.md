@@ -27,7 +27,7 @@ pack-fixture-build
 
 Informational (never blocks merge): the 3-leg Tests matrix, `perf-thresholds` (floors-or-stated-skip-reasons signal), `eval-report`, the whole Desktop Build workflow, and `doc-accuracy` (issue #89: documentation-vs-code drift guardrail — deliberately unscoped so docs-only PRs get a signal; informational tier is a deliberate choice, not an omission — promote it to required by adding the `doc-accuracy` context to branch protection if the maintainers want it gating). Note for PRs opened BEFORE a required check existed (e.g. #48): the new checks stay "Pending" on the old head until the PR is pushed again or closed/reopened.
 
-The `security` job (required, unbucketed — it reports on every PR) additionally runs the **contract-spec family** (`embed-seam-contract`, `embed-threads-clamp-contract`, `embed-constants-parity`, `pack-twin-parity`, `ci-gate-required-contract`, `contract-spec-conventions`) as its final step (issue #215): a red contract pin fails this required context, so it blocks the merge. The roster is closed and pinned by `ci-gate-required-contract.test.ts`; new contract-family specs must be added to that step's run line and the roster.
+The `security` job (required, unbucketed — it reports on every PR) additionally runs the **contract-spec family** (`embed-seam-contract`, `embed-threads-clamp-contract`, `embed-constants-parity`, `pack-twin-parity`, `ci-gate-required-contract`, `contract-spec-conventions`) as its final gating step before the artifact upload (issue #215): a red contract pin fails this required context, so it blocks the merge. The roster is closed and pinned by `ci-gate-required-contract.test.ts`; new contract-family specs must be added to that step's run line and the roster.
 
 ## Workflows
 
@@ -51,7 +51,7 @@ The `security` job (required, unbucketed — it reports on every PR) additionall
 **Triggers:** push to main/master, PRs to main/master (unfiltered; scoping at job level).
 **Jobs:**
 
-- `python-conformance` — the frozen API contract suite (`contracts/tests/run_conformance.py --asgi api_server:app`) plus the #51 test-collection guard. Runs on the Python surface and anything under `contracts/**` (lockstep fail-open with the `python` bucket).
+- `python-conformance` — the frozen API contract suite (`contracts/tests/run_conformance.py --asgi api_server:app`), the #51 test-collection guard, and the CI wiring guardrail (`python -m pytest tests/test_ci_paths.py`) that carries the contract-family gate's external defender (review PRR-003: a diff that deletes the contract step from `security.yml` must still get a red required check). Runs on the Python surface and anything under `contracts/**` (lockstep fail-open with the `python` bucket), plus `scripts/check_test_collection.py`, `conformance.yml`, and `security.yml` (the defender's trigger).
 - `pack-fixture-build` — packtool fixture packs: `build-docs` from `contracts/fixtures/source-docs/` (issue #73 leg, moved from desktop-build.yml) AND `build-storyline` against an assembled publish dir (`tests/fixtures/storyline-mini` + the committed `story.html` stub), each followed by `verify`; uploads both pack artifacts. Runs on `packtool/**`, `contracts/pack.schema.json`, `contracts/fixtures/**`, `contracts/validate_pack.py`.
 - The Electron-backend conformance leg (issue #61/B3) stays in `desktop-build.yml` (`backend-conformance` job) — informational.
 
@@ -61,7 +61,7 @@ The `security` job (required, unbucketed — it reports on every PR) additionall
 
 ### 5. Security Scan (`security.yml`) — unfiltered — required
 
-Bandit + Safety on every push/PR plus weekly cron; Bandit step is `continue-on-error` (report-only) but the job still gates on Safety.
+Bandit + Safety on every push/PR plus weekly cron (Bandit step is `continue-on-error` report-only; the job still gates on Safety), plus the merge-blocking **contract-spec family** step (issue #215): Node setup + `npm --prefix desktop ci --no-audit --no-fund` + the closed six-spec roster. Least-privilege: `permissions: contents: read`; the contract steps run BEFORE the network-dependent Safety step so their signal cannot be masked by a Safety flake.
 
 ### 6. Build and Release (`build.yml`) — tags `v*` + manual
 

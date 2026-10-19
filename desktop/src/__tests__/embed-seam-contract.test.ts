@@ -22,7 +22,10 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { embedSessionOptions } from '../../main/backend/ingest/embed-threads.js';
+import {
+  embedSessionOptions,
+  seamEnvRecord,
+} from '../../main/backend/ingest/embed-threads.js';
 import { PACK_EMBED_SESSION_OPTIONS } from '../../../packtool/build/embedder.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -34,6 +37,9 @@ function findRepoRoot(dir: string): string {
   let current = dir;
   for (let i = 0; i < 32; i += 1) {
     if (fs.existsSync(path.join(current, 'contracts', 'api.openapi.yaml'))) return current;
+    // Review PRR-024/UCR-04: stop at the checkout root — a marker-less
+    // checkout must fail closed, never bind a foreign ancestor's marker.
+    if (fs.existsSync(path.join(current, '.git'))) break;
     const parent = path.dirname(current);
     if (parent === current) break;
     current = parent;
@@ -266,11 +272,52 @@ describe('session-call-sites (issue #204)', () => {
       const stripped = stripComments(fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8'));
       const occurrences = stripped.split(call).length - 1;
       expect(occurrences, `${rel} must bind the seam exactly ${expected}x via ${call}`).toBe(expected);
+      // Per-site, not per-file (review PRR-020): rerank-worker.ts carries two
+      // call sites, so a file-wide toContain stays green when one of the two
+      // guards is deleted. One omit-key guard per pinned call site.
+      const guards = stripped.split('sessionOptions === undefined').length - 1;
       expect(
-        stripped,
-        `${rel} must keep the default-OFF omit-key guard`,
-      ).toContain('sessionOptions === undefined');
+        guards,
+        `${rel} must keep the default-OFF omit-key guard at each of its ${expected} seam call sites`,
+      ).toBe(expected);
     }
+  });
+
+  it('env-record-merge: a partial injected record keeps ambient pins (review PRR-011)', () => {
+    // The seam resolves its env via seamEnvRecord: injected STRING values win
+    // per key, omitted/undefined keys keep ambient values. Whole-record
+    // substitution dropped the ambient thread pin whenever a host injected a
+    // partial record. Named mutant: restore `workerData.env ?? process.env`
+    // (or `opts.env ?? process.env`) and this row must go red.
+    const KEY = 'TRAININGAPP_TEST_PRR011_AMBIENT';
+    const saved = process.env[KEY];
+    try {
+      process.env[KEY] = 'ambient';
+      expect(seamEnvRecord({ OTHER: 'injected' })[KEY], 'omitted keys keep ambient').toBe('ambient');
+      expect(seamEnvRecord({ [KEY]: 'injected' })[KEY], 'injected strings win per key').toBe(
+        'injected',
+      );
+      expect(
+        seamEnvRecord({ [KEY]: undefined })[KEY],
+        'an undefined injected value never erases the ambient pin',
+      ).toBe('ambient');
+      expect(seamEnvRecord(null)[KEY], 'no injection falls back to ambient').toBe('ambient');
+    } finally {
+      if (saved === undefined) delete process.env[KEY];
+      else process.env[KEY] = saved;
+    }
+    // Both PR-introduced seam bindings must resolve their record through the
+    // merge helper (call-form pin, comment-stripped).
+    const strip = (text: string): string =>
+      text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    expect(
+      strip(fs.readFileSync(path.join(REPO_ROOT, 'desktop/main/backend/retrieval/rerank-worker.ts'), 'utf8')),
+      'the rerank worker must merge the injected record',
+    ).toContain('seamEnvRecord(');
+    expect(
+      strip(fs.readFileSync(path.join(REPO_ROOT, 'desktop/main/backend/ingest/embedder.ts'), 'utf8')),
+      'resolveEmbedder must merge the injected record',
+    ).toContain('seamEnvRecord(opts.env)');
   });
 
   it('env-injection: the seam reads the injected host record, never ambient process.env', () => {
@@ -288,6 +335,12 @@ describe('session-call-sites (issue #204)', () => {
     expect(embedder, 'resolveEmbedder must pass the resolved env record to OnnxEmbedder').toContain(
       'new OnnxEmbedder(staged, env)',
     );
+    // Review PRR-012: a bare one-arg construction silently reads ambient
+    // env — the pin must ban the shape, not just require the two-arg one.
+    expect(
+      embedder,
+      'bare one-arg OnnxEmbedder constructions read ambient env and must not appear',
+    ).not.toMatch(/new OnnxEmbedder\([^,()]+\)/);
 
     const worker = stripLine('desktop/main/backend/retrieval/rerank-worker.ts');
     expect(worker, 'the worker seam calls must take the injected workerData env record').toContain(

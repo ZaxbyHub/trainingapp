@@ -626,27 +626,61 @@ describe('i103b refusal contract sweep (#167)', () => {
 const GATE_PROBE_ENV = 'TRAININGAPP_TEST_GATE_PROBE';
 
 describe('native-deps gate adoption (issue #203)', () => {
-  it('gate-adoption-real-store: forced-absent skips the real-store rows with the shared staging instruction', () => {
-    // Nested-run self-exclusion: this row IS the probe, so the nested run
-    // (which sets GATE_PROBE_ENV) must not spawn another nested run.
-    if (process.env[GATE_PROBE_ENV] === '1') return;
-    const env = {
-      ...process.env,
-      TRAININGAPP_TEST_FORCE_NATIVE_DEPS_ABSENT: '1',
-      [GATE_PROBE_ENV]: '1',
-    };
-    delete env.CI;
-    const result = spawnSync(
-      `npm --prefix desktop test -- src/__tests__/i103b-degrade-contract-sweep.test.ts --reporter=verbose`,
-      { shell: true, cwd: REPO_ROOT, env, encoding: 'utf8', timeout: 240_000 },
+  it('selector-contract-tokens: each frozen selector token names exactly one group', () => {
+    // The header's SELECTOR CONTRACT was prose (review PRR-032) — and it is
+    // load-bearing: the frozen -t drivers select these group tokens. Each of
+    // warmup/degrade/lifecycle/refusal must appear in exactly one GROUP
+    // title so a renamed or duplicated group can never make a frozen driver
+    // select zero (or two) groups silently.
+    const source = fs.readFileSync(
+      path.join(REPO_ROOT, 'desktop', 'src', '__tests__', 'i103b-degrade-contract-sweep.test.ts'),
+      'utf8',
     );
-    const out = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
-    // Every real-store row took the shared skip path (same message i169 produces).
-    expect(out, out).toContain(NATIVE_DEPS_SKIP_MARKER);
-    expect(out, out).toContain(STAGING_INSTRUCTION);
-    expect(out, out).toMatch(/[1-9][0-9]* skipped/);
-    // The ungated groups keep running on a deps-less box, and the run is green.
-    expect(out, out).toMatch(/[1-9][0-9]* passed/);
-    expect(result.status, out).toBe(0);
+    const groupTitles = [...source.matchAll(/describe\('([^']+)'/g)].map((m) => m[1]);
+    for (const token of ['warmup', 'degrade', 'lifecycle', 'refusal']) {
+      const hits = groupTitles.filter((t) => t.includes(token));
+      expect(hits, `selector token ${token} must appear in exactly one group title`).toHaveLength(1);
+    }
+  });
+
+  it('gate-adoption-real-store: forced-absent skips the real-store rows with the shared staging instruction', () => {
+    // Nested-run self-exclusion (review PRR-006): the child recognizes
+    // itself by a MARKER FILE the parent passes through GATE_PROBE_ENV.
+    // A bare ambient value cannot disarm the probe (the previous value-only
+    // guard made the row a silent zero-assertion pass). Residual, recorded
+    // in the PR body's Considered table: an ambient var that already names
+    // an EXISTING file does disarm this row — deliberate hostile setup, not
+    // an accidental leak.
+    const ambientProbe = process.env[GATE_PROBE_ENV];
+    if (ambientProbe !== undefined && fs.existsSync(ambientProbe)) return;
+    const probeMarker = path.join(
+      os.tmpdir(),
+      `i103b-gate-probe-${process.pid}-${Date.now()}.marker`,
+    );
+    fs.writeFileSync(probeMarker, 'i103b gate probe marker', 'utf8');
+    try {
+      const env = {
+        ...process.env,
+        TRAININGAPP_TEST_FORCE_NATIVE_DEPS_ABSENT: '1',
+        [GATE_PROBE_ENV]: probeMarker,
+      };
+      delete env.CI;
+      const result = spawnSync(
+        `npm --prefix desktop test -- src/__tests__/i103b-degrade-contract-sweep.test.ts --reporter=verbose`,
+        { shell: true, cwd: REPO_ROOT, env, encoding: 'utf8', timeout: 240_000 },
+      );
+      const out = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+      // Every real-store row took the shared skip path (same message i169 produces).
+      expect(out, out).toContain(NATIVE_DEPS_SKIP_MARKER);
+      expect(out, out).toContain(STAGING_INSTRUCTION);
+      expect(out, out).toMatch(/[1-9][0-9]* skipped/);
+      // The ungated groups keep running on a deps-less box (anchored on a NAMED
+      // ungated row, not just a count — review TI-04), and the run is green.
+      expect(out, out).toMatch(/[1-9][0-9]* passed/);
+      expect(out, out).toContain('invalid packs-security env values are refused per key');
+      expect(result.status, out).toBe(0);
+    } finally {
+      fs.rmSync(probeMarker, { force: true });
+    }
   });
 });

@@ -82,25 +82,31 @@ const ImageGuard: React.FC<React.ImgHTMLAttributes<HTMLImageElement>> = (props) 
   const { src, alt, node: _node, ...rest } = props as ImageGuardProps;
   const s = typeof src === 'string' ? src : '';
   const inLink = React.useContext(InLinkContext);
-  const label = alt ?? 'remote image';
+  // Review PRR-008: an empty alt string must fall back like a missing one
+  // (`??` alone produced an unnamed placeholder).
+  const label = typeof alt === 'string' && alt.trim() !== '' ? alt : 'remote image';
   if (s.startsWith('data:') || s.startsWith('blob:')) {
     return <img src={s} alt={alt ?? ''} {...rest} />;
   }
+  // Placeholders carry NO role="img"/aria-label: role=img makes the subtree
+  // presentational and would hide the deliberate-open link from assistive
+  // tech, and an aria-label would discard the visible status text. The
+  // visible text IS the announcement (PRR-008, a11y-01/02/03).
   if (!s) {
     return (
-      <span className="chat-md__img-placeholder" role="img" aria-label={label}>
-        [image: {label} — blocked or unsafe image source]
+      <span className="chat-md__img-placeholder">
+        [image: {label} — no usable image source (blocked or unsafe)]
       </span>
     );
   }
   return (
-    <span className="chat-md__img-placeholder" role="img" aria-label={label}>
-      [image: {label} —{' '}
+    <span className="chat-md__img-placeholder">
+      [image: {label} — remote image not loaded;{' '}
       {inLink ? (
         <span className="chat-md__img-url">{s}</span>
       ) : (
         <a href={s} target="_blank" rel="noopener noreferrer" className="chat-md__link">
-          open
+          open image: {label}
         </a>
       )}
       ]

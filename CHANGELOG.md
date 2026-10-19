@@ -18,7 +18,8 @@
   `desktop/src/__tests__/packaged-smoke-contract.test.ts`.
 - **Opt-in embedding determinism seam (issue #170, D1)**:
   `TRAININGAPP_DESKTOP_EMBED_THREADS=<n>` pins ONNX session threading
-  (intra-op `n`, inter-op 1, sequential execution) at all three
+  (intra-op `min(n, host cores)`, inter-op 1, sequential execution — the
+  count is clamped to the host's available parallelism, issue #204 AC6) at all three
   retrieval-path transformer session sites — the ingest/query embedder and
   the rerank worker's rerank and query-embed sessions — so embeddings and
   rerank scores are run-to-run byte-deterministic (a prior incident broke

@@ -30,7 +30,11 @@
 // semantics (reranker.ts:7-13, 312-320). ADR-0001 (#55) may re-pin the
 // models; that is a modelDir/config change, not a protocol change.
 import { parentPort, workerData } from 'node:worker_threads';
-import { embedSessionOptions, type EmbedSessionThreadOptions } from '../ingest/embed-threads.js';
+import {
+  embedSessionOptions,
+  seamEnvRecord,
+  type EmbedSessionThreadOptions,
+} from '../ingest/embed-threads.js';
 
 type WorkerJob =
   | { kind: 'rerank'; jobId: number; query: string; candidates: string[] }
@@ -62,11 +66,14 @@ interface EmbedPipeline {
 let rerankPromise: Promise<{ tokenizer: Tokenizer; model: RerankModel }> | null = null;
 let embedPromise: Promise<EmbedPipeline> | null = null;
 
-// Determinism seam (issue #204 AC7): the worker reads its env record from
-// workerData (WorkerReranker forwards the injected host record); when the
-// host injects none, this falls back to process.env as before.
-const seamEnv: Record<string, string | undefined> =
-  ((workerData ?? {}) as { env?: Record<string, string | undefined> | null }).env ?? process.env;
+// Determinism seam (issue #204 AC7): the worker merges the injected host
+// record (WorkerReranker forwards it via workerData) over ambient process.env
+// per key — an injected string wins, keys the injection omits keep their
+// ambient values (review PRR-011: whole-record substitution dropped the
+// ambient thread pin whenever the host injected a partial record).
+const seamEnv: Record<string, string | undefined> = seamEnvRecord(
+  ((workerData ?? {}) as { env?: Record<string, string | undefined> | null }).env,
+);
 
 function sigmoid(logit: number): number {
   return 1 / (1 + Math.exp(-logit));

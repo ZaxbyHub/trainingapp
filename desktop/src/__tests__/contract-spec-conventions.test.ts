@@ -23,6 +23,9 @@ function findRepoRoot(dir: string): string {
   let current = dir;
   for (let i = 0; i < 32; i += 1) {
     if (fs.existsSync(path.join(current, 'contracts', 'api.openapi.yaml'))) return current;
+    // Review PRR-024/UCR-04: stop at the checkout root — a marker-less
+    // checkout must fail closed, never bind a foreign ancestor's marker.
+    if (fs.existsSync(path.join(current, '.git'))) break;
     const parent = path.dirname(current);
     if (parent === current) break;
     current = parent;
@@ -89,7 +92,7 @@ describe('contract spec conventions (issue #215 AC14)', () => {
       expect(
         source,
         `${name}: fixed-depth path.resolve root derivations are banned in the contract-spec family`,
-      ).not.toMatch(/path\.resolve\(\s*\w+\s*,\s*'\.\.'\s*,/);
+      ).not.toMatch(/path\.(?:resolve|join)\(\s*[^,]+,\s*'\.\.'/);
       if (/REPO_ROOT\s*=/.test(source)) {
         expect(
           source,
@@ -113,6 +116,18 @@ describe('contract spec conventions (issue #215 AC14)', () => {
       fs.readFileSync(path.join(REPO_ROOT, 'desktop', 'tsconfig.json'), 'utf8'),
     ) as { include?: unknown };
     expect(tsconfig.include, 'the disclosed tsc scope is exactly main/**').toEqual(['main/**/*.ts']);
+    // Review PRR-024: NO desktop project may compile the test tree — the
+    // preload and e2e configs could otherwise absorb src/__tests__ and make
+    // the disclosure false while this row stays green.
+    for (const extra of ['tsconfig.preload.json', 'tsconfig.e2e.json']) {
+      const cfg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'desktop', extra), 'utf8')) as {
+        include?: unknown;
+      };
+      expect(
+        JSON.stringify(cfg.include ?? []),
+        `${extra} must not compile src/__tests__`,
+      ).not.toContain('__tests__');
+    }
     expect(embedSeamRaw, 'the header must carry the tsc-coverage disclosure').toMatch(
       /tsconfig\.json includes main\/\*\* only/,
     );

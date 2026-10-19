@@ -190,6 +190,12 @@ def test_python_empty_diff_fails_open():
         ("conformance", ["web_ui/src/lib/x.ts"], False),
         # lockstep fail-open with the python bucket (round-2 note 4)
         ("conformance", ["newpkg/mod.py"], True),
+        # Review PRR-003: security.yml diffs must arm the REQUIRED
+        # python-conformance job (the contract-family gate's external
+        # defender runs there) without dragging the informational python
+        # matrix along (security.yml stays python-safe-false).
+        ("conformance", [".github/workflows/security.yml"], True),
+        ("python", [".github/workflows/security.yml"], False),
         ("pack", ["packtool/src/x.ts", "contracts/pack.schema.json"], True),
         ("pack", ["contracts/fixtures/source-docs/a.md"], True),
         ("pack", ["web_ui/src/lib/x.ts"], False),
@@ -299,8 +305,11 @@ EXPECTED_WIRING = {
 }
 
 # Explicit unbucketed class (issue #215 batch): jobs in the bucketed workflows
-# that deliberately carry NO bucket gate. Today: none. Kept explicit and
-# disjoint from EXPECTED_WIRING so the wiring pin cannot under-cover a job.
+# that deliberately carry NO bucket gate. Deliberately EMPTY today (review
+# PRR-035: this is an escape hatch awaiting a genuinely-unbucketed job, not a
+# live policy surface — the exhaustiveness direction of the completeness
+# assertion is what protects the pin). Entries here lose the wiring-polarity
+# assertions on purpose; keep the set disjoint from EXPECTED_WIRING.
 UNBUCKETED_JOBS: dict[str, list[str]] = {
     "test.yml": [],
     "web-ui.yml": [],
@@ -410,7 +419,21 @@ def test_job_wiring_and_polarity(name):
 def test_expected_wiring_is_complete():
     """Every non-changes job in the bucketed workflows is mapped or declared
     unbucketed (issue #215 batch: closes this pin's own fail-open hole — an
-    unmapped job silently escapes the wiring assertions above)."""
+    unmapped job silently escapes the wiring assertions above). The workflow
+    universe comes from DISK, not from the map itself (review PRR-026): a new
+    bucketed workflow is not silently out of scope."""
+    bucketed = []
+    for wf_path in sorted(WORKFLOWS.glob("*.yml")):
+        text = wf_path.read_text(encoding="utf-8")
+        if re.search(r"needs\.changes\.outputs\.", text) or re.search(
+            r"needs:\s*\[?\s*changes", text
+        ):
+            bucketed.append(wf_path.name)
+    for name in bucketed:
+        assert name in EXPECTED_WIRING, (
+            f"{name} is bucketed (needs: changes) but missing from EXPECTED_WIRING "
+            f"and UNBUCKETED_JOBS — classify it"
+        )
     for name, mapped in EXPECTED_WIRING.items():
         wf = _load_workflow(name)
         unbucketed = set(UNBUCKETED_JOBS.get(name, []))
@@ -422,6 +445,56 @@ def test_expected_wiring_is_complete():
                 f"{name}: job {job_id} is neither in EXPECTED_WIRING nor "
                 f"declared unbucketed - classify it"
             )
+
+
+def test_conformance_runs_the_wiring_guardrail():
+    """Review PRR-003: the guardrail's own runner must live in a REQUIRED
+    context. `python-conformance` is a branch-protection context, and the
+    conformance bucket arms it on security.yml diffs — so the guardrail
+    (and the contract-gate defender below) actually executes when the
+    contract step in security.yml is edited or deleted. Deleting this step
+    reddens the informational Tests matrix at minimum; keeping it is the
+    contract."""
+    wf = _load_workflow("conformance.yml")
+    job = wf["jobs"]["python-conformance"]
+    guard_steps = [
+        step
+        for step in job.get("steps", [])
+        if "pytest tests/test_ci_paths.py" in str(step.get("run", ""))
+    ]
+    assert (
+        guard_steps
+    ), "conformance.yml: python-conformance lost the wiring-guardrail run"
+    assert (
+        "if" not in guard_steps[0]
+    ), "conformance.yml: the wiring-guardrail step must be unconditional"
+
+
+def test_security_workflow_carries_the_contract_gate():
+    """Independent enforcement of the contract-family gate (PRR-003): the
+    ci-gate-required-contract spec runs INSIDE the security.yml step it
+    validates, so deleting that step would delete its own runner with zero
+    red. This test defends the step from OUTSIDE it — it runs in the
+    required python-conformance job (armed on security.yml diffs via the
+    conformance bucket extras) and in the informational Tests matrix."""
+    wf = _load_workflow("security.yml")
+    job = wf["jobs"]["security"]
+    # Assert on PARSED step run scalars, never raw text (critic round-1:
+    # commenting the step out of YAML keeps every string in the file, so a
+    # raw-text scan stays green while the gate is gone).
+    run_scalars = "\n".join(str(step.get("run", "")) for step in job.get("steps", []))
+    assert (
+        "npm --prefix desktop test" in run_scalars
+    ), "security.yml lost the contract-family run"
+    assert (
+        "embed-seam-contract.test.ts" in run_scalars
+    ), "security.yml lost the contract roster"
+    assert (
+        "npm --prefix desktop ci" in run_scalars
+    ), "security.yml lost the contract-family install step"
+    needs = job.get("needs")
+    assert not needs, f"security job must not gate on needs: {needs}"
+    assert "if" not in job, "security job must not carry a job-level if"
 
 
 # ---------------------------------------------------------------------------

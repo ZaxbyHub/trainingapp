@@ -33,6 +33,12 @@ describe('MarkdownRenderer remote-image guard (issue #143)', () => {
     expect(link?.getAttribute('rel')).toContain('noopener');
     // The link is the ONLY anchor — nothing else wraps the placeholder.
     expect(container.querySelectorAll('a')).toHaveLength(1);
+    // PRR-008 a11y shape, pinned so it cannot regress silently: the
+    // placeholder wrapper is not a fake image, and the link carries its
+    // context in its accessible name.
+    expect(placeholder?.getAttribute('role')).toBeNull();
+    expect(placeholder?.getAttribute('aria-label')).toBeNull();
+    expect(link?.textContent ?? '').toContain('open image: x');
   });
 
   it('data-url-image-renders-inline: data and blob sources render inline; N10 href policy and no-nested-anchor hold', () => {
@@ -68,6 +74,22 @@ describe('MarkdownRenderer remote-image guard (issue #143)', () => {
     expect(outer?.getAttribute('href')).toBe('https://link.example/y');
     expect(nested.container.querySelector('.chat-md__img-url')?.textContent).toBe(
       'https://img.example/x.png',
+    );
+  });
+
+  it('stripped-src-placeholders: a stripped/empty image source never renders an img element', () => {
+    // Review PRR-019: this branch is production behavior — a stripped src
+    // must produce the placeholder, never an <img src=""> (an empty src
+    // makes the browser re-fetch the document URL).
+    for (const md of ['![x](local.png)', '![x](javascript:alert(1))', '![](https://evil.example/x)']) {
+      const { container } = render(<MarkdownRenderer content={md} />);
+      expect(container.querySelectorAll('img'), md).toHaveLength(0);
+      expect(container.querySelector('.chat-md__img-placeholder'), md).not.toBeNull();
+    }
+    // Empty-alt gets the fallback label (PRR-008): no unnamed placeholder.
+    const { container } = render(<MarkdownRenderer content={'![](https://evil.example/x)'} />);
+    expect(container.textContent ?? '', 'empty alt falls back to the remote-image label').toContain(
+      'remote image',
     );
   });
 
