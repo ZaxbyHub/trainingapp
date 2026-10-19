@@ -188,6 +188,58 @@ def _require_encodable_text(text: str) -> str:
     return text
 
 
+def _find_unencodable_manifest_string(node: Any, trail: str = "") -> Optional[str]:
+    """First JSON-pointer-ish trail to a string in `node` that cannot round-trip
+    through UTF-8, or None. Recurses dicts and lists; keys are walked too."""
+    if isinstance(node, str):
+        try:
+            node.encode("utf-8")
+        except UnicodeEncodeError:
+            return trail or "<root>"
+        return None
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if isinstance(key, str):
+                try:
+                    key.encode("utf-8")
+                except UnicodeEncodeError:
+                    return f"{trail}/<key {key!r}>"
+            found = _find_unencodable_manifest_string(value, f"{trail}/{key}")
+            if found is not None:
+                return found
+        return None
+    if isinstance(node, list):
+        for index, value in enumerate(node):
+            found = _find_unencodable_manifest_string(value, f"{trail}/{index}")
+            if found is not None:
+                return found
+    return None
+
+
+def _refuse_unencodable_manifest_strings(manifest: Any) -> None:
+    """Refuse a manifest carrying a lone-surrogate string, before anything
+    interpolates one into a refusal message.
+
+    `json.loads` turns a six-character ASCII `\\ud800` escape into a real lone
+    surrogate, which is legal JSON on the wire and illegal UTF-8 to encode. Every
+    downstream refusal names a manifest string (`doc unreadable: {rel_path}`,
+    `duplicate docs[].path`), and the install route renders that message with
+    Starlette's `JSONResponse`, which serialises with `ensure_ascii=False` — so an
+    unencoded surrogate in the message raises `UnicodeEncodeError` during
+    rendering and the caller gets an unhandled 500 instead of the documented 409
+    (issue #226, adversarial-review blocker). The message must never carry the
+    value it is complaining about, so the refusal below names the field's trail
+    only. This runs before `schema_errors` and `semantic_problems`, which build
+    their own messages from the same strings.
+    """
+    trail = _find_unencodable_manifest_string(manifest)
+    if trail is not None:
+        raise PackManagerError(
+            "pack.json carries a string that is not encodable as UTF-8 at "
+            f"{trail}; refusing the pack"
+        )
+
+
 def split_words(text: str, size: int, overlap: int) -> List[str]:
     """fixed-words windows over whitespace-separated words, per the manifest
     chunking block. Returns [text] unchanged when it fits within size."""
@@ -382,6 +434,7 @@ class PackManager:
                 raise PackManagerError(
                     f"{pack_path}: pack.json is not valid UTF-8 JSON: {error}"
                 ) from error
+            _refuse_unencodable_manifest_strings(manifest)
             problems: List[str] = list(schema_errors(manifest, self._validator_for()))
             problems.extend(semantic_problems(manifest, source))
         except UsageError as error:

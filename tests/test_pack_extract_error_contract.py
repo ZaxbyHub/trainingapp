@@ -45,6 +45,7 @@ from pack_extract import (  # noqa: E402
     check_signature_gate,
     verify_pack_signature,
 )
+from pack_manager import PackManagerError  # noqa: E402
 
 SURROGATE = chr(0xD800)
 
@@ -307,3 +308,108 @@ def test_route_path_matches_the_string_the_static_mount_resolves():
                 f"root_path={root_path!r} path={path!r}: the gate would read a "
                 "different string than the static mount resolves"
             )
+
+
+# --------------------------------------------------------------------------- #
+# Refusal messages must never carry a value they cannot encode
+# --------------------------------------------------------------------------- #
+
+
+def test_a_surrogate_in_a_manifest_string_is_refused_before_any_message_is_built():
+    """The adversarial-review blocker. `docs[].path` carrying a lone surrogate
+    made `_build_chunks` raise its typed `doc unreadable: {rel_path}` refusal —
+    which interpolates the attacker string RAW. The route renders that detail with
+    Starlette's `JSONResponse` (ensure_ascii=False), so the surrogate raised
+    `UnicodeEncodeError` during rendering and the caller got an unhandled 500
+    instead of the documented 409. Reachable on the DEFAULT configuration, where
+    the signature gate is off, so the AC6 check does not cover it."""
+    from pack_manager import _refuse_unencodable_manifest_strings
+
+    manifest = {"id": "p", "docs": [{"path": "docs/" + SURROGATE + ".json"}]}
+    with pytest.raises(PackManagerError) as refusal:
+        _refuse_unencodable_manifest_strings(manifest)
+    # The refusal names WHERE, never WHAT — echoing the value would reintroduce
+    # the very encode failure it is reporting.
+    assert "/docs/0/path" in str(refusal.value)
+    assert SURROGATE not in str(refusal.value)
+    assert "not encodable as UTF-8" in str(refusal.value)
+
+
+def test_a_clean_manifest_passes_the_unencodable_string_check():
+    from pack_manager import _refuse_unencodable_manifest_strings
+
+    manifest = {
+        "id": "p",
+        "name": "Ordinary pack name",
+        "docs": [{"path": "docs/a.json", "title": "t"}],
+        "supersedes": ["p/0.1.0"],
+    }
+    assert _refuse_unencodable_manifest_strings(manifest) is None
+
+
+def test_the_install_route_answers_409_for_a_surrogate_doc_path_on_the_default_config(
+    monkeypatch, tmp_path
+):
+    """The blocker's route-level proof, on the configuration where it was
+    reachable: `requireSignature` OFF, so the signature gate never runs."""
+    from fastapi.testclient import TestClient
+
+    import config
+    import vector_store as vector_store_module
+    from pack_manager import PackManager
+
+    class StubEmbeddingModel:
+        def __init__(self, model_name=None):
+            self.model_name = model_name or "stub"
+
+        def encode(self, texts):
+            return [[0.1] * 384 for _ in texts]
+
+    doc_text = '{"title": "doc", "text": "hello"}'
+    manifest = {
+        "id": "p226-blocker",
+        "name": "Blocker Probe",
+        "version": "1.0.0",
+        "published_at": "2026-10-19T00:00:00Z",
+        "source_class": "user",
+        "embedding": {"model_id": "bge-small-en-v1.5", "dims": 384, "normalize": True},
+        "chunking": {"strategy": "fixed-words", "size": 64, "overlap": 0},
+        "docs": [
+            {
+                # absent from the archive, so `_build_chunks` raises its typed
+                # refusal — which is exactly the message that used to echo it.
+                "path": "docs/" + SURROGATE + ".json",
+                "sha256": hashlib.sha256(doc_text.encode("utf-8")).hexdigest(),
+                "title": "doc",
+                "mime": "application/json",
+            }
+        ],
+    }
+    payload = json.dumps(manifest, indent=2).encode("ascii")
+    assert SURROGATE_ESCAPE.encode("ascii") in payload
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("pack.json", payload)
+        archive.writestr("docs/doc-1.json", doc_text)
+
+    settings = config.get_settings()
+    monkeypatch.setattr(
+        settings, "rag_packs_security_require_signature", False, raising=False
+    )
+    monkeypatch.setattr(
+        vector_store_module, "EmbeddingModel", StubEmbeddingModel, raising=False
+    )
+    store = vector_store_module.VectorStore(
+        db_path=str(tmp_path / "db"), embedding_model="stub"
+    )
+    monkeypatch.setattr(
+        api_server, "pack_manager", PackManager(store, packs_root=tmp_path / "packs")
+    )
+
+    client = TestClient(api_server.app, raise_server_exceptions=False)
+    response = client.post(
+        "/packs/install",
+        files={"file": ("blocker.zip", buffer.getvalue(), "application/zip")},
+    )
+    assert response.status_code == 409, response.text
+    assert "correlation_id" not in response.json()
