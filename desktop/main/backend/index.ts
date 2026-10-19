@@ -135,6 +135,15 @@ export class NodeBackendHost implements BackendHost {
   private idle: IdleUnloadController | null = null;
   private resumable: ResumableReranker | null = null;
   private telemetryTimer: ReturnType<typeof setInterval> | null = null;
+  /**
+   * issue #229 (b): the sampler's lifecycle identity. `memoryTick` captures it
+   * at entry and re-validates it after its await, so a tick suspended across
+   * `stop()` performs no post-teardown write. `stop()` bumps it in its
+   * synchronous teardown block.
+   */
+  private memoryTickGeneration = 0;
+  /** issue #229 (b): excludes overlapping sampler ticks (a skip, never an await). */
+  private memoryTickInflight = false;
   private workerMemory: WorkerMemoryReport | null = null;
   private embedsViaWorker = false;
   private rssBaselineBytes = 0;
@@ -172,11 +181,29 @@ export class NodeBackendHost implements BackendHost {
 
   /** One sampler tick: refresh worker memory, sample, observe, decide. */
   private memoryTick = async (): Promise<void> => {
-    const monitor = this.monitor;
-    const scheduler = this.scheduler;
-    if (monitor === null || scheduler === null) return;
-    this.workerMemory = this.resumable !== null ? await this.resumable.reportMemory() : null;
-    const snapshot = this.telemetry?.sample() ?? null;
+    // Exclude overlapping ticks rather than letting them interleave (issue
+    // #229 (b), AC4). This is a SKIP, not an await: no deadlock, but a
+    // permanently hung reportMemory() holds the flag and the sampler stays
+    // idle. That is strictly better than the base behavior (a pile of
+    // overlapping hung ticks) and satisfies AC4's "excluded or ordered";
+    // converting this into an await would wedge stop() on teardown.
+    if (this.memoryTickInflight) return;
+    this.memoryTickInflight = true;
+    // Bumped by stop(); captured BEFORE the await below so a tick suspended
+    // across teardown can see that it is no longer wanted.
+    const generation = this.memoryTickGeneration;
+    try {
+      const monitor = this.monitor;
+      const scheduler = this.scheduler;
+      if (monitor === null || scheduler === null) return;
+      // Await into a local FIRST, then re-validate the generation, then assign
+      // — the write must not land after stop() has torn the host down
+      // (issue #229 (b), AC3).
+      const reported =
+        this.resumable !== null ? await this.resumable.reportMemory() : null;
+      if (generation !== this.memoryTickGeneration) return;
+      this.workerMemory = reported;
+      const snapshot = this.telemetry?.sample() ?? null;
     monitor.observe(os.freemem(), Date.now());
     const status = monitor.evaluate();
     const engineOverride = this.engine as { setProfileOverride?: (profile: 'quality' | 'fast' | null) => void };
@@ -224,6 +251,9 @@ export class NodeBackendHost implements BackendHost {
         effectiveProfile: 'quality',
         detail: 'profile override cleared between generations (recovery sustained)',
       });
+    }
+    } finally {
+      this.memoryTickInflight = false;
     }
   };
 
@@ -710,7 +740,12 @@ export class NodeBackendHost implements BackendHost {
             this.embedder = resolveEmbedder({
               env,
               dims: this.store.dims,
-              repoRoot: process.env.TRAININGAPP_DESKTOP_REPO_ROOT,
+              // The effective record, not the ambient environment: a host that
+              // injects config.env carrying TRAININGAPP_DESKTOP_REPO_ROOT must
+              // have it honored here like every sibling key (issue #229 (c)).
+              // When config.env is absent, `env` IS process.env, so ambient
+              // behavior is unchanged.
+              repoRoot: env.TRAININGAPP_DESKTOP_REPO_ROOT,
             });
           } catch (err) {
             console.error(
@@ -739,7 +774,9 @@ export class NodeBackendHost implements BackendHost {
           try {
             const rerankerModelDir = resolveRerankerModelDir({
               env,
-              repoRoot: process.env.TRAININGAPP_DESKTOP_REPO_ROOT,
+              // Same effective-record read as the embedder site above
+              // (issue #229 (c)).
+              repoRoot: env.TRAININGAPP_DESKTOP_REPO_ROOT,
             });
             if (
               this.embedder instanceof OnnxEmbedder &&
@@ -787,7 +824,10 @@ export class NodeBackendHost implements BackendHost {
               `[trainingapp-backend] reranker unavailable (retrieval degrades to fused ordering): ${err instanceof Error ? err.message : String(err)}`,
             );
           }
-          attachStoreSurface(this.config, this.engine, this.store, this.embedder, {
+          // The host mirrors what the engine actually holds so stop()'s
+          // detach guard is live: this.surface is assigned ONLY here, which is
+          // what makes the guard at stop() meaningful (issue #199 (d)).
+          this.surface = attachStoreSurface(this.config, this.engine, this.store, this.embedder, {
             get: () => this.store,
             set: (handle: StoreHandle | null) => {
               this.store = handle;
@@ -921,6 +961,12 @@ export class NodeBackendHost implements BackendHost {
       clearInterval(this.telemetryTimer);
       this.telemetryTimer = null;
     }
+    // issue #229 (b): invalidate any tick already past its await BEFORE nulling
+    // the fields it captured, so the tick cannot write host or engine state
+    // after teardown. Must stay in the synchronous block — a bump after an
+    // await here would be too late.
+    this.memoryTickGeneration += 1;
+    this.memoryTickInflight = false;
     this.idle?.dispose();
     this.idle = null;
     this.scheduler?.rejectQueued(new Error('backend host is stopping'));
@@ -1143,7 +1189,11 @@ interface StoreAccessors {
 
 /** Build the B6 document surface (embedder + pipeline) and hand it to the engine.
  *  The embedder is resolved (and possibly worker-proxied) by the caller so the
- *  document and retrieval surfaces share ONE embedding source. */
+ *  document and retrieval surfaces share ONE embedding source.
+ *
+ *  Returns the surface ONLY when it was actually attached to the engine, and
+ *  null otherwise, so the caller's mirror field never claims a surface the
+ *  engine does not hold (issue #199 (d)). */
 function attachStoreSurface(
   config: BackendHostConfig,
   engine: EngineSurface,
@@ -1151,13 +1201,13 @@ function attachStoreSurface(
   embedder: EmbeddingSurface | null,
   accessors: StoreAccessors,
   coordination: ConcurrencyScheduler | null,
-): void {
+): StoreDocumentSurface | null {
   if (embedder === null) {
     // No usable embedder (weights not staged, bad env): the document surface
     // stays detached and the engine keeps its stub document behavior; the
     // rest of the host serves.
     console.error('[trainingapp-backend] ingest surface unavailable (documents stay stubbed): no embedding model staged');
-    return;
+    return null;
   }
   const env = config.env ?? process.env;
   const surface = new StoreDocumentSurface({
@@ -1172,7 +1222,9 @@ function attachStoreSurface(
   });
   if (typeof (engine as { attachDocumentSurface?: unknown }).attachDocumentSurface === 'function') {
     engine.attachDocumentSurface?.(surface);
+    return surface;
   }
+  return null;
 }
 
 /** Resolve the config and build the ONE host interface for B4-B9. */
