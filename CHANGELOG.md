@@ -1,7 +1,38 @@
 # Changelog
 
 ## [Unreleased]
-
+- **Desktop backend host lifecycle: generation-bound disposal, post-stop tick
+  invalidation, effective-env model roots, live surface detach (issues #199,
+  #229)**: five state-lifecycle defects in `desktop/main/backend/` are fixed
+  under one defect class — a host function reading mutable lifecycle state
+  where a concurrent transition can have replaced or nulled it, or from a
+  source other than the effective configuration record.
+  `ResumableReranker.runWithReloadTiming` now captures the runner a job
+  actually runs on before its await and disposes exactly that generation, so an
+  idle unload that published a replacement runner can no longer have the
+  replacement torn down by the stale job's rejection.
+  `NodeBackendHost.memoryTick` captures a generation counter at entry and
+  re-validates it after its await, and overlapping ticks are excluded rather
+  than interleaved, so a tick in flight across `stop()` writes no
+  `workerMemory`, latches no downgrade, flips no engine profile and emits no
+  event after teardown. Both model resolvers now read
+  `TRAININGAPP_DESKTOP_REPO_ROOT` from the effective `config.env` record
+  instead of the ambient `process.env`, so an injected value is honored; the
+  sibling whole-record substitution sites are unchanged by design.
+  `attachStoreSurface` returns the surface it attached so the host's mirror
+  field is real and `stop()`'s document-surface detach guard actually fires.
+  `StubEngine.retrieveContext` captures the retrieval surface once before its
+  await, closing the last holdout of the issue #185 capture-once invariant.
+  The in-flight exclusion is generation-bound, so a tick superseded by a
+  `stop()` -> `start()` cycle cannot release the exclusion a new generation's
+  tick holds. Contract pins:
+  `desktop/src/__tests__/reranker-generation-lifecycle.test.ts`,
+  `backend-memory-tick-lifecycle.test.ts`,
+  `backend-env-repo-root-contract.test.ts`,
+  `i199-backend-surface-lifecycle.test.ts`, and the class guardrail
+  `backend-lifecycle-capture-once-census.test.ts`. These pins run in the
+  desktop vitest suite; only the contract-family roster runs inside the
+  required `security` job, and none of these five is a roster member.
 - **Player-origin refusal and pack typed-refusal contract (issues #228, #226)**:
   the ADR-0012 player-origin 404 now keys on `_route_path(request.scope)` — the
   same string `StaticFiles` resolves — instead of `request.url.path`. Starlette
@@ -26,6 +57,7 @@
   not a JSON object, and one nested past CPython's json recursion limit. Both
   predate this work and both produced the same 500. Contract:
   `tests/test_pack_extract_error_contract.py`.
+
 - **Packaged-boot smoke hardening and CI wiring (issues #177, #178, #179,
   #180, #182)**: `desktop/scripts/packaged-smoke.mjs` is now an import-safe,
   unit-tested driver — bounded evaluates on one helper line, a 30-minute run

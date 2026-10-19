@@ -319,8 +319,14 @@ export class ResumableReranker {
     this.onUse?.();
     const rebuilt = this.runner === null;
     const startedAt = performance.now();
+    // The generation THIS job runs on, captured before the await. The catch
+    // branch must dispose exactly this generation: re-reading this.runner
+    // there would dispose a replacement that a concurrent unload() ->
+    // ensureRunner() already installed (issue #229 (a)).
+    let own: WorkerReranker | null = null;
     try {
-      const result = await run(this.ensureRunner());
+      own = this.ensureRunner();
+      const result = await run(own);
       if (rebuilt) {
         // performance.now(): sub-ms precision, so even an instant fixture
         // rebuild reports a finite, positive latency (C9's assertion).
@@ -334,10 +340,13 @@ export class ResumableReranker {
       // controller never sees a usable session (PRR-F5). Drop it so the next
       // call transparently rebuilds a fresh worker.
       const message = err instanceof Error ? err.message : String(err);
-      if (/exited|disposed|terminated/i.test(message)) {
-        const dead = this.runner;
-        this.runner = null;
-        if (dead !== null) void dead.dispose().catch(() => {});
+      if (/exited|disposed|terminated/i.test(message) && own !== null) {
+        // Generation-bound: forget this.runner only when it still IS the dead
+        // generation, so a replacement installed while this job was in flight
+        // survives. `own` is disposed either way — it is the runner the failed
+        // job actually ran on, and dispose() is idempotent.
+        if (this.runner === own) this.runner = null;
+        void own.dispose().catch(() => {});
       }
       throw err;
     }
