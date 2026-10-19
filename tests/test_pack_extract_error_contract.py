@@ -413,3 +413,127 @@ def test_the_install_route_answers_409_for_a_surrogate_doc_path_on_the_default_c
     )
     assert response.status_code == 409, response.text
     assert "correlation_id" not in response.json()
+
+
+# --------------------------------------------------------------------------- #
+# Malformed shapes must refuse typed too, not crash into a 500
+# --------------------------------------------------------------------------- #
+
+
+def test_a_non_object_pack_json_is_refused_typed():
+    """Round-2 blocker. `semantic_problems` dereferences `manifest["docs"]`, so a
+    top-level list/scalar/null raised `AttributeError` and the route answered an
+    unhandled 500 — the exact symptom #226 documents."""
+    from pack_extract import canonical_manifest_bytes
+
+    for raw in (b"[1,2,3]", b'"a string"', b"null", b"42"):
+        with pytest.raises(PackExtractError, match="must be a JSON object"):
+            canonical_manifest_bytes(raw)
+
+
+def test_a_pathologically_nested_manifest_is_refused_typed():
+    """Round-2 blocker. `json.loads` raises `RecursionError` past ~1000 nesting
+    levels; only `(UnicodeDecodeError, JSONDecodeError)` was caught, so the route
+    answered an unhandled 500."""
+    from pack_extract import canonical_manifest_bytes
+
+    deep = b'{"a":1}'
+    for _ in range(1400):
+        deep = b'{"x":' + deep + b"}"
+    with pytest.raises(PackExtractError, match="nested too deeply"):
+        canonical_manifest_bytes(deep)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [b"[1,2,3]", b'"a string"', b"null"],
+    ids=["array", "scalar", "null"],
+)
+def test_the_install_route_answers_409_for_a_non_object_pack_json(
+    monkeypatch, tmp_path, raw
+):
+    """The route-level proof for the non-object shape, on the default config."""
+    from fastapi.testclient import TestClient
+
+    import config
+    import vector_store as vector_store_module
+    from pack_manager import PackManager
+
+    class StubEmbeddingModel:
+        def __init__(self, model_name=None):
+            self.model_name = model_name or "stub"
+
+        def encode(self, texts):
+            return [[0.1] * 384 for _ in texts]
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("pack.json", raw)
+        archive.writestr("docs/doc-1.json", '{"title": "doc", "text": "hello"}')
+
+    settings = config.get_settings()
+    monkeypatch.setattr(
+        settings, "rag_packs_security_require_signature", False, raising=False
+    )
+    monkeypatch.setattr(
+        vector_store_module, "EmbeddingModel", StubEmbeddingModel, raising=False
+    )
+    store = vector_store_module.VectorStore(
+        db_path=str(tmp_path / "db"), embedding_model="stub"
+    )
+    monkeypatch.setattr(
+        api_server, "pack_manager", PackManager(store, packs_root=tmp_path / "packs")
+    )
+
+    response = TestClient(api_server.app, raise_server_exceptions=False).post(
+        "/packs/install",
+        files={"file": ("pack.zip", buffer.getvalue(), "application/zip")},
+    )
+    assert response.status_code == 409, response.text
+    assert "correlation_id" not in response.json()
+
+
+def test_the_install_route_answers_409_for_a_pathologically_nested_pack_json(
+    monkeypatch, tmp_path
+):
+    from fastapi.testclient import TestClient
+
+    import config
+    import vector_store as vector_store_module
+    from pack_manager import PackManager
+
+    class StubEmbeddingModel:
+        def __init__(self, model_name=None):
+            self.model_name = model_name or "stub"
+
+        def encode(self, texts):
+            return [[0.1] * 384 for _ in texts]
+
+    deep = b'{"a":1}'
+    for _ in range(1400):
+        deep = b'{"x":' + deep + b"}"
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("pack.json", deep)
+        archive.writestr("docs/doc-1.json", '{"title": "doc", "text": "hello"}')
+
+    settings = config.get_settings()
+    monkeypatch.setattr(
+        settings, "rag_packs_security_require_signature", False, raising=False
+    )
+    monkeypatch.setattr(
+        vector_store_module, "EmbeddingModel", StubEmbeddingModel, raising=False
+    )
+    store = vector_store_module.VectorStore(
+        db_path=str(tmp_path / "db"), embedding_model="stub"
+    )
+    monkeypatch.setattr(
+        api_server, "pack_manager", PackManager(store, packs_root=tmp_path / "packs")
+    )
+
+    response = TestClient(api_server.app, raise_server_exceptions=False).post(
+        "/packs/install",
+        files={"file": ("pack.zip", buffer.getvalue(), "application/zip")},
+    )
+    assert response.status_code == 409, response.text
+    assert "correlation_id" not in response.json()

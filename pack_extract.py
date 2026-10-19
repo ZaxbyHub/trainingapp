@@ -285,6 +285,13 @@ def canonical_manifest_bytes(manifest_bytes: bytes) -> bytes:
         manifest = json.loads(manifest_bytes.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise PackExtractError(f"pack.json is not valid UTF-8 JSON: {error}") from error
+    except RecursionError as error:
+        # A pathologically nested manifest exhausts CPython's json recursion
+        # limit; that is a malformed pack, not a server fault, so it belongs in
+        # the typed-refusal contract (issue #226).
+        raise PackExtractError(
+            f"pack.json is nested too deeply to parse: {error}"
+        ) from error
     if not isinstance(manifest, dict):
         raise PackExtractError("pack.json must be a JSON object")
     if "signature" in manifest:

@@ -434,6 +434,22 @@ class PackManager:
                 raise PackManagerError(
                     f"{pack_path}: pack.json is not valid UTF-8 JSON: {error}"
                 ) from error
+            except RecursionError as error:
+                # A pathologically nested manifest exhausts CPython's json
+                # recursion limit. That is a malformed pack, not a server fault,
+                # so it belongs in the typed-refusal contract the install route
+                # maps to 409 (issue #226).
+                raise PackManagerError(
+                    f"{pack_path}: pack.json is nested too deeply to parse"
+                ) from error
+            if not isinstance(manifest, dict):
+                # `semantic_problems` below dereferences `manifest["docs"]`, so a
+                # non-object top level would escape as an AttributeError and answer
+                # an unhandled 500 instead of the documented 409.
+                raise PackManagerError(
+                    f"{pack_path}: pack.json must be a JSON object, not a"
+                    f" {type(manifest).__name__}"
+                )
             _refuse_unencodable_manifest_strings(manifest)
             problems: List[str] = list(schema_errors(manifest, self._validator_for()))
             problems.extend(semantic_problems(manifest, source))
