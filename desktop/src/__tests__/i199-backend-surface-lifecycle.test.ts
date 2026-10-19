@@ -46,8 +46,18 @@ const { NodeBackendHost } = await import('../../main/backend/index.js');
 
 describe('issue 199 backend surface lifecycle', () => {
   let tmpDir: string | null = null;
+  // Describe-scoped so afterEach can stop the host on the FAILURE path too.
+  // PRR review finding: a happy-path-only host.stop() leaves the sqlite handle
+  // and the telemetry interval live when an anti-vacuity assertion throws, and
+  // the afterEach rmSync then hits EPERM/EBUSY on windows-latest — masking the
+  // real assertion failure and cascading it into the next test.
+  let host: NodeBackendHost | null = null;
 
-  afterEach(() => {
+  afterEach(async () => {
+    if (host !== null) {
+      await host.stop().catch(() => {});
+      host = null;
+    }
     if (tmpDir !== null) {
       fs.rmSync(tmpDir, { recursive: true, force: true });
       tmpDir = null;
@@ -65,7 +75,7 @@ describe('issue 199 backend surface lifecycle', () => {
       // LlamaEngine, whose surface field is named differently and would make
       // the harness-sanity assertions below vacuously satisfied).
       const engine = new StubEngine();
-      const host = new NodeBackendHost({
+      host = new NodeBackendHost({
         token: 'i199-surface-token',
         storePath: dbPath,
         storeEmbeddingDims: 8,
@@ -89,6 +99,7 @@ describe('issue 199 backend surface lifecycle', () => {
       ).not.toBeNull();
 
       await host.stop();
+      host = null;
 
       // THE DEFECT (index.ts stop()): the detach is guarded on this.surface,
       // a field that is never assigned a non-null value (attachStoreSurface

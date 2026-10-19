@@ -253,7 +253,12 @@ export class NodeBackendHost implements BackendHost {
       });
     }
     } finally {
-      this.memoryTickInflight = false;
+      // Generation-bound release (issue #229 (b)): a tick superseded by a
+      // stop()->start() cycle must NOT clear the exclusion a NEW generation's
+      // tick holds. stop() force-clears the flag at teardown, so an
+      // unconditional release here would let the stale tick re-admit a
+      // concurrent tick on the live generation.
+      if (generation === this.memoryTickGeneration) this.memoryTickInflight = false;
     }
   };
 

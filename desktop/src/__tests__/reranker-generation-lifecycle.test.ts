@@ -188,4 +188,82 @@ describe('issue 229 reranker generation lifecycle', () => {
     },
     20_000,
   );
+
+  // AC9 (PRR review finding H2): the production path the generation-bound
+  // catch branch actually protects is an ORGANIC worker exit — the worker
+  // dies on its own while this.runner still IS the failed generation. AC1
+  // cannot reach that path because unload() nulls this.runner before the
+  // rejection lands, so `this.runner === own` is always false there; deleting
+  // the guard line was an uncaught mutant. This spec drives the real path.
+  it(
+    'AC9 an organic worker exit drops the dead generation so the next score rebuilds',
+    async () => {
+      // Fixture that dies ONCE, on the first job it ever receives, WITHOUT
+      // answering it. The job is therefore still in the runner's `pending` map
+      // when the 'exit' event fires, so WorkerReranker's orphan-exit handler
+      // (reranker.ts:182-184) rejects it synchronously with "rerank worker
+      // exited with code N" — an organic exit, not a dispose.
+      //
+      // A sidecar marker file makes the exit exactly-once: each spawn is a
+      // fresh module instance, so an in-memory flag would reset and the REBUILT
+      // worker would die too. Without the marker this spec passes alone and
+      // fails in the full suite (the second score hits the fresh worker, which
+      // exits again and rejects).
+      const selfExitingSource = [
+        "import { parentPort, workerData } from 'node:worker_threads';",
+        "import fs from 'node:fs';",
+        "const marker = workerData.modelDir;",
+        "parentPort.on('message', (msg) => {",
+        "  if (!msg || msg.kind !== 'rerank') return;",
+        "  if (!fs.existsSync(marker)) {",
+        "    // First job ever: die with it still pending — the organic-exit",
+        "    // shape the generation-bound catch branch exists for.",
+        "    fs.writeFileSync(marker, '1');",
+        "    process.exit(0);",
+        "  }",
+        "  const scores = msg.candidates.map((_, i) => (msg.candidates.length - i) / msg.candidates.length);",
+        "  parentPort.postMessage({ kind: 'rerank:result', jobId: msg.jobId, scores });",
+        '});',
+        '',
+      ].join('\n');
+      const fixturePath = writeFixture(selfExitingSource, 'i229-gen-selfexit');
+      // The marker lives beside the fixture so cleanupFixture() removes both.
+      const markerPath = `${fixturePath}.exited`;
+      try {
+        const rr = new ResumableReranker({ workerPath: fixturePath, modelDir: markerPath });
+
+        // Job 1 is admitted against generation A and rejected by A's organic
+        // exit. At that moment this.runner still IS A (nothing nulled it), so
+        // the catch branch's `this.runner === own` guard is TRUE and must drop
+        // generation A.
+        const rejected = await rr.score('one', ['alpha', 'beta']).then(
+          () => 'RESOLVED',
+          (e: unknown) => `REJECTED: ${e instanceof Error ? e.message : String(e)}`,
+        );
+        expect(
+          rejected,
+          'the job admitted against the organically exited generation must reject, not hang',
+        ).toContain('REJECTED');
+        expect(
+          rejected,
+          'the rejection must be the organic exit message that arms the catch branch',
+        ).toContain('exited');
+
+        // THE GUARD: generation A was dropped, so the next score rebuilds a
+        // fresh runner and succeeds. Without `if (this.runner === own)
+        // this.runner = null;` this score replays the same rejection forever —
+        // the PRR-F5 "a dead runner must not be reused" contract.
+        const second = await rr.score('two', ['gamma']);
+        expect(
+          second,
+          'the next score after an organic exit rebuilds a fresh runner and succeeds',
+        ).toEqual([1]);
+
+        await rr.dispose();
+      } finally {
+        cleanupFixture(fixturePath);
+      }
+    },
+    30_000,
+  );
 });

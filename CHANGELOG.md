@@ -24,11 +24,16 @@
   field is real and `stop()`'s document-surface detach guard actually fires.
   `StubEngine.retrieveContext` captures the retrieval surface once before its
   await, closing the last holdout of the issue #185 capture-once invariant.
-  Contract pins: `desktop/src/__tests__/reranker-generation-lifecycle.test.ts`,
+  The in-flight exclusion is generation-bound, so a tick superseded by a
+  `stop()` -> `start()` cycle cannot release the exclusion a new generation's
+  tick holds. Contract pins:
+  `desktop/src/__tests__/reranker-generation-lifecycle.test.ts`,
   `backend-memory-tick-lifecycle.test.ts`,
   `backend-env-repo-root-contract.test.ts`,
   `i199-backend-surface-lifecycle.test.ts`, and the class guardrail
-  `backend-lifecycle-capture-once-census.test.ts`.
+  `backend-lifecycle-capture-once-census.test.ts`. These pins run in the
+  desktop vitest suite; only the contract-family roster runs inside the
+  required `security` job, and none of these five is a roster member.
 
 - **Packaged-boot smoke hardening and CI wiring (issues #177, #178, #179,
   #180, #182)**: `desktop/scripts/packaged-smoke.mjs` is now an import-safe,

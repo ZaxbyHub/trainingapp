@@ -59,6 +59,27 @@ async function until(cond: () => boolean, timeoutMs: number): Promise<void> {
   while (!cond() && Date.now() < deadline) await drain(10);
 }
 
+/**
+ * LIVENESS WITNESS helper: counts how many sampler ticks have actually run.
+ *
+ * The host starts the sampler with a bare `setInterval(() => { void
+ * this.memoryTick().catch(...) }, ...)`, so the only observable proof that the
+ * loop is alive is to count invocations. Wrapping the per-instance
+ * `memoryTick` arrow property (it is an own property, assigned in the class
+ * field initializer) intercepts every dispatch without touching production
+ * code or the interval itself.
+ */
+function tickCounter(host: NodeBackendHost): () => number {
+  const h = host as unknown as { memoryTick: () => Promise<void> };
+  const original = h.memoryTick.bind(host);
+  let count = 0;
+  h.memoryTick = (): Promise<void> => {
+    count += 1;
+    return original();
+  };
+  return () => count;
+}
+
 describe('issue 229 memory tick lifecycle across stop', () => {
   let host: NodeBackendHost | null = null;
 
@@ -169,6 +190,7 @@ describe('issue 229 memory tick lifecycle across stop', () => {
         engine,
         onMemoryEvent: (event) => events.push(event),
       });
+      const tickCount = tickCounter(host);
       await host.start();
 
       await until(() => engine.effectiveProfile() === 'fast', 5000);
@@ -179,7 +201,20 @@ describe('issue 229 memory tick lifecycle across stop', () => {
 
       // Quiescence: several further ticks under the SAME sustained pressure
       // must not re-latch or re-emit (the latch is edge-triggered).
+      //
+      // LIVENESS WITNESS (PRR review finding): the two "exactly one"
+      // assertions below are equally satisfied by a sampler that wedged right
+      // after the first latch — which is precisely the new failure mode this
+      // fix introduces (an in-flight exclusion flag that is never released).
+      // So prove the sampler kept running during the observation window before
+      // proving it stayed quiet.
+      const ticksBefore = tickCount();
       await drain(150);
+      const ticksDuring = tickCount() - ticksBefore;
+      expect(
+        ticksDuring,
+        `the sampler must keep ticking through the quiescence window (saw ${ticksDuring})`,
+      ).toBeGreaterThan(0);
 
       expect(
         setProfileOverride.mock.calls.filter((call) => call[0] === 'fast'),
@@ -191,5 +226,96 @@ describe('issue 229 memory tick lifecycle across stop', () => {
       ).toHaveLength(1);
     },
     20_000,
+  );
+
+  // AC10 (PRR review finding H1): the in-flight exclusion must be GENERATION-
+  // BOUND. A tick suspended across stop()->start() resumes, fails the
+  // generation check, and must NOT clear the exclusion a NEW generation's tick
+  // holds — otherwise a third tick is admitted concurrently with the new one,
+  // which is exactly the invariant the fix comment claims. Execution-proven
+  // defect at the previous head (maxConcurrentReportMemory: 2).
+  it(
+    'AC10 a stale tick across stop then start must not release the new generation exclusion',
+    async () => {
+      const engine = new LlamaEngine({
+        freeMemBytes: () => 10 * GIB,
+        modelDir: 'Z:/i229-memtick-none',
+      });
+      const ac10Events: MemoryEvent[] = [];
+      host = new NodeBackendHost({
+        token: 'i229-memtick-token',
+        env: { ...ENV },
+        engine,
+        onMemoryEvent: (event) => ac10Events.push(event),
+      });
+      await host.start();
+
+      // Each reportMemory() call gets its OWN gate, so the test can release the
+      // stale generation's tick while the new generation's tick is still
+      // suspended — the exact interleaving the defect needs.
+      const gates: Array<() => void> = [];
+      let inFlight = 0;
+      let maxConcurrent = 0;
+      const makeResumable = (): { reportMemory: () => Promise<unknown> } => ({
+        reportMemory: async () => {
+          inFlight += 1;
+          maxConcurrent = Math.max(maxConcurrent, inFlight);
+          await new Promise<void>((resolve) => gates.push(resolve));
+          inFlight -= 1;
+          return { rss: 1, external: 2, arrayBuffers: 3 };
+        },
+      });
+      const h = host as unknown as {
+        resumable: { reportMemory: () => Promise<unknown> } | null;
+        memoryTick: () => Promise<void>;
+      };
+      h.resumable = makeResumable();
+
+      // Generation 0: one tick enters and suspends inside reportMemory().
+      const staleTick = h.memoryTick();
+      await new Promise((r) => setTimeout(r, 40));
+      expect(gates.length, 'harness sanity: the stale tick entered reportMemory').toBe(1);
+      expect(inFlight, 'harness sanity: exactly one tick is in flight').toBe(1);
+
+      // Teardown bumps the generation and force-clears the flag.
+      await host.stop();
+
+      // A new generation starts. stop() nulled this.resumable and runStart does
+      // not rebuild it on the hash-embedder path, so re-inject the suspending
+      // seam before driving the new generation's first tick.
+      await host.start();
+      h.resumable = makeResumable();
+      const newTick = h.memoryTick();
+      await new Promise((r) => setTimeout(r, 40));
+      expect(gates.length, 'harness sanity: the new tick entered reportMemory').toBe(2);
+      expect(inFlight, 'harness sanity: both ticks are suspended in flight').toBe(2);
+
+      // Release ONLY the stale generation's tick. It fails its generation check
+      // and unwinds; the new generation's tick is still suspended.
+      gates[0]?.();
+      await staleTick.catch(() => {});
+      await new Promise((r) => setTimeout(r, 40));
+
+      // THE GUARD: the stale tick's finally must not have released the new
+      // generation's exclusion. With the un-tokened release a further tick is
+      // admitted while the new one is still suspended (maxConcurrent 3, and a
+      // third gate appears). Probe: swap the finally's guard for an
+      // unconditional `this.memoryTickInflight = false;` and this goes RED.
+      expect(
+        gates.length,
+        'no further tick may be admitted while the new generation tick is suspended',
+      ).toBe(2);
+      expect(
+        maxConcurrent,
+        'no tick may run concurrently with an in-flight tick of another generation',
+      ).toBe(2);
+
+      // Release the new generation's tick and let it complete.
+      gates[1]?.();
+      await newTick.catch(() => {});
+      await host.stop().catch(() => {});
+      host = null;
+    },
+    30_000,
   );
 });

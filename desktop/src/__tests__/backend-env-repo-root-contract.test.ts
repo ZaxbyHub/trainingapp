@@ -58,8 +58,16 @@ const AMBIENT = 'X:/i229-ambient-repo-root';
 describe('issue 229 injected env repo-root contract', () => {
   const originalAmbient = process.env.TRAININGAPP_DESKTOP_REPO_ROOT;
   let tmpDir: string | null = null;
+  // Describe-scoped so afterEach stops the host on the FAILURE path too (the
+  // sqlite handle and telemetry interval otherwise leak and the afterEach
+  // rmSync hits EPERM/EBUSY on windows-latest, masking the real assertion).
+  let host: NodeBackendHost | null = null;
 
   afterEach(async () => {
+    if (host !== null) {
+      await host.stop().catch(() => {});
+      host = null;
+    }
     if (originalAmbient === undefined) delete process.env.TRAININGAPP_DESKTOP_REPO_ROOT;
     else process.env.TRAININGAPP_DESKTOP_REPO_ROOT = originalAmbient;
     if (tmpDir !== null) {
@@ -76,14 +84,13 @@ describe('issue 229 injected env repo-root contract', () => {
       tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'i229-envroot-'));
       process.env.TRAININGAPP_DESKTOP_REPO_ROOT = AMBIENT;
 
-      const host = new NodeBackendHost({
+      host = new NodeBackendHost({
         token: 'i229-envroot-token',
         storePath: path.join(tmpDir, 'store.sqlite'),
         storeEmbeddingDims: 8,
         env: { TRAININGAPP_DESKTOP_REPO_ROOT: INJECTED },
       });
       await host.start();
-      await host.stop().catch(() => {});
 
       // BOTH resolvers must have received the INJECTED value — called exactly
       // once each, with the injected root, not the ambient one.
@@ -110,13 +117,12 @@ describe('issue 229 injected env repo-root contract', () => {
       // config.env is NOT injected: today the effective record IS the ambient
       // process.env, so the ambient repo root must keep reaching both
       // resolvers exactly as before.
-      const host = new NodeBackendHost({
+      host = new NodeBackendHost({
         token: 'i229-envroot-token',
         storePath: path.join(tmpDir, 'store.sqlite'),
         storeEmbeddingDims: 8,
       });
       await host.start();
-      await host.stop().catch(() => {});
 
       expect(
         seen.embedder,
