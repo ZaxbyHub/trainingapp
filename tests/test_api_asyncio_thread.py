@@ -21,6 +21,25 @@ from api_server import IngestRequest, QuestionRequest, SearchRequest, app
 pytestmark = pytest.mark.unit
 
 
+async def _wait_until_blocking_started(event, what):
+    """Yield until the blocking worker signals it has begun.
+
+    A fixed `asyncio.sleep(0.15)` here is load-bearing, not cosmetic: the
+    ordering asserts below require `blocking_start` to exist before health is
+    fired, so on a busy runner where the pool thread starts late the test fails
+    with "the handler never reached the blocking call" even though the event loop
+    is perfectly responsive. Polling for the signal makes the precondition
+    depend on the work actually starting rather than on how fast the machine is.
+
+    The deadline is a hang guard, not a timing budget -- the ordering asserts
+    after this point hold for any duration.
+    """
+    deadline = time.perf_counter() + 5.0
+    while not event.is_set() and time.perf_counter() < deadline:
+        await asyncio.sleep(0.001)
+    assert event.is_set(), f"the {what} blocking call never started"
+
+
 class TestAsyncioToThreadUsage:
     """Verify asyncio.to_thread is used for CPU-bound operations."""
 
@@ -149,9 +168,11 @@ class TestEventLoopNonBlocking:
             # Synchronous function that blocks to simulate CPU-bound work
             # asyncio.to_thread runs this in a separate thread
             marks = {}
+            blocking_started = threading.Event()
 
             def slow_query(*args, **kwargs):
                 marks["blocking_start"] = time.perf_counter()
+                blocking_started.set()
                 time.sleep(0.5)  # Blocking call - simulates CPU-bound work
                 marks["blocking_end"] = time.perf_counter()
                 return MagicMock(
@@ -174,8 +195,8 @@ class TestEventLoopNonBlocking:
                     ac.post("/ask", json=ask_request.model_dump())
                 )
 
-                # Give the thread pool time to start the blocking work
-                await asyncio.sleep(0.15)
+                # Wait until the blocking work has actually begun.
+                await _wait_until_blocking_started(blocking_started, "/ask")
 
                 # Health should respond immediately if event loop is not blocked
                 health_response = await ac.get("/")
@@ -310,9 +331,11 @@ class TestEventLoopNonBlocking:
 
                 # Synchronous blocking function
                 marks = {}
+                blocking_started = threading.Event()
 
                 def slow_ingest(*args, **kwargs):
                     marks["blocking_start"] = time.perf_counter()
+                    blocking_started.set()
                     time.sleep(0.5)  # Simulate CPU-bound directory processing
                     marks["blocking_end"] = time.perf_counter()
                     return {
@@ -333,8 +356,8 @@ class TestEventLoopNonBlocking:
                         ac.post("/ingest", json=ingest_request.model_dump())
                     )
 
-                    # Give thread time to start blocking work
-                    await asyncio.sleep(0.15)
+                    # Wait until the blocking work has actually begun.
+                    await _wait_until_blocking_started(blocking_started, "/ingest")
 
                     # Health should respond while ingest is still blocking
                     health_response = await ac.get("/")
