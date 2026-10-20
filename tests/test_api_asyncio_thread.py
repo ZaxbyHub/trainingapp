@@ -204,12 +204,13 @@ class TestEventLoopNonBlocking:
 
                 assert health_response.status_code == 200
                 # The property under test is ORDERING, not speed: health must
-                # complete while the blocking call is in flight. That needs no
-                # duration budget, so a loaded runner cannot fail a responsive
-                # event loop. First assert the call had started (otherwise
-                # "still blocking" is vacuous), then that it had not finished —
-                # the second is only checkable when the loop was slow enough for
-                # it to finish, which is exactly the blocked case.
+                # complete while the blocking call is in flight. There is no
+                # explicit duration threshold here, so how fast the machine is
+                # does not decide the result — but the round trip does have to
+                # land inside the worker's remaining flight (the 0.5s the mock
+                # sleeps), so a pathologically stalled runner could still
+                # redden this. The call having started is implied by the
+                # handshake above; both asserts are kept as cheap guards.
                 assert "blocking_start" in marks, (
                     "the /ask handler never reached the blocking call, so this "
                     "test did not exercise what it claims"
@@ -306,11 +307,13 @@ class TestEventLoopNonBlocking:
                 "the two handlers did not overlap in time "
                 f"(overlap {overlap:.4f}s) - they ran sequentially"
             )
-            # Overlap alone cannot see a PARTIAL loss of offloading: if only one
-            # handler regressed to the event loop, both windows would still
-            # coincide and the assertion above would pass. Checking which thread
-            # each blocking call actually ran on closes that blind spot, and needs
-            # no timing at all.
+            # Overlap alone cannot see a PARTIAL loss of offloading: if only
+            # /search regressed to the event loop, both windows would still
+            # coincide and the assertion above would pass (a /ask-side
+            # regression is caught by the overlap assert instead, since the
+            # worker and the loop cannot interleave). Checking which thread each
+            # blocking call actually ran on closes that blind spot, and needs no
+            # timing at all.
             assert (
                 marks["ask_thread"] != loop_thread
             ), "engine.query ran on the event loop thread instead of the pool"
