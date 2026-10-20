@@ -64,6 +64,20 @@ function log(msg) {
 export const VALUE_FLAGS = new Set(['model', 'browser', 'prompt-tokens', 'max-tokens']);
 export const BOOLEAN_FLAGS = new Set(['run', 'chat', 'list-modes']);
 
+/** Issue #223 AC6: numeric bench flags must be positive decimal integers.
+ *
+ *  These two used to be handed to a bare `parseInt` at their use sites, so
+ *  `--prompt-tokens abc` became NaN and flowed straight into the emitted row's
+ *  `prompt_tokens` cell and the `n_ctx` prompt sizing — a measurement recorded
+ *  as a number that was never a number, with nothing signalling it. Validating
+ *  them here puts them in the same parse-error class as every other bad flag,
+ *  so the CLI exits 2 with `--<flag> must be a positive integer`.
+ *
+ *  Decimal digits only, mirroring node_bench_driver's contract: hex, exponent
+ *  and signed/padded spellings must never be silently reinterpreted into a
+ *  different measurement value. */
+const POSITIVE_INT_FLAGS = new Set(['prompt-tokens', 'max-tokens']);
+
 export function parseArgs(argv) {
   const args = { _: [] };
   for (let i = 0; i < argv.length; i++) {
@@ -77,7 +91,14 @@ export function parseArgs(argv) {
           // Bare value-requiring flag: fail loud, never a silent default.
           throw new Error(`--${key} requires a value`);
         }
-        args[key] = argv[++i];
+        const value = argv[++i];
+        if (POSITIVE_INT_FLAGS.has(key) && !/^[0-9]+$/.test(value)) {
+          throw new Error(`--${key} must be a positive integer`);
+        }
+        if (POSITIVE_INT_FLAGS.has(key) && Number.parseInt(value, 10) < 1) {
+          throw new Error(`--${key} must be a positive integer`);
+        }
+        args[key] = value;
       } else if (hasValue) {
         args[key] = argv[++i];
       } else {

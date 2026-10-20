@@ -76,6 +76,18 @@ export function parseArgs(argv) {
   for (const key of ['model', 'gguf']) {
     if (!args[key]) throw new Error(`--${key} is required`);
   }
+  // Issue #223 AC1: reject an unknown profile IN THE PARSE STEP, so it lands in
+  // the same try/catch as every other parse failure and therefore exits 2 with
+  // the parse-error message class. It used to be a bare `throw` AFTER the
+  // dynamic engine import, which meant exit 1 — and when `desktop/dist` is
+  // absent the import's own failure masked the whitelist error entirely, so a
+  // typo presented as a build problem rather than a bad flag.
+  // PRR-115 (intent unchanged): refuse unknown values instead of silently
+  // fast-falling, since a typo would otherwise record a different
+  // configuration into the same registered identity cell.
+  if (args.profile !== undefined && args.profile !== 'quality' && args.profile !== 'fast') {
+    throw new Error(`--profile must be 'quality' or 'fast' (got: ${args.profile})`);
+  }
   return args;
 }
 
@@ -89,15 +101,13 @@ export async function main() {
     console.error(`[node_bench_driver] ${err instanceof Error ? err.message : String(err)}`);
     return 2;
   }
+  // Issue #223 AC1: the --profile whitelist now lives in parseArgs, i.e. BEFORE
+  // this import. It used to sit here as a bare throw AFTER the dynamic import,
+  // so it exited 1 instead of 2 and was masked entirely by an import failure
+  // whenever `desktop/dist` is absent.
   const { LlamaEngine } = await import(
     pathToFileURL(path.join(repoRoot, 'desktop', 'dist', 'main', 'backend', 'inference', 'llama-engine.js')).href
   );
-  // PRR-115: reject unknown profile values instead of silently fast-falling —
-  // a typo would otherwise record a different configuration into the same
-  // registered identity cell.
-  if (args.profile !== undefined && args.profile !== 'quality' && args.profile !== 'fast') {
-    throw new Error(`--profile must be 'quality' or 'fast' (got: ${args.profile})`);
-  }
   const engine = new LlamaEngine({
     // #156: the profile carries the tier's chat policy (the quality tier's
     // reasoning suppression is part of its shipping configuration), so a row
