@@ -40,6 +40,21 @@ startup (`desktop/main/integrity-check.ts`, `desktop/main/first-run/manifest-ver
 The sidecar reuses the staging/verification vocabulary the first-run wizard
 already speaks (a not-yet-staged install reports `staged:false` honestly and
 the `<userData>/models` compatibility surface accepts the staged payload).
+Those are two different components with two different notions of "staged", and
+the distinction matters when reading the code:
+
+- `staged` is a field on `WizardManifestResult`
+  (`desktop/main/first-run/wizard-manifest.ts`). A packaged install with no
+  manifest on disk returns `{ staged: false, manifest: null, verify: null,
+  loadError: null }`, and the wizard treats that as a state to guide the user
+  out of — NOT an error.
+- The startup integrity gate (`desktop/main/integrity-check.ts`) has no
+  `staged` field at all; `IntegrityGateResult` is `{ decision, failures,
+  manifestPath, manifest, modelDirs }`. For a packaged build with no manifest
+  the gate's decision is `block` with a named `manifest-unreadable` failure,
+  never a silent `staged:false` skip. The `staged:false` phrase in that file's
+  header comment describes the DEV-and-no-manifest skip arm, not a reported
+  field.
 
 ### Option C — revisit the model/budget decision (rejected)
 
@@ -71,6 +86,18 @@ rejected for the reasons recorded above.
   bundle remains the shipping form for real weights; the fixture-mode
   Setup.exe remains CI-only and must never be mistaken for a real-weights
   installer (loud in the manifest note and artifact name).
+  **How that bundle is actually produced** (corrected 2026-10-20, issue #171
+  Part 1 — the previous wording implied a build-time producer that does not
+  exist): `.7z` and `.sha256` have NO automated producer in this repository.
+  They come from a MANUAL operator procedure documented in `desktop/README.md`
+  ("Real-weights portable bundle"): a `7z a -mx=9 …` archive step followed by a
+  `Get-FileHash … -Algorithm SHA256` pipeline. `README-portable.txt` is weaker
+  still — no command in the documentation and no script in the repository
+  creates it, it is untracked, and any copy on disk is local build output. So
+  the shipping form is an operator-run sequence with one unproduced component,
+  not a build artifact; treat "ship the README" as an instruction to an
+  operator, and do not read the old wording as evidence that a packaging step
+  emits it.
 - The startup integrity gate is the single CORRUPTION anchor for BOTH
   artifacts: whatever is staged is verified against `resources/manifest.json`
   at every launch, so a missing or corrupted sidecar fails closed with named
@@ -80,3 +107,13 @@ rejected for the reasons recorded above.
   ADVERSARIAL sidecar writer this anchor proves self-consistency, not
   provenance; the signature coverage that closes that gap is part of #171's
   scope, as the first Consequences bullet states.
+- **SCOPE BOUNDARY (stated explicitly rather than left to be discovered):
+  `<userData>/models` is OUTSIDE the integrity gate.** The gate verifies only
+  what `resources/manifest.json` lists, resolved under the manifest roots
+  (`verifyManifest(manifest, roots)`); the first-run wizard's
+  `<userData>/models` compatibility surface is a separate, wizard-only
+  staging area and is not covered by that gate. This is deliberate and it is
+  the property that makes the two-artifact split necessary in the first place
+  — content placed there is outside the startup corruption anchor — but it
+  also means a user who populates `<userData>/models` gets no
+  startup verification for it.
