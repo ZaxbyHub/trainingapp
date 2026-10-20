@@ -18,6 +18,7 @@ import type {
   LearnAssembler,
   ModelStatus,
   RetrievalSurface,
+  StatsShape,
 } from './types.js';
 import type { PackManager } from './store/pack-manager.js';
 import { DEFAULT_RETRIEVAL_CONFIG } from './retrieval/config.js';
@@ -395,7 +396,7 @@ export class StubEngine implements EngineSurface {
     if (this.documentSurface !== null) return this.documentSurface.clearDocuments();
   }
 
-  async getStats(): Promise<{ document_count: number; chunk_count: number; embedding_model: string; llm_backend: string | null; documents: string[] }> {
+  async getStats(): Promise<StatsShape> {
     // issue #169: delegate to the attached document surface exactly like
     // listDocuments() above — a single listDocuments() call derives BOTH
     // counts (document_count = total, chunk_count = SUM of per-document
@@ -407,10 +408,23 @@ export class StubEngine implements EngineSurface {
       // null-deref or mix surface-A counts with surface-B's embedder id.
       const surface = this.documentSurface;
       const listed = await surface.listDocuments();
+      // issue #198: read the VECTORS-built model from the SAME captured surface
+      // as the counts. With a surface attached, embedding_model is the model
+      // that produced the stored vectors and configured_embedding_model is what
+      // this process would embed with right now; they differ after a
+      // prebuilt-index pack lands in an empty store. Reading both off `surface`
+      // (never re-reading `this.documentSurface`) keeps the payload internally
+      // consistent, which is the whole #191/#185 capture-once property.
+      const configured = surface.embedderModelId;
+      const vectorsModel = surface.vectorsEmbeddingModelId;
       return {
         document_count: listed.total,
         chunk_count: listed.documents.reduce((acc, doc) => acc + doc.chunk_count, 0),
-        embedding_model: surface.embedderModelId,
+        // The seeded meta value is '' (no vector ever written) and a fake or
+        // detached surface may report '' too; fall back to the configured id so
+        // a store with no vectors never reports an empty embedding_model.
+        embedding_model: vectorsModel.length > 0 ? vectorsModel : configured,
+        configured_embedding_model: configured,
         llm_backend: null,
         documents: [],
       };
@@ -419,6 +433,10 @@ export class StubEngine implements EngineSurface {
       document_count: 0,
       chunk_count: 0,
       embedding_model: 'desktop-stub (B5 #63)',
+      // No surface means no store and no configured embedder. The frozen B3
+      // marker already says "this build has no vectors"; saying so for the
+      // configured model too is truthful rather than a second guess.
+      configured_embedding_model: 'desktop-stub (B5 #63)',
       llm_backend: null,
       documents: [],
     };
