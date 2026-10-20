@@ -368,13 +368,13 @@ class TestEventLoopNonBlocking:
 
                     assert health_response.status_code == 200
                     # The property under test is ORDERING, not speed: health must
-                    # complete while the blocking call is in flight. That needs no
-                    # duration budget, so a loaded runner cannot fail a
-                    # responsive event loop. First assert the call had started
-                    # (otherwise "still blocking" is vacuous), then that it had
-                    # not finished — the second is only checkable when the loop
-                    # was slow enough for it to finish, which is exactly the
-                    # blocked case.
+                    # complete while the blocking call is in flight. There is no
+                    # explicit duration threshold here, so how fast the machine is
+                    # does not decide the result — but the round trip does have to
+                    # land inside the worker's remaining flight (the 0.5s the mock
+                    # sleeps), so a pathologically stalled runner could still
+                    # redden this. The call having started is implied by the
+                    # handshake above; both asserts are kept as cheap guards.
                     assert "blocking_start" in marks, (
                         "the /ingest handler never reached the blocking call, so "
                         "this test did not exercise what it claims"
