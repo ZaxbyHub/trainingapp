@@ -8,6 +8,7 @@ Phase 1.1: API & Thread Safety - asyncio.to_thread() wrapping verification
 """
 
 import asyncio
+import threading
 import time
 from unittest.mock import MagicMock, patch
 
@@ -181,14 +182,20 @@ class TestEventLoopNonBlocking:
                 health_done = time.perf_counter()
 
                 assert health_response.status_code == 200
-                # The property under test is that health completed WHILE the
-                # blocking call was still in flight -- not that health was fast.
-                # A wall-clock threshold here fails on a loaded runner even when
-                # the event loop is perfectly responsive.
+                # The property under test is ORDERING, not speed: health must
+                # complete while the blocking call is in flight. That needs no
+                # duration budget, so a loaded runner cannot fail a responsive
+                # event loop. First assert the call had started (otherwise
+                # "still blocking" is vacuous), then that it had not finished —
+                # the second is only checkable when the loop was slow enough for
+                # it to finish, which is exactly the blocked case.
                 assert "blocking_start" in marks, (
                     "the /ask handler never reached the blocking call, so this "
                     "test did not exercise what it claims"
                 )
+                assert (
+                    marks["blocking_start"] <= health_done
+                ), "health responded before the blocking call had started"
                 blocking_end = marks.get("blocking_end")
                 if blocking_end is not None:
                     assert health_done < blocking_end, (
@@ -212,9 +219,11 @@ class TestEventLoopNonBlocking:
 
             # Synchronous functions that block briefly
             marks = {}
+            loop_thread = threading.get_ident()
 
             def counting_query(*args, **kwargs):
                 marks["ask_start"] = time.perf_counter()
+                marks["ask_thread"] = threading.get_ident()
                 time.sleep(0.15)
                 marks["ask_end"] = time.perf_counter()
                 return MagicMock(
@@ -227,6 +236,7 @@ class TestEventLoopNonBlocking:
 
             def counting_search(*args, **kwargs):
                 marks["search_start"] = time.perf_counter()
+                marks["search_thread"] = threading.get_ident()
                 time.sleep(0.15)
                 marks["search_end"] = time.perf_counter()
                 return [("Document text", {"source": "doc1.txt"}, 0.85)]
@@ -260,6 +270,8 @@ class TestEventLoopNonBlocking:
             assert {
                 "ask_start",
                 "ask_end",
+                "ask_thread",
+                "search_thread",
                 "search_start",
                 "search_end",
             } <= marks.keys(), (
@@ -271,8 +283,19 @@ class TestEventLoopNonBlocking:
             )
             assert overlap > 0, (
                 "the two handlers did not overlap in time "
-                f"(overlap {overlap:.4f}s) - they ran sequentially, so "
-                "asyncio.to_thread is not offloading them"
+                f"(overlap {overlap:.4f}s) - they ran sequentially"
+            )
+            # Overlap alone cannot see a PARTIAL loss of offloading: if only one
+            # handler regressed to the event loop, both windows would still
+            # coincide and the assertion above would pass. Checking which thread
+            # each blocking call actually ran on closes that blind spot, and needs
+            # no timing at all.
+            assert (
+                marks["ask_thread"] != loop_thread
+            ), "engine.query ran on the event loop thread instead of the pool"
+            assert marks["search_thread"] != loop_thread, (
+                "engine.search_documents ran on the event loop thread instead of "
+                "the pool"
             )
 
             assert ask_response.status_code == 200
@@ -318,19 +341,31 @@ class TestEventLoopNonBlocking:
                     health_done = time.perf_counter()
 
                     assert health_response.status_code == 200
-                    # Overlap, not a duration: see the sibling row above.
-                assert "blocking_start" in marks, (
-                    "the /ingest handler never reached the blocking call, so "
-                    "this test did not exercise what it claims"
-                )
-                blocking_end = marks.get("blocking_end")
-                if blocking_end is not None:
-                    assert health_done < blocking_end, (
-                        "health did not respond until the blocking ingest had "
-                        "finished - the event loop is blocked"
+                    # The property under test is ORDERING, not speed: health must
+                    # complete while the blocking call is in flight. That needs no
+                    # duration budget, so a loaded runner cannot fail a
+                    # responsive event loop. First assert the call had started
+                    # (otherwise "still blocking" is vacuous), then that it had
+                    # not finished — the second is only checkable when the loop
+                    # was slow enough for it to finish, which is exactly the
+                    # blocked case.
+                    assert "blocking_start" in marks, (
+                        "the /ingest handler never reached the blocking call, so "
+                        "this test did not exercise what it claims"
                     )
+                    assert (
+                        marks["blocking_start"] <= health_done
+                    ), "health responded before the blocking call had started"
+                    blocking_end = marks.get("blocking_end")
+                    if blocking_end is not None:
+                        assert health_done < blocking_end, (
+                            "health did not respond until the blocking ingest had "
+                            "finished - the event loop is blocked"
+                        )
 
-                    # Wait for ingest to complete
+                    # Wait for ingest to complete. Unconditional, and inside the
+                    # client block: /ingest succeeding is part of the contract
+                    # under test, not a side effect of the ordering check.
                     ingest_response = await ingest_task
                     assert ingest_response.status_code == 200
 
