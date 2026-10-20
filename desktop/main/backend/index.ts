@@ -698,7 +698,16 @@ export class NodeBackendHost implements BackendHost {
         const engineProfile = (this.engine as { effectiveProfile?: () => 'quality' | 'fast' })
           .effectiveProfile?.();
         return {
-          snapshot: this.telemetry?.snapshot() ?? {},
+          // issue #232 (c): additive numeric field (the snapshot schema's
+          // properties are fixed but not closed) so a wedged sampler is
+          // observable without opening the renderer: 0 while healthy, the
+          // in-flight age once the staleness event has latched.
+          snapshot: {
+            ...this.telemetry?.snapshot(),
+            samplerStaleMs: this.samplerStaleEmitted
+              ? Math.max(0, Date.now() - this.memoryTickStartedAt)
+              : 0,
+          },
           downgrade: {
             effectiveProfile: engineProfile ?? 'quality',
             downgraded: status.downgraded,
