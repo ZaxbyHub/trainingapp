@@ -149,6 +149,10 @@ export class NodeBackendHost implements BackendHost {
   private rssBaselineBytes = 0;
   private downgradeLatched = false;
   private recoveryEmitted = false;
+  /** issue #232 (c): wedged-sampler staleness observability (frozen check C6/AC6). */
+  private memoryTickStartedAt = 0;
+  private samplerStaleEmitted = false;
+  private memoryTelemetryIntervalMs = 0;
 
   /** Per-component RSS provider for the telemetry snapshot (bytes). */
   private rssFor = (component: MemoryComponent): number => {
@@ -187,8 +191,30 @@ export class NodeBackendHost implements BackendHost {
     // idle. That is strictly better than the base behavior (a pile of
     // overlapping hung ticks) and satisfies AC4's "excluded or ordered";
     // converting this into an await would wedge stop() on teardown.
-    if (this.memoryTickInflight) return;
+    if (this.memoryTickInflight) {
+      // issue #232 (c): the exclusion is right, but the blackout must be
+      // OBSERVABLE. Once the in-flight tick is older than one full telemetry
+      // interval, emit a one-latched sampler-stale event; the next tick that
+      // is admitted (i.e. the wedged one finally settled, or teardown/start
+      // recycled the sampler) unlatches it. Frozen check C6 pins the event.
+      if (
+        this.memoryTelemetryIntervalMs > 0 &&
+        this.samplerStaleEmitted === false &&
+        this.memoryTickStartedAt > 0 &&
+        Date.now() - this.memoryTickStartedAt >= this.memoryTelemetryIntervalMs
+      ) {
+        this.samplerStaleEmitted = true;
+        this.config.onMemoryEvent?.({
+          type: 'sampler-stale',
+          detail:
+            'memory sampler tick has not settled for over one telemetry interval; workerMemory and pressure observation are frozen',
+        });
+      }
+      return;
+    }
     this.memoryTickInflight = true;
+    this.memoryTickStartedAt = Date.now();
+    this.samplerStaleEmitted = false;
     // Bumped by stop(); captured BEFORE the await below so a tick suspended
     // across teardown can see that it is no longer wanted.
     const generation = this.memoryTickGeneration;
@@ -918,6 +944,8 @@ export class NodeBackendHost implements BackendHost {
           );
         });
       }, memoryConfig.telemetryIntervalMs);
+      // issue #232 (c): the staleness threshold is one full interval.
+      this.memoryTelemetryIntervalMs = memoryConfig.telemetryIntervalMs;
       this.telemetryTimer.unref?.();
       return this.handle;
     } catch (err) {
@@ -982,6 +1010,20 @@ export class NodeBackendHost implements BackendHost {
     this.embedsViaWorker = false;
     this.downgradeLatched = false;
     this.recoveryEmitted = false;
+    // issue #232 (a): the pressure override lives on the ENGINE (a private
+    // readonly dependency that outlives host generations); stop() reset the
+    // latch but never the latched effect, so a restarted host inherited
+    // 'fast' until a fresh pressure episode re-latched and recovered — and
+    // effectiveProfile() returns the override ahead of the user's setting,
+    // masking even an explicit inference.profile change. Teardown restores
+    // it silently: no memory:event during teardown. The host is the only
+    // setProfileOverride caller, so the unconditional clear cannot clobber
+    // a foreign override.
+    (this.engine as { setProfileOverride?: (profile: 'quality' | 'fast' | null) => void }).setProfileOverride?.(null);
+    // issue #232 (c): reset the staleness witness with the sampler it watched.
+    this.memoryTickStartedAt = 0;
+    this.samplerStaleEmitted = false;
+    this.memoryTelemetryIntervalMs = 0;
     this.resumable = null;
     const server = this.server;
     this.server = null;

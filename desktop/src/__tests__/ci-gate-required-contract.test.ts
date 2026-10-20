@@ -55,8 +55,8 @@ const FAMILY_ROSTER = [
 /**
  * Explicit convention-match exclusions (outbound-guardrail allowlist
  * pattern): pre-existing specs whose suffix matches the family convention but
- * which are NOT this contract family. Post-fix the convention matches 15
- * files = 6 roster + 9 exclusions.
+ * which are NOT this contract family. Post-fix the convention matches 16
+ * files = 6 roster + 10 exclusions.
  */
 const ROSTER_EXCLUSIONS = new Map<string, string>([
   ['acceptance-precision-contract.test.ts', 'pin-record guard owned by harness-contracts.yml'],
@@ -66,6 +66,10 @@ const ROSTER_EXCLUSIONS = new Map<string, string>([
   ['e1-manifest-contract.test.ts', 'desktop-build-owned pin (installer fixtures)'],
   ['b9-contract-route-parity.test.ts', 'desktop-build-owned pin (route fixtures)'],
   ['browser-pack-extract-parity.test.ts', 'desktop-build-owned pin (browser twin)'],
+  [
+    'i230-resolver-env-parity.test.ts',
+    'issue-tracer acceptance check for issue #232 (b) — owned by the desktop vitest suite, not the cross-cutting contract family',
+  ],
   ['c3-pack-parity.test.ts', 'desktop-build-owned pin (pack fixtures)'],
   [
     'backend-env-repo-root-contract.test.ts',

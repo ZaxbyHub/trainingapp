@@ -170,4 +170,101 @@ describe('e1 wizard-manifest cache (issue #131 item 3)', () => {
     expect(r.verify?.failures[0]?.path).toBe(s.rel);
     expect(['hash-mismatch', 'size-mismatch']).toContain(r.verify?.failures[0]?.reason);
   });
+
+  // ---- Acceptance checks: a cached verify FAILURE must not outlive the
+  // on-disk repair it describes. The cache admits every result whose
+  // loadError === null — including results with non-empty verify.failures —
+  // so a non-fresh call on an UNCHANGED manifest keeps serving the stale
+  // failure after the underlying file has been repaired. Cases 1-3 below are
+  // RED at base; case 4 pins the existing fresh-refresh behavior (GREEN at
+  // base). All four leave manifest.json untouched between calls, so the cache
+  // key (manifestPath, mtimeMs) never changes.
+
+  it('cached-verify-failure-not-served: repairing wrong file bytes is visible to the next non-fresh call', () => {
+    const s = buildStage('131-wiz-fixmismatch-');
+    const w = factoryFor(s);
+    mutateVerifiedFile(s); // wrong bytes (hash drift); manifest mtime untouched
+    const first = w.wizardManifest();
+    expect(first.staged).toBe(true);
+    expect(first.loadError).toBeNull();
+    expect(first.verify?.ok).toBe(false);
+    expect(first.verify?.failures).toHaveLength(1);
+    expect(first.verify?.failures[0]?.path).toBe(s.rel);
+    expect(['hash-mismatch', 'size-mismatch']).toContain(first.verify?.failures[0]?.reason);
+    // Repair: restore the exact original bytes. The manifest is untouched, so
+    // the cache key is unchanged — the next non-fresh call must NOT be served
+    // the cached failure verdict from call 1.
+    fs.writeFileSync(s.abs, s.original);
+    const second = w.wizardManifest();
+    expect(second.verify?.ok).toBe(true);
+    expect(second.verify?.failures).toEqual([]);
+    expect(second.verify?.digests[s.rel]).toBe(s.sha);
+  });
+
+  it('missing-then-staged: creating a previously missing required file is visible to the next non-fresh call', () => {
+    const s = buildStage('131-wiz-missing-');
+    fs.rmSync(s.abs); // required file absent; manifest present + unchanged
+    const w = factoryFor(s);
+    const first = w.wizardManifest();
+    expect(first.staged).toBe(true);
+    expect(first.loadError).toBeNull();
+    expect(first.verify?.ok).toBe(false);
+    expect(first.verify?.failures).toHaveLength(1);
+    expect(first.verify?.failures[0]?.path).toBe(s.rel);
+    expect(first.verify?.failures[0]?.reason).toBe('missing');
+    // Stage the file with the manifest-declared bytes; the manifest mtime is
+    // untouched, so the key is unchanged and call 2 must see the repair.
+    fs.writeFileSync(s.abs, s.original);
+    const second = w.wizardManifest();
+    expect(second.verify?.ok).toBe(true);
+    expect(second.verify?.failures).toEqual([]);
+    expect(second.verify?.verifiedCount).toBe(1);
+  });
+
+  it('unreadable-then-readable: replacing an unreadable path (directory) with valid bytes is visible to the next non-fresh call', () => {
+    const s = buildStage('131-wiz-unreadable-');
+    // A directory at the file's path is the deterministic cross-platform way
+    // to make the read/hash fail (openSync on a directory throws EPERM on
+    // Windows / EISDIR elsewhere) without chmod games: the path passes
+    // existsSync, then sha256File throws and the verifier pushes a failure
+    // with reason 'unreadable' — loadError stays null, so it caches.
+    fs.rmSync(s.abs);
+    fs.mkdirSync(s.abs);
+    const w = factoryFor(s);
+    const first = w.wizardManifest();
+    expect(first.staged).toBe(true);
+    expect(first.loadError).toBeNull();
+    expect(first.verify?.ok).toBe(false);
+    expect(first.verify?.failures).toHaveLength(1);
+    expect(first.verify?.failures[0]?.path).toBe(s.rel);
+    expect(first.verify?.failures[0]?.reason).toBe('unreadable');
+    // Repair: remove the directory and stage the valid file.
+    fs.rmSync(s.abs, { recursive: true });
+    fs.writeFileSync(s.abs, s.original);
+    const second = w.wizardManifest();
+    expect(second.verify?.ok).toBe(true);
+    expect(second.verify?.failures).toEqual([]);
+    expect(second.verify?.digests[s.rel]).toBe(s.sha);
+  });
+
+  it('fresh-then-non-fresh-returns-fresh: the next non-fresh call reports the fresh pass verdict after the staged bytes diverge', () => {
+    const s = buildStage('131-wiz-f2nf-');
+    const w = factoryFor(s);
+    const first = w.wizardManifest();
+    expect(first.verify?.ok).toBe(true);
+    // Diverge the staged bytes (manifest mtime preserved) BEFORE the fresh
+    // pass, so call 1's cached result and the fresh pass's result DISAGREE:
+    // the fresh pass detects the drift (verify.ok false), call 1 cached the
+    // clean verdict. The subsequent non-fresh call must serve the FRESH
+    // pass's result: if the fresh pass did not refresh the cache, this
+    // would return call 1's clean result and fail. (Dropping the cache
+    // entirely recomputes the same drifted state and is killed by the
+    // UNCHANGED-manifest-mtime case instead.)
+    mutateVerifiedFile(s);
+    const fresh = w.wizardManifest({ fresh: true });
+    expect(fresh.verify?.ok, 'harness sanity: the fresh pass detects the drift').toBe(false);
+    const second = w.wizardManifest();
+    expect(second.verify?.ok).toBe(fresh.verify?.ok);
+    expect(second.verify?.digests[s.rel]).toBe(fresh.verify?.digests[s.rel]);
+  });
 });

@@ -12,6 +12,12 @@
 // never pay for a thread or a model load. dispose() terminates the worker,
 // rejects every in-flight job, and is idempotent.
 import { Worker } from 'node:worker_threads';
+// issue #232 (b): the reranker resolver must apply the SAME env-precedence
+// rule as the embedder resolver — per-key merge over ambient — so a partial
+// injected config.env record cannot silently drop an ambient
+// TRAININGAPP_RERANKER_MODEL_DIR pin that a whole-record replacement would
+// discard.
+import { seamEnvRecord } from '../ingest/embed-threads.js';
 import type { RerankerSurface } from './hybrid.js';
 
 export type { RerankerSurface };
@@ -110,7 +116,9 @@ export interface ResolveRerankerOptions {
  * exactly like rerank disabled.
  */
 export function resolveRerankerModelDir(opts: ResolveRerankerOptions = {}): string | null {
-  const env = opts.env ?? process.env;
+  // Per-key merge over ambient (issue #232 (b)): a partial injected record
+  // must not silently drop ambient pins — injected strings win per key.
+  const env = seamEnvRecord(opts.env);
   const explicit = env[RERANKER_MODEL_DIR_ENV];
   const candidates = [
     explicit,

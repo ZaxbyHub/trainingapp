@@ -120,11 +120,24 @@ export function createWizardManifest(options: CreateWizardManifestOptions): {
     // Windows while an installer copy is in flight) is NOT cached: the old
     // uncached closure recovered on the next status call, and latching a
     // transient error under an unchanged mtime would block the wizard until
-    // restart (PRR-003). Clean results — including legitimate verify
-    // failures — cache normally.
-    if (result.loadError === null) {
-      cached = { key, result };
-    }
+    // restart (PRR-003).
+    //
+    // Issue #175: a result with verify FAILURES is not admitted either, and
+    // evicts any cached entry under the current key. verifyManifest reports
+    // missing/unreadable/digest-mismatch as failures with loadError ===
+    // null, so this admission predicate decides whether a repaired tree
+    // converges: repair does not touch the manifest mtime, so a cached
+    // failure would keep failing the status handler — which disables the
+    // wizard's Complete button — while the only fresh caller is the
+    // completion handler, unreachable from the UI in exactly that state.
+    // Eviction (not skip) matters when a fresh pass observes a drift that
+    // contradicts a previously cached clean result: serving the stale clean
+    // verdict would hide the failure the operator must see (plan-critic
+    // round 2, R2-1; pinned by the frozen C13 case).
+    const cleanResult =
+      result.loadError === null &&
+      (result.verify === null || result.verify.failures.length === 0);
+    cached = cleanResult ? { key, result } : null;
     return result;
   };
 

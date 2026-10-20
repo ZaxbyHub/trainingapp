@@ -79,6 +79,27 @@ class DocumentChunk:
     pack_published_at: Optional[str] = None
 
 
+def _require_encodable_text(text: str) -> str:
+    """Refuse a string that cannot round-trip through UTF-8, typed.
+
+    Same contract as pack_manager._require_encodable_text (issue #226, PR
+    #231) — duplicated deliberately: importing the pack module would couple
+    the RAG core to the pack toolchain (jsonschema), and PackManagerError
+    extends Exception rather than ValueError, bypassing process_file's typed
+    refusal channel. The recurrence sweep watches both sites for drift. The
+    error text carries only the UnicodeEncodeError's own escaped form, never
+    the offending value — a message echoing a lone surrogate would itself
+    raise on encode (the PR #231 refusal-message lesson).
+    """
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ValueError(
+            f"document text carries a string that is not encodable as UTF-8: {error}"
+        ) from error
+    return text
+
+
 class DocumentProcessor:
     """Processes various document formats and extracts text."""
 
@@ -244,6 +265,21 @@ class DocumentProcessor:
             raise ValueError(f"Unsupported file format: {ext}")
 
     def extract_json_document(self, filepath: str) -> str:
+        """Extract text from a JSON document, refusing unencodable text.
+
+        Issue #234: a JSON payload can carry a lone surrogate — a
+        six-character "backslash-u-D-8-0-0 style escape" escape is pure ASCII on disk, survives the
+        errors="replace" read, and json.loads materializes it into a str
+        that detonates far downstream at the first UTF-8 encode (the sqlite
+        bind in VectorStore.add_chunks, surfacing as HTTP 500 from
+        POST /ingest). Refuse once here, at the choke point where the text
+        is produced, with the same typed guard the pack path gained in PR
+        #231; process_file's ValueError channel then reports the per-file
+        refusal and the directory ingest proceeds with the clean documents.
+        """
+        return _require_encodable_text(self._extract_json_text(filepath))
+
+    def _extract_json_text(self, filepath: str) -> str:
         """Extract text from a JSON document.
 
         Storyline slide documents (issue #77/#79: JSON with slide_id,
