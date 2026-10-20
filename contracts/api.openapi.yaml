@@ -376,6 +376,17 @@ paths:
       tags: [ops]
       summary: Engine statistics
       operationId: getStats
+      description: >
+        A live measurement, never a degraded one. The route awaits the engine's
+        store query with no per-route catch, so a store failure (disk I/O error,
+        corrupt database) propagates to the backend's generic handler and answers
+        500. It deliberately does NOT answer zero counts: a broken store and an
+        empty one would then be indistinguishable from the response, which is a
+        silent wrong answer a monitoring client cannot detect. A 500 is loud and
+        is the honest signal that the caller did not receive a measurement
+        (issue #192). Cost note: each call runs a full document listing with a
+        GROUP BY on the chunks-to-document index, so /stats is O(documents) per
+        call rather than O(1); do not poll it on a tight interval.
       responses:
         "200":
           description: Engine stats
@@ -383,6 +394,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StatsResponse"
+        "500":
+          description: >
+            Store failure while reading stats. The generic handler answers
+            {"detail": "An internal error occurred"} on both backends; counts are
+            never reported as zero on this path.
         "503":
           description: Engine not initialized
   /telemetry/memory:
