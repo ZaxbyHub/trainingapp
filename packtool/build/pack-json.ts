@@ -178,6 +178,40 @@ export interface TrustedKey {
   public_key: string;
 }
 
+/**
+ * The first key_id that appears more than once, or null when all are unique.
+ *
+ * A duplicated key_id makes the trusted keyset ambiguous: the config says the
+ * key_id selects the signing key, and two entries answering to one id cannot
+ * both be intended. It is a CONFIGURATION error, refused wherever it is
+ * detected, rather than something a gate resolves by picking a winner.
+ *
+ * This is what removes the long-standing TS-vs-python disagreement at the
+ * signature gate (issue #225). The TS twins took first-match and python looped
+ * every matching key, so a retired key reusing a key_id was a false-accept on
+ * one side and a false-reject on the other. Refusing the duplicate makes the
+ * ambiguous case unreachable.
+ *
+ * packtool has NO config-load site for trustedKeys -- `PacksSecurityConfig`
+ * carries them as a caller-supplied option -- so for this implementation the
+ * gate check in `verifyPackSignature` is the enforcement point, not a
+ * belt-and-braces repeat of a load-time one.
+ *
+ * Mirrored verbatim by `duplicate_trusted_key_id` in `pack_extract.py`,
+ * `desktop/main/backend/packs/pack-extract.ts` and
+ * `web_ui/src/lib/packs/pack-verify.ts`.
+ */
+export function duplicateTrustedKeyId(
+  trustedKeys: ReadonlyArray<{ key_id: string }>,
+): string | null {
+  const seen = new Set<string>();
+  for (const key of trustedKeys) {
+    if (seen.has(key.key_id)) return key.key_id;
+    seen.add(key.key_id);
+  }
+  return null;
+}
+
 /** Signature-verification options shared by `verify` flags (issue #75 C7/C11). */
 export interface PacksSecurityConfig {
   /** Require every verified pack to carry a valid trusted signature. */
@@ -262,6 +296,20 @@ export function verifyPackSignature(
   signature: unknown,
   trustedKeys: readonly TrustedKey[],
 ): SignatureVerification {
+  // An ambiguous keyset is a CONFIGURATION fault, not a property of this
+  // signature, and it must not be reported as though the pack were at fault.
+  // Deliberately the FIRST check, ahead of the signature block itself and every
+  // other gate input, so a malformed signature cannot mask a broken keyset.
+  // This is packtool's ONLY enforcement point: trustedKeys arrives as a
+  // caller-supplied option and there is no config-load site (issue #225). The
+  // python and desktop twins order it identically.
+  const duplicate = duplicateTrustedKeyId(trustedKeys);
+  if (duplicate !== null) {
+    return {
+      ok: false,
+      detail: `trusted keyset has more than one entry with key_id '${duplicate}'; a duplicated key_id is ambiguous and is refused`,
+    };
+  }
   if (typeof signature !== 'object' || signature === null) {
     return { ok: false, detail: 'signature block is missing' };
   }
