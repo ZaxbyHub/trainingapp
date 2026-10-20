@@ -146,3 +146,94 @@ describe('harness runner contracts B (issue #216 AC5)', () => {
     expect(source).not.toContain('[--json]');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Issue #223: bench flag semantics. The maintainer decision resolved AC2 and
+// WITHDREW AC3; these three tests cover the parts that follow from it.
+// ---------------------------------------------------------------------------
+
+describe('harness runner contracts B (issue #223)', () => {
+  it('runner-contract: node_bench_driver profile-exit-class rejects a bad --profile with exit 2, before any engine import', async () => {
+    // The whitelist used to be a bare `throw` AFTER the dynamic import of
+    // desktop/dist/.../llama-engine.js. Two consequences, both wrong:
+    //   - it exited 1 (the runtime-failure class) instead of 2 (parse), and
+    //   - whenever desktop/dist is absent the IMPORT failed first, masking the
+    //     whitelist error entirely, so a typo presented as a build problem.
+    // Acceptance is on the parse step, so it must be reachable with no dist.
+    for (const bad of ['turbo', 'FAST', 'quality ', '']) {
+      expect(() =>
+        nodeBenchParseArgs(['--model', 'm', '--gguf', 'g', '--profile', bad]),
+      ).toThrow(`--profile must be 'quality' or 'fast' (got: ${bad})`);
+    }
+    // Valid values are unaffected, and an ABSENT profile is still allowed.
+    expect(nodeBenchParseArgs(['--model', 'm', '--gguf', 'g', '--profile', 'quality']).profile).toBe('quality');
+    expect(nodeBenchParseArgs(['--model', 'm', '--gguf', 'g', '--profile', 'fast']).profile).toBe('fast');
+    expect(nodeBenchParseArgs(['--model', 'm', '--gguf', 'g']).profile).toBeUndefined();
+
+    // The exit-2 class, pinned without spawning a process and WITHOUT
+    // desktop/dist being present (which is the whole point of the placement).
+    const origArgv = process.argv;
+    try {
+      process.argv = [process.execPath, 'node_bench_driver.mjs', '--model', 'm', '--gguf', 'g', '--profile', 'turbo'];
+      await expect(nodeBenchMain()).resolves.toBe(2);
+    } finally {
+      process.argv = origArgv;
+    }
+
+    // ...and the whitelist must NOT still exist after the import, which is
+    // where it used to sit. The named mutant for this AC is exactly that move.
+    const source = readRel('bench/node_bench_driver.mjs');
+    const importAt = source.indexOf("await import(");
+    const whitelistAt = source.search(/if \(args\.profile !== undefined && args\.profile !== 'quality'/);
+    expect(importAt, 'the dynamic import must be present').toBeGreaterThan(-1);
+    expect(
+      whitelistAt,
+      'the profile whitelist must no longer sit after the dynamic import',
+    ).toBeLessThan(importAt);
+  });
+
+  it('runner-contract: node_bench_driver prompt-tokens-truth pins the prompt as sized from --max-tokens, not --prompt-tokens', () => {
+    // AC3 as originally written ("--prompt-tokens N makes the measured prompt
+    // contain N tokens") is WITHDRAWN by the maintainer decision: --prompt-tokens
+    // is a LABEL for the row, never a measurement input. This is its
+    // replacement — it pins WHICH flag actually sizes the prompt, so the row's
+    // prompt_tokens cell is never mistaken for the measured prompt size.
+    const source = readRel('bench/node_bench_driver.mjs');
+
+    // The sentence count — and therefore the prompt — is derived from
+    // --max-tokens. Named mutant: revert prompt sizing to --prompt-tokens.
+    expect(source).toMatch(/args\['max-tokens'\]/);
+    expect(source).toMatch(/Math\.floor\(args\['max-tokens'\] \/ 12\)/);
+    // And --prompt-tokens reaches the ROW only, never the prompt.
+    expect(source).toMatch(/prompt_tokens: args\['prompt-tokens'\]/);
+
+    // Behavioural confirmation that the two flags are independent: changing
+    // --prompt-tokens changes nothing about the parsed prompt budget, while
+    // --max-tokens is a real parse-time integer.
+    const a = nodeBenchParseArgs(['--model', 'm', '--gguf', 'g', '--prompt-tokens', '32', '--max-tokens', '256']);
+    const b = nodeBenchParseArgs(['--model', 'm', '--gguf', 'g', '--prompt-tokens', '999', '--max-tokens', '256']);
+    expect(a['max-tokens']).toBe(b['max-tokens']);
+    expect(a['prompt-tokens']).not.toBe(b['prompt-tokens']);
+  });
+
+  it('runner-contract: wllama_bench_driver wllama-numeric-validate rejects non-integer, NaN and sub-1 token flags', async () => {
+    // Issue #223 AC6: these two flags reached a bare parseInt at their use
+    // sites, so `--prompt-tokens abc` became NaN and flowed into both the
+    // emitted row's prompt_tokens cell and the n_ctx prompt sizing — a
+    // measurement recorded as a number that was never a number.
+    for (const flag of ['--prompt-tokens', '--max-tokens']) {
+      for (const bad of ['abc', 'NaN', '1.5', '0', '-1', '0x10', '1e3', ' 8', '']) {
+        expect(() => wllamaParseArgs([flag, bad])).toThrow(`${flag} must be a positive integer`);
+      }
+      // ...and the valid spellings still pass, so the guard is not
+      // swallowing everything.
+      expect(wllamaParseArgs([flag, '1'])[flag.slice(2)]).toBe('1');
+      expect(wllamaParseArgs([flag, '256'])[flag.slice(2)]).toBe('256');
+    }
+
+    // A BARE value-requiring flag keeps its own distinct message (PR #220 P6):
+    // the numeric guard must not have absorbed it.
+    expect(() => wllamaParseArgs(['--prompt-tokens'])).toThrow('--prompt-tokens requires a value');
+    expect(VALUE_FLAGS.has('prompt-tokens')).toBe(true);
+  });
+});
