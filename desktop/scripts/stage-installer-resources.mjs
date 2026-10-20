@@ -384,6 +384,101 @@ export function stageContracts(targetDesktopDir = desktopDir) {
   console.log(`${SCRIPT}: staged ${STAGED_CONTRACTS.length} contract files into ${path.relative(repoRoot, path.join(targetDesktopDir, 'dist', 'contracts'))}/`);
 }
 
+/** Newest mtime (ms) under `dir`, or 0 when it holds no readable file.
+ *
+ *  Bounded two ways so it stays cheap on a real-weights tree: `dist/models/`
+ *  is excluded because copyRenderer() excludes it too (comparing against a
+ *  staged multi-GB weight directory would both be slow and describe something
+ *  the renderer never contained), and the walk stops after MAX_FRESHNESS_FILES
+ *  files, which is far more than any renderer needs to establish a verdict.
+ *  A truncated walk can only under-report NEWEST, so it can never invent a
+ *  staleness failure that is not real. */
+const FRESHNESS_EXCLUDED = new Set(['models']);
+const MAX_FRESHNESS_FILES = 5000;
+function newestMtimeMs(dir) {
+  let newest = 0;
+  let seen = 0;
+  const walk = (abs) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(abs, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (!FRESHNESS_EXCLUDED.has(entry.name)) walk(path.join(abs, entry.name));
+        continue;
+      }
+      try {
+        const mtimeMs = fs.statSync(path.join(abs, entry.name)).mtimeMs;
+        if (mtimeMs > newest) newest = mtimeMs;
+      } catch {
+        // Raced away between readdir and stat; a file we cannot stat cannot
+        // make the renderer look fresher, so skipping it is the safe direction.
+      }
+      if (++seen >= MAX_FRESHNESS_FILES) return;
+    }
+  };
+  walk(dir);
+  return newest;
+}
+
+/**
+ * Is desktop/renderer missing or stale with respect to web_ui/dist? Returns a
+ * named problem string, or null when the renderer is usable (issue #173 AC1).
+ *
+ * PLACEMENT IS THE FIX, and it is why this lives here rather than inside
+ * copyRenderer(). `desktop/package.json`'s `build` invokes this script with
+ * --skip-renderer-copy, so copyRenderer() — and the missing-dist guard inside
+ * it — never ran on the very path that produces the footgun. The build then
+ * succeeded silently and packaged whatever renderer happened to be on disk,
+ * possibly one many builds old. A guard that only executes on the path the
+ * mistake avoids is not a guard.
+ *
+ * STALENESS, not merely ABSENCE: this compares the newest mtime under
+ * web_ui/dist against the newest under desktop/renderer, so a renderer that is
+ * present but predates the current dist is caught. Absence-only detection would
+ * wave through "present but three builds old", which is the more dangerous half
+ * — it ships a working-looking installer whose UI does not match the tree.
+ *
+ * Returns null when there is nothing to compare against (no web_ui/dist), so a
+ * machine that only ever builds the desktop bundle is not forced into a web_ui
+ * build it has no reason to run.
+ */
+export function rendererFreshnessProblem({
+  skipRendererCopy,
+  rendererDir: renderer = rendererDir,
+  webUiDist: dist = webUiDist,
+  repoRoot: root = repoRoot,
+} = {}) {
+  // Without the flag, copyRenderer() is about to create the renderer wholesale;
+  // absence and staleness are both about to be resolved, so nothing to report.
+  if (!skipRendererCopy) return null;
+
+  const relRenderer = path.relative(root, renderer);
+  if (!fs.existsSync(renderer)) {
+    return (
+      `--skip-renderer-copy was passed but ${relRenderer} does not exist, so this build would ` +
+      'package no renderer at all. Run "npm --prefix desktop run desktop:build" to build the ' +
+      'web app and stage it, or drop --skip-renderer-copy.'
+    );
+  }
+  if (!fs.existsSync(dist)) return null;
+
+  const distNewest = newestMtimeMs(dist);
+  const rendererNewest = newestMtimeMs(renderer);
+  if (distNewest <= rendererNewest) return null;
+
+  const distRel = path.relative(root, dist);
+  return (
+    `${relRenderer} is STALE: ${distRel} contains a file newer than every file in the ` +
+    'renderer, so this build would package a renderer that predates the current web app. ' +
+    'Run "npm --prefix desktop run desktop:build", or re-stage the renderer without ' +
+    '--skip-renderer-copy.'
+  );
+}
+
 /** Copy web_ui/dist -> desktop/renderer, excluding staged weight (model-id)
  *  directories under dist/models/. Returns kept + skipped file counts. */
 function copyRenderer() {
@@ -558,6 +653,13 @@ function main() {
   stagePacks();
   stageDocs();
   stageContracts();
+  // issue #173 AC1: evaluated on EVERY invocation and BEFORE the
+  // --skip-renderer-copy branch below. `build` passes that flag, so a check
+  // placed inside the copy path would never run on the path that needs it.
+  const freshnessProblem = rendererFreshnessProblem({
+    skipRendererCopy: args.skipRendererCopy,
+  });
+  if (freshnessProblem !== null) fail(freshnessProblem);
   if (!args.skipRendererCopy) copyRenderer();
   if (args.fixtureModels) console.log('MODE: fixture-models');
   if (errors.length > 0) {
