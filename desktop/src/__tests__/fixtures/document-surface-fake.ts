@@ -35,6 +35,17 @@ export interface FakeSurfaceOpts {
   onList?: () => Promise<void>;
   /** Makes listDocuments() throw (negative path). */
   rejectList?: Error;
+  /**
+   * The model that built the stored VECTORS (issue #198). Defaults to '' — the
+   * schema's seeded value for a store with no writes yet — which makes every
+   * caller fall back to `embedderModelId`.
+   *
+   * That default is load-bearing, not incidental: it is why the four frozen
+   * specs sharing this fixture (i103c / i169 / i175 / i185) keep their existing
+   * `embedding_model === embedderModelId` verdicts UNCHANGED. Set it only where
+   * a test is exercising the divergence itself.
+   */
+  vectorsEmbeddingModelId?: string;
 }
 
 /** A fake DocumentSurface plus the observability the shared specs need. */
@@ -72,6 +83,7 @@ export function makeFakeSurface(
       return { total_files: 0, successful: 0, failed: 0, results: [] };
     },
     embedderModelId,
+    vectorsEmbeddingModelId: opts.vectorsEmbeddingModelId ?? '',
     get listDocumentsCalls() {
       return listDocumentsCalls;
     },

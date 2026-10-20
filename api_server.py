@@ -436,11 +436,28 @@ class SettingsUpdateRequest(BaseModel):
 
 
 class StatsResponse(BaseModel):
-    """Response model for engine statistics."""
+    """Response model for engine statistics.
+
+    ``embedding_model`` is the model that actually BUILT THE STORED VECTORS;
+    ``configured_embedding_model`` is what this process is configured to embed
+    with (issue #198). The desktop surface can install a prebuilt-index pack
+    into an empty store, and there the pack's model built the vectors while the
+    configured embedder never ran -- reporting only the configured id would
+    attribute an eval result to an embedding space that did not produce the
+    vectors. Both fields are published so the mismatch is visible in the
+    response rather than silent.
+
+    On THIS surface the two never diverge: the vector store's embedder is both
+    the configured one and the one that produced every stored vector (there is
+    no prebuilt-index import path here), so they carry the same value. That is
+    a truthful answer, not a stub -- the field exists precisely so that a future
+    divergent path cannot hide.
+    """
 
     document_count: int
     chunk_count: int
     embedding_model: str
+    configured_embedding_model: str
     llm_backend: Optional[str]
     documents: List[str] = []
 
@@ -769,6 +786,13 @@ async def get_stats(auth: dict = Security(require_auth())):
         document_count=stats["document_count"],
         chunk_count=stats["chunk_count"],
         embedding_model=stats["embedding_model"],
+        # issue #198: the store's embedder is both the configured one and the
+        # one that produced every stored vector on this surface, so both fields
+        # carry the same value. Prefer an explicit configured key from the engine
+        # if one is ever added, so a future divergent path needs no change here.
+        configured_embedding_model=stats.get(
+            "configured_embedding_model", stats["embedding_model"]
+        ),
         llm_backend=stats["llm"]["backend"] if stats["llm"] else None,
         documents=stats.get("documents", []),
     )

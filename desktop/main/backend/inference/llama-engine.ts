@@ -40,6 +40,7 @@ import type {
   LearnAssembler,
   ModelStatus,
   RetrievalSurface,
+  StatsShape,
 } from '../types.js';
 import { filterDeclineSentences } from './decline-filter.js';
 import { activeGpuVerdict, setActiveGpuVerdict, writeGpuProbeVerdict, type GpuProbeVerdict } from './gpu-probe.js';
@@ -1419,13 +1420,7 @@ export class LlamaEngine implements EngineSurface {
     return this.loads;
   }
 
-  async getStats(): Promise<{
-    document_count: number;
-    chunk_count: number;
-    embedding_model: string;
-    llm_backend: string | null;
-    documents: string[];
-  }> {
+  async getStats(): Promise<StatsShape> {
     const profile = this.effectiveProfile();
     const stubStats = await this.stub.getStats();
     // issue #169: attachDocumentSurface stores the surface HERE (not on the
@@ -1437,6 +1432,11 @@ export class LlamaEngine implements EngineSurface {
     // detach/attach landing in the await window can no longer mix states.
     const docs = this.documents;
     const listed = docs !== null ? await docs.listDocuments() : null;
+    // issue #198: BOTH model fields are read off the SAME captured `docs`, never
+    // re-read from this.documents, so the two cannot describe different
+    // surfaces — the capture-once property above extended to the new field.
+    const configured = docs !== null ? docs.embedderModelId : stubStats.embedding_model;
+    const vectorsModel = docs !== null ? docs.vectorsEmbeddingModelId : '';
     return {
       ...stubStats,
       ...(listed !== null
@@ -1446,9 +1446,21 @@ export class LlamaEngine implements EngineSurface {
           }
         : {}),
       // B6 (issue #64): when a store surface is attached, the real embedder id
-      // (also what meta.embedding_model_id records) replaces the stub value.
-      embedding_model:
-        docs !== null ? docs.embedderModelId : stubStats.embedding_model,
+      // replaces the stub value.
+      //
+      // issue #198 CHANGES WHICH ID IS REPORTED HERE. It used to be the
+      // configured embedder's id; it is now the model that built the stored
+      // VECTORS, read from meta.embedding_model_id. They differ after a
+      // prebuilt-index pack is installed into an empty store, where reporting
+      // the configured id attributes the vectors to the wrong embedding space.
+      // The old comment claimed this value was "also what
+      // meta.embedding_model_id records" — true only while the two agree, which
+      // is exactly the assumption this issue exists to remove.
+      //
+      // The '' fallback keeps a store with no written vectors (and a detached or
+      // test surface) reporting the configured id rather than an empty string.
+      embedding_model: vectorsModel.length > 0 ? vectorsModel : configured,
+      configured_embedding_model: configured,
       llm_backend: this.external.active()
         ? this.external.describe()
         : `llama.cpp (node-llama-cpp) profile=${profile} model=${path.basename(this.modelPathFor(profile))}`,

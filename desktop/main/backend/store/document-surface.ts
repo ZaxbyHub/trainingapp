@@ -32,8 +32,28 @@ export interface DocumentSurface {
   ingestDirectory(directory: string): Promise<IngestResult>;
   ingestFile(input?: IngestFileInput): Promise<IngestResult>;
   ingestBatch(inputs?: IngestFileInput[]): Promise<BatchIngestResult>;
-  /** Identifier recorded in meta.embedding_model_id (stats surface). */
+  /**
+   * The CONFIGURED embedder's id — what this process would use to embed text
+   * right now. NOT necessarily what built the stored vectors; see
+   * `vectorsEmbeddingModelId` (issue #198).
+   */
   readonly embedderModelId: string;
+  /**
+   * The model that actually BUILT THE STORED VECTORS, read from
+   * meta.embedding_model_id. Empty string when no vector has ever been written
+   * (the schema seeds the key to ''), so callers must fall back to
+   * `embedderModelId` rather than report an empty id.
+   *
+   * The two diverge exactly when a prebuilt-index pack is installed into an
+   * EMPTY store: `importPrebuiltIndex` stamps the SHIPPED index's model into
+   * meta, and `readPrebuiltIndex` only refuses a model mix once the store has
+   * chunks. Reporting only `embedderModelId` there attributes an eval result
+   * to an embedding space that did not produce the vectors.
+   *
+   * Required rather than optional so no implementation can silently omit it
+   * and keep reporting the configured id forever.
+   */
+  readonly vectorsEmbeddingModelId: string;
 }
 
 export interface StoreDocumentSurfaceOptions {
@@ -62,6 +82,31 @@ export class StoreDocumentSurface implements DocumentSurface {
 
   get embedderModelId(): string {
     return this.opts.embedder.modelId;
+  }
+
+  /**
+   * Read meta.embedding_model_id — the model the stored vectors were actually
+   * built with (issue #198). Deliberately NOT `this.opts.embedder.modelId`:
+   * those diverge after a prebuilt-index pack lands in an empty store, and the
+   * whole point is to report the one that produced the vectors.
+   *
+   * Returns '' when there is no store or no row, matching the schema's seeded
+   * empty value; callers fall back to `embedderModelId`.
+   */
+  get vectorsEmbeddingModelId(): string {
+    const store = this.opts.getStore();
+    if (store === null) return '';
+    try {
+      const row = store.db
+        .prepare("SELECT value FROM meta WHERE key = 'embedding_model_id'")
+        .get() as { value: string } | undefined;
+      return row?.value ?? '';
+    } catch {
+      // A store without a meta table (pre-schema file mid-migration) reports
+      // "unknown" rather than throwing: this is a reporting field, and the
+      // caller has a correct fallback.
+      return '';
+    }
   }
 
   private getPipeline(store: StoreHandle): IngestPipeline {

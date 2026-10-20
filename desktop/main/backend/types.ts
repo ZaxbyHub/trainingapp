@@ -79,7 +79,23 @@ export interface DocumentSurface {
   ingestDirectory(directory: string): Promise<IngestResult>;
   ingestFile(input?: IngestFileInput): Promise<IngestResult>;
   ingestBatch(inputs?: IngestFileInput[]): Promise<BatchIngestResult>;
+  /**
+   * The CONFIGURED embedder's id — what this process would embed with right
+   * now. Not necessarily what built the stored vectors; see
+   * `vectorsEmbeddingModelId` (issue #198).
+   */
   readonly embedderModelId: string;
+  /**
+   * The model that actually BUILT THE STORED VECTORS, from
+   * meta.embedding_model_id. Empty string when no vector has ever been written,
+   * so callers must fall back to `embedderModelId`.
+   *
+   * Required rather than optional so no implementation can silently omit it and
+   * keep reporting the configured id forever — which is the defect #198
+   * records. Mirrored on `StoreDocumentSurface` in
+   * `store/document-surface.ts`; this is the interface the engines consume.
+   */
+  readonly vectorsEmbeddingModelId: string;
 }
 
 /** Corruption-recovery choice callback (B6): restore from backup or start fresh. */
@@ -404,6 +420,33 @@ export class ModelNotConfiguredError extends Error {
  * The backend surface the routes need. StubEngine implements it with
  * documented stubs; B4-B7 will provide the real implementation.
  */
+/**
+ * The GET /stats payload (issue #198).
+ *
+ * `embedding_model` is the model that actually BUILT THE STORED VECTORS.
+ * `configured_embedding_model` is the model this process is configured to embed
+ * with. They are equal in the normal case and DIVERGE after a prebuilt-index
+ * pack is installed into an empty store: the pack's vectors were built by the
+ * pack's model, while the configured embedder is untouched. Reporting only the
+ * configured id there mis-attributes an eval result to an embedding space that
+ * did not produce the vectors — a wrong measurement with nothing signalling it,
+ * which is worse than a missing field.
+ *
+ * Mirrored in `contracts/api.openapi.yaml` (StatsResponse) and
+ * `api_server.py` (StatsResponse); the response shape is triplicated across all
+ * three backend surfaces.
+ */
+export interface StatsShape {
+  document_count: number;
+  chunk_count: number;
+  /** The model that built the stored vectors (issue #198). */
+  embedding_model: string;
+  /** The configured embedder's id; equals embedding_model unless a pack import diverged. */
+  configured_embedding_model: string;
+  llm_backend: string | null;
+  documents: string[];
+}
+
 export interface EngineSurface {
   query(question: string, opts?: EngineQueryOptions): Promise<EngineQueryResult>;
   /**
@@ -428,7 +471,7 @@ export interface EngineSurface {
   search(query: string, nResults?: number): Promise<Array<{ text: string; source: string; similarity: number }>>;
   listDocuments(): Promise<{ documents: Array<{ id: string; chunk_count: number }>; total: number }>;
   clearDocuments(): Promise<void>;
-  getStats(): Promise<{ document_count: number; chunk_count: number; embedding_model: string; llm_backend: string | null; documents: string[] }>;
+  getStats(): Promise<StatsShape>;
   applySettingsPatch(patch: Record<string, unknown>): { ok: true } | { ok: false; status: 400 | 422; detail: string; errors?: string[] };
   /**
    * settings-wiring-honesty: the PUT /settings `reset` directive. Restores the
