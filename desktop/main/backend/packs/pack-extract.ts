@@ -134,13 +134,41 @@ function envBool(env: Record<string, string | undefined>, key: string): boolean 
   return value === '1' || value === 'true';
 }
 
+/**
+ * The first key_id that appears more than once, or null when all are unique.
+ *
+ * A duplicated key_id makes the trusted keyset ambiguous: the config says the
+ * key_id selects the signing key, and two entries answering to one id cannot
+ * both be intended. It is a CONFIGURATION error, refused wherever it is
+ * detected, rather than something a gate resolves by picking a winner.
+ *
+ * This is what removes the long-standing TS-vs-python disagreement at the
+ * signature gate (issue #225). The TS twins took first-match and python looped
+ * every matching key, so a retired key reusing a key_id was a false-accept on
+ * one side and a false-reject on the other. Refusing the duplicate at load and
+ * again at the gate makes the ambiguous case unreachable.
+ *
+ * Mirrored verbatim by `duplicate_trusted_key_id` in `pack_extract.py`,
+ * `packtool/build/pack-json.ts` and `web_ui/src/lib/packs/pack-verify.ts`.
+ */
+export function duplicateTrustedKeyId(
+  trustedKeys: ReadonlyArray<{ key_id: string }>,
+): string | null {
+  const seen = new Set<string>();
+  for (const key of trustedKeys) {
+    if (seen.has(key.key_id)) return key.key_id;
+    seen.add(key.key_id);
+  }
+  return null;
+}
+
 function envTrustedKeys(env: Record<string, string | undefined>): TrustedPackKey[] {
   const raw = env[PACKS_TRUSTED_KEYS_ENV];
   if (raw === undefined || raw.trim().length === 0) return [];
   try {
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) throw new Error('not a JSON array');
-    return parsed
+    const keys: TrustedPackKey[] = parsed
       .filter(
         (entry): entry is { key_id: string; public_key: string } =>
           typeof entry === 'object' &&
@@ -149,6 +177,15 @@ function envTrustedKeys(env: Record<string, string | undefined>): TrustedPackKey
           typeof (entry as Record<string, unknown>)['public_key'] === 'string',
       )
       .map((entry) => ({ key_id: entry.key_id, public_key: entry.public_key }));
+    // Refused at CONFIG LOAD, before any pack is offered, so a bad keyset
+    // cannot sit latent until the first signed pack arrives (issue #225).
+    const duplicate = duplicateTrustedKeyId(keys);
+    if (duplicate !== null) {
+      throw new Error(
+        `more than one entry with key_id ${JSON.stringify(duplicate)}; a duplicated key_id is ambiguous and is refused`,
+      );
+    }
+    return keys;
   } catch (error) {
     // Fail-closed: malformed keyset trusts NOTHING (with requireSignature on,
     // every pack is refused); visibility via stderr, never a host crash.
@@ -343,6 +380,20 @@ export function verifyPackSignature(
   signature: unknown,
   trustedKeys: readonly TrustedPackKey[],
 ): SignatureVerification {
+  // An ambiguous keyset is a CONFIGURATION fault, not a property of this
+  // signature, and it must not be reported as though the pack were at fault.
+  // Deliberately the FIRST check, ahead of the signature block itself and every
+  // other gate input, so a malformed signature cannot mask a broken keyset.
+  // Re-checked at the GATE rather than only at config load because `trustedKeys`
+  // is a parameter: a caller that built the list itself bypasses the load-time
+  // refusal (issue #225). The python twin orders it identically.
+  const duplicate = duplicateTrustedKeyId(trustedKeys);
+  if (duplicate !== null) {
+    return {
+      ok: false,
+      detail: `trusted keyset has more than one entry with key_id '${duplicate}'; a duplicated key_id is ambiguous and is refused`,
+    };
+  }
   if (typeof signature !== 'object' || signature === null) {
     return { ok: false, detail: 'signature block is missing' };
   }

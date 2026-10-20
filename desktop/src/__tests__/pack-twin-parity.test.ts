@@ -18,18 +18,22 @@
 //                         canonical expectation (never side-vs-side), and
 //                         api_server.py::_extract_pack_zip delegates to
 //                         pack_extract.safe_extract_pack_zip.
-//   multi-key-divergence-pinned — deliberate change-detector for the known
-//                         TS↔python key_id-matching divergence (NOT part of
-//                         the frozen battery): both TS twins take first-match
-//                         while python loops every trusted key sharing the
-//                         key_id. Scope: issue #213 says "Out: changing any
-//                         limit value or gate semantics", so reconciliation is
-//                         filed at closeout as the follow-up ("Follow-up from the
-//                         batch PR: reconcile the TS signature gates to
-//                         python's all-keys-per-key_id verification"); first-
-//                         match is the false-reject side, so TS adopts
-//                         python's loop when that lands. This row asserts
-//                         today's state so neither side can drift unnoticed.
+//   duplicate-key-id-refused — REPLACES the former
+//                         `multi-key-divergence-pinned` row (PR #224), which
+//                         pinned today's TS-first-match vs python-all-keys
+//                         divergence as a documented, deliberate state.
+//                         Resolved by issue #225's decision: rather than pick
+//                         a winner, a trusted keyset carrying two entries under
+//                         one key_id is a CONFIGURATION ERROR, refused at
+//                         config load and again at the gate, in every
+//                         implementation. First-match was the false-reject
+//                         side and python's loop the false-accept side; making
+//                         the ambiguous case unreachable removes the need to
+//                         choose. Pins FOUR implementations, not the three the
+//                         issue named: web_ui/src/lib/packs/pack-verify.ts is a
+//                         live fourth copy of the gate. A second row pins the
+//                         PRESERVING half — with unique key_ids, verification
+//                         direction is unchanged on all four.
 //
 // Named mutants: change VERIFY_MAX_ENTRIES 5000 to 5001 (or one side's
 // RATIO_FLOOR_BYTES) -> limits-twin red; flip one TS gate's key-id handling
@@ -86,6 +90,8 @@ const PACK_EXTRACT_SRC = path.join(REPO_ROOT, 'desktop', 'main', 'backend', 'pac
 const PACK_JSON_SRC = path.join(REPO_ROOT, 'packtool', 'build', 'pack-json.ts');
 const PY_EXTRACT_SRC = path.join(REPO_ROOT, 'pack_extract.py');
 const API_SERVER_SRC = path.join(REPO_ROOT, 'api_server.py');
+const WEB_UI_VERIFY_SRC = path.join(REPO_ROOT, 'web_ui', 'src', 'lib', 'packs', 'pack-verify.ts');
+const WEB_UI_POLICY_SRC = path.join(REPO_ROOT, 'web_ui', 'src', 'lib', 'packs', 'pack-policy.ts');
 
 /** Numeric value of a `NAME = <expr>` declaration (TS const or python). */
 function numericConst(sourcePath: string, name: string): number {
@@ -304,28 +310,101 @@ describe('pack twin parity (issue #213)', () => {
     ).toMatch(/return\s+safe_extract_pack_zip\(/);
   });
 
-  it('multi-key-divergence-pinned: the known TS-first-match vs python-all-keys divergence stays explicit', () => {
-    // Documented divergence (see the file header): NOT part of the frozen
-    // battery; this is a change-detector so neither side can drift unnoticed.
-    // Reconciliation follow-up: TS adopts python's all-keys-per-key_id loop
-    // Review PRR-023: comment-stripped anchors (a doc comment naming the
-    // shape must not satisfy the pin) and the direction stated both ways:
-    // TS first-match is the FALSE-REJECT side (a second key under a shared
-    // key_id is refused); python's all-keys loop is the FALSE-ACCEPT side
-    // for a retired key that reuses a key_id. Neither side is silently
-    // tightened here — see the reconciliation follow-up.
+  it('duplicate-key-id-refused: every gate refuses an ambiguous trusted keyset (issue #225)', () => {
+    // Replaces the `multi-key-divergence-pinned` row (PR #224). The divergence
+    // is gone: rather than pick a winner between TS first-match and python's
+    // all-keys loop, a trusted keyset with two entries under one key_id is now
+    // a CONFIGURATION ERROR refused by every gate. The ambiguous case that
+    // produced the disagreement is unreachable, so the two sides never have to
+    // agree about it.
+    //
+    // The decision named three implementations. This row pins FOUR: web_ui's
+    // pack-verify.ts is a live fourth copy (imported by pack-update-browser.ts,
+    // pack-policy.ts and pack-manifest.ts, with its own signature-vector tests),
+    // and leaving it first-match would have recreated the twin drift this row
+    // exists to prevent.
+    //
+    // Comment-stripped anchors, per review PRR-023: a doc comment NAMING the
+    // shape must not satisfy the pin, so every source is stripped first.
+    const stripHash2 = (t: string): string =>
+      t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(\/\/|#)[^\n]*/g, '');
+
+    // The helper itself, present and equivalent in all four implementations.
+    // Checked as three separable properties rather than one literal regex, so a
+    // python-vs-TS syntax difference (`def`/`return None` vs
+    // `function`/`return null`) is not mistaken for a missing guard — and so a
+    // helper that merely EXISTS cannot satisfy the row.
+    const DEF_RE = /(?:def|function)\s+duplicate_?[Tt]rusted_?[Kk]ey_?[Ii]d\s*\(/;
+    const SEEN_RE = /seen\s*[:=]\s*(?:new Set|Set\[)/;
+    const RETURNS_RE = /return\s+key\.key_id\b/;
+    const NULL_RE = /return\s+(?:null|None)\s*;?\s*$/m;
+
+    const gates: Array<[string, string, string]> = [
+      ['python', PY_EXTRACT_SRC, stripHash2(fs.readFileSync(PY_EXTRACT_SRC, 'utf8'))],
+      ['packtool', PACK_JSON_SRC, stripHash2(fs.readFileSync(PACK_JSON_SRC, 'utf8'))],
+      ['desktop', PACK_EXTRACT_SRC, stripHash2(fs.readFileSync(PACK_EXTRACT_SRC, 'utf8'))],
+      ['web_ui', WEB_UI_VERIFY_SRC, stripHash2(fs.readFileSync(WEB_UI_VERIFY_SRC, 'utf8'))],
+    ];
+    for (const [name, sourcePath, source] of gates) {
+      expect(source, `${name} (${sourcePath}) must define duplicateTrustedKeyId`).toMatch(DEF_RE);
+      expect(source, `${name} must accumulate seen key_ids in a set`).toMatch(SEEN_RE);
+      expect(source, `${name} must return the repeated key_id`).toMatch(RETURNS_RE);
+      expect(source, `${name} must return null/None when every key_id is unique`).toMatch(NULL_RE);
+      // ...and must CALL it inside verifyPackSignature, before any key lookup,
+      // so an ambiguous keyset is never reported as a bad pack. Slicing from
+      // the gate's own definition (not from the top of the file) is what keeps
+      // the helper's own body from satisfying the "calls it" check.
+      const verifyStart = source.search(/(?:def|function)\s+verify_?[Pp]ack_?[Ss]ignature\s*\(/);
+      expect(verifyStart, `${name} must still define its signature gate`).toBeGreaterThan(-1);
+      const verifyBody = source.slice(verifyStart);
+      const dupCall = verifyBody.search(/duplicate_?[Tt]rusted_?[Kk]ey_?[Ii]d\(\s*trusted_?[Kk]eys\s*\)/);
+      expect(dupCall, `${name} gate must call duplicateTrustedKeyId`).toBeGreaterThan(-1);
+      const findCall = verifyBody.search(/trustedKeys\.find\(|trusted_keys if key\.key_id/);
+      expect(
+        findCall === -1 || dupCall < findCall,
+        `${name} must refuse a duplicate key_id BEFORE its key lookup (dup@${dupCall}, find@${findCall})`,
+      );
+    }
+
+    // Config-load refusals exist wherever there IS a config-load site. packtool
+    // takes trustedKeys as a caller-supplied option and has none, so its gate
+    // check above is the enforcement, not a repeat.
+    const py = stripHash2(fs.readFileSync(PY_EXTRACT_SRC, 'utf8'));
+    expect(py, 'python refuses a duplicate key_id at config load').toMatch(
+      /duplicate = duplicate_trusted_key_id\(keys\)/,
+    );
+    const desktop = stripHash2(fs.readFileSync(PACK_EXTRACT_SRC, 'utf8'));
+    expect(desktop, 'desktop refuses a duplicate key_id at env config load').toMatch(
+      /duplicateTrustedKeyId\(keys\)/,
+    );
+    const policy = stripHash2(fs.readFileSync(WEB_UI_POLICY_SRC, 'utf8'));
+    expect(policy, 'web_ui refuses a duplicate key_id at config load').toMatch(
+      /duplicateTrustedKeyId\(keys\)/,
+    );
+  });
+
+  it('duplicate-key-id-refused: verification direction is unchanged when every key_id is unique', () => {
+    // PRESERVING half of issue #225's decision. The duplicate refusal must not
+    // have moved the normal case: with unique key_ids, a signature made by the
+    // trusted key still verifies on all four, and a key_id that is simply not
+    // trusted is still refused. python keeps its all-keys loop (now
+    // unreachable with more than one match); the TS twins keep first-match.
     const stripHash2 = (t: string): string =>
       t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(\/\/|#)[^\n]*/g, '');
     const py = stripHash2(fs.readFileSync(PY_EXTRACT_SRC, 'utf8'));
-    expect(py, 'python collects every trusted key sharing the key_id').toMatch(
+    expect(py, 'python still collects every trusted key sharing the key_id').toMatch(
       /matching = \[key for key in trusted_keys if key\.key_id == key_id\]/,
     );
-    expect(py, 'python verifies against each matching key in turn').toMatch(/for key in matching:/);
-    const packJson = stripHash2(fs.readFileSync(PACK_JSON_SRC, 'utf8'));
-    const packExtract = stripHash2(fs.readFileSync(PACK_EXTRACT_SRC, 'utf8'));
-    expect(packJson, 'packtool takes the first matching trusted key').toMatch(/trustedKeys\.find\(/);
-    expect(packExtract, 'the install-side gate takes the first matching trusted key').toMatch(
-      /trustedKeys\.find\(/,
-    );
+    expect(py, 'python still verifies against each matching key in turn').toMatch(/for key in matching:/);
+    for (const [name, sourcePath] of [
+      ['packtool', PACK_JSON_SRC],
+      ['desktop', PACK_EXTRACT_SRC],
+      ['web_ui', WEB_UI_VERIFY_SRC],
+    ] as Array<[string, string]>) {
+      const source = stripHash2(fs.readFileSync(sourcePath, 'utf8'));
+      expect(source, `${name} still selects the matching trusted key by key_id`).toMatch(
+        /trustedKeys\.find\(/,
+      );
+    }
   });
 });

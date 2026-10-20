@@ -25,6 +25,40 @@ export interface TrustedPackKey {
   public_key: string;
 }
 
+/**
+ * The first key_id that appears more than once, or null when all are unique.
+ *
+ * A duplicated key_id makes the trusted keyset ambiguous: the config says the
+ * key_id selects the signing key, and two entries answering to one id cannot
+ * both be intended. It is a CONFIGURATION error, refused wherever it is
+ * detected, rather than something a gate resolves by picking a winner.
+ *
+ * This is what removes the long-standing TS-vs-python disagreement at the
+ * signature gate (issue #225). The TS twins took first-match and python looped
+ * every matching key, so a retired key reusing a key_id was a false-accept on
+ * one side and a false-reject on the other. Refusing the duplicate makes the
+ * ambiguous case unreachable.
+ *
+ * This module is a FOURTH copy of the signature gate. The issue named three
+ * implementations; `web_ui/src/lib/packs/pack-verify.ts` is live too (imported
+ * by pack-update-browser.ts, pack-policy.ts and pack-manifest.ts, and covered
+ * by its own signature-vector tests), so leaving it first-match would have
+ * recreated exactly the twin drift the change exists to remove.
+ *
+ * Mirrored verbatim by `duplicate_trusted_key_id` in `pack_extract.py`,
+ * `packtool/build/pack-json.ts` and `desktop/main/backend/packs/pack-extract.ts`.
+ */
+export function duplicateTrustedKeyId(
+  trustedKeys: ReadonlyArray<{ key_id: string }>,
+): string | null {
+  const seen = new Set<string>();
+  for (const key of trustedKeys) {
+    if (seen.has(key.key_id)) return key.key_id;
+    seen.add(key.key_id);
+  }
+  return null;
+}
+
 export interface SignatureVerification {
   ok: boolean;
   detail?: string;
@@ -217,6 +251,20 @@ export async function verifyPackSignature(
   signature: unknown,
   trustedKeys: ReadonlyArray<TrustedPackKey>,
 ): Promise<SignatureVerification> {
+  // An ambiguous keyset is a CONFIGURATION fault, not a property of this
+  // signature, and it must not be reported as though the pack were at fault.
+  // Deliberately the FIRST check, ahead of the signature block itself and every
+  // other gate input, so a malformed signature cannot mask a broken keyset.
+  // Re-checked at the GATE rather than only at config load because `trustedKeys`
+  // is a parameter: a caller that built the list itself bypasses the load-time
+  // refusal (issue #225). The python and desktop twins order it identically.
+  const duplicate = duplicateTrustedKeyId(trustedKeys);
+  if (duplicate !== null) {
+    return {
+      ok: false,
+      detail: `trusted keyset has more than one entry with key_id '${duplicate}'; a duplicated key_id is ambiguous and is refused`,
+    };
+  }
   if (typeof signature !== 'object' || signature === null) {
     return { ok: false, detail: 'signature block is missing' };
   }

@@ -12,7 +12,7 @@
 //   VITE_TRAININGAPP_UPDATE_TRUSTED_KEYS       JSON TrustedKey[] for the update feed
 //                                              (default: the desktop baked feed key)
 import { DEFAULT_PACK_EMBEDDING_MODEL_ID, type ManifestGateConfig } from './pack-manifest';
-import type { TrustedPackKey } from './pack-verify';
+import { duplicateTrustedKeyId, type TrustedPackKey } from './pack-verify';
 
 /** Desktop UPDATE_FEED_PUBLIC_KEY (desktop/main/update-checker.ts), the default feed anchor. */
 export const UPDATE_FEED_PUBLIC_KEY: TrustedPackKey = {
@@ -30,13 +30,17 @@ export function parseBoolFlag(raw: string | undefined): boolean {
 /**
  * Desktop envTrustedKeys: a JSON array of {key_id, public_key}; malformed
  * input trusts NOTHING (fail closed), entries without both strings are dropped.
+ *
+ * A key_id appearing twice is also malformed for this purpose: it is an
+ * ambiguous trusted keyset, so it trusts nothing rather than silently picking
+ * a winner (issue #225).
  */
 export function parseTrustedKeys(raw: string | undefined): TrustedPackKey[] {
   if (raw === undefined || raw.trim().length === 0) return [];
   try {
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed
+    const keys: TrustedPackKey[] = parsed
       .filter(
         (entry): entry is { key_id: string; public_key: string } =>
           typeof entry === 'object' &&
@@ -45,6 +49,10 @@ export function parseTrustedKeys(raw: string | undefined): TrustedPackKey[] {
           typeof (entry as Record<string, unknown>)['public_key'] === 'string',
       )
       .map((entry) => ({ key_id: entry.key_id, public_key: entry.public_key }));
+    // Refused at CONFIG LOAD, before any pack is offered, so a bad keyset
+    // cannot sit latent until the first signed pack arrives (issue #225).
+    if (duplicateTrustedKeyId(keys) !== null) return [];
+    return keys;
   } catch {
     return [];
   }

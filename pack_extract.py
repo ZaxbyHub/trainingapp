@@ -32,7 +32,7 @@ import shutil
 import tempfile
 import zipfile
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from pack_manager import PackManagerError
 
@@ -102,6 +102,33 @@ class PackSecurityLimits:
     trusted_keys: Tuple[TrustedKey, ...] = field(default_factory=tuple)
 
 
+def duplicate_trusted_key_id(trusted_keys: Iterable[TrustedKey]) -> Optional[str]:
+    """The first key_id that appears more than once, or None when all are unique.
+
+    A duplicated key_id makes the trusted keyset ambiguous: the config says the
+    key_id selects the signing key, and two entries answering to one id cannot
+    both be intended. It is a CONFIGURATION error, refused wherever it is
+    detected, rather than something a gate resolves by picking a winner.
+
+    This is what removes the long-standing TS-vs-python disagreement at the
+    signature gate (issue #225). The TS twins took first-match and python looped
+    every matching key, so a retired key reusing a key_id was a false-accept on
+    one side and a false-reject on the other. Refusing the duplicate at load and
+    again at the gate makes the ambiguous case unreachable, so the two directions
+    never have to agree about it.
+
+    Mirrored verbatim by `duplicateTrustedKeyId` in
+    `packtool/build/pack-json.ts`, `desktop/main/backend/packs/pack-extract.ts`
+    and `web_ui/src/lib/packs/pack-verify.ts`.
+    """
+    seen: Set[str] = set()
+    for key in trusted_keys:
+        if key.key_id in seen:
+            return key.key_id
+        seen.add(key.key_id)
+    return None
+
+
 def limits_from_settings() -> PackSecurityLimits:
     """Build the active limits from the RAG_PACKS_SECURITY_* settings."""
     from config import get_settings
@@ -128,6 +155,14 @@ def limits_from_settings() -> PackSecurityLimits:
             )
         keys.append(
             TrustedKey(key_id=str(entry["key_id"]), public_key=str(entry["public_key"]))
+        )
+    duplicate = duplicate_trusted_key_id(keys)
+    if duplicate is not None:
+        # Refused at CONFIG LOAD, before any pack is offered, so a bad keyset
+        # cannot sit latent until the first signed pack arrives (issue #225).
+        raise PackExtractError(
+            "RAG_PACKS_SECURITY_TRUSTED_KEYS has more than one entry with "
+            f"key_id {duplicate!r}; a duplicated key_id is ambiguous and is refused"
         )
     return PackSecurityLimits(
         max_uncompressed_bytes=int(
@@ -383,6 +418,22 @@ def verify_pack_signature(
     `TypeError` for a non-string, which is outside `(binascii.Error, ValueError)`
     and would otherwise bypass the typed contract entirely.
     """
+    duplicate = duplicate_trusted_key_id(trusted_keys)
+    if duplicate is not None:
+        # Re-checked at the GATE, not only at config load: `trusted_keys` is a
+        # parameter, so a caller that built the tuple itself (packtool's twin
+        # takes trustedKeys as an option and has no config-load site at all)
+        # would otherwise bypass the load-time refusal (issue #225).
+        #
+        # Deliberately the FIRST check, ahead of the signature block itself and
+        # every other gate input: an ambiguous keyset is a configuration fault,
+        # not a property of this signature, and reporting it as though the pack
+        # were at fault would send the operator hunting in the wrong place. The
+        # three TS twins order it identically.
+        raise PackExtractError(
+            "packs.security.trustedKeys has more than one entry with "
+            f"key_id {duplicate!r}; a duplicated key_id is ambiguous and is refused"
+        )
     if not isinstance(signature, dict):
         raise PackExtractError("pack signature block is missing or malformed")
     if signature.get("algorithm") != "ed25519":
