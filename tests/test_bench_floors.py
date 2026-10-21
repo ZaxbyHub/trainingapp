@@ -8,6 +8,7 @@ parsed from bench/RESULTS.md) and that the native driver enumerates the full
 
 import importlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -396,3 +397,102 @@ def _reference_i5_gemma_native_decode_recorded(text: str) -> bool:
             continue
         return True
     return False
+
+
+class TestRecordedArtifactBinding:
+    """Review PRR-010(d) (pr242): the recorded #205 run is load-bearing.
+
+    The desktop-retrieval-eval floor rows cite
+    eval/samples/report-i205-thread-provenance.json; previously deleting
+    that artifact kept every test green. This binding test reads the
+    artifact path FROM the RESULTS.md provenance string (so the rows
+    cannot cite a missing or swapped file), asserts the recorded metrics
+    sit at/above the floor rows' values, and pins the revision the run was
+    recorded at (the original artifact predated the first commit
+    containing the producing code and named no revision)."""
+
+    def test_recorded_i205_artifact_binds_to_the_floor_rows(self):
+        rows = floors.parse_floors(RESULTS)
+        desktop_rows = [
+            row
+            for row in rows
+            if row.get("surface") == "desktop-retrieval-eval"
+            and row.get("machine") == "devstation"
+        ]
+        assert len(desktop_rows) == 2, (
+            "expected the recall@5 and mrr desktop-retrieval-eval rows, got "
+            f"{len(desktop_rows)}"
+        )
+        artifact_rel = "eval/samples/report-i205-thread-provenance.json"
+        commit_pin = re.compile(r"recorded at commit ([0-9a-f]{40})")
+        pins = set()
+        for row in desktop_rows:
+            provenance = str(row.get("provenance", ""))
+            assert artifact_rel in provenance, (
+                f"the {row.get('metric')} row must cite the recorded run "
+                f"artifact ({artifact_rel})"
+            )
+            match = commit_pin.search(provenance)
+            assert match, (
+                f"the {row.get('metric')} row's provenance must pin the "
+                "40-hex commit the recorded run was made at (the old "
+                "'at head' claim named no revision)"
+            )
+            pins.add(match.group(1))
+        assert len(pins) == 1, "both rows must pin the SAME recorded commit"
+
+        artifact = REPO_ROOT / artifact_rel
+        assert artifact.is_file(), f"the cited artifact must exist: {artifact}"
+        data = json.loads(artifact.read_text(encoding="utf-8"))
+        measured = {
+            "recall@5": data["metrics"]["recall_at_k"]["5"],
+            "mrr": data["metrics"]["mrr"],
+        }
+        for row in desktop_rows:
+            metric = row["metric"]
+            assert metric in measured, f"unexpected floor metric {metric!r}"
+            assert measured[metric] >= row["value"], (
+                f"the recorded artifact's {metric} ({measured[metric]}) must "
+                f"sit at/above the floor row's value ({row['value']})"
+            )
+        assert (
+            data["error_count"] == 0
+        ), "the recorded run must be error-free for its metrics to bind"
+        # PRR-010(a): sources recorded as basenames only (the original
+        # artifact carried 426 absolute machine paths).
+        for result in data["results"]:
+            for source in result.get("sources", []):
+                assert not any(ch in source for ch in (":", "/", "\\")), (
+                    "recorded sources must be basenames, got "
+                    f"{source!r} (review PRR-010)"
+                )
+        # PRR-010(e): the thread pin is attested by the RUNNER process.
+        assert (
+            data["provenance"]["env"].get("TRAININGAPP_DESKTOP_EMBED_THREADS") == "1"
+        ), "the recorded report must attest the thread pin in provenance.env"
+        # PRR-010(b)/(f): the .log header pins the SAME commit, carries the
+        # runner digest, and puts the env prefix and command on ONE
+        # runnable line (the old header spliced a '#' mid-command).
+        log_text = (
+            REPO_ROOT / "eval" / "samples" / "report-i205-thread-provenance.log"
+        ).read_text(encoding="utf-8")
+        header = log_text.split("----", 1)[0]
+        assert pins.pop() in header, "the .log header must pin the same commit"
+        assert "runner.py sha256" in header
+        runnable = [
+            line
+            for line in header.splitlines()
+            if "python -m pytest" in line
+            and "BENCH_FLOORS_MACHINE=" in line
+            and "TRAININGAPP_PARITY_CAPTURE_DIR=" in line
+        ]
+        assert runnable, (
+            "the .log header must carry the env prefix and the command on "
+            "one runnable line"
+        )
+        for line in runnable:
+            stripped = line.lstrip("# ").strip()
+            assert "#" not in stripped, (
+                f"the recorded command must be copy-pasteable (no embedded "
+                f"'#' splice): {line!r}"
+            )
