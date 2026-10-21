@@ -114,9 +114,10 @@ function corrupt(packDir: string, sql: string): void {
   const db = new Database(join(packDir, INDEX_FILE_NAME));
   try {
     // The corruption injections deliberately create rows verify must catch
-    // (orphan chunk/pack references) — FK enforcement (better-sqlite3 enables
-    // it by default) would refuse the very rows the guardrail exists to
-    // detect, so injection runs with FKs off, exactly like the C3 check.
+    // (orphan chunk/pack references) — FK enforcement (left OFF by default;
+    // sqlite issues no enabling pragma) would refuse the very rows the
+    // guardrail exists to detect, so injection runs with FKs off, exactly
+    // like the C3 check.
     db.exec('PRAGMA foreign_keys = OFF');
     db.exec(sql);
   } finally {

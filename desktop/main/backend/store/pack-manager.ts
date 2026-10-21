@@ -1017,8 +1017,12 @@ export class PackManager {
    * no uniqueness on chunk_id, so leftovers are deleted before insert instead
    * of relying on any upsert. */
   private writeLiveChunksLocked(manifest: PackManifest, chunks: ChunkPayload[], vectors: number[][]): void {
-    // Docs rows FIRST: chunks.doc_id references docs(id) and better-sqlite3
-    // runs with PRAGMA foreign_keys=ON by default (the pipeline does the same).
+    // Docs rows FIRST: chunks.doc_id references docs(id). Foreign keys are
+    // OFF by default (SQLite's default; better-sqlite3 issues no pragma) —
+    // except on a connection that has run the v2->v3 migration ladder, which
+    // leaves them ON (store/migrate.ts). Inserting docs before their chunks
+    // is what keeps those connections legal and every other connection
+    // orphan-free; do not reorder it.
     for (const entry of manifest.docs) {
       this.stmt(
         'INSERT OR IGNORE INTO docs (id, source_class, path, sha256, title, published_at, pack_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
@@ -1059,7 +1063,9 @@ export class PackManager {
       this.writeLiveChunksLocked(manifest, chunks, vectors);
       return;
     }
-    // Docs rows FIRST (chunks.doc_id references docs(id); foreign keys on).
+    // Docs rows FIRST (chunks.doc_id references docs(id); foreign keys are
+    // OFF by default except on a connection that ran the v2->v3 ladder —
+    // store/migrate.ts — so this ordering is load-bearing in both worlds).
     for (const entry of manifest.docs) {
       this.stmt(
         'INSERT OR IGNORE INTO docs (id, source_class, path, sha256, title, published_at, pack_id) VALUES (?, ?, ?, ?, ?, ?, ?)',

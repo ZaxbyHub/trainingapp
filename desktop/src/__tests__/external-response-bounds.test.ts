@@ -64,7 +64,15 @@ async function failureOf(p: Promise<unknown>): Promise<ExternalProviderError> {
   throw new Error('expected a failure');
 }
 
-const SENTINEL_MS = 8_000;
+// CI evidence (trace 243-184-187-128-collated): 8s repeatedly loses this race
+// on loaded windows runners — run 39633198589 abandoned both 8 MiB legs at
+// 8020ms/8016ms when the sentinel fired (runs 39531781365, 39555678455 and
+// 39640637382 failed the same way), while the whole file passes in 1964ms on
+// the older runner agent (20261002.596, run 39647009729): the failures track
+// the runner deploy, not the code, and the cap fires correctly in every
+// observation. 18s stays under this file's smallest per-test budget (20s),
+// keeping fail-fast-before-timeout, with CI-load margin.
+const SENTINEL_MS = 18_000;
 function bounded<T>(p: Promise<T>): Promise<T | 'sentinel'> {
   return Promise.race([p, new Promise<'sentinel'>((resolve) => setTimeout(() => resolve('sentinel'), SENTINEL_MS))]);
 }

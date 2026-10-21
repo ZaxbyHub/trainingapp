@@ -382,3 +382,23 @@ def test_changelog_correction_markers_present():
                     "a nearby correction"
                 )
     assert not problems, "CHANGELOG corrections drifted:\n" + "\n".join(problems)
+
+
+def test_training_transcription_has_no_trace_local_citation():
+    """Issue #128 class guard: docs/training-transcription.md must cite no
+    trace-local artifact — neither path-shaped references (.agents/issue-traces,
+    c1-out) nor the prose pointer ("trace's localization log"). That evidence
+    is git-excluded and dead in every clone; the doc's own sections are the
+    durable record."""
+    text = (REPO_ROOT / "docs" / "training-transcription.md").read_text(
+        encoding="utf-8", errors="replace"
+    )
+    problems = [
+        pattern
+        for pattern in ("issue-traces", "c1-out", "trace's localization log")
+        if pattern in text
+    ]
+    assert not problems, (
+        "training-transcription.md regressed to citing trace-local artifacts: "
+        + ", ".join(problems)
+    )

@@ -1,6 +1,19 @@
 # Changelog
 
 ## [Unreleased]
+- **CI signal honesty and comment/doc truthfulness (issues #243, #184, #187,
+  #128)**: the two F-003 streamed-cap tests no longer lose their 8s harness
+  race on loaded CI runners (sentinel 8s -> 18s with the runner-deploy
+  evidence recorded inline; the 8 MiB cap itself was never wrong),
+  the store's FK-pragma comments now tell one true story (foreign_keys are
+  OFF by default; only the migration ladder flips them ON, leaving them on
+  for that connection — six false "ON by default" sites corrected across the
+  Node store, its python mirror, and two test premises), ADR-0013's article
+  mismatch and the wizard-manifest cache bullet's missing inline loadError
+  carve-out are fixed (the issue's already-shipped signal-reap and TDZ-safe
+  behaviors gained regression floors), and docs/training-transcription.md no
+  longer cites git-excluded trace-local artifacts, guarded by a new
+  doc-accuracy row.
 - **The protection bites: the desktop lifecycle pins are merge-blocking, the
   bench identity and floor cells are honest, and the eval harness cannot
   silently re-execute or swallow a dead /stats (issues #233, #205, #206)**:
