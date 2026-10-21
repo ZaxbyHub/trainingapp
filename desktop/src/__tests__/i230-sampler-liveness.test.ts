@@ -113,6 +113,20 @@ describe('issue 230 a wedged sampler is observable on the memory event stream', 
       const ticks = tickCounter(host);
       await host.start();
 
+      // HEALTHY-BASELINE (feedback PRR-003): while the sampler is healthy,
+      // /telemetry/memory must report samplerStaleMs === 0 — this kills the
+      // always-age mutant (computing Date.now() - startedAt unconditionally,
+      // ignoring the latch) which the >0-latched assertion alone cannot.
+      const healthy = await fetch(`${(host as unknown as { handle: { url: string } }).handle!.url}/telemetry/memory`, {
+        headers: { 'X-Desktop-Token': 'i230-wedge-token' },
+      });
+      expect(healthy.status).toBe(200);
+      const healthyBody = (await healthy.json()) as { snapshot: Record<string, number> };
+      expect(
+        healthyBody.snapshot.samplerStaleMs,
+        'a healthy sampler reports samplerStaleMs === 0',
+      ).toBe(0);
+
       // A resumable whose reportMemory() NEVER settles: the first tick that
       // reaches it suspends inside the await forever, holding the in-flight
       // exclusion flag, and every later tick skips at the guard. This is the
@@ -220,6 +234,18 @@ describe('issue 230 a wedged sampler is observable on the memory event stream', 
         hw.samplerStaleEmitted,
         'the restarted sampler stays unlatched (healthy)',
       ).toBe(false);
+      // samplerStaleMs is back to 0 after the restart (feedback PRR-003:
+      // kills the always-age mutant from the recovery side too).
+      const restarted = await fetch(
+        `${(host as unknown as { handle: { url: string } }).handle!.url}/telemetry/memory`,
+        { headers: { 'X-Desktop-Token': 'i230-wedge-token' } },
+      );
+      expect(restarted.status).toBe(200);
+      const restartedBody = (await restarted.json()) as { snapshot: Record<string, number> };
+      expect(
+        restartedBody.snapshot.samplerStaleMs,
+        'samplerStaleMs returns to 0 after the restart',
+      ).toBe(0);
     },
     30_000,
   );
