@@ -210,9 +210,12 @@ describe('issue 229 memory tick lifecycle across stop', () => {
       // after the first latch — which is precisely the new failure mode this
       // fix introduces (an in-flight exclusion flag that is never released).
       // So prove the sampler kept running during the observation window before
-      // proving it stayed quiet.
+      // proving it stayed quiet. PRR-012 (pr242 review): poll via the spec's
+      // until() helper with a 5 s deadline instead of a fixed 150 ms drain —
+      // a loaded runner could strand a 20 ms sampler tick inside that window
+      // and red a required check.
       const ticksBefore = tickCount();
-      await drain(150);
+      await until(() => tickCount() - ticksBefore > 0, 5000);
       const ticksDuring = tickCount() - ticksBefore;
       expect(
         ticksDuring,

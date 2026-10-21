@@ -806,14 +806,28 @@ def _execute_parity_flow() -> dict:
             host_err = (work / "host.err").read_text(encoding="utf-8", errors="replace")
         finally:
             host.kill_tree()
+        # Cache the host stderr BEFORE the opt-in capture block (review
+        # PRR-005): a capture failure must never poison the cached run — the
+        # metric assertions quote this stderr as their diagnostic.
+        _PARITY_RUN["host_err"] = host_err
         capture_dir = os.environ.get(_PARITY_CAPTURE_ENV)
         if capture_dir:
-            dest = Path(capture_dir)
-            dest.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(work / "report.json", dest / "report.json")
-            shutil.copyfile(work / "REPORT.md", dest / "REPORT.md")
-            (dest / "host.err").write_text(host_err, encoding="utf-8")
-    _PARITY_RUN["host_err"] = host_err
+            # Warn-and-continue (review PRR-005): the capture is opt-in
+            # evidence recording, not part of the measurement. An OSError
+            # here must not turn a successful ~540 s measurement into a
+            # sticky cached failure.
+            try:
+                dest = Path(capture_dir)
+                dest.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(work / "report.json", dest / "report.json")
+                shutil.copyfile(work / "REPORT.md", dest / "REPORT.md")
+                (dest / "host.err").write_text(host_err, encoding="utf-8")
+            except Exception as exc:
+                print(
+                    f"parity: capture to {capture_dir} failed ({exc!r}); "
+                    "continuing without recorded artifacts",
+                    file=sys.stderr,
+                )
     return report
 
 
@@ -835,7 +849,9 @@ def _parity_report() -> dict:
         return _PARITY_RUN["report"]
     try:
         report = _execute_parity_flow()
-    except BaseException as exc:
+    except Exception as exc:  # review PRR-006: never cache BaseException —
+        # KeyboardInterrupt/pytest Skipped must unwind, not become a sticky
+        # cached failure that re-raises (and re-logs) on every consumer.
         _PARITY_RUN["failure"] = exc
         raise
     _PARITY_RUN["report"] = report

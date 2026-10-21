@@ -565,6 +565,33 @@ class TestStatsFetchErrorSentinel:
         assert report["backend_stats"]["stats_fetch_error"] == "http 503"
         assert report["backend_stats"]["document_count"] is None
 
+    def test_transport_message_stats_fetch_error_invalid_json(self, monkeypatch):
+        # Review PRR-003 (a): HTTP 200 whose body is not JSON must surface as
+        # a sentinel, never an uncaught JSONDecodeError aborting run_eval.
+        class _NotJsonResponse(_FakeResponse):
+            def json(self):
+                raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+        report = self._run(monkeypatch, lambda: _NotJsonResponse(200, None))
+        error = report["backend_stats"]["stats_fetch_error"]
+        assert (
+            error == "http 200: response is not valid JSON"
+        ), f"the sentinel must name the invalid-JSON failure kind, got {error!r}"
+        assert report["backend_stats"]["document_count"] is None
+
+    def test_transport_message_stats_fetch_error_non_object_json(self, monkeypatch):
+        # Review PRR-003 (b): HTTP 200 whose body parses to a non-object must
+        # surface as a sentinel too (a bare list would AttributeError on
+        # .get after the full sweep).
+        report = self._run(
+            monkeypatch, lambda: _FakeResponse(200, ["not", "an", "object"])
+        )
+        error = report["backend_stats"]["stats_fetch_error"]
+        assert (
+            error == "http 200: response body is not a JSON object"
+        ), f"the sentinel must name the non-object failure kind, got {error!r}"
+        assert report["backend_stats"]["document_count"] is None
+
     def test_transport_message_absent_when_stats_fetch_ok(self, monkeypatch):
         # Twin: a clean /stats fetch records no sentinel at all.
         report = self._run(

@@ -149,6 +149,17 @@ def source_matches(source: str, expected_doc_id: str) -> bool:
     return normalized.rsplit("/", 1)[-1] == expected_doc_id
 
 
+def source_basename(source: str) -> str:
+    """Final path component of a source id (review PRR-010a).
+
+    Backends return display filenames or full ingest paths depending on the
+    surface; the REPORT records the basename so recorded artifacts stay
+    machine-portable (the committed #205 report previously carried 426
+    absolute devstation paths).
+    """
+    return source.replace("\\", "/").rsplit("/", 1)[-1]
+
+
 def rank_of_expected(sources: list[str], expected_doc_id: str) -> int:
     """1-based rank of the first matching source, or 0 when absent."""
     for idx, source in enumerate(sources, 1):
@@ -241,7 +252,23 @@ def run_eval(
         try:
             stats_response = client.get(f"{base_url}/stats", timeout=timeout)
             if stats_response.status_code == 200:
-                stats = stats_response.json()
+                # Issue #205 AC2 + review PRR-003: a 200 whose body is not
+                # JSON, or is JSON but not an object, is a FETCH FAILURE with
+                # a named kind — never an uncaught JSONDecodeError aborting
+                # run_eval, and never an AttributeError after the sweep.
+                try:
+                    stats = stats_response.json()
+                except ValueError:  # covers json.JSONDecodeError
+                    stats = None
+                    stats_fetch_error = (
+                        f"http {stats_response.status_code}: response is not valid JSON"
+                    )
+                if stats is not None and not isinstance(stats, dict):
+                    stats_fetch_error = (
+                        f"http {stats_response.status_code}: "
+                        "response body is not a JSON object"
+                    )
+                    stats = None
             else:
                 stats_fetch_error = f"http {stats_response.status_code}"
         except httpx.HTTPError as exc:
@@ -281,7 +308,7 @@ def run_eval(
                 if answer.strip().lower().startswith(CANCELLED_MARKER):
                     entry["error"] = "generation cancelled ([Cancelled] answer)"
                 else:
-                    entry["sources"] = sources
+                    entry["sources"] = [source_basename(s) for s in sources]
                     entry["answer"] = answer
                     entry["abstained"] = is_abstain(sources, answer)
                     entry["fallback_phrase"] = is_fallback_phrase_answer(

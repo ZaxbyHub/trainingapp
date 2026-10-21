@@ -56,9 +56,31 @@ ASSETS = REPO_ROOT / "models"
 
 _MACHINE_TAG = floors.current_machine_tag()
 
-# sys.modules["llama_cpp"] sentinel for "the key was absent on snapshot" (a
-# plain None would be ambiguous with a stored None value).
-_LLAMA_CPP_ABSENT = object()
+# The llama_cpp* namespace helpers below are the eviction contract's
+# primitives (issue #206 AC10 + review PRR-011): snapshot EVERY key the
+# package occupies, restore exactly that set.
+
+
+def _llama_cpp_keys() -> list[str]:
+    """Every sys.modules key the llama_cpp package occupies (the top-level
+    module plus its llama_cpp.* submodules — the real import binds both)."""
+    return [
+        name
+        for name in sys.modules
+        if name == "llama_cpp" or name.startswith("llama_cpp.")
+    ]
+
+
+def _restore_llama_cpp_namespace(snapshot: dict) -> None:
+    """Put the exact pre-existing llama_cpp* key set back (review PRR-011).
+
+    Restoring only the top-level `llama_cpp` key left the real wheel's
+    `llama_cpp.*` submodules resident after the block; this evicts every
+    llama_cpp* key currently present and re-inserts only the snapshot's."""
+    for name in _llama_cpp_keys():
+        del sys.modules[name]
+    sys.modules.update(snapshot)
+
 
 UNARMED_REASON = (
     "BENCH_FLOORS_MACHINE is not set, so no machine-tagged floor rows are "
@@ -187,55 +209,54 @@ def _real_llama_cpp():
     real binding exposes Llama as a class, a Mock does not - so detect the
     stand-in, evict it just long enough for the real import (the bench
     driver's own `import llama_cpp` then resolves to the real one), and
-    RESTORE THE PRE-EXISTING OBJECT ON EXIT unconditionally (issue #206
+    RESTORE THE PRE-EXISTING NAMESPACE ON EXIT unconditionally (issue #206
     AC10): the eviction is symmetric, so the conftest stand-in survives the
     enforcement module instead of being permanently replaced by the real
     wheel (which would no-op every sibling setdefault defense and make
     `patch("llama_cpp.Llama")` collection-order dependent).
 
+    Review PRR-011: the snapshot/restore covers ALL llama_cpp* keys (the
+    real import binds submodules too), and the restoring try/finally arms
+    BEFORE the first eviction, so no BaseException can leave the namespace
+    half-restored.
+
     Yields the real module, or None when the wheel is not importable (the
     caller skips in that case).
     """
-    mod = sys.modules.get("llama_cpp")
-    if mod is not None and isinstance(getattr(mod, "Llama", None), type):
+    snapshot = {name: sys.modules[name] for name in _llama_cpp_keys()}
+    top = snapshot.get("llama_cpp")
+    if top is not None and isinstance(getattr(top, "Llama", None), type):
         try:
-            yield mod
+            yield top
         finally:
-            sys.modules["llama_cpp"] = mod
+            _restore_llama_cpp_namespace(snapshot)
         return
-    mocked = mod is not None and not isinstance(getattr(mod, "Llama", None), type)
-    if mocked:
-        del sys.modules["llama_cpp"]
+    mocked = top is not None and not isinstance(getattr(top, "Llama", None), type)
     real = None
     try:
-        import llama_cpp
+        if mocked:
+            del sys.modules["llama_cpp"]
+        try:
+            import llama_cpp
 
-        real = llama_cpp
-    except Exception:
-        real = None
-    try:
+            real = llama_cpp
+        except Exception:
+            real = None
         yield real
     finally:
-        if mocked:
-            sys.modules["llama_cpp"] = mod
-        elif real is not None and sys.modules.get("llama_cpp") is real:
-            # Nothing was there before the block: restore the absence.
-            del sys.modules["llama_cpp"]
+        _restore_llama_cpp_namespace(snapshot)
 
 
 @pytest.fixture(autouse=True, scope="module")
 def _llama_cpp_snapshot_safety_net():
-    """Safety net (issue #206 AC10): whatever any test in this module does to
-    sys.modules["llama_cpp"], the object that was there when the module
-    started is back in place when it finishes — the conftest stand-in must
-    survive the enforcement module even if a future edit breaks the context
-    manager's own restore."""
-    snapshot = sys.modules.get("llama_cpp", _LLAMA_CPP_ABSENT)
+    """Safety net (issue #206 AC10 + review PRR-011): whatever any test in
+    this module does to the llama_cpp* namespace, the exact key set that was
+    there when the module started is back in place when it finishes — the
+    conftest stand-in must survive the enforcement module even if a future
+    edit breaks the context manager's own restore."""
+    snapshot = {name: sys.modules[name] for name in _llama_cpp_keys()}
     yield
-    if snapshot is _LLAMA_CPP_ABSENT:
-        sys.modules.pop("llama_cpp", None)
-    else:
-        sys.modules["llama_cpp"] = snapshot
+    _restore_llama_cpp_namespace(snapshot)
 
 
 # ---------------------------------------------------------------------------
@@ -652,13 +673,18 @@ class TestProtocolPins:
 class TestLlamaCppEviction:
     """The sys.modules['llama_cpp'] swap is symmetric: whatever was there
     before the native block is back after it — the conftest stand-in
-    survives the enforcement module."""
+    survives the enforcement module (both entry states: a stand-in present,
+    and nothing llama_cpp* present at all)."""
 
     def test_eviction_context_restores_the_pre_existing_object(self):
-        import types
+        from unittest.mock import MagicMock
 
-        sentinel = types.ModuleType("llama_cpp_sentinel")
-        previous = sys.modules.get("llama_cpp", _LLAMA_CPP_ABSENT)
+        # Review PRR-009: a MagicMock whose .Llama attribute is a NON-type
+        # object — the exact shape of conftest's stand-in (a plain
+        # types.ModuleType has no attribute protocol to speak of).
+        sentinel = MagicMock()
+        sentinel.Llama = object()
+        snapshot = {name: sys.modules[name] for name in _llama_cpp_keys()}
         sys.modules["llama_cpp"] = sentinel
         try:
             with _real_llama_cpp() as real:
@@ -666,7 +692,7 @@ class TestLlamaCppEviction:
                     real is not sentinel
                 ), "the stand-in must never be yielded as the real binding"
                 if real is not None:
-                    assert isinstance(real, types.ModuleType) and isinstance(
+                    assert isinstance(
                         getattr(real, "Llama", None), type
                     ), "a yielded real binding must carry Llama as a class"
             assert sys.modules["llama_cpp"] is sentinel, (
@@ -674,8 +700,44 @@ class TestLlamaCppEviction:
                 "one-way eviction permanently breaks every sibling "
                 'patch("llama_cpp.Llama") defense'
             )
+            assert not [
+                name for name in _llama_cpp_keys() if name != "llama_cpp"
+            ], "the real import's llama_cpp.* submodules must not stay resident"
         finally:
-            if previous is _LLAMA_CPP_ABSENT:
-                sys.modules.pop("llama_cpp", None)
-            else:
-                sys.modules["llama_cpp"] = previous
+            _restore_llama_cpp_namespace(snapshot)
+
+    def test_eviction_context_restores_absence_when_absent_at_entry(self):
+        # Review PRR-009: the other entry state — NOTHING llama_cpp* in
+        # sys.modules. Entering imports the real wheel (skip when the wheel
+        # is absent, mirroring how the native measurement tests gate on
+        # wheel presence); on exit the namespace must be absent again,
+        # submodules included.
+        snapshot = {name: sys.modules[name] for name in _llama_cpp_keys()}
+        for name in list(snapshot):
+            del sys.modules[name]
+        try:
+            with _real_llama_cpp() as real:
+                if real is None:
+                    pytest.skip(
+                        "llama-cpp-python not importable (the absent-at-entry "
+                        "eviction branch needs the real wheel; the native "
+                        "measurement tests gate on wheel presence the same "
+                        "way)"
+                    )
+                assert isinstance(
+                    getattr(real, "Llama", None), type
+                ), "a yielded real binding must carry Llama as a class"
+                assert "llama_cpp" in sys.modules, (
+                    "with nothing evicted at entry, the real import must "
+                    "bind the module during the block"
+                )
+            assert "llama_cpp" not in sys.modules, (
+                "nothing was there on entry, so the top-level key must be "
+                "absent again on exit"
+            )
+            assert not _llama_cpp_keys(), (
+                "nothing was there on entry, so no llama_cpp.* submodule "
+                "may stay resident on exit (review PRR-011)"
+            )
+        finally:
+            _restore_llama_cpp_namespace(snapshot)

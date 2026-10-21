@@ -17,11 +17,17 @@
 // frozen roster-exclusion-evidence-contract acceptance spec), and every
 // exclusion carries machine-verifiable owning-context evidence — the
 // workflow file must exist and its text must contain the pinned scalar.
-// The convention census at base matched 18 files = 10 rostered (the 6
-// original members plus backend-env-repo-root-contract,
-// i230-resolver-env-parity, roster-exclusion-evidence-contract and
-// frozen-recipe-replay-contract; the four *-lifecycle specs are rostered
-// but named outside the convention) + 8 excluded.
+// The convention census at HEAD (this commit) matched 18 files = 10
+// rostered via the convention (the 6 original members plus
+// backend-env-repo-root-contract, i230-resolver-env-parity,
+// roster-exclusion-evidence-contract and frozen-recipe-replay-contract)
+// + 8 excluded; six rostered specs are named OUTSIDE the convention and
+// are therefore invisible to the census — backend-lifecycle-capture-once-
+// census, backend-memory-tick-lifecycle, i199-backend-surface-lifecycle,
+// reranker-generation-lifecycle, i230-host-stop-profile-reset and
+// i230-sampler-liveness (the last two rostered by review PRR-008) — so
+// the ROSTER, not the naming convention, is the closed set a new spec
+// must be added to.
 //
 // Named mutants: (a) remove the contract-family step from security.yml;
 // (b) narrow its selection below the roster; (c) add continue-on-error (or an
@@ -34,6 +40,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FAMILY_ROSTER, ROSTER_EXCLUSIONS } from './contract-family-registry.js';
+import type { RosterExclusionEntry } from './contract-family-registry.js';
 
 function findRepoRoot(dir: string): string {
   let current = dir;
@@ -185,8 +192,40 @@ describe('ci gate required wiring (issue #215 AC13)', () => {
     }
     // Issue #233 (plan A2): an exclusion is EVIDENCE, not a sentence — each
     // entry's owning workflow must exist under .github/workflows/ and its
-    // text must contain the pinned run-line scalar (the same evidence bar
-    // the roster run line itself is held to above).
+    // run line must literally execute the excluded spec (the same evidence
+    // bar the roster run line itself is held to above).
+    //
+    // Review PRR-002 (pr242, executed attack): the raw containment scan is
+    // comment-blind and prefix-loose — a COMMENTED-OUT run line keeps the
+    // raw text intact, and a NARROWED run line still contains/prefixes the
+    // scalar, while the excluded spec then runs nowhere. So the evidence
+    // must additionally hold on COMMENT-STRIPPED text at LINE granularity:
+    // some stripped, whitespace-collapsed line (leading 'run:'/'-' step
+    // markers dropped) must EQUAL the scalar exactly. (A starts-with
+    // fallback was considered for folded scalars and rejected: it is
+    // exactly the narrowing hole this closes — the folded-prefix scalars
+    // were tightened to full run-line literals in the registry instead.)
+    const normalizeWorkflowLine = (line: string): string => {
+      let out = line.trim();
+      out = out.replace(/^-\s+/, '');
+      out = out.replace(/^run:\s*/, '');
+      return out.replace(/\s+/g, ' ').trim();
+    };
+    const lineEvidenceViolation = (
+      entry: RosterExclusionEntry,
+      strippedText: string,
+    ): string | null => {
+      const lines = strippedText
+        .split('\n')
+        .map(normalizeWorkflowLine)
+        .filter((line) => line.length > 0);
+      if (lines.some((line) => line === entry.runs_in.scalar)) return null;
+      return (
+        `${entry.spec}: workflow ${entry.runs_in.workflow} carries no run line that equals ` +
+        `the evidence scalar ${JSON.stringify(entry.runs_in.scalar)} (claimed reason: ` +
+        `${entry.reason}) — a commented-out or narrowed run line is not execution evidence`
+      );
+    };
     for (const entry of ROSTER_EXCLUSIONS) {
       const workflowPath = path.join(WORKFLOWS_DIR, entry.runs_in.workflow);
       expect(
@@ -194,10 +233,53 @@ describe('ci gate required wiring (issue #215 AC13)', () => {
         `${entry.spec}: excluded via ${entry.runs_in.workflow}, but that workflow does not exist`,
       ).toBe(true);
       const workflowText = fs.readFileSync(workflowPath, 'utf8');
+      // Raw containment stays asserted (the frozen evidence contract's own
+      // bar — roster-exclusion-evidence-contract.test.ts); the line-exact
+      // layer below is the hardened one.
       expect(
         workflowText,
         `${entry.spec}: workflow ${entry.runs_in.workflow} does not contain the evidence scalar ${JSON.stringify(entry.runs_in.scalar)} (claimed reason: ${entry.reason})`,
       ).toContain(entry.runs_in.scalar);
+      expect(
+        lineEvidenceViolation(entry, stripYamlComments(workflowText)),
+        `${entry.spec}: the owning run-line evidence must survive comment stripping and line-exactness (review PRR-002)`,
+      ).toBeNull();
     }
+    // Negative controls (review PRR-002, both executed attacks), fabricated
+    // through the SAME stripYamlComments + lineEvidenceViolation path the
+    // real entries take: (a) a run line that exists only as a YAML COMMENT
+    // must fail; (b) a NARROWED run line that merely starts with the scalar
+    // must fail too.
+    const commentedEntry: RosterExclusionEntry = {
+      spec: 'fabricated-contract.test.ts',
+      reason: 'negative control',
+      runs_in: { workflow: 'sample.yml', scalar: 'npm --prefix desktop test' },
+    };
+    const commentedOutSample = stripYamlComments(
+      [
+        'jobs:',
+        '  build:',
+        '    steps:',
+        '      - name: Acceptance tests (vitest, stubbed electron)',
+        '        # run: npm --prefix desktop test',
+        "        run: echo 'no tests here'",
+        '',
+      ].join('\n'),
+    );
+    expect(
+      lineEvidenceViolation(commentedEntry, commentedOutSample),
+      'a commented-out run line must NOT count as exclusion evidence',
+    ).not.toBeNull();
+    const narrowedSample = stripYamlComments(
+      [
+        '      - name: Acceptance tests (vitest, stubbed electron)',
+        '        run: npm --prefix desktop test -- src/__tests__/ci-gate-required-contract.test.ts',
+        '',
+      ].join('\n'),
+    );
+    expect(
+      lineEvidenceViolation(commentedEntry, narrowedSample),
+      'a narrowed run line (a mere prefix of the scalar) must NOT count as exclusion evidence',
+    ).not.toBeNull();
   });
 });

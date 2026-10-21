@@ -42,6 +42,12 @@ export const FAMILY_ROSTER: string[] = [
   'i199-backend-surface-lifecycle.test.ts',
   'reranker-generation-lifecycle.test.ts',
   'i230-resolver-env-parity.test.ts',
+  // Review PRR-008 (pr242-20261021): the frozen #232-residual acceptance
+  // specs join the roster — same REAL-engine idiom as the ubuntu-green
+  // memory-tick spec; before this they ran in no merge-blocking context
+  // and were invisible to the convention census (non-convention names).
+  'i230-host-stop-profile-reset.test.ts',
+  'i230-sampler-liveness.test.ts',
   // The frozen acceptance surfaces of this issue ride the same gate.
   'roster-exclusion-evidence-contract.test.ts',
   'frozen-recipe-replay-contract.test.ts',
@@ -54,27 +60,43 @@ export const ROSTER_EXCLUSIONS: RosterExclusionEntry[] = [
     reason: 'pin-record guard owned by harness-contracts.yml',
     runs_in: {
       workflow: 'harness-contracts.yml',
-      // The owning run line's tail (run: npm --prefix desktop test --
-      // src/__tests__/harness- src/__tests__/acceptance-precision-...):
-      // contiguous, run-line-unique — the bare filename also appears in the
-      // paths: trigger filters, which are not run evidence.
-      scalar: 'test -- src/__tests__/harness- src/__tests__/acceptance-precision-contract.test.ts',
+      // The owning run line VERBATIM (single physical line). Review
+      // PRR-002: the previous tail-only scalar was a line PREFIX — a
+      // narrowed run line starting with it kept the evidence green while
+      // selecting fewer specs; the full-line form is what the hardened
+      // line-exact check in ci-gate-required-contract.test.ts requires
+      // (and the bare filename also appears in the paths: trigger
+      // filters, which are not run evidence).
+      scalar: 'npm --prefix desktop test -- src/__tests__/harness- src/__tests__/acceptance-precision-contract.test.ts',
     },
   },
   {
     spec: 'packaged-smoke-contract.test.ts',
-    reason: 'needs a packaged dist (desktop-build smoke)',
+    // Review PRR-013: truthful — the spec runs in desktop-build's full
+    // vitest suite (before the build); only the packaged smoke itself
+    // needs a built installer dist.
+    reason: 'runs in desktop-build full vitest suite; packaged smoke needs built dist',
     runs_in: { workflow: 'desktop-build.yml', scalar: 'npm --prefix desktop test' },
   },
   {
     spec: 'harness-kill-guard-contract.test.ts',
     reason: 'harness-contracts.yml owns this pin',
-    runs_in: { workflow: 'harness-contracts.yml', scalar: 'test -- src/__tests__/harness-' },
+    runs_in: {
+      workflow: 'harness-contracts.yml',
+      // Full owning run line (review PRR-002 tightened the previous
+      // 'test -- src/__tests__/harness-' tail to the line-exact form).
+      scalar: 'npm --prefix desktop test -- src/__tests__/harness- src/__tests__/acceptance-precision-contract.test.ts',
+    },
   },
   {
     spec: 'harness-parse-contract.test.ts',
     reason: 'harness-contracts.yml owns this pin',
-    runs_in: { workflow: 'harness-contracts.yml', scalar: 'test -- src/__tests__/harness-' },
+    runs_in: {
+      workflow: 'harness-contracts.yml',
+      // Full owning run line (review PRR-002 tightened the previous
+      // 'test -- src/__tests__/harness-' tail to the line-exact form).
+      scalar: 'npm --prefix desktop test -- src/__tests__/harness- src/__tests__/acceptance-precision-contract.test.ts',
+    },
   },
   {
     spec: 'e1-manifest-contract.test.ts',
