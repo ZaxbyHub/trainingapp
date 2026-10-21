@@ -64,3 +64,51 @@ def test_directory_route_reports_typed_refusal_not_store_failure(tmp_path, caplo
         "expected an ERROR-level refusal record naming evil.json; "
         f"captured log was:\n{caplog.text}"
     )
+
+
+def test_extract_json_refuses_lone_surrogate_in_storyline_marker_branch(tmp_path):
+    """The storyline-marker return path is inside the same guard (PRR-019 leg).
+
+    A slide document (slide_id + slide_title + on_screen_text present) takes
+    the parts-join return, not the json.dumps path — a surrogate carried in
+    on_screen_text must be refused there too, not only on the dumps paths.
+    """
+    payload = (
+        '{"slide_id": "s1", "slide_title": "t",'
+        ' "on_screen_text": "bad \\ud800 text"}'
+    )
+    path = tmp_path / "slide.json"
+    path.write_bytes(payload.encode("ascii"))
+
+    processor = DocumentProcessor()
+    with pytest.raises(ValueError):
+        processor.extract_json_document(str(path))
+    assert processor.process_file(str(path)) == []
+
+
+def test_extract_json_refuses_lone_surrogate_in_non_dict_root(tmp_path):
+    """A non-dict root (list) takes the json.dumps branch — still guarded."""
+    payload = '["bad \\ud800 text"]'
+    path = tmp_path / "list.json"
+    path.write_bytes(payload.encode("ascii"))
+
+    processor = DocumentProcessor()
+    with pytest.raises(ValueError):
+        processor.extract_json_document(str(path))
+
+
+def test_refusal_message_names_no_document_text(tmp_path):
+    """The refusal text carries the codec's escaped form, never the raw value
+    (the message itself must survive a UTF-8 encode — PR #231 lesson)."""
+    path = tmp_path / "evil.json"
+    path.write_bytes(EVIL_JSON.encode("ascii"))
+
+    processor = DocumentProcessor()
+    with pytest.raises(ValueError) as excinfo:
+        processor.extract_json_document(str(path))
+
+    message = str(excinfo.value)
+    assert "not encodable as UTF-8" in message
+    assert "not encodable as UTF-8: 'utf-8' codec" in message
+    assert message.encode("utf-8"), "refusal message must itself be encodable"
+    assert "evil" not in message, "the offending document text must not be echoed"

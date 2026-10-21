@@ -695,8 +695,12 @@ export function bootstrap(): void {
       const fastBytes = modelBytesFor('fast');
       // One wizardManifest() per status invocation: results are cached per
       // (manifestPath, mtime) (#131 item 3, subsuming PRR-002's within-status
-      // sharing), so repeated status calls cost a stat, not a hash pass; the
-      // completion handler passes {fresh: true} for its TOCTOU re-verify.
+      // sharing), so repeated status calls on a CLEAN tree cost a stat, not a
+      // hash pass; the completion handler passes {fresh: true} for its TOCTOU
+      // re-verify. A FAILED verify is never cached (issue #175: the repair
+      // must converge), so while failures persist every status call re-hashes
+      // the staged tree (~2.4s, main thread) — accepted by #175 so the
+      // wizard cannot wedge on a cached failure.
       const wm = wizardManifest(opts);
       // RAM-gate sizes: the staged file's real size when present, otherwise
       // the manifest's declared size for the group (a quality model that has
@@ -935,8 +939,11 @@ export function bootstrap(): void {
           // Fresh verification (TOCTOU guard): the operator may have completed
           // the wizard long after the status they saw was rendered. #131:
           // {fresh: true} re-hashes even though the cache may hold a clean
-          // result, and the digest capture below then reads THIS pass from
-          // the cache instead of paying a second hash.
+          // result; on a CLEAN pass the digest capture below then reads THIS
+          // pass from the cache instead of paying a second hash. A FAILING
+          // fresh pass is never cached (issue #175) and assertCanComplete
+          // below throws before any digest capture, so the eviction cannot
+          // affect completion.
           const status = await buildFirstRunStatus({ fresh: true });
           const manifestOk = manifestCompletionState({
             packaged: status.manifest.packaged,

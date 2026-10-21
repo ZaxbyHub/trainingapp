@@ -15,8 +15,8 @@
 //     at construction — a mid-session TRAININGAPP_DESKTOP_REPO_ROOT change
 //     does not re-resolve, unlike the old closure);
 //   - cache keyed (manifestPath, manifest mtimeMs): a non-fresh call on an
-//     unchanged manifest returns the cached verify result WITHOUT re-hashing;
-//     `{fresh: true}` re-verifies and refreshes the cache — the
+//     unchanged manifest returns the cached CLEAN verify result WITHOUT
+//     re-hashing; `{fresh: true}` re-verifies and refreshes the cache — the
 //     completion-time TOCTOU re-verify stays a real pass, and the digest
 //     capture right after it reads that same fresh result instead of paying
 //     a second hash.
@@ -28,10 +28,15 @@
 // drift re-check in evaluateStatus compares stored digests against these
 // cached digests, so within one process it cannot surface such a mutation;
 // the startup integrity gate re-verifies at every launch and the completion
-// handler re-verifies on every wizard completion. Transient loadError
-// results are never cached (see wizardManifest below), so a one-off read
-// failure recovers on the next status call exactly as the uncached closure
-// did.
+// handler re-verifies on every wizard completion. Results that are not
+// CLEAN are never cached, and evict any cached entry under the current key
+// (see wizardManifest below): a transient loadError (EBUSY/EPERM/EMFILE on
+// Windows while an installer copy is in flight) recovers on the next status
+// call exactly as the uncached closure did (PRR-003), and a FAILED verify
+// (missing/unreadable/digest-mismatch) re-verifies on every non-fresh call
+// until repaired, so a repaired tree converges instead of wedging the
+// wizard behind a cached failure (issue #175; cost: the ~2.4s staged-tree
+// hash pass repeats per status call while the failure persists).
 import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 

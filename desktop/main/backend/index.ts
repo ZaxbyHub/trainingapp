@@ -284,7 +284,14 @@ export class NodeBackendHost implements BackendHost {
       // tick holds. stop() force-clears the flag at teardown, so an
       // unconditional release here would let the stale tick re-admit a
       // concurrent tick on the live generation.
-      if (generation === this.memoryTickGeneration) this.memoryTickInflight = false;
+      if (generation === this.memoryTickGeneration) {
+        this.memoryTickInflight = false;
+        // issue #232 (c): a SETTLED tick proves the sampler recovered —
+        // unlatch the staleness signal here (not only at the next
+        // admission), so samplerStaleMs returns to 0 and a later wedge can
+        // re-emit instead of staying silenced by the old latch.
+        this.samplerStaleEmitted = false;
+      }
     }
   };
 

@@ -68,7 +68,7 @@ const ROSTER_EXCLUSIONS = new Map<string, string>([
   ['browser-pack-extract-parity.test.ts', 'desktop-build-owned pin (browser twin)'],
   [
     'i230-resolver-env-parity.test.ts',
-    'issue-tracer acceptance check for issue #232 (b) — owned by the desktop vitest suite, not the cross-cutting contract family',
+    'issue-tracer acceptance check for issue #232 residual (b) — owned by the desktop vitest suite, not the cross-cutting contract family',
   ],
   ['c3-pack-parity.test.ts', 'desktop-build-owned pin (pack fixtures)'],
   [

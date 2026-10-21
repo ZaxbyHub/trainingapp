@@ -1292,6 +1292,13 @@ components:
         sqliteRssMb: { type: number, description: SQLite driver heap (0 when no store is open) }
         systemFreeMb: { type: number, description: os.freemem() in MB }
         systemTotalMb: { type: number, description: os.totalmem() in MB }
+        samplerStaleMs:
+          type: number
+          description: >-
+            Milliseconds since the in-flight memory-sampler tick started while
+            a sampler-stale wedge is latched (issue #232); 0 while the sampler
+            is healthy. Optional additive field: hosts answering this route
+            without the issue #232 fix omit it.
     DowngradeState:
       type: object
       description: Sustained-pressure downgrade state (B8 S6; AC3 hysteresis documented in ADR-0008).

@@ -1,5 +1,6 @@
 // i230-sampler-liveness.test.ts — FROZEN ACCEPTANCE SPEC
-// (issue #230 sub-defect (c); trace 199-230-backend-host-lifecycle).
+// (issue #232 residual (c) — sub-defect (c) of PR #230's host lifecycle work;
+// trace 199-230-backend-host-lifecycle).
 //
 // AC (DISCRIMINATING): WHEN a resumable.reportMemory() never settles (the
 // tick holds the in-flight exclusion flag forever and every subsequent tick
@@ -18,6 +19,12 @@
 // is several telemetry intervals long and witnessed by the tickCounter
 // liveness helper, so the assertion proves a wedged pipeline under a LIVE
 // dispatch loop, not a sampler that never ran.
+//
+// Feedback coverage (PR #241 review PRR-003/004/016/021): exactly-one latch,
+// workerMemory stays null while wedged, the samplerStaleMs snapshot field
+// through the real /telemetry/memory route (0 healthy, >0 while latched,
+// back to 0 after restart), and no second event after a stop()->start()
+// cycle (the witness reset is condition-scoped, issue #232's own class).
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NodeBackendHost } from '../../main/backend/index.js';
 import { LlamaEngine } from '../../main/backend/inference/llama-engine.js';
@@ -50,6 +57,12 @@ const ENV = {
 
 const drain = async (ms: number): Promise<void> => {
   await new Promise((resolve) => setTimeout(resolve, ms));
+};
+
+/** Poll every 10 ms until cond() is true or the deadline passes. */
+const until = async (cond: () => boolean, timeoutMs: number): Promise<void> => {
+  const deadline = Date.now() + timeoutMs;
+  while (!cond() && Date.now() < deadline) await drain(10);
 };
 
 /**
@@ -124,11 +137,89 @@ describe('issue 230 a wedged sampler is observable on the memory event stream', 
       ).toBeGreaterThanOrEqual(3);
 
       // THE DISCRIMINATING ASSERTION: assert on the EVENT stream the host
-      // forwards to the renderer as `memory:event`. The staleness signal is
-      // compared as a plain string so this spec compiles against the current
-      // MemoryEvent union, which does not yet carry a 'sampler-stale' type.
-      const stale = events.find((e) => (e as { type: string }).type === 'sampler-stale');
-      expect(stale).toBeTruthy();
+      // forwards to the renderer as `memory:event`, through the shipped
+      // MemoryEvent union (the type-level pin: a reverted union member fails
+      // this comparison at typecheck, not just at runtime).
+      const staleEvents = events.filter((e) => e.type === 'sampler-stale');
+      expect(staleEvents.length, 'the wedge latches EXACTLY ONE sampler-stale event').toBe(1);
+
+      // The frozen-pipeline claim: a wedged tick writes nothing.
+      const hw = host as unknown as { workerMemory: unknown };
+      expect(hw.workerMemory, 'workerMemory stays null while the tick is wedged').toBeNull();
+
+      // samplerStaleMs through the REAL /telemetry/memory route (feedback
+      // PRR-003/021): once the wedge has latched, the snapshot field reports
+      // the in-flight age (>0) instead of a silent 0.
+      const handle = (host as unknown as { handle: { port: number; url: string } }).handle;
+      expect(handle, 'harness sanity: the host handle carries the bound server').toBeTruthy();
+      const res = await fetch(`${handle!.url}/telemetry/memory`, {
+        headers: { 'X-Desktop-Token': 'i230-wedge-token' },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { snapshot: Record<string, number> };
+      expect(
+        body.snapshot.samplerStaleMs,
+        'the wedged sampler reports a nonzero samplerStaleMs on /telemetry/memory',
+      ).toBeGreaterThan(0);
+    },
+    30_000,
+  );
+
+  it(
+    'stop clears the staleness witness: no second sampler-stale after a restart',
+    async () => {
+      const engine = new LlamaEngine({
+        freeMemBytes: () => 10 * GIB,
+        modelDir: 'Z:/i230-wedge-restart',
+      });
+      const events: MemoryEvent[] = [];
+
+      host = new NodeBackendHost({
+        token: 'i230-wedge-token',
+        env: { ...ENV },
+        engine,
+        onMemoryEvent: (event) => events.push(event),
+      });
+      await host.start();
+
+      const h = host as unknown as {
+        resumable: { reportMemory: () => Promise<unknown> } | null;
+      };
+      h.resumable = { reportMemory: () => new Promise(() => {}) };
+      await drain(300);
+      const latched = events.filter((e) => e.type === 'sampler-stale');
+      expect(latched.length, 'harness sanity: the first wedge latched').toBe(1);
+
+      // issue #232's own class: the witness (startedAt / latch / interval)
+      // must NOT outlive the condition. stop() zeroes it; the restarted host
+      // admits fresh ticks (resumable null on the new seam), so no second
+      // event may appear even with the sampler running.
+      await host.stop();
+      await host.start();
+      const hw = host as unknown as {
+        samplerStaleEmitted: boolean;
+        memoryTickStartedAt: number;
+        workerMemory: unknown;
+      };
+      expect(
+        hw.samplerStaleEmitted,
+        'the staleness latch is clear after a stop()->start() cycle',
+      ).toBe(false);
+      const eventsAfter = events.filter((e) => e.type === 'sampler-stale');
+      await drain(120);
+      expect(
+        events.filter((e) => e.type === 'sampler-stale').length,
+        'no second sampler-stale event after the restart',
+      ).toBe(eventsAfter.length);
+      // The restarted sampler admits fresh ticks (startedAt stamped at each
+      // admission) and stays healthy — the real resumable reports null until
+      // its worker is used, so health here is witnessed by admission + latch
+      // state, not by workerMemory.
+      await until(() => (hw.memoryTickStartedAt ?? 0) > 0, 5000);
+      expect(
+        hw.samplerStaleEmitted,
+        'the restarted sampler stays unlatched (healthy)',
+      ).toBe(false);
     },
     30_000,
   );

@@ -1,5 +1,6 @@
 // i230-host-stop-profile-reset.test.ts — FROZEN ACCEPTANCE SPEC
-// (issue #230 sub-defect (a); trace 199-230-backend-host-lifecycle).
+// (issue #232 residual (a) — sub-defect (a) of PR #230’s host lifecycle
+// work; trace 199-230-backend-host-lifecycle).
 //
 // AC (DISCRIMINATING): WHEN sustained memory pressure has latched the B8
 // engine profile override ('fast') via memoryTick's setProfileOverride, THEN

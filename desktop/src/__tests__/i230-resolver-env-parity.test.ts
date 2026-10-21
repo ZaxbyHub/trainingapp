@@ -1,5 +1,6 @@
 // i230-resolver-env-parity.test.ts — FROZEN ACCEPTANCE SPEC
-// (issue #230 sub-defect (b); reranker/embedder env-injection parity).
+// (issue #232 residual (b) — sub-defect (b) of PR #230’s host lifecycle
+// work; reranker/embedder env-injection parity).
 //
 // AC (DISCRIMINATING): WHEN the host injects a PARTIAL env record into
 // resolveRerankerModelDir (naming only TRAININGAPP_DESKTOP_REPO_ROOT), THEN
@@ -91,4 +92,53 @@ describe('issue 230 reranker resolver env-injection parity with the embedder', (
       }
     },
   );
+
+  it('injected-pin-wins when the injected record names a valid absolute model dir', () => {
+    const staged = makeTempDir('i230-rerank-injected-');
+    fs.mkdirSync(path.join(staged, 'onnx'), { recursive: true });
+    fs.writeFileSync(
+      path.join(staged, 'onnx', 'model_quantized.onnx'),
+      Buffer.alloc(RERANKER_WEIGHTS_MIN_BYTES),
+    );
+    const saved = process.env[RERANKER_MODEL_DIR_ENV];
+    try {
+      process.env[RERANKER_MODEL_DIR_ENV] = makeTempDir('i230-rerank-ambient-unused-');
+      // The injected record names a VALID model dir explicitly: it must win
+      // over the ambient pin (injected strings win per key — the merge is
+      // not ambient-preferring).
+      expect(
+        resolveRerankerModelDir({ env: { TRAININGAPP_RERANKER_MODEL_DIR: staged } }),
+        'an explicitly injected absolute pin wins over ambient',
+      ).toBe(staged);
+    } finally {
+      if (saved === undefined) delete process.env[RERANKER_MODEL_DIR_ENV];
+      else process.env[RERANKER_MODEL_DIR_ENV] = saved;
+    }
+  });
+
+  it('injected-pin-containment: a CWD-relative explicit pin is skipped, not resolved against process.cwd', () => {
+    const relativePin = path.join('models', 'reranker');
+    const saved = process.env[RERANKER_MODEL_DIR_ENV];
+    delete process.env[RERANKER_MODEL_DIR_ENV];
+    try {
+      // issue #232 Scope-In: an explicit value is honored only when
+      // ABSOLUTE. A CWD-relative value must be SKIPPED — never resolved
+      // against whatever directory the host started in — even though the
+      // per-key merge placed it in the merged record (shadowing any ambient
+      // pin for that key). No other candidate is staged in this bare-env
+      // fixture, so containment means the resolver degrades to null rather
+      // than returning the relative path.
+      const resolved = resolveRerankerModelDir({
+        env: { TRAININGAPP_RERANKER_MODEL_DIR: relativePin },
+      });
+      expect(resolved, 'a CWD-relative explicit pin must never be returned').not.toBe(relativePin);
+      expect(
+        resolved === null || path.isAbsolute(resolved),
+        'the resolver degrades to null (or an absolute candidate), never a relative dir',
+      ).toBe(true);
+    } finally {
+      if (saved === undefined) delete process.env[RERANKER_MODEL_DIR_ENV];
+      else process.env[RERANKER_MODEL_DIR_ENV] = saved;
+    }
+  });
 });
