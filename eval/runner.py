@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from collections import Counter
@@ -70,6 +71,13 @@ REQUIRED_RESPONSE_KEYS = (
     # contract since C5; the harness treats it as a required response key.
     "grounding",
 )
+
+# Issue #205 AC2: env names whose values can change the measured numbers
+# (determinism-relevant configuration). Recorded in report.provenance.env
+# WHEN SET (an unset seam is the default-OFF production posture and records
+# nothing) so a recorded floor's thread configuration is part of the report
+# a floor row cites, not tribal knowledge.
+PROVENANCE_ENV_VARS = ("TRAININGAPP_DESKTOP_EMBED_THREADS",)
 
 
 def load_questions(path: Path) -> list[dict]:
@@ -225,12 +233,19 @@ def run_eval(
             print(f"runner: backend {base_url} failed /health: {exc}", file=sys.stderr)
             sys.exit(1)
         stats = None
+        # Issue #205 AC2: keep the /stats failure KIND instead of collapsing
+        # every failure mode into stats=None — the parity pin must be able to
+        # tell a swallowed transport failure (remedy: fix the transport) from
+        # an absent count key (remedy: re-derive floors / check the route).
+        stats_fetch_error: str | None = None
         try:
             stats_response = client.get(f"{base_url}/stats", timeout=timeout)
             if stats_response.status_code == 200:
                 stats = stats_response.json()
-        except httpx.HTTPError:
-            stats = None
+            else:
+                stats_fetch_error = f"http {stats_response.status_code}"
+        except httpx.HTTPError as exc:
+            stats_fetch_error = f"transport error: {type(exc).__name__}: {exc}"
 
         for row in questions:
             body, latency_ms, error = ask_one(
@@ -366,6 +381,20 @@ def run_eval(
             "llm_backend": (stats or {}).get("llm_backend"),
             "document_count": (stats or {}).get("document_count"),
             "chunk_count": (stats or {}).get("chunk_count"),
+            # Issue #205 AC2: null on a clean fetch; the failure kind when the
+            # best-effort /stats fetch died (additive — consumers pin fields,
+            # not key sets).
+            "stats_fetch_error": stats_fetch_error,
+        },
+        "provenance": {
+            # Issue #205 AC3: the determinism-relevant env the run measured
+            # under (recorded when set; absent when the seam stayed default-
+            # OFF) — bench/RESULTS.md provenance strings cite this.
+            "env": {
+                name: os.environ[name]
+                for name in PROVENANCE_ENV_VARS
+                if name in os.environ
+            },
         },
         "metrics": {
             "recall_at_k": recall_at_k,

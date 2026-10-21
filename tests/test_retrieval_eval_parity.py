@@ -29,6 +29,16 @@ pins the report's ``backend_stats.document_count`` against the seeded count
 ``test_embed_threads_seam_shape`` pins the default-OFF
 ``TRAININGAPP_DESKTOP_EMBED_THREADS`` determinism seam (issue #170 D1),
 which ``_sanitized_env()`` sets to 1 on the measured path.
+
+Issue #205 additions: the parity cache now also caches FAILURES (the second
+consumer re-raises the shared exception instead of re-running the ~540s
+flow) and re-validates floors/dist preconditions on the cache-hit path
+(box-independent pins in ``TestParityCacheSemantics``); the AC14 stats pin
+branches on the runner's ``stats_fetch_error`` transport sentinel before
+the count pin (``test_transport_message_pin_side_synthetic_report``); and
+setting ``TRAININGAPP_PARITY_CAPTURE_DIR`` copies the run's report.json /
+REPORT.md / host.err out of the tempdir for recorded-run provenance under
+eval/samples/.
 """
 
 import http.client
@@ -37,6 +47,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -750,7 +761,10 @@ def _run_eval(work: Path, env: dict, proxy_port: int) -> dict:
 # The parity flow is expensive (weights-gated seed + host boot + full
 # 60-question eval), so it runs ONCE per process and the parsed report is
 # cached: the metric pins and the AC14 backend_stats pin share one measured
-# run (test-batch-oct2026 cluster B).
+# run (test-batch-oct2026 cluster B). A FAILED first execution is cached the
+# same way (issue #205 AC1): the second consumer re-raises the shared
+# exception object instead of re-running a ~540s flow that is already known
+# to be broken (or racing the first attempt's teardown).
 _PARITY_RUN: dict = {}
 
 
@@ -759,18 +773,21 @@ def _cached_host_stderr_tail() -> str:
     return "--- host stderr (tail) ---\n" + text[-4000:]
 
 
-def _parity_report() -> dict:
-    """Execute the seeded parity flow once and return the parsed report.
+# Issue #205 B4: opt-in artifact capture for the recorded run — when set, the
+# flow copies its report.json / REPORT.md / host.err out of the tempdir so a
+# recorded-run's evidence can be committed under eval/samples/. Unset (the
+# default, CI included) this is a no-op.
+_PARITY_CAPTURE_ENV = "TRAININGAPP_PARITY_CAPTURE_DIR"
 
-    The host stderr TEXT is captured while the tempdir still exists: the
-    cached report outlives it, and the metric assertions quote that stderr
-    as their diagnostic — the same reason every assertion originally lived
-    inside the tempdir block.
+
+def _execute_parity_flow() -> dict:
+    """The cache-miss worker: seed a store, boot the host, run the eval.
+
+    Returns the parsed eval report. The host stderr TEXT is captured while
+    the tempdir still exists — the cached report outlives it, and the metric
+    assertions quote that stderr as their diagnostic — the same reason every
+    assertion originally lived inside the tempdir block.
     """
-    if "report" in _PARITY_RUN:
-        return _PARITY_RUN["report"]
-    _assert_floors_armed()
-    _assert_dist_fresh()
     with tempfile.TemporaryDirectory(prefix="i103-parity-") as tmp:
         work = Path(tmp)
         env = _sanitized_env()
@@ -789,8 +806,39 @@ def _parity_report() -> dict:
             host_err = (work / "host.err").read_text(encoding="utf-8", errors="replace")
         finally:
             host.kill_tree()
-    _PARITY_RUN["report"] = report
+        capture_dir = os.environ.get(_PARITY_CAPTURE_ENV)
+        if capture_dir:
+            dest = Path(capture_dir)
+            dest.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(work / "report.json", dest / "report.json")
+            shutil.copyfile(work / "REPORT.md", dest / "REPORT.md")
+            (dest / "host.err").write_text(host_err, encoding="utf-8")
     _PARITY_RUN["host_err"] = host_err
+    return report
+
+
+def _parity_report() -> dict:
+    """Execute the seeded parity flow once and return the parsed report.
+
+    Cache semantics (issue #205 AC1): the flow runs at most once per process
+    on BOTH the success and the failure path — a cached failure re-raises the
+    SAME exception object (never a re-run, never a second teardown race). The
+    floors-armed and dist-fresh preconditions are asserted BEFORE the
+    cache-hit return, so a cached report is never handed to a caller on a box
+    that would not be allowed to measure it in the first place.
+    """
+    if "failure" in _PARITY_RUN:
+        raise _PARITY_RUN["failure"]
+    _assert_floors_armed()
+    _assert_dist_fresh()
+    if "report" in _PARITY_RUN:
+        return _PARITY_RUN["report"]
+    try:
+        report = _execute_parity_flow()
+    except BaseException as exc:
+        _PARITY_RUN["failure"] = exc
+        raise
+    _PARITY_RUN["report"] = report
     return report
 
 
@@ -835,24 +883,29 @@ def test_desktop_retrieval_eval_parity() -> None:
     )
 
 
-@_SKIP_GATES[0]
-@_SKIP_GATES[1]
-@_SKIP_GATES[2]
-@_SKIP_GATES[3]
-def test_backend_stats_document_count() -> None:
-    """AC14 (issue #186): the report's backend_stats block carries the host's
-    real /stats document count for the seeded store.
+def _assert_backend_stats_document_count(report: dict) -> None:
+    """AC14 (issue #186) stats pin body, factored so the transport-failure
+    branch (issue #205 AC2) is unit-testable against a synthetic report.
 
-    Shares the parity run (seeded machinery + ``_run_eval``'s parsed report);
-    weights-gated skip preserved like its siblings — a skip at head is the
-    sanctioned shape on weightless boxes.
+    The transport sentinel is checked BEFORE the count pin: a /stats fetch
+    that died at the transport layer (host down, proxy refused, non-200)
+    must fail with the transport remedy, never with the re-derive-the-floors
+    remedy — those are different failure classes with different fixes.
     """
-    report = _parity_report()
     stats = report.get("backend_stats")
     assert isinstance(stats, dict), (
         "eval report is missing backend_stats — eval/runner.py's report "
         f"assembly dropped it (got {stats!r}); the parity report must carry "
         "the host's GET /stats snapshot"
+    )
+    stats_fetch_error = stats.get("stats_fetch_error")
+    assert stats_fetch_error is None, (
+        f"backend_stats.stats_fetch_error is set ({stats_fetch_error!r}): the "
+        "eval runner's GET /stats failed at the transport layer (host or "
+        "loopback proxy unreachable, or a non-200 response) — a runner-side "
+        "infrastructure failure, not a retrieval-quality or count defect; "
+        "make the host's /stats route reachable from the runner (check the "
+        "host boot and the proxy thread) and re-run the eval"
     )
     document_count = stats.get("document_count")
     assert document_count is not None, (
@@ -866,4 +919,137 @@ def test_backend_stats_document_count() -> None:
         f"pinned) {EXPECTED_DOCUMENTS} — the host's /stats document count "
         "must equal the ingest seed count (GET /stats -> engine.getStats -> "
         "store counts)"
+    )
+
+
+@_SKIP_GATES[0]
+@_SKIP_GATES[1]
+@_SKIP_GATES[2]
+@_SKIP_GATES[3]
+def test_backend_stats_document_count() -> None:
+    """AC14 (issue #186): the report's backend_stats block carries the host's
+    real /stats document count for the seeded store.
+
+    Shares the parity run (seeded machinery + ``_run_eval``'s parsed report);
+    weights-gated skip preserved like its siblings — a skip at head is the
+    sanctioned shape on weightless boxes.
+    """
+    _assert_backend_stats_document_count(_parity_report())
+
+
+# --- issue #205 AC1: parity cache semantics (box-independent unit pins) -----
+
+
+class TestParityCacheSemantics:
+    """``_parity_report()`` cache discipline, with every environmental seam
+    monkeypatched away (worker, floor arming, dist freshness): these run green
+    on weightless, dist-less, untagged boxes — C4's verdict never depends on
+    the dev-server stat or BENCH_FLOORS_MACHINE.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _isolated_run_cache(self):
+        saved = dict(_PARITY_RUN)
+        _PARITY_RUN.clear()
+        yield
+        _PARITY_RUN.clear()
+        _PARITY_RUN.update(saved)
+
+    @staticmethod
+    def _patch_seams(monkeypatch, worker):
+        calls = {"worker": 0, "floors": 0, "dist": 0}
+
+        def fake_worker():
+            calls["worker"] += 1
+            return worker()
+
+        this_module = sys.modules[__name__]
+        monkeypatch.setattr(this_module, "_execute_parity_flow", fake_worker)
+        monkeypatch.setattr(
+            this_module,
+            "_assert_floors_armed",
+            lambda: calls.__setitem__("floors", calls["floors"] + 1),
+        )
+        monkeypatch.setattr(
+            this_module,
+            "_assert_dist_fresh",
+            lambda: calls.__setitem__("dist", calls["dist"] + 1),
+        )
+        return calls
+
+    def test_cache_semantics_failure_is_cached_and_reraised(self, monkeypatch):
+        """A mid-flow failure runs the worker ONCE; both consumers re-raise
+        the SAME exception object (fail fast with the shared cause)."""
+        boom = RuntimeError("parity flow exploded mid-flight")
+
+        def failing_worker():
+            raise boom
+
+        calls = self._patch_seams(monkeypatch, failing_worker)
+        with pytest.raises(RuntimeError) as first:
+            _parity_report()
+        with pytest.raises(RuntimeError) as second:
+            _parity_report()
+        assert calls["worker"] == 1, (
+            "a failed first execution must be cached — the second consumer "
+            f"re-runs the expensive worker (executions: {calls['worker']})"
+        )
+        assert first.value is boom, "the first raise must carry the worker's object"
+        assert second.value is boom, (
+            "the cached re-raise must be the SAME exception object, not a "
+            "fresh copy or a re-run"
+        )
+
+    def test_cache_semantics_success_runs_once_and_revalidates(self, monkeypatch):
+        """The success twin: one worker execution, two cached returns, and
+        the floors/dist preconditions are invoked per call — never skipped
+        on the cache-hit path."""
+        fake_report = {"schema": "eval-report/1", "metrics": {}}
+
+        calls = self._patch_seams(monkeypatch, lambda: fake_report)
+        first = _parity_report()
+        second = _parity_report()
+        assert calls["worker"] == 1
+        assert first is fake_report
+        assert second is fake_report
+        assert calls["floors"] == 2, (
+            "_assert_floors_armed must run on EVERY call including the "
+            "cache hit (a cached report must not bypass floor arming)"
+        )
+        assert calls["dist"] == 2, (
+            "_assert_dist_fresh must run on EVERY call including the cache "
+            "hit (a cached report must not bypass dist freshness)"
+        )
+
+
+# --- issue #205 AC2: transport-message pin side (synthetic report) -----------
+
+
+def test_transport_message_pin_side_synthetic_report() -> None:
+    """The AC14 pin must branch on the runner's transport sentinel: a report
+    carrying ``stats_fetch_error`` fails with the TRANSPORT remedy and NOT
+    with the floor/re-derive remedy (box-independent synthetic report, so
+    C5's verdict needs no weights, dist, or machine tag)."""
+    synthetic = {
+        "schema": "eval-report/1",
+        "backend_stats": {
+            "embedding_model": None,
+            "llm_backend": None,
+            "document_count": None,
+            "chunk_count": None,
+            "stats_fetch_error": "transport error: ConnectError: [Errno] refused",
+        },
+    }
+    with pytest.raises(AssertionError) as excinfo:
+        _assert_backend_stats_document_count(synthetic)
+    message = str(excinfo.value)
+    assert (
+        "stats_fetch_error" in message
+    ), f"the transport failure must name the sentinel: {message!r}"
+    assert (
+        "transport" in message
+    ), f"the remedy must name the transport failure class: {message!r}"
+    assert "if it persists" not in message, (
+        "a transport failure must NOT fire the floor-remedy (null-count) "
+        f"message: {message!r}"
     )

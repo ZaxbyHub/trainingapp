@@ -1,0 +1,65 @@
+# Recorded desktop-host parity run under the thread pin (issue #205), 2026-10-21.
+# Verbatim output of the B4 recorded run at head on the devstation:
+#   BENCH_FLOORS_MACHINE=devstation TRAININGAPP_PARITY_CAPTURE_DIR=<tmp> #     python -m pytest tests/test_retrieval_eval_parity.py -q -k desktop_retrieval_eval_parity
+# (60q/9doc set, real bge-small + ettin weights, stub engine, ONNX sessions
+# pinned to TRAININGAPP_DESKTOP_EMBED_THREADS=1 by _sanitized_env()) — the
+# source run behind the thread-provenance extension of the bench/RESULTS.md
+# desktop-retrieval-eval rows. Measured recall@5=0.648 (floor 0.64), mrr=0.369
+# (floor 0.3236), error_count=0, document_count=9; the parsed report (with
+# provenance.env.TRAININGAPP_DESKTOP_EMBED_THREADS=1) is committed beside this
+# log as report-i205-thread-provenance.json.
+----
+.                                                                        [100%]
+1 passed, 6 deselected in 72.06s (0:01:12)
+EXIT:0
+---- host.err (full) ----
+Unknown tokenizer class "TokenizersBackend", attempting to construct from base class.
+
+---- REPORT.md (as rendered by the run) ----
+# Tier-0 Eval Report
+
+- base_url: `http://127.0.0.1:49461`
+- timestamp: 2026-10-21T04:47:58+00:00
+- label: pytest-parity
+- backend: embedding_model='bge-small-en-v1.5', llm_backend=None
+- questions: 60 (in-corpus 54, out-of-corpus 6, errors 0)
+
+## Metrics
+
+| metric | value |
+|---|---|
+| recall@1 | 0.204 |
+| recall@3 | 0.426 |
+| recall@5 | 0.648 |
+| MRR | 0.369 |
+| abstain accuracy | 0.000 (0/6) |
+| Learn hit@3 | 0.000 (over 4 slide-target questions; initial target >= 0.70) |
+| badge accuracy | 0.900 (54/60; emitted grounding matches the expected grounded/general label; report-only, initial target >= 0.80 non-blocking) |
+| latency p50 (ms) | 1122.2 |
+| latency p95 (ms) | 1223.1 |
+| fallback-phrase answers | 0 |
+
+## Per-category (in-corpus, successful rows)
+
+| category | count | recall@3 | MRR |
+|---|---|---|---|
+| benefits | 7 | 0.429 | 0.338 |
+| compliance | 5 | 0.400 | 0.369 |
+| expenses | 5 | 0.400 | 0.357 |
+| it-support | 6 | 0.500 | 0.525 |
+| policy | 7 | 1.000 | 0.857 |
+| safety | 6 | 0.167 | 0.210 |
+| security | 7 | 0.714 | 0.445 |
+| training | 4 | 0.000 | 0.000 |
+| training-content | 7 | 0.000 | 0.060 |
+
+## Abstain rows (out-of-corpus)
+
+| id | abstained | error |
+|---|---|---|
+| q51 | false | - |
+| q52 | false | - |
+| q53 | false | - |
+| q54 | false | - |
+| q55 | false | - |
+| q56 | false | - |

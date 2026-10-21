@@ -189,3 +189,77 @@ class TestNativeMatrix:
             section = text.split(heading, 1)[1].split("## ", 1)[0]
             assert "| machine |" in section or "reference-i5" in section
         assert "<fill in>" not in text
+
+
+class TestFloorsProvenance:
+    """Issue #205/#206 provenance pins over the bench-floors fence rows.
+
+    CI-fast structural tests (like the rest of this module): they read
+    bench/RESULTS.md only, never the artifacts it cites.
+    """
+
+    def test_floors_provenance_thread_config_recorded(self):
+        """Both desktop-retrieval-eval rows must record the thread
+        configuration the re-verification ran under (issue #205: recorded
+        provenance predating the TRAININGAPP_DESKTOP_EMBED_THREADS=1 pin is
+        the hole this pins shut)."""
+        rows = floors.parse_floors(RESULTS)
+        desktop_rows = [
+            row
+            for row in rows
+            if row.get("surface") == "desktop-retrieval-eval"
+            and row.get("machine") == "devstation"
+        ]
+        assert len(desktop_rows) == 2, (
+            "expected the recall@5 and mrr desktop-retrieval-eval rows for "
+            f"devstation, got {len(desktop_rows)}"
+        )
+        for row in desktop_rows:
+            provenance = str(row.get("provenance", ""))
+            metric = row.get("metric")
+            assert "TRAININGAPP_DESKTOP_EMBED_THREADS" in provenance, (
+                f"the {metric} row's provenance must record the thread pin "
+                "the re-verification ran under "
+                "(TRAININGAPP_DESKTOP_EMBED_THREADS=1)"
+            )
+            assert "report-i205-thread-provenance" in provenance, (
+                f"the {metric} row's provenance must cite the recorded run "
+                "artifact (eval/samples/report-i205-thread-provenance.json)"
+            )
+
+    def test_floors_provenance_gemma_replacement_named_and_retired_when_landed(
+        self,
+    ):
+        """The gemma floor's deviation from the 2x slack convention must NAME
+        its concrete replacement row (issue #206 AC9), and the pending note
+        must be RETIRED once that replacement row lands in the fence (the
+        void-once-recorded exit condition, enforced as a tripwire)."""
+        rows = floors.parse_floors(RESULTS)
+        gemma_rows = [row for row in rows if row.get("model") == "gemma-4-e2b-it"]
+        assert gemma_rows, "the gemma-4-e2b-it decode floor row must exist"
+        for row in gemma_rows:
+            provenance = str(row.get("provenance", ""))
+            assert "reference-i5 native decode row" in provenance, (
+                "the gemma floor deviates from the block's 2x convention, so "
+                "its provenance must name the concrete replacement row (the "
+                "reference-i5 native decode row), not an vague pointer"
+            )
+            assert (
+                "2x" in provenance
+            ), "the deviation from the 2x slack convention must be stated"
+        reference_native_rows = [
+            row
+            for row in rows
+            if row.get("surface") == "native"
+            and str(row.get("machine", "")).strip() == "reference-i5"
+        ]
+        pending_marker = "pending note is VOID once that row is recorded"
+        if reference_native_rows:
+            for row in gemma_rows:
+                provenance = str(row.get("provenance", ""))
+                assert pending_marker not in provenance, (
+                    "the reference-i5 native decode row is now recorded in "
+                    "the fence, so the gemma row's pending-replacement note "
+                    "must have been retired — edit the provenance to cite the "
+                    "recorded row instead of declaring the replacement pending"
+                )

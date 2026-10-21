@@ -18,10 +18,18 @@
 // ambient sentinel is DELIBERATELY a different value than the injected one,
 // so a start() that reads the ambient record fails loudly instead of passing
 // vacuously.
+//
+// Contract-family shim (issue #233, plan A5 — ADDITIVE ONLY): this spec is
+// rostered in the required `security` contract-family step, so it carries
+// the family's root-resolution idiom below (marker-walk findRepoRoot +
+// REPO_ROOT). The pin below deliberately does NOT wire REPO_ROOT into the
+// NodeBackendHost options — the spec's own subject is the INJECTED /
+// AMBIENT env record, not a source-derived root.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Capture the repoRoot each resolver receives, without changing behavior
 // beyond the recorded null return (weights-free checkout equivalent).
@@ -50,6 +58,25 @@ vi.mock('../../main/backend/retrieval/reranker.js', async (importOriginal) => {
 });
 
 const { NodeBackendHost } = await import('../../main/backend/index.js');
+
+// Contract-family root-resolution idiom (issue #233 shim, see header):
+// marker-walk to the repo root with an explicit diagnosable failure — never
+// a fixed-depth path.resolve. The pin's own assertions below are untouched.
+function findRepoRoot(dir: string): string {
+  let current = dir;
+  for (let i = 0; i < 32; i += 1) {
+    if (fs.existsSync(path.join(current, 'contracts', 'api.openapi.yaml'))) return current;
+    // Stop at the checkout root — a marker-less checkout must fail closed,
+    // never bind a foreign ancestor's marker.
+    if (fs.existsSync(path.join(current, '.git'))) break;
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  throw new Error('could not locate the repo root (marker contracts/api.openapi.yaml not found)');
+}
+
+const REPO_ROOT = findRepoRoot(path.dirname(fileURLToPath(import.meta.url)));
 
 // Anti-vacuity: the two sentinels differ by construction.
 const INJECTED = 'X:/i229-injected-repo-root';

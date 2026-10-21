@@ -36,7 +36,10 @@ function findRepoRoot(dir: string): string {
 const REPO_ROOT = findRepoRoot(path.dirname(fileURLToPath(import.meta.url)));
 const SPEC_DIR = path.join(REPO_ROOT, 'desktop', 'src', '__tests__');
 
-/** The closed contract-family roster (mirrors ci-gate-required-contract). */
+/** The closed contract-family roster (mirrors contract-family-registry.ts,
+ * the single source of truth shared with ci-gate-required-contract and the
+ * frozen roster-exclusion-evidence spec; issue #233 rostered the PR #230
+ * lifecycle pins and the frozen acceptance surfaces here). */
 const FAMILY_ROSTER = [
   'embed-seam-contract.test.ts',
   'embed-threads-clamp-contract.test.ts',
@@ -44,6 +47,14 @@ const FAMILY_ROSTER = [
   'pack-twin-parity.test.ts',
   'ci-gate-required-contract.test.ts',
   'contract-spec-conventions.test.ts',
+  'backend-env-repo-root-contract.test.ts',
+  'backend-lifecycle-capture-once-census.test.ts',
+  'backend-memory-tick-lifecycle.test.ts',
+  'i199-backend-surface-lifecycle.test.ts',
+  'reranker-generation-lifecycle.test.ts',
+  'i230-resolver-env-parity.test.ts',
+  'roster-exclusion-evidence-contract.test.ts',
+  'frozen-recipe-replay-contract.test.ts',
 ];
 
 describe('contract spec conventions (issue #215 AC14)', () => {

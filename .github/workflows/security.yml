@@ -45,7 +45,10 @@ jobs:
       # (see README's required-checks table) and this job reports on every PR,
       # so a red contract pin cannot merge silently. The roster is the closed
       # contract family (pinned by ci-gate-required-contract.test.ts, which
-      # also pins this step's unconditionality).
+      # also pins this step's unconditionality). Issue #233 rostered the PR
+      # #230 backend/reranker lifecycle pins, i230-resolver-env-parity, and
+      # the frozen acceptance surfaces (registry:
+      # desktop/src/__tests__/contract-family-registry.ts).
       - name: Set up Node for the contract-spec family
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -65,6 +68,14 @@ jobs:
           src/__tests__/pack-twin-parity.test.ts
           src/__tests__/ci-gate-required-contract.test.ts
           src/__tests__/contract-spec-conventions.test.ts
+          src/__tests__/backend-env-repo-root-contract.test.ts
+          src/__tests__/backend-lifecycle-capture-once-census.test.ts
+          src/__tests__/backend-memory-tick-lifecycle.test.ts
+          src/__tests__/i199-backend-surface-lifecycle.test.ts
+          src/__tests__/reranker-generation-lifecycle.test.ts
+          src/__tests__/i230-resolver-env-parity.test.ts
+          src/__tests__/roster-exclusion-evidence-contract.test.ts
+          src/__tests__/frozen-recipe-replay-contract.test.ts
 
       - name: Run Safety
         run: |
