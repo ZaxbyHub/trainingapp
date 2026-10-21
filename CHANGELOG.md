@@ -1,6 +1,34 @@
 # Changelog
 
 ## [Unreleased]
+- **The protection bites: the desktop lifecycle pins are merge-blocking, the
+  bench identity and floor cells are honest, and the eval harness cannot
+  silently re-execute or swallow a dead /stats (issues #233, #205, #206)**:
+  three enforcement-honesty defects fixed under one class — a contract
+  written down but not enforced where it bites.
+  The five PR #230 lifecycle specs and the `i230-resolver-env-parity` pin now
+  run inside the required `security` job via a shared
+  `contract-family-registry.ts` (14-name roster); roster exclusions carry
+  machine-verified `runs_in` evidence (workflow file + run-line scalar) enforced
+  by both `ci-gate-required-contract` and the new frozen
+  `roster-exclusion-evidence-contract` spec, and a second frozen spec
+  (`frozen-recipe-replay-contract`) pins the closing issues’ replay recipes
+  after #199’s `-t` filters were found to select zero tests and #229’s
+  `-q` recipes to crash vitest 3.2.7 (both issues’ recipes amended).
+  The eval-parity harness caches failures so its second consumer no longer
+  re-runs the ~540 s flow, re-validates floors/dist freshness on cache hits,
+  reports a `/stats` transport failure as a transport failure via a new
+  `stats_fetch_error` sentinel, and records the measured thread configuration
+  in `report.provenance.env` — with a recorded verification run under
+  `TRAININGAPP_DESKTOP_EMBED_THREADS=1` (recall@5 0.648, MRR 0.369) cited in
+  the `bench/RESULTS.md` floor rows.
+  The bench-floor rows now name the enforced measurement cell (warm-all-feeds
+  + median-of-3-rep-means, warm-2 + median-of-5) cross-pinned to the module’s
+  constants; the gemma decode floor keeps its value but names its
+  `reference-i5` replacement row with a void-once-recorded exit condition and
+  a CI tripwire; the llama_cpp conftest stand-in survives the native section
+  via a `_real_llama_cpp()` context manager, ending the collection-order
+  dependence of five sibling suites.
 - **State that outlives its condition: surrogate text refused at the ingest
   choke point, host teardown restores the latched profile, one env-precedence
   rule for both model resolvers, a wedged memory sampler is observable, and
