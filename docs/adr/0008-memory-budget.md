@@ -76,9 +76,12 @@ per-worker ORT isolation AND duplicated model memory — rejected until a future
   `memory:event {type:'downgrade'}` to the renderer.
 - **Recovery / no silent auto-upgrade:** after the downgrade, sustained above-threshold free RAM
   for `recoverySustainedMs` latches `recoveryEligible` (event `recovery-eligible` fires once). The
-  override clears ONLY at a sampler tick where the scheduler is fully drained
-  (`generationInFlight === false && queueDepth === 0 && activeGenerations === 0`). At that upgrade
-  the host ACKNOWLEDGES the monitor (`resetAfterUpgrade()`), which clears the monitor's downgrade
+  override clears at exactly two sites: a sampler tick where the scheduler is fully drained
+  (`generationInFlight === false && queueDepth === 0 && activeGenerations === 0`) — the upgrade
+  path — and host teardown (`BackendHost.stop()`, issue #232: a latch reset without clearing the
+  override it set let a restarted host inherit a stale `fast`; teardown clears silently, no
+  event). At the upgrade path the host ACKNOWLEDGES the monitor (`resetAfterUpgrade()`), which
+  clears the monitor's downgrade
   latch so the next downgrade requires a NEW sustained pressure episode — without the ack, the
   never-reset latch re-latched 'fast' on the next tick (fast/quality oscillation + event spam;
   PR-review finding PRR-F1, pinned by b8-host-loop.test.ts). Bounded

@@ -15,8 +15,8 @@
 //     at construction — a mid-session TRAININGAPP_DESKTOP_REPO_ROOT change
 //     does not re-resolve, unlike the old closure);
 //   - cache keyed (manifestPath, manifest mtimeMs): a non-fresh call on an
-//     unchanged manifest returns the cached verify result WITHOUT re-hashing;
-//     `{fresh: true}` re-verifies and refreshes the cache — the
+//     unchanged manifest returns the cached CLEAN verify result WITHOUT
+//     re-hashing; `{fresh: true}` re-verifies and refreshes the cache — the
 //     completion-time TOCTOU re-verify stays a real pass, and the digest
 //     capture right after it reads that same fresh result instead of paying
 //     a second hash.
@@ -28,10 +28,15 @@
 // drift re-check in evaluateStatus compares stored digests against these
 // cached digests, so within one process it cannot surface such a mutation;
 // the startup integrity gate re-verifies at every launch and the completion
-// handler re-verifies on every wizard completion. Transient loadError
-// results are never cached (see wizardManifest below), so a one-off read
-// failure recovers on the next status call exactly as the uncached closure
-// did.
+// handler re-verifies on every wizard completion. Results that are not
+// CLEAN are never cached, and evict any cached entry under the current key
+// (see wizardManifest below): a transient loadError (EBUSY/EPERM/EMFILE on
+// Windows while an installer copy is in flight) recovers on the next status
+// call exactly as the uncached closure did (PRR-003), and a FAILED verify
+// (missing/unreadable/digest-mismatch) re-verifies on every non-fresh call
+// until repaired, so a repaired tree converges instead of wedging the
+// wizard behind a cached failure (issue #175; cost: the ~2.4s staged-tree
+// hash pass repeats per status call while the failure persists).
 import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 
@@ -120,11 +125,24 @@ export function createWizardManifest(options: CreateWizardManifestOptions): {
     // Windows while an installer copy is in flight) is NOT cached: the old
     // uncached closure recovered on the next status call, and latching a
     // transient error under an unchanged mtime would block the wizard until
-    // restart (PRR-003). Clean results — including legitimate verify
-    // failures — cache normally.
-    if (result.loadError === null) {
-      cached = { key, result };
-    }
+    // restart (PRR-003).
+    //
+    // Issue #175: a result with verify FAILURES is not admitted either, and
+    // evicts any cached entry under the current key. verifyManifest reports
+    // missing/unreadable/digest-mismatch as failures with loadError ===
+    // null, so this admission predicate decides whether a repaired tree
+    // converges: repair does not touch the manifest mtime, so a cached
+    // failure would keep failing the status handler — which disables the
+    // wizard's Complete button — while the only fresh caller is the
+    // completion handler, unreachable from the UI in exactly that state.
+    // Eviction (not skip) matters when a fresh pass observes a drift that
+    // contradicts a previously cached clean result: serving the stale clean
+    // verdict would hide the failure the operator must see (plan-critic
+    // round 2, R2-1; pinned by the frozen C13 case).
+    const cleanResult =
+      result.loadError === null &&
+      (result.verify === null || result.verify.failures.length === 0);
+    cached = cleanResult ? { key, result } : null;
     return result;
   };
 

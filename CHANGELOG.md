@@ -1,6 +1,41 @@
 # Changelog
 
 ## [Unreleased]
+- **State that outlives its condition: surrogate text refused at the ingest
+  choke point, host teardown restores the latched profile, one env-precedence
+  rule for both model resolvers, a wedged memory sampler is observable, and
+  the wizard verify cache no longer serves repaired trees (issues #234, #232,
+  #175, #176)**: four state-lifecycle defects fixed under one class — a value
+  or latch produced by a condition surviving that condition's end, carried to
+  a far detonation point.
+  `DocumentProcessor.extract_json_document` now refuses text that cannot
+  round-trip through UTF-8 with a typed `ValueError` at the extraction choke
+  point (the same guard PR #231 gave the pack path for #226), so a `.json`
+  document carrying a lone surrogate is refused per-file through
+  `process_file`'s existing channel instead of detonating as
+  `UnicodeEncodeError` at the sqlite bind and answering HTTP 500 from
+  `POST /ingest`.
+  `BackendHost.stop()` clears the engine profile override its memory-pressure
+  downgrade latched, so a start→stop→start cycle no longer inherits a stale
+  `fast` that masked even an explicit `inference.profile` change.
+  `resolveRerankerModelDir` now merges an injected env record per key over
+  ambient via `seamEnvRecord`, matching the embedder resolver's contract — a
+  partial injected record can no longer drop the ambient
+  `TRAININGAPP_RERANKER_MODEL_DIR` pin. The sibling whole-record substitution
+  site at `desktop/main/backend/store/profiles.ts:49` is unchanged by design
+  (dispositioned in the recurrence sweep).
+  A sampler tick that never settles now surfaces: once the in-flight tick is
+  older than one telemetry interval, the host emits a one-latched
+  `sampler-stale` memory event (new `MemoryEvent` type, additive) and the
+  `/telemetry/memory` snapshot carries `samplerStaleMs`, instead of freezing
+  telemetry with no indication.
+  The first-run wizard verify cache admits only clean results and EVICTS the
+  cached entry when a verify pass fails, so a repaired tree (missing file
+  staged, unreadable file restored) converges on the next status call instead
+  of wedging the wizard's Complete button behind a cached failure; the
+  completion-time TOCTOU re-verify, BLOCK-dialog failure listing, and driver
+  selftest value assertions are pinned by committed specs (issue #176; C16's
+  mutation driver proves both named mutations each fail a committed spec).
 - **Desktop backend host lifecycle: generation-bound disposal, post-stop tick
   invalidation, effective-env model roots, live surface detach (issues #199,
   #229)**: five state-lifecycle defects in `desktop/main/backend/` are fixed

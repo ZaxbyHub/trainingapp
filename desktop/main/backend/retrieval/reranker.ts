@@ -12,6 +12,12 @@
 // never pay for a thread or a model load. dispose() terminates the worker,
 // rejects every in-flight job, and is idempotent.
 import { Worker } from 'node:worker_threads';
+// issue #232 (b): the reranker resolver must apply the SAME env-precedence
+// rule as the embedder resolver — per-key merge over ambient — so a partial
+// injected config.env record cannot silently drop an ambient
+// TRAININGAPP_RERANKER_MODEL_DIR pin that a whole-record replacement would
+// discard.
+import { seamEnvRecord } from '../ingest/embed-threads.js';
 import type { RerankerSurface } from './hybrid.js';
 
 export type { RerankerSurface };
@@ -110,8 +116,16 @@ export interface ResolveRerankerOptions {
  * exactly like rerank disabled.
  */
 export function resolveRerankerModelDir(opts: ResolveRerankerOptions = {}): string | null {
-  const env = opts.env ?? process.env;
-  const explicit = env[RERANKER_MODEL_DIR_ENV];
+  // Per-key merge over ambient (issue #232 (b)): a partial injected record
+  // must not silently drop ambient pins — injected strings win per key.
+  const env = seamEnvRecord(opts.env);
+  // Containment (issue #232 Scope-In): an explicit pin is honored only when
+  // ABSOLUTE — a CWD-relative value would resolve against whatever directory
+  // the host happened to start in, silently binding a model dir the operator
+  // did not name. A relative explicit pin is skipped, falling through to the
+  // staged candidates (degrade to RRF-only when none validate).
+  const rawExplicit = env[RERANKER_MODEL_DIR_ENV];
+  const explicit = rawExplicit && path.isAbsolute(rawExplicit) ? rawExplicit : undefined;
   const candidates = [
     explicit,
     opts.userDataPath ? path.join(opts.userDataPath, 'models', DEFAULT_RERANKER_MODEL_SUBPATH) : undefined,

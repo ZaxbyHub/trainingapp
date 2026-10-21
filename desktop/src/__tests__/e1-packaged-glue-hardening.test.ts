@@ -224,6 +224,18 @@ describe('e1 packaged glue hardening (PR #172 review)', () => {
     await waitFor(() => (dialog.showErrorBox as ReturnType<typeof vi.fn>).mock.calls.length > 0, 'dialog shown');
     const call = (dialog.showErrorBox as ReturnType<typeof vi.fn>).mock.calls[0] as unknown as [string, string];
     expect(call[1]).toContain('and 1 more');
+    // issue #176 AC3: a >1-failure dialog must LIST the failing paths and
+    // reasons, not just the truncation suffix. The six failures are the six
+    // manifest entries whose files buildFailingStage removed (manifest paths
+    // are forward-slash), so the first five (pre-truncation) must appear by
+    // path — a mutant that blanked the per-failure lines while keeping the
+    // suffix fails here.
+    for (let i = 0; i < 5; i++) {
+      expect(
+        call[1],
+        `dialog names failing path ${i} of the six staged failures`,
+      ).toContain(`models/embedding/dummy-${i}/tokenizer.json`);
+    }
   });
 
   it('PRR-036c: a partially staged manifest degrades engineOverrides.models correctly (quality only, fast absent)', async () => {

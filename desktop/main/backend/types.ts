@@ -113,10 +113,13 @@ export interface IngestProgressEvent {
  * `downgrade` fires once when sustained pressure latches the Quality->Fast
  * switch (carrying the observed free-RAM value); `recovery-eligible` fires
  * once when the recovery window matures; `telemetry` carries informational
- * budget notices (e.g. a worker-pool size >1 rejected by the ORT guardrail).
+ * budget notices (e.g. a worker-pool size >1 rejected by the ORT guardrail);
+ * `sampler-stale` (issue #232) fires once when a sampler tick has not settled
+ * for over one telemetry interval — workerMemory, pressure observation and
+ * further memory events are frozen until a tick completes again.
  */
 export interface MemoryEvent {
-  type: 'downgrade' | 'recovery-eligible' | 'telemetry';
+  type: 'downgrade' | 'recovery-eligible' | 'telemetry' | 'sampler-stale';
   effectiveProfile?: 'quality' | 'fast';
   freeMemMb?: number;
   detail?: string;

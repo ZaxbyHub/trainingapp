@@ -122,7 +122,6 @@ describe('issue 229 memory tick lifecycle across stop', () => {
       ).toHaveBeenCalled();
 
       // From here on, measure ONLY post-stop activity.
-      setProfileOverride.mockClear();
       events.length = 0;
 
       // A resumable whose reportMemory() never settles until released: a tick
@@ -155,6 +154,10 @@ describe('issue 229 memory tick lifecycle across stop', () => {
       await entered; // deterministic: the tick is suspended inside reportMemory()
 
       await host.stop(); // teardown while the tick is suspended
+
+      // Erase teardown activity (including stop's own override clear) so
+      // the post-stop assertions measure only writes from the resumed tick.
+      setProfileOverride.mockClear();
 
       release?.();
       await tick.catch(() => {});
