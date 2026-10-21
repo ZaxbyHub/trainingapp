@@ -8,6 +8,7 @@ parsed from bench/RESULTS.md) and that the native driver enumerates the full
 
 import importlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -189,3 +190,309 @@ class TestNativeMatrix:
             section = text.split(heading, 1)[1].split("## ", 1)[0]
             assert "| machine |" in section or "reference-i5" in section
         assert "<fill in>" not in text
+
+
+class TestFloorsProvenance:
+    """Issue #205/#206 provenance pins over the bench-floors fence rows.
+
+    CI-fast structural tests (like the rest of this module): they read
+    bench/RESULTS.md only, never the artifacts it cites — except the
+    source-site pin below, which reads the enforcement module's SOURCE so
+    the warm-loop idiom is guarded in CI (the -k protocol/-k eviction pins
+    live in the BENCH_FLOORS_MACHINE-gated module and never run in CI;
+    review PRR-009).
+    """
+
+    def test_floors_provenance_thread_config_recorded(self):
+        """Both desktop-retrieval-eval rows must record the thread
+        configuration the re-verification ran under (issue #205: recorded
+        provenance predating the TRAININGAPP_DESKTOP_EMBED_THREADS=1 pin is
+        the hole this pins shut)."""
+        rows = floors.parse_floors(RESULTS)
+        desktop_rows = [
+            row
+            for row in rows
+            if row.get("surface") == "desktop-retrieval-eval"
+            and row.get("machine") == "devstation"
+        ]
+        assert len(desktop_rows) == 2, (
+            "expected the recall@5 and mrr desktop-retrieval-eval rows for "
+            f"devstation, got {len(desktop_rows)}"
+        )
+        for row in desktop_rows:
+            provenance = str(row.get("provenance", ""))
+            metric = row.get("metric")
+            assert "TRAININGAPP_DESKTOP_EMBED_THREADS" in provenance, (
+                f"the {metric} row's provenance must record the thread pin "
+                "the re-verification ran under "
+                "(TRAININGAPP_DESKTOP_EMBED_THREADS=1)"
+            )
+            assert "report-i205-thread-provenance" in provenance, (
+                f"the {metric} row's provenance must cite the recorded run "
+                "artifact (eval/samples/report-i205-thread-provenance.json)"
+            )
+
+    def test_floors_provenance_gemma_replacement_named_and_retired_when_landed(
+        self,
+    ):
+        """The DEVSTATION gemma floor's deviation from the 2x slack convention
+        must NAME its concrete replacement row (issue #206 AC9), and the
+        pending note must be RETIRED once the replacement lands.
+
+        Review PRR-007 (swarm-pr-review pr242-20261021) corrected both halves
+        of the original tripwire, which was dead and self-blocking:
+        * the naming/"2x" literals are demanded only of the DEVIATING row
+          (the devstation decode floor, or a machine-untagged gemma row) —
+          a future reference-i5 fence row is NOT required to carry them;
+        * the retirement trigger reads the NATIVE RESULTS TABLE (the
+          free-text pipe table under "## Native llama.cpp CPU results" —
+          where a measured reference-i5 row will actually land), not the
+          bench-floors fence (which contains zero reference-i5 native rows
+          today, so a fence-only trigger could never fire).
+        When a reference-i5 gemma row with a recorded (non-PENDING)
+        decode_tok_s exists in that native table, every devstation gemma
+        fence row must have dropped the pending marker and cite the
+        recorded row instead."""
+        rows = floors.parse_floors(RESULTS)
+        gemma_rows = [
+            row
+            for row in rows
+            if row.get("model") == "gemma-4-e2b-it"
+            and (
+                row.get("machine") == "devstation"
+                or not str(row.get("machine", "")).strip()
+            )
+        ]
+        assert gemma_rows, "the gemma-4-e2b-it decode floor row must exist"
+        for row in gemma_rows:
+            provenance = str(row.get("provenance", ""))
+            assert "reference-i5 native decode row" in provenance, (
+                "the gemma floor deviates from the block's 2x convention, so "
+                "its provenance must name the concrete replacement row (the "
+                "reference-i5 native decode row), not an vague pointer"
+            )
+            assert (
+                "2x" in provenance
+            ), "the deviation from the 2x slack convention must be stated"
+        if _reference_i5_gemma_native_decode_recorded(
+            RESULTS.read_text(encoding="utf-8")
+        ):
+            for row in gemma_rows:
+                provenance = str(row.get("provenance", ""))
+                pending_marker = "pending note is VOID once that row is recorded"
+                assert pending_marker not in provenance, (
+                    "a reference-i5 native gemma decode row with a recorded "
+                    "decode_tok_s now exists in the native results table of "
+                    "bench/RESULTS.md, so the gemma row's pending-replacement "
+                    "note must have been retired — edit the provenance to "
+                    "cite the recorded row instead of declaring the "
+                    "replacement pending"
+                )
+
+    def test_floors_provenance_rerank_warm_loop_source_site(self):
+        """The rerank floor's warm-up loop keeps its exact slice idiom at the
+        measurement SITE (review PRR-009: the -k protocol pin lives in the
+        BENCH_FLOORS_MACHINE-gated tests/test_bench_floor_enforcement.py and
+        is CI-inert; this pin runs in the plain CI matrix and cannot be
+        satisfied by constants alone).
+
+        RERANK_WARM_FEEDS is None (warm EVERY candidate feed), and the warm
+        loop must stay the verbatim slice form — the two forbidden idioms
+        silently warm zero feeds when None (`or 0`) or skip the warm loop's
+        per-feed shape (`range(...)`), drifting the enforced measurement
+        cell away from the warm-all-feeds protocol the RESULTS.md rows
+        name; a hardcoded `feeds[:2]` would drift it just as silently."""
+        enforcement_source = (
+            REPO_ROOT / "tests" / "test_bench_floor_enforcement.py"
+        ).read_text(encoding="utf-8")
+        # Comment-stripped so the pins bind executable lines, not prose.
+        code_lines = [
+            line
+            for line in enforcement_source.splitlines()
+            if not line.lstrip().startswith("#")
+        ]
+        code = "\n".join(code_lines)
+        assert "for f in feeds[:RERANK_WARM_FEEDS]:" in code, (
+            "the rerank warm loop must keep the exact slice idiom "
+            "`for f in feeds[:RERANK_WARM_FEEDS]:` (None warms every "
+            "candidate feed); see RERANK_WARM_FEEDS in "
+            "tests/test_bench_floor_enforcement.py"
+        )
+        assert "RERANK_WARM_FEEDS or 0" not in code, (
+            "`feeds[:RERANK_WARM_FEEDS or 0]` silently warms ZERO feeds "
+            "when RERANK_WARM_FEEDS is None — the executed mutant the "
+            "-k protocol pin provably could not see (review PRR-009)"
+        )
+        assert "range(RERANK_WARM_FEEDS)" not in code, (
+            "`range(RERANK_WARM_FEEDS)` is the wrong loop shape for the "
+            "None-means-all warm contract (and a TypeError when None)"
+        )
+        assert "feeds[:2]" not in code, (
+            "a hardcoded warm count (`feeds[:2]`-style) drifts the enforced "
+            "cell away from the warm-all-feeds protocol the RESULTS.md "
+            "rerank rows name"
+        )
+
+
+def _native_table_data_rows(text: str) -> list[list[str]]:
+    """Data rows (as stripped cell lists) of the free-text native llama.cpp
+    pipe table under "## Native llama.cpp CPU results".
+
+    Structural parse only: header and |-separator rows are skipped, every
+    other pipe line in the section is returned. Column meaning comes from
+    the header row (machine/model/decode_tok_s), not fixed positions."""
+    heading = "## Native llama.cpp CPU results"
+    if heading not in text:
+        return []
+    section = text.split(heading, 1)[1].split("## ", 1)[0]
+    data_rows: list[list[str]] = []
+    for line in section.splitlines():
+        stripped = line.strip()
+        if not (stripped.startswith("|") and stripped.endswith("|")):
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if cells and cells[0] == "machine":
+            continue  # the header row
+        if all(set(cell) <= {"-", ":", " "} for cell in cells):
+            continue  # the |- separator row
+        data_rows.append(cells)
+    return data_rows
+
+
+def _reference_i5_gemma_native_decode_recorded(text: str) -> bool:
+    """True when the native table carries a reference-i5 gemma-4-e2b-it row
+    whose decode_tok_s cell is a recorded number (not PENDING/blank)."""
+    rows = _native_table_data_rows(text)
+    header = None
+    for line in (
+        text.split("## Native llama.cpp CPU results", 1)[1]
+        .split("## ", 1)[0]
+        .splitlines()
+    ):
+        stripped = line.strip()
+        if stripped.startswith("|") and "machine" in stripped and "model" in stripped:
+            header = [cell.strip() for cell in stripped.strip("|").split("|")]
+            break
+    if header is None:
+        return False
+    try:
+        machine_i = header.index("machine")
+        model_i = header.index("model")
+        decode_i = header.index("decode_tok_s")
+    except ValueError:
+        return False
+    for cells in rows:
+        if len(cells) <= max(machine_i, model_i, decode_i):
+            continue
+        if cells[machine_i] != "reference-i5":
+            continue
+        if "gemma-4-e2b-it" not in cells[model_i]:
+            continue
+        value = cells[decode_i]
+        if not value or value.upper() == "PENDING":
+            continue
+        try:
+            float(value)
+        except ValueError:
+            continue
+        return True
+    return False
+
+
+class TestRecordedArtifactBinding:
+    """Review PRR-010(d) (pr242): the recorded #205 run is load-bearing.
+
+    The desktop-retrieval-eval floor rows cite
+    eval/samples/report-i205-thread-provenance.json; previously deleting
+    that artifact kept every test green. This binding test reads the
+    artifact path FROM the RESULTS.md provenance string (so the rows
+    cannot cite a missing or swapped file), asserts the recorded metrics
+    sit at/above the floor rows' values, and pins the revision the run was
+    recorded at (the original artifact predated the first commit
+    containing the producing code and named no revision)."""
+
+    def test_recorded_i205_artifact_binds_to_the_floor_rows(self):
+        rows = floors.parse_floors(RESULTS)
+        desktop_rows = [
+            row
+            for row in rows
+            if row.get("surface") == "desktop-retrieval-eval"
+            and row.get("machine") == "devstation"
+        ]
+        assert len(desktop_rows) == 2, (
+            "expected the recall@5 and mrr desktop-retrieval-eval rows, got "
+            f"{len(desktop_rows)}"
+        )
+        artifact_rel = "eval/samples/report-i205-thread-provenance.json"
+        commit_pin = re.compile(r"recorded at commit ([0-9a-f]{40})")
+        pins = set()
+        for row in desktop_rows:
+            provenance = str(row.get("provenance", ""))
+            assert artifact_rel in provenance, (
+                f"the {row.get('metric')} row must cite the recorded run "
+                f"artifact ({artifact_rel})"
+            )
+            match = commit_pin.search(provenance)
+            assert match, (
+                f"the {row.get('metric')} row's provenance must pin the "
+                "40-hex commit the recorded run was made at (the old "
+                "'at head' claim named no revision)"
+            )
+            pins.add(match.group(1))
+        assert len(pins) == 1, "both rows must pin the SAME recorded commit"
+
+        artifact = REPO_ROOT / artifact_rel
+        assert artifact.is_file(), f"the cited artifact must exist: {artifact}"
+        data = json.loads(artifact.read_text(encoding="utf-8"))
+        measured = {
+            "recall@5": data["metrics"]["recall_at_k"]["5"],
+            "mrr": data["metrics"]["mrr"],
+        }
+        for row in desktop_rows:
+            metric = row["metric"]
+            assert metric in measured, f"unexpected floor metric {metric!r}"
+            assert measured[metric] >= row["value"], (
+                f"the recorded artifact's {metric} ({measured[metric]}) must "
+                f"sit at/above the floor row's value ({row['value']})"
+            )
+        assert (
+            data["error_count"] == 0
+        ), "the recorded run must be error-free for its metrics to bind"
+        # PRR-010(a): sources recorded as basenames only (the original
+        # artifact carried 426 absolute machine paths).
+        for result in data["results"]:
+            for source in result.get("sources", []):
+                assert not any(ch in source for ch in (":", "/", "\\")), (
+                    "recorded sources must be basenames, got "
+                    f"{source!r} (review PRR-010)"
+                )
+        # PRR-010(e): the thread pin is attested by the RUNNER process.
+        assert (
+            data["provenance"]["env"].get("TRAININGAPP_DESKTOP_EMBED_THREADS") == "1"
+        ), "the recorded report must attest the thread pin in provenance.env"
+        # PRR-010(b)/(f): the .log header pins the SAME commit, carries the
+        # runner digest, and puts the env prefix and command on ONE
+        # runnable line (the old header spliced a '#' mid-command).
+        log_text = (
+            REPO_ROOT / "eval" / "samples" / "report-i205-thread-provenance.log"
+        ).read_text(encoding="utf-8")
+        header = log_text.split("----", 1)[0]
+        assert pins.pop() in header, "the .log header must pin the same commit"
+        assert "runner.py sha256" in header
+        runnable = [
+            line
+            for line in header.splitlines()
+            if "python -m pytest" in line
+            and "BENCH_FLOORS_MACHINE=" in line
+            and "TRAININGAPP_PARITY_CAPTURE_DIR=" in line
+        ]
+        assert runnable, (
+            "the .log header must carry the env prefix and the command on "
+            "one runnable line"
+        )
+        for line in runnable:
+            stripped = line.lstrip("# ").strip()
+            assert "#" not in stripped, (
+                f"the recorded command must be copy-pasteable (no embedded "
+                f"'#' splice): {line!r}"
+            )

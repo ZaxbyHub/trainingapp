@@ -1,0 +1,70 @@
+# Recorded desktop-host parity run under the thread pin (issue #205), 2026-10-21.
+# Verbatim output of the re-recorded B4 run on the devstation, recorded at
+# commit b3c1a83758b13de2217a1d7643d709c7a8236e1d (the pr242 review-fix
+# head); runner.py sha256
+# 61091614f096db98b39f9a34d8316ec2b9db90ba037d5123d1482f46e9d28a9e.
+# Reproduce (Git Bash; one runnable line):
+#   BENCH_FLOORS_MACHINE=devstation TRAININGAPP_PARITY_CAPTURE_DIR=<tmp> python -m pytest tests/test_retrieval_eval_parity.py -q -k desktop_retrieval_eval_parity
+# (60q/9doc set, real bge-small + ettin weights, stub engine, ONNX sessions
+# pinned to TRAININGAPP_DESKTOP_EMBED_THREADS=1 by _sanitized_env()) — the
+# source run behind the thread-provenance extension of the bench/RESULTS.md
+# desktop-retrieval-eval rows. Measured recall@5=0.6481 (floor 0.64),
+# mrr=0.3692 (floor 0.3236), error_count=0, document_count=9; the parsed
+# report (with provenance.env.TRAININGAPP_DESKTOP_EMBED_THREADS=1 and
+# basename-only sources — review PRR-010) is committed beside this log as
+# report-i205-thread-provenance.json. verbatim output below
+----
+.                                                                        [100%]
+1 passed, 6 deselected in 79.33s (0:01:19)
+EXIT:0
+---- host.err (full) ----
+Unknown tokenizer class "TokenizersBackend", attempting to construct from base class.
+
+---- REPORT.md (as rendered by the run) ----
+# Tier-0 Eval Report
+
+- base_url: `http://127.0.0.1:50154`
+- timestamp: 2026-10-21T16:09:19+00:00
+- label: pytest-parity
+- backend: embedding_model='bge-small-en-v1.5', llm_backend=None
+- questions: 60 (in-corpus 54, out-of-corpus 6, errors 0)
+
+## Metrics
+
+| metric | value |
+|---|---|
+| recall@1 | 0.204 |
+| recall@3 | 0.426 |
+| recall@5 | 0.648 |
+| MRR | 0.369 |
+| abstain accuracy | 0.000 (0/6) |
+| Learn hit@3 | 0.000 (over 4 slide-target questions; initial target >= 0.70) |
+| badge accuracy | 0.900 (54/60; emitted grounding matches the expected grounded/general label; report-only, initial target >= 0.80 non-blocking) |
+| latency p50 (ms) | 1202.8 |
+| latency p95 (ms) | 1318.0 |
+| fallback-phrase answers | 0 |
+
+## Per-category (in-corpus, successful rows)
+
+| category | count | recall@3 | MRR |
+|---|---|---|---|
+| benefits | 7 | 0.429 | 0.338 |
+| compliance | 5 | 0.400 | 0.369 |
+| expenses | 5 | 0.400 | 0.357 |
+| it-support | 6 | 0.500 | 0.525 |
+| policy | 7 | 1.000 | 0.857 |
+| safety | 6 | 0.167 | 0.210 |
+| security | 7 | 0.714 | 0.445 |
+| training | 4 | 0.000 | 0.000 |
+| training-content | 7 | 0.000 | 0.060 |
+
+## Abstain rows (out-of-corpus)
+
+| id | abstained | error |
+|---|---|---|
+| q51 | false | - |
+| q52 | false | - |
+| q53 | false | - |
+| q54 | false | - |
+| q55 | false | - |
+| q56 | false | - |

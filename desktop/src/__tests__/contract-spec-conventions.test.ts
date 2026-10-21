@@ -36,15 +36,12 @@ function findRepoRoot(dir: string): string {
 const REPO_ROOT = findRepoRoot(path.dirname(fileURLToPath(import.meta.url)));
 const SPEC_DIR = path.join(REPO_ROOT, 'desktop', 'src', '__tests__');
 
-/** The closed contract-family roster (mirrors ci-gate-required-contract). */
-const FAMILY_ROSTER = [
-  'embed-seam-contract.test.ts',
-  'embed-threads-clamp-contract.test.ts',
-  'embed-constants-parity.test.ts',
-  'pack-twin-parity.test.ts',
-  'ci-gate-required-contract.test.ts',
-  'contract-spec-conventions.test.ts',
-];
+/** The closed contract-family roster — imported from contract-family-registry.ts,
+ * the single source of truth shared with ci-gate-required-contract and the
+ * frozen roster-exclusion-evidence spec (issue #233; impl-review r1 MINOR-3:
+ * importing the registry removes the local mirror so a future registry addition
+ * cannot silently escape this spec's pins). */
+import { FAMILY_ROSTER } from './contract-family-registry.js';
 
 describe('contract spec conventions (issue #215 AC14)', () => {
   it('root-resolution-and-tsc-pin: the family marker-walks to the repo root and the tsc disclosure stays true', () => {

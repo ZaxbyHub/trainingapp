@@ -10,6 +10,7 @@ import json
 import sys
 from pathlib import Path
 
+import httpx
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -493,3 +494,157 @@ class TestRunEvalMetricMath:
     def test_backend_stats_recorded(self, report):
         assert report["backend_stats"]["embedding_model"] == "fake-embed"
         assert report["label"] == "unit-test"
+
+
+class TestStatsFetchErrorSentinel:
+    """Issue #205 AC2: the /stats fetch failure KIND reaches the report.
+
+    A collapsed ``stats=None`` hid transport deaths behind a null count; the
+    sentinel lets the parity pin fail with the transport remedy instead of
+    the re-derive-the-floors remedy. ``-k transport_message`` selects this
+    class plus the pin-side synthetic test in test_retrieval_eval_parity.py.
+    """
+
+    QUESTION = {
+        "id": "q1",
+        "question": "sentinel text?",
+        "expected_doc_id": None,
+        "expected_page": None,
+        "expected_training_slide_id": None,
+        "category": "out-of-corpus",
+    }
+    ASK_PAYLOAD = {
+        "question": "sentinel text?",
+        "answer": "ok",
+        "sources": [],
+        "context_length": 0,
+        "inference_time": 0.0,
+        "grounding": "general",
+    }
+
+    def _run(self, monkeypatch, stats_get):
+        class _StatsBrokenClient:
+            def get(self, path, timeout=None):
+                if path.endswith("/health"):
+                    return _FakeResponse(200, {"status": "ok"})
+                if path.endswith("/stats"):
+                    return stats_get()
+                raise AssertionError(f"unexpected GET {path}")
+
+            def post(self, path, json=None, timeout=None):
+                return _FakeResponse(200, TestStatsFetchErrorSentinel.ASK_PAYLOAD)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        monkeypatch.setattr(runner.httpx, "Client", lambda: _StatsBrokenClient())
+        return runner.run_eval(
+            base_url="http://fake",
+            questions=[dict(self.QUESTION)],
+            n_results=10,
+            timeout=5.0,
+            label="unit-test",
+        )
+
+    def test_transport_message_stats_fetch_error_connect_error(self, monkeypatch):
+        def refused():
+            raise httpx.ConnectError("[Errno 111] connection refused")
+
+        report = self._run(monkeypatch, refused)
+        error = report["backend_stats"]["stats_fetch_error"]
+        assert error == (
+            "transport error: ConnectError: [Errno 111] connection refused"
+        ), f"the sentinel must describe the transport failure, got {error!r}"
+        assert report["backend_stats"]["document_count"] is None
+
+    def test_transport_message_stats_fetch_error_http_status(self, monkeypatch):
+        report = self._run(monkeypatch, lambda: _FakeResponse(503, {}))
+        assert report["backend_stats"]["stats_fetch_error"] == "http 503"
+        assert report["backend_stats"]["document_count"] is None
+
+    def test_transport_message_stats_fetch_error_invalid_json(self, monkeypatch):
+        # Review PRR-003 (a): HTTP 200 whose body is not JSON must surface as
+        # a sentinel, never an uncaught JSONDecodeError aborting run_eval.
+        class _NotJsonResponse(_FakeResponse):
+            def json(self):
+                raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+        report = self._run(monkeypatch, lambda: _NotJsonResponse(200, None))
+        error = report["backend_stats"]["stats_fetch_error"]
+        assert (
+            error == "http 200: response is not valid JSON"
+        ), f"the sentinel must name the invalid-JSON failure kind, got {error!r}"
+        assert report["backend_stats"]["document_count"] is None
+
+    def test_transport_message_stats_fetch_error_non_object_json(self, monkeypatch):
+        # Review PRR-003 (b): HTTP 200 whose body parses to a non-object must
+        # surface as a sentinel too (a bare list would AttributeError on
+        # .get after the full sweep).
+        report = self._run(
+            monkeypatch, lambda: _FakeResponse(200, ["not", "an", "object"])
+        )
+        error = report["backend_stats"]["stats_fetch_error"]
+        assert (
+            error == "http 200: response body is not a JSON object"
+        ), f"the sentinel must name the non-object failure kind, got {error!r}"
+        assert report["backend_stats"]["document_count"] is None
+
+    def test_transport_message_absent_when_stats_fetch_ok(self, monkeypatch):
+        # Twin: a clean /stats fetch records no sentinel at all.
+        report = self._run(
+            monkeypatch,
+            lambda: _FakeResponse(200, {"document_count": 7}),
+        )
+        assert report["backend_stats"]["stats_fetch_error"] is None
+        assert report["backend_stats"]["document_count"] == 7
+
+
+class TestProvenanceEnv:
+    """Issue #205 AC3: determinism-relevant env is recorded in
+    report.provenance.env when set and absent when unset
+    (``-k thread_provenance``)."""
+
+    QUESTION = {
+        "id": "q1",
+        "question": "provenance text?",
+        "expected_doc_id": None,
+        "expected_page": None,
+        "expected_training_slide_id": None,
+        "category": "out-of-corpus",
+    }
+
+    def _run(self, monkeypatch):
+        scripted = {
+            "provenance text?": (
+                200,
+                {
+                    "question": "provenance text?",
+                    "answer": "ok",
+                    "sources": [],
+                    "context_length": 0,
+                    "inference_time": 0.0,
+                    "grounding": "general",
+                },
+            )
+        }
+        monkeypatch.setattr(runner.httpx, "Client", lambda: _FakeClient(scripted))
+        return runner.run_eval(
+            base_url="http://fake",
+            questions=[dict(self.QUESTION)],
+            n_results=10,
+            timeout=5.0,
+            label="unit-test",
+        )
+
+    def test_thread_provenance_recorded_when_set(self, monkeypatch):
+        monkeypatch.setenv("TRAININGAPP_DESKTOP_EMBED_THREADS", "2")
+        report = self._run(monkeypatch)
+        assert report["provenance"]["env"]["TRAININGAPP_DESKTOP_EMBED_THREADS"] == "2"
+
+    def test_thread_provenance_absent_when_unset(self, monkeypatch):
+        monkeypatch.delenv("TRAININGAPP_DESKTOP_EMBED_THREADS", raising=False)
+        report = self._run(monkeypatch)
+        assert "TRAININGAPP_DESKTOP_EMBED_THREADS" not in report["provenance"]["env"]
