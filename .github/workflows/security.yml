@@ -82,6 +82,8 @@ jobs:
           src/__tests__/i230-sampler-liveness.test.ts
           src/__tests__/roster-exclusion-evidence-contract.test.ts
           src/__tests__/frozen-recipe-replay-contract.test.ts
+          src/__tests__/logline-contract-sweep.test.ts
+          src/__tests__/acceptance-battery-precision.test.ts
 
       - name: Run Safety
         run: |
