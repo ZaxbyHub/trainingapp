@@ -17,8 +17,9 @@
 //   - cache keyed (manifestPath, manifest mtimeMs): a non-fresh call on an
 //     unchanged manifest returns the cached CLEAN verify result WITHOUT
 //     re-hashing; `{fresh: true}` re-verifies and refreshes the cache (a
-//     loadError — a transient manifest read failure — is never cached; see
-//     the staleness note below) — the completion-time TOCTOU re-verify stays
+//     loadError — any manifest read/parse failure, transient or not — is
+//     never cached; see the staleness note below) — the completion-time
+//     TOCTOU re-verify stays
 //     a real pass, and the digest capture right after it reads that same
 //     fresh result instead of paying a second hash.
 //

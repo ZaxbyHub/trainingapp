@@ -351,7 +351,11 @@ export class IngestPipeline {
     db.exec('BEGIN IMMEDIATE');
     try {
       // DELETE-BEFORE-REINGEST: an older revision of the same path must not
-      // retain chunks. Cascades manually (FKs are not enforced on vec0/fts5).
+      // retain chunks. Cascades manually: SQLite never enforces foreign keys
+      // on the vec0/fts5 VIRTUAL tables, and on ordinary tables foreign_keys
+      // is OFF by default (ON only on a connection that ran the v2->v3
+      // migration ladder - store/migrate.ts) - so the manual ordering is
+      // load-bearing in both pragma states.
       const staleDocs = stmt(db, 'SELECT id FROM docs WHERE path = ? AND id != ?').all(docPath, docId) as Array<{
         id: string;
       }>;
@@ -360,8 +364,10 @@ export class IngestPipeline {
         for (const chunk of chunkIds) {
           stmt(db, 'DELETE FROM embeddings WHERE chunk_id = ?').run(chunk.id);
           stmt(db, 'DELETE FROM chunks_fts WHERE chunk_id = ?').run(chunk.id);
-          // D4/#80: links are a third derived table keyed by chunk id — the
-          // stale cascade must clear them or they orphan (FKs unenforced).
+          // D4/#80: links are a third derived table keyed by chunk id - the
+          // stale cascade must clear them: with foreign_keys OFF they would
+          // orphan, and with foreign_keys ON (a connection that ran the
+          // v2->v3 ladder) the stale row would abort the delete.
           stmt(db, 'DELETE FROM links WHERE chunk_id = ?').run(chunk.id);
         }
         stmt(db, 'DELETE FROM chunks WHERE doc_id = ?').run(doc.id);

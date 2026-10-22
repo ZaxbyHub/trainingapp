@@ -7,13 +7,16 @@
   evidence recorded inline; the 8 MiB cap itself was never wrong),
   the store's FK-pragma comments now tell one true story (foreign_keys are
   OFF by default; only the migration ladder flips them ON, leaving them on
-  for that connection — six false "ON by default" sites corrected across the
-  Node store, its python mirror, and two test premises), ADR-0013's article
-  mismatch and the wizard-manifest cache bullet's missing inline loadError
-  carve-out are fixed (the issue's already-shipped signal-reap and TDZ-safe
-  behaviors gained regression floors), and docs/training-transcription.md no
-  longer cites git-excluded trace-local artifacts, guarded by a new
-  doc-accuracy row.
+  for that connection) — six false "ON by default" claims plus the ingest
+  pipeline's blanket "(FKs unenforced)" claim corrected across the Node store,
+  its python mirror, the ingest pipeline and two test premises, ADR-0013's
+  article mismatch and the wizard-manifest cache bullet's missing inline
+  loadError carve-out are fixed (the issue's already-shipped signal-reap and
+  TDZ-safe behaviors keep their committed contract pins from PR #217 and are
+  additionally floored by this batch's acceptance battery, which is
+  trace-local by this repo's convention), and docs/training-transcription.md
+  no longer cites git-excluded trace-local artifacts, guarded by a new
+  doc-accuracy row with a liveness probe on the citation shapes.
 - **The protection bites: the desktop lifecycle pins are merge-blocking, the
   bench identity and floor cells are honest, and the eval harness cannot
   silently re-execute or swallow a dead /stats (issues #233, #205, #206)**:

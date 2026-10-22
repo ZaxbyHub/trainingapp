@@ -96,10 +96,10 @@ run (partial-failure containment).
 Reference-package run (2026-09-12): **300 audio + 37 video = 337 media
 transcribed, 0 failures** (acceptance check C1). The issue's "33 sidecar-less
 MP4s" was file-space arithmetic (57 files − 24 sidecars); the run's id-space
-census (finding H4 of the #78 acceptance run — that run's artifacts are
-session-local and not committed; this section is the durable record) found
-61 distinct video object ids of which 37 have no sidecar — the invariant
-"every sidecar-less asset transcribed" covers 37 ⊇ 33, with no coverage gap.
+census found 61 distinct video object ids of which 37 have no sidecar — the
+invariant "every sidecar-less asset transcribed" covers 37 ⊇ 33, with no
+coverage gap. (That run's own artifacts are session-local and are not
+committed; this section is the durable record.)
 
 ## Spot-check sample (human-review anchor)
 

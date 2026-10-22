@@ -159,9 +159,10 @@ function migrateV2ToV3Inner(db: StoreDb): void {
     db.exec('DROP TABLE packs');
     db.exec('ALTER TABLE packs_v3 RENAME TO packs');
 
-    // docs: re-create with the v3 DDL (pack_id FK dropped). FKs are never
-    // enforced today, so the drop is behavior-preserving; re-creating keeps
-    // migrated files identical in shape to a fresh v3 apply.
+    // docs: re-create with the v3 DDL (pack_id FK dropped). Foreign keys are
+    // OFF for the duration of this migration (the pragma flip above), so the
+    // drop is behavior-preserving; re-creating keeps migrated files
+    // identical in shape to a fresh v3 apply.
     db.exec(
       'CREATE TABLE docs_v3 (\n' +
         '    id           TEXT PRIMARY KEY,\n' +
