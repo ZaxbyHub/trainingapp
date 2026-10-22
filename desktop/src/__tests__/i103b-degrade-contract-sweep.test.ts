@@ -122,8 +122,15 @@ async function waitForErrorLine(
     const hit = errorMessages(spy).find((m) => m.includes(substring));
     if (hit !== undefined) return hit;
     if (Date.now() > deadline) {
+      // issue #210 (PRR-051): the timeout dump is BOUNDED (first 12 lines,
+      // each truncated to 200 chars) and REDACTED (long hex runs - tokens,
+      // hashes - replaced), so a failing diagnostic cannot exfiltrate an
+      // unbounded unredacted buffer into the test report.
+      const dump = errorMessages(spy)
+        .slice(0, 12)
+        .map((m) => m.slice(0, 200).replace(/[0-9a-f]{24,}/gi, '[redacted-hex]'));
       throw new Error(
-        `timed out waiting for a console.error line containing "${substring}" (captured: ${JSON.stringify(errorMessages(spy))})`,
+        `timed out waiting for a console.error line containing "${substring}" (captured up to 12 lines, truncated to 200 chars, hex-redacted: ${JSON.stringify(dump)})`,
       );
     }
     await new Promise((resolve) => setTimeout(resolve, 25));
@@ -427,7 +434,7 @@ describe('i103b lifecycle contract sweep (#167)', () => {
       const backupsDir = path.join(dir, 'backups');
       const store = openStore({ dbPath: storePath, dims: DIMS, repoRoot: REPO_ROOT });
       await seedDoc(store, 'doc-precious', 'PRECIOUS-DOC');
-      await createBackup(store, backupsDir);
+      const backup = createBackup(store, backupsDir);
       store.close();
       // Non-SQLite garbage: the boot integrity check fails and recovery runs.
       fs.writeFileSync(storePath, Buffer.alloc(4096, 0xde));
@@ -445,7 +452,12 @@ describe('i103b lifecycle contract sweep (#167)', () => {
       // Degraded outcome: recovery never crashes the host.
       expect(handle.mode).toBe('node');
       const line = await waitForErrorLine(errorSpy, '[trainingapp-backend] store recovered (action=restore');
-      expect(line).toContain(' from '); // restoredFrom names the backup
+      // issue #210 (PRR-049): name the ACTUAL backup, not just the ' from '
+      // separator - a restoredFrom that pointed at the wrong file survived
+      // the bare substring pin.
+      expect(line, 'restoredFrom must name the concrete backup file').toContain(
+        ` from ${backup.path}`,
+      );
       // ...and the host serves the RESTORED store, not an empty one.
       const listed = await getJson(handle.port, '/documents');
       expect(listed.status).toBe(200);

@@ -162,3 +162,65 @@ test.describe('axe gate wiring (issue #146: the gate itself must grow)', () => {
     );
   });
 });
+
+test.describe('axe gate post-condition rows (issue #207)', () => {
+  test.use({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+
+  test('axe gate convergence: a chasey never-settling surface makes the shared gate fail loud naming it', async ({ page }) => {
+    // Frozen C5 row (driver repro/check-c5.sh). The chasey element keeps its
+    // height 800px ahead of the viewport: every growth the loop performs is
+    // answered by new overflow, so the 6-iteration budget AND the
+    // MAX_SCAN_HEIGHT cap end with the page STILL scrolling. The gate must
+    // throw naming the surface instead of scanning anyway - the exact
+    // silent fall-out this row kills (named mutant: delete the convergence
+    // post-condition in axe-full-page.ts and the gate scans a
+    // still-scrolling page, this expect never rejects -> red).
+    await openSettings(page);
+    await page.evaluate(() => {
+      const scroller = document.querySelector('.ui-shell__main') ?? document.body;
+      const chasey = document.createElement('div');
+      chasey.id = 'convergence-chasey';
+      const grow = () => {
+        chasey.style.height = `${window.innerHeight + 800}px`;
+      };
+      grow();
+      window.addEventListener('resize', grow);
+      scroller.append(chasey);
+    });
+    await expect(
+      wholePageAxeExpectClean(page, { key: 'convergence-chasey', knownBaseline: {} }),
+    ).rejects.toThrow(/convergence-chasey did not converge/);
+  });
+
+  test('axe gate stabilization: content appended after the grow snapshot is re-fitted before the scan', async ({ page }) => {
+    // Frozen C6 row (driver repro/check-c6.sh). The late plant is appended
+    // through the gate's row-controlled onAfterGrow seam (a wall-clock timer
+    // could race the grow snapshot). With stabilization in place the gate
+    // re-measures, re-fits, and the scan REPORTS the late below-fold
+    // contrast violation (rejects naming it). Named mutant: delete the
+    // stabilization re-measure (settle -> grow -> scan once, the base
+    // sequence) - the plant stays below the scanned fold, axe defers it as
+    // offscreen `incomplete`, the gate goes vacuously green -> red.
+    await openSettings(page);
+    await expect(
+      wholePageAxeExpectClean(page, {
+        key: 'stabilization-late',
+        knownBaseline: {},
+        onAfterGrow: async (target) => {
+          await target.evaluate(() => {
+            const scroller = (document.querySelector('.ui-shell__main') ?? document.body) as HTMLElement;
+            if (getComputedStyle(scroller).position === 'static') scroller.style.position = 'relative';
+            const node = document.createElement('p');
+            node.id = 'stabilization-late-violation';
+            node.textContent = 'deliberate late below-fold contrast violation planted after the grow snapshot';
+            node.style.position = 'absolute';
+            node.style.top = `${scroller.scrollHeight + 400}px`;
+            node.style.color = '#cfcfcf';
+            node.style.background = '#ffffff';
+            scroller.append(node);
+          });
+        },
+      }),
+    ).rejects.toThrow(/stabilization-late-violation/);
+  });
+});

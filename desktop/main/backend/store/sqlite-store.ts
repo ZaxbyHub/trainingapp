@@ -173,8 +173,12 @@ export function openStore(options: StoreOptions): StoreHandle {
   const repoRoot = options.repoRoot ?? findRepoRoot();
   const schemaSql = loadSchemaSql(repoRoot, dims);
 
-  fs.mkdirSync(path.dirname(options.dbPath), { recursive: true });
+  // issue #210 (PRR-043): the lazy native load runs BEFORE the mkdir, so an
+  // addon LOAD failure (MODULE_NOT_FOUND / ABI mismatch) degrades to the
+  // caller's failure isolation WITHOUT openStore having already created the
+  // store's parent directory on disk.
   const { Database, sqliteVec } = loadNativeAddons();
+  fs.mkdirSync(path.dirname(options.dbPath), { recursive: true });
   const db = new Database(options.dbPath);
   try {
     // issue #100 item 2: explicit connection pragmas, then READ BACK the

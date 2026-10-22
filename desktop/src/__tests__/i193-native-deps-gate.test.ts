@@ -15,6 +15,10 @@
 // keeps the stack import-safe and (b) the end-to-end branch behavior via a
 // nested run of the gated spec with TRAININGAPP_TEST_FORCE_NATIVE_DEPS_ABSENT.
 import { spawnSync } from 'node:child_process';
+import Module from 'node:module';
+import os from 'node:os';
+
+type ModuleWithLoad = { _load: (request: string, parent: unknown, isMain: boolean) => unknown };
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,6 +39,40 @@ function findRepoRoot(dir: string): string {
 }
 
 const REPO_ROOT = findRepoRoot(THIS_DIR);
+
+/**
+ * Run a nested vitest command with issue #210 (PRR-016/052) hygiene: an
+ * EXPLICIT hard timeout on spawnSync AND, when the child was killed by that
+ * timeout (status === null), a full process-TREE kill (taskkill /T /F on
+ * Windows - with shell:true the wrapper's npm/vitest descendants would
+ * otherwise survive the parent kill and hold sqlite handles / ports).
+ */
+interface NestedRun {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+}
+function runNestedVitest(
+  command: string,
+  env: Record<string, string | undefined>,
+  timeoutMs: number,
+): NestedRun {
+  const result = spawnSync(command, {
+    shell: true,
+    cwd: REPO_ROOT,
+    env,
+    encoding: 'utf8',
+    timeout: timeoutMs,
+  });
+  if (result.status === null && typeof result.pid === 'number' && process.platform === 'win32') {
+    spawnSync(`taskkill /T /F /PID ${result.pid}`, { shell: true, encoding: 'utf8' });
+  }
+  return {
+    status: result.status,
+    stdout: String(result.stdout ?? ''),
+    stderr: String(result.stderr ?? ''),
+  };
+}
 
 describe('native-deps-gate policy (issue #193 D2: CI fails, local skips)', () => {
   it('deps present -> run, regardless of CI', () => {
@@ -90,18 +128,19 @@ describe('native-deps-gate WIRING (issue #193 AC21: the gate must be reachable)'
     // exits nonzero, so this row must go red.
     const env = { ...process.env, TRAININGAPP_TEST_FORCE_NATIVE_DEPS_ABSENT: '1' };
     delete env.CI;
-    const result = spawnSync(
+    const result = runNestedVitest(
       `npm --prefix desktop test -- src/__tests__/i169-stats-route-real-seed.test.ts --reporter=verbose`,
-      { shell: true, cwd: REPO_ROOT, env, encoding: 'utf8', timeout: 180_000 },
+      env,
+      180_000,
     );
-    const out = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+    const out = `${result.stdout}\n${result.stderr}`;
     expect(out, out).toContain(NATIVE_DEPS_SKIP_MARKER);
     expect(out, out).toContain(STAGING_INSTRUCTION);
     expect(result.status, out).toBe(0);
     // The non-native AC15 row keeps running on a deps-less box.
     expect(out, out).toMatch(/[1-9][0-9]* passed/);
     expect(out, out).toMatch(/out-of-scope-fields/);
-  });
+  }, 200_000);
 
   it('wiring: forced-absent under CI FAILS loudly with the staging instruction', () => {
     // Named mutant: delete the fail-branch throw in i169's suite-scoped
@@ -112,11 +151,12 @@ describe('native-deps-gate WIRING (issue #193 AC21: the gate must be reachable)'
       TRAININGAPP_TEST_FORCE_NATIVE_DEPS_ABSENT: '1',
       CI: '1',
     };
-    const result = spawnSync(
+    const result = runNestedVitest(
       `npm --prefix desktop test -- src/__tests__/i169-stats-route-real-seed.test.ts --reporter=verbose`,
-      { shell: true, cwd: REPO_ROOT, env, encoding: 'utf8', timeout: 180_000 },
+      env,
+      180_000,
     );
-    const out = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+    const out = `${result.stdout}\n${result.stderr}`;
     // Exclude the null status (review PRR-006): spawnSync reports
     // status: null on timeout or signal death, which would satisfy a bare
     // not.toBe(0) — a killed run must never read as the loud failure.
@@ -125,7 +165,7 @@ describe('native-deps-gate WIRING (issue #193 AC21: the gate must be reachable)'
     expect(out, out).toContain('native deps missing under CI');
     expect(out, out).toContain('fail, never silently skip');
     expect(out, out).toContain(STAGING_INSTRUCTION);
-  });
+  }, 200_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -282,5 +322,94 @@ describe('native-deps gate ADOPTION (issue #203)', () => {
       expect(gates.length, `${rel}: the exemption covers ONE named gate, found ${gates.length}`).toBe(1);
       expect(reason.length, `${rel}: exemption must carry a reason`).toBeGreaterThan(10);
     }
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// issue #210 AC3 (trace 201-207-208-209-210): the six hygiene residuals, one
+// home row each so the batch is falsifiable as a whole (frozen token:
+// 'hygiene' - the C13 driver replays exactly these 6 rows). Source-pin rows
+// read the pinned files directly (i103b/i211 established pattern); the
+// spawn row pins THIS file's runNestedVitest; the store row is BEHAVIORAL.
+// ---------------------------------------------------------------------------
+function readRepoFile(rel: string): string {
+  return fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
+}
+
+describe('native-deps batch hygiene residuals (issue #210 AC3)', () => {
+  it('hygiene: enteredGate-bound - i169-llama never awaits an unbounded gate', () => {
+    // Named mutant: restore the bare `await enteredGate;` in the mixed-state
+    // row - this row goes red.
+    const src = readRepoFile('desktop/src/__tests__/i169-llama-getstats-counts.test.ts');
+    expect(src).toContain('awaitEntered(enteredGate)');
+    expect(src).not.toMatch(/^\s*await enteredGate;/m);
+  });
+
+  it('hygiene: afterAll-wiring - drainTempDirs is registered, not only self-drained by its row', () => {
+    // Named mutant: delete the afterAll(drainTempDirs) registration - the
+    // self-draining tmp-cleanup row keeps passing while litter returns, so
+    // only THIS pin sees the wiring.
+    const src = readRepoFile('desktop/src/__tests__/i169-llama-getstats-counts.test.ts');
+    expect(src).toMatch(/afterAll\(\s*drainTempDirs\s*\)/);
+  });
+
+  it('hygiene: restore-source - the i103b recovery row names the concrete backup', () => {
+    // Named mutant: revert to the bare toContain(' from ') - a restoredFrom
+    // pointing at the WRONG backup file survived it (PRR-049).
+    const src = readRepoFile('desktop/src/__tests__/i103b-degrade-contract-sweep.test.ts');
+    expect(src).toMatch(/from \$\{backup\.path\}/);
+    expect(src).toMatch(/const backup = createBackup\(store, backupsDir\)/);
+  });
+
+  it('hygiene: diagnostics-bounded - the timeout dump is capped and hex-redacted', () => {
+    // Named mutant: remove the .slice caps / the redaction - an unbounded
+    // unredacted buffer returns (PRR-051).
+    const src = readRepoFile('desktop/src/__tests__/i103b-degrade-contract-sweep.test.ts');
+    expect(src).toMatch(/\.slice\(0, 12\)/);
+    expect(src).toMatch(/\.slice\(0, 200\)/);
+    expect(src).toMatch(/redacted-hex/);
+  });
+
+  it('hygiene: spawn-tree-kill - nested vitest runs are tree-killed with explicit per-test timeouts', () => {
+    // Named mutants: drop the taskkill branch from runNestedVitest, or remove
+    // the timeoutMs argument / the 200_000 per-test bounds from the wiring
+    // rows (PRR-016/052). Pinned from THIS file's source.
+    const src = readRepoFile('desktop/src/__tests__/i193-native-deps-gate.test.ts');
+    expect(src).toMatch(/function runNestedVitest\(/);
+    expect(src).toMatch(/taskkill \/T \/F/);
+    expect(src).toMatch(/timeout: timeoutMs/);
+    const wiringRows = src.match(/runNestedVitest\(/g) ?? [];
+    expect(wiringRows.length, 'both forced-absent wiring rows use the hardened helper').toBeGreaterThanOrEqual(2);
+    expect(src).toMatch(/}, 200_000\);/);
+  });
+
+  it('hygiene: lazy-load-before-mkdir - a failed native load leaves no created parent dir (behavioral)', async () => {
+    // Named mutant: swap sqlite-store back to mkdir-before-load - the parent
+    // directory exists after the throw and this row goes red (PRR-043).
+    // The r01 Module._load intercept injects the deterministic addon absence
+    // on a box that HAS the addons installed (round-1 critic R3a mechanism).
+    const { openStore } = await import('../../main/backend/store/sqlite-store.js');
+    const mod = Module as unknown as ModuleWithLoad;
+    const original = mod._load;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'i210-hyg-store-'));
+    const dbPath = path.join(root, 'nested', 'store.sqlite');
+    try {
+      mod._load = (request: string, parent: unknown, isMain: boolean) => {
+        if (request === 'better-sqlite3' || request === 'sqlite-vec') {
+          const err = new Error(`Cannot find module '${request}'`);
+          (err as NodeJS.ErrnoException).code = 'MODULE_NOT_FOUND';
+          throw err;
+        }
+        return original.call(mod, request, parent, isMain);
+      };
+      expect(() => openStore({ dbPath, dims: 8, repoRoot: REPO_ROOT })).toThrow(/MODULE_NOT_FOUND|Cannot find module/);
+    } finally {
+      mod._load = original;
+    }
+    // The contract: the load failure precedes ANY filesystem mutation - the
+    // parent directory was never created.
+    expect(fs.existsSync(path.dirname(dbPath)), 'a failed native load must not create the parent dir').toBe(false);
+    fs.rmSync(root, { recursive: true, force: true });
   });
 });

@@ -26,13 +26,15 @@
 // GREEN after the fix: every case stays internally consistent.
 import { describe, expect, it } from 'vitest';
 import { StubEngine } from '../../main/backend/engine.js';
+import { createBackendServer, listenOnRandomPort } from '../../main/backend/server.js';
+import { createLoopbackGuard } from '../../main/security/loopback-guard.js';
 // The fake surface factory is THE shared fixture in
 // ./fixtures/document-surface-fake.ts — this file's factory body was moved
 // there verbatim as the superset shape (issue #193 AC19 / #200 AC2): same
 // parameterization (embedderModelId first, then docs/onList/rejectList),
 // same DEFAULT_DOCS, same `total: documents.length`. The swap test below is
 // byte-verbatim and still speaks the docs seam.
-import { makeFakeSurface } from './fixtures/document-surface-fake.js';
+import { makeFakeSurface, withGatedList } from './fixtures/document-surface-fake.js';
 
 const STUB_MARKER = 'desktop-stub (B5 #63)';
 
@@ -65,14 +67,12 @@ describe('StubEngine.getStats mixed-state guardrail (i185)', () => {
     const releaseGate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    engine.attachDocumentSurface({
-      ...base,
-      async listDocuments() {
-        entered();
-        await releaseGate;
-        return base.listDocuments();
-      },
-    });
+    // issue #209 AC1: the wrap goes through withGatedList (Object.create +
+    // delegation) - the old `{ ...base, listDocuments(){} }` spread froze the
+    // listDocumentsCalls getter into a data 0 on the wrapper.
+    engine.attachDocumentSurface(
+      withGatedList(base, { onEnter: () => entered(), release: releaseGate }),
+    );
 
     const pending = engine.getStats();
     await awaitEntered(enteredGate); // getStats is now suspended INSIDE listDocuments
@@ -108,14 +108,9 @@ describe('StubEngine.getStats mixed-state guardrail (i185)', () => {
     const releaseGate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    engine.attachDocumentSurface({
-      ...surfaceA,
-      async listDocuments() {
-        entered();
-        await releaseGate;
-        return surfaceA.listDocuments();
-      },
-    });
+    engine.attachDocumentSurface(
+      withGatedList(surfaceA, { onEnter: () => entered(), release: releaseGate }),
+    );
 
     const pending = engine.getStats();
     await awaitEntered(enteredGate); // suspended inside surface-A's listDocuments
@@ -152,5 +147,62 @@ describe('StubEngine.getStats mixed-state guardrail (i185)', () => {
     expect(stats.chunk_count).toBe(0);
     expect(stats.embedding_model).toBe('stub-dims-empty');
     expect(stats.embedding_model).not.toBe(STUB_MARKER);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// issue #209 AC2 (trace 201-207-208-209-210): the engine->HTTP-route
+// rejection contract. The rows above pin that getStats REJECTS; nothing here
+// pinned that the HTTP route turns that rejection into the generic 500 -
+// server.ts's catch wrapper had zero tests (PRR-008). The named mutant
+// (wrap the 'GET /stats' engine.getStats() call in a try/catch returning a
+// zeroed 200) turns BOTH rows below red.
+// ---------------------------------------------------------------------------
+const ROUTE_TOKEN = 'i209-route-500-token';
+const ROUTE_HEADER = 'x-desktop-token';
+
+async function route500Server(): Promise<{ port: number; close: () => Promise<void> }> {
+  const engine = new StubEngine();
+  engine.attachDocumentSurface(
+    makeFakeSurface('surface-500', { rejectList: new Error('store closed') }),
+  );
+  const server = createBackendServer({
+    guard: createLoopbackGuard({ token: ROUTE_TOKEN }),
+    tokenHeaderName: ROUTE_HEADER,
+    engine,
+  });
+  const port = await listenOnRandomPort(server);
+  return {
+    port,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
+}
+
+describe('GET /stats route-level rejection handling (i209 AC2)', () => {
+  it('route-500: a rejecting attached surface surfaces as HTTP 500 from GET /stats', async () => {
+    const { port, close } = await route500Server();
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/stats`, {
+        headers: { [ROUTE_HEADER]: ROUTE_TOKEN },
+      });
+      // The engine rejection must NOT be swallowed into a 200.
+      expect(response.status).toBe(500);
+    } finally {
+      await close();
+    }
+  });
+
+  it('route-500: the 500 body is the generic internal error payload', async () => {
+    const { port, close } = await route500Server();
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/stats`, {
+        headers: { [ROUTE_HEADER]: ROUTE_TOKEN },
+      });
+      expect(response.status).toBe(500);
+      const body = (await response.json()) as { detail?: string };
+      expect(body).toEqual({ detail: 'An internal error occurred' });
+    } finally {
+      await close();
+    }
   });
 });

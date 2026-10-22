@@ -237,3 +237,112 @@ describe('GET /stats out-of-scope fields on the attached-surface path (issue #19
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// issue #210 AC1 (trace 201-207-208-209-210): the FROZEN chunk-count oracle.
+// The rows above certify /stats against values re-derived from the same
+// production chunking the server reads (listDocuments totals / a raw count of
+// the same ingest) - a chunker behavior change moves oracle and payload
+// TOGETHER and the spec stays green (PRR-036). The deterministic truth for
+// the seeded 40/300/600-word corpus at the default 256/100 config is the
+// FROZEN constants below: per-doc [1, 2, 3], total 6 (verified by direct
+// chunkDocument execution; the overlap-100-to-0 mutant claim was corrected
+// to a size mutant by the plan critics). Named mutant:
+// DEFAULT_INGEST_CONFIG chunkWordCount 256 -> 128 (yields 1/4/8, total 13).
+// ---------------------------------------------------------------------------
+const FROZEN_CHUNK_COUNTS = [1, 2, 3];
+const FROZEN_CHUNK_TOTAL = 6;
+
+describeReal(() => {
+  it('chunk-oracle: GET /stats reports the FROZEN document_count 3 and chunk_count 6 for the seeded corpus', async () => {
+    if (store === null) throw new Error('store handle unexpectedly null after seed');
+    const response = await fetch(url('/stats'), { headers: { [TOKEN_HEADER]: TOKEN } });
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as { document_count: number; chunk_count: number };
+    // The constants are LITERALS, not values summed from listDocuments/the
+    // same chunker output (that is the PRR-036 vacuity this row kills).
+    expect(payload.document_count).toBe(3);
+    expect(payload.chunk_count).toBe(FROZEN_CHUNK_TOTAL);
+    const rawChunks = (store.db.prepare('SELECT COUNT(*) AS n FROM chunks').get() as { n: number }).n;
+    expect(rawChunks).toBe(FROZEN_CHUNK_TOTAL);
+  });
+
+  it('chunk-oracle: per-doc chunk counts are exactly [1, 2, 3] for the 40/300/600-word seeds', async () => {
+    if (store === null) throw new Error('store handle unexpectedly null after seed');
+    const rows = store.db
+      .prepare('SELECT d.path AS path, COUNT(*) AS n FROM chunks c JOIN docs d ON d.id = c.doc_id GROUP BY c.doc_id ORDER BY d.path')
+      .all() as Array<{ path: string; n: number }>;
+    expect(rows.map((r) => r.n)).toEqual(FROZEN_CHUNK_COUNTS);
+    // docs.path stores the absolute seed-file path; compare by basename in
+    // seed order (the GROUP BY ORDER BY d.path sorts doc-0 < doc-1 < doc-2).
+    expect(rows.map((r) => path.basename(r.path))).toEqual(['doc-0.txt', 'doc-1.txt', 'doc-2.txt']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// issue #210 AC2 (PRR-037 / PRR-038): negative-auth row and the falsy
+// embedder-id payload shape. Both run on the FAKE surface (no native deps),
+// top-level on purpose. Named mutants: exempt /stats from the loopback guard
+// (row 1 red); add `|| STUB_MARKER` to engine.ts:426 (row 2 red).
+// ---------------------------------------------------------------------------
+describe('GET /stats negative auth and falsy-embedder-id shape (issue #210 AC2)', () => {
+  async function fakeStatsServer(): Promise<{ port: number; close: () => Promise<void> }> {
+    const engine = new StubEngine();
+    engine.attachDocumentSurface(makeFakeSurface('route-auth'));
+    const server = createBackendServer({
+      guard: createLoopbackGuard({ token: TOKEN }),
+      tokenHeaderName: 'X-Desktop-Token',
+      engine,
+    });
+    const port = await listenOnRandomPort(server);
+    return { port, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
+  }
+
+  it('auth-negative: GET /stats without and with a wrong token is refused 401/403 by the guard', async () => {
+    const { port, close } = await fakeStatsServer();
+    try {
+      const noToken = await fetch(`http://127.0.0.1:${port}/stats`);
+      expect([401, 403], `no-token status: ${noToken.status}`).toContain(noToken.status);
+      const wrongToken = await fetch(`http://127.0.0.1:${port}/stats`, {
+        headers: { [TOKEN_HEADER]: 'not-the-token' },
+      });
+      expect([401, 403], `wrong-token status: ${wrongToken.status}`).toContain(wrongToken.status);
+      // Positive control: the guard admits exactly the valid-token request.
+      const ok = await fetch(`http://127.0.0.1:${port}/stats`, {
+        headers: { [TOKEN_HEADER]: TOKEN },
+      });
+      expect(ok.status).toBe(200);
+    } finally {
+      await close();
+    }
+  });
+
+  it('auth-negative falsy-id: falsy embedderModelId/vectorsEmbeddingModelId pin the /stats embedding_model shape', async () => {
+    const engine = new StubEngine();
+    engine.attachDocumentSurface(makeFakeSurface('', { vectorsEmbeddingModelId: '' }));
+    const server = createBackendServer({
+      guard: createLoopbackGuard({ token: TOKEN }),
+      tokenHeaderName: 'X-Desktop-Token',
+      engine,
+    });
+    const port = await listenOnRandomPort(server);
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/stats`, {
+        headers: { [TOKEN_HEADER]: TOKEN },
+      });
+      expect(response.status).toBe(200);
+      const payload = (await response.json()) as {
+        embedding_model: string;
+        configured_embedding_model: string;
+      };
+      // engine.ts:426 `vectorsModel.length > 0 ? vectorsModel : configured`:
+      // both falsy -> '' EXACTLY (a `|| STUB_MARKER` fallback flips this red;
+      // the no-surface marker belongs to the detached path, not this one).
+      expect(payload.embedding_model).toBe('');
+      expect(payload.configured_embedding_model).toBe('');
+      expect(payload.embedding_model).not.toBe(STUB_MARKER);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});

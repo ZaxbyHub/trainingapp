@@ -6,7 +6,7 @@
 // parameterization contract so a mutation of the shared factory fails here
 // first (named mutant AC19: changing DEFAULT_DOCS or dropping the docs seam).
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_DOCS, makeFakeSurface } from './document-surface-fake.js';
+import { DEFAULT_DOCS, makeFakeSurface, withGatedList } from './document-surface-fake.js';
 
 function chunkSum(docs: Array<{ id: string; chunk_count: number }>): number {
   return docs.reduce((acc, doc) => acc + doc.chunk_count, 0);
@@ -130,5 +130,66 @@ describe('document-surface-fake (shared fixture contract, issue #193 AC19)', () 
     expect(chunkSum(DEFAULT_DOCS)).toBe(5);
     // The zero-docs default reuses the canonical export by reference.
     expect((await makeFakeSurface().listDocuments()).documents).toBe(DEFAULT_DOCS);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// issue #209 AC1 (trace 201-207-208-209-210): every MUTATING method is
+// observable, and wrapping a surface keeps the counters live. The frozen
+// named mutant (revert clearDocuments to the counterless no-op) kills row 1.
+// ---------------------------------------------------------------------------
+describe('mutating-methods observability (issue #209 AC1)', () => {
+  it('mutating-methods: clearDocuments() is recorded (clearDocumentsCalls increments per call)', async () => {
+    const surface = makeFakeSurface('s-clear');
+    expect(surface.clearDocumentsCalls).toBe(0);
+    await surface.clearDocuments();
+    await surface.clearDocuments();
+    expect(surface.clearDocumentsCalls).toBe(2);
+  });
+
+  it('mutating-methods: ingestDirectory() is recorded (ingestDirectoryCalls)', async () => {
+    const surface = makeFakeSurface('s-dir');
+    expect(surface.ingestDirectoryCalls).toBe(0);
+    await surface.ingestDirectory('nowhere');
+    await surface.ingestDirectory('nowhere-again');
+    expect(surface.ingestDirectoryCalls).toBe(2);
+  });
+
+  it('mutating-methods: ingestFile() is recorded (ingestFileCalls)', async () => {
+    const surface = makeFakeSurface('s-file');
+    expect(surface.ingestFileCalls).toBe(0);
+    await surface.ingestFile();
+    await surface.ingestFile({ name: 'x.txt', data: Buffer.from('x') } as never);
+    expect(surface.ingestFileCalls).toBe(2);
+  });
+
+  it('mutating-methods: ingestBatch() is recorded (ingestBatchCalls)', async () => {
+    const surface = makeFakeSurface('s-batch');
+    expect(surface.ingestBatchCalls).toBe(0);
+    await surface.ingestBatch();
+    expect(surface.ingestBatchCalls).toBe(1);
+  });
+
+  it('mutating-methods: spread-wrap replacement withGatedList keeps counters live', async () => {
+    // The footgun this row kills: `{ ...base, listDocuments(){} }` copies the
+    // accessor properties as FROZEN data values (i185:69, i169-llama:123 at
+    // filing), so the observability seam reads 0 forever on the wrapper.
+    // withGatedList builds on Object.create(base): the override delegates to
+    // base.listDocuments(), and EVERY counter stays live through the chain.
+    const base = makeFakeSurface('s-wrap');
+    let entered = 0;
+    const wrapped = withGatedList(base, { onEnter: () => { entered += 1; } });
+    expect(wrapped.listDocumentsCalls).toBe(0);
+    await wrapped.listDocuments();
+    await wrapped.listDocuments();
+    expect(wrapped.listDocumentsCalls).toBe(2);
+    expect(entered).toBe(2);
+    await wrapped.clearDocuments();
+    expect(wrapped.clearDocumentsCalls).toBe(1);
+    await wrapped.ingestFile();
+    expect(wrapped.ingestFileCalls).toBe(1);
+    // The counters read on the WRAPPER are the BASE's counters - delegation,
+    // not duplication.
+    expect(base.listDocumentsCalls).toBe(2);
   });
 });
