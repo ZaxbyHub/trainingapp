@@ -382,3 +382,70 @@ def test_changelog_correction_markers_present():
                     "a nearby correction"
                 )
     assert not problems, "CHANGELOG corrections drifted:\n" + "\n".join(problems)
+
+
+# Issue #128 class: the citation shapes this repo's trace evidence actually
+# takes — the path-shaped trace dir, the c1-out extract dir, the #78 trace-log
+# pointer, and the H-label finding pointers. Matched case-insensitively because
+# the class's spellings vary; each shape carries a liveness sample so a pattern
+# edit cannot silently drop coverage.
+_TRACE_CITATION_PATTERNS = (
+    (re.compile(r"issue-traces", re.IGNORECASE), ".agents/issue-traces/x"),
+    (re.compile(r"c1-out", re.IGNORECASE), "c1-out/x"),
+    (
+        re.compile(r"trace.?s localization log", re.IGNORECASE),
+        "the #78 trace's localization log",
+    ),
+    (re.compile(r"finding h\d", re.IGNORECASE), "finding H4"),
+)
+# The shape set the class actually takes, pinned so a pattern cannot be
+# deleted or renamed out of the guard without this probe failing.
+_TRACE_CITATION_PATTERN_ROSTER = (
+    "issue-traces",
+    "c1-out",
+    "trace.?s localization log",
+    "finding h\\d",
+)
+
+
+def test_training_transcription_has_no_trace_local_citation():
+    """Issue #128 class guard: docs/training-transcription.md must cite no
+    trace-local artifact — neither path-shaped references (.agents/issue-traces,
+    c1-out) nor the prose pointers ("trace's localization log", the H-label
+    findings). That evidence is git-excluded and dead in every clone; the
+    doc's own sections are the durable record."""
+    text = (REPO_ROOT / "docs" / "training-transcription.md").read_text(
+        encoding="utf-8", errors="replace"
+    )
+    problems = [
+        pattern.pattern
+        for pattern, _sample in _TRACE_CITATION_PATTERNS
+        if pattern.search(text)
+    ]
+    assert not problems, (
+        "training-transcription.md regressed to citing trace-local artifacts: "
+        + ", ".join(problems)
+    )
+
+
+def test_trace_citation_shape_patterns_are_alive():
+    """Liveness probe for the citation-shape tuple above: every shape must
+    still be detectable, so a pattern edit cannot silently drop coverage (the
+    same vacuity the stale-token patterns guard against)."""
+    dead = [
+        pattern.pattern
+        for pattern, sample in _TRACE_CITATION_PATTERNS
+        if not pattern.search(sample)
+    ]
+    assert (
+        not dead
+    ), "trace-citation shapes no longer match their liveness samples: " + ", ".join(
+        dead
+    )
+    rostered = tuple(pattern.pattern for pattern, _sample in _TRACE_CITATION_PATTERNS)
+    assert rostered == _TRACE_CITATION_PATTERN_ROSTER, (
+        "trace-citation shape roster drifted: expected "
+        + str(_TRACE_CITATION_PATTERN_ROSTER)
+        + ", got "
+        + str(rostered)
+    )

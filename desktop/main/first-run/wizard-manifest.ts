@@ -16,10 +16,12 @@
 //     does not re-resolve, unlike the old closure);
 //   - cache keyed (manifestPath, manifest mtimeMs): a non-fresh call on an
 //     unchanged manifest returns the cached CLEAN verify result WITHOUT
-//     re-hashing; `{fresh: true}` re-verifies and refreshes the cache — the
-//     completion-time TOCTOU re-verify stays a real pass, and the digest
-//     capture right after it reads that same fresh result instead of paying
-//     a second hash.
+//     re-hashing; `{fresh: true}` re-verifies and refreshes the cache (a
+//     loadError — any manifest read/parse failure, transient or not — is
+//     never cached; see the staleness note below) — the completion-time
+//     TOCTOU re-verify stays
+//     a real pass, and the digest capture right after it reads that same
+//     fresh result instead of paying a second hash.
 //
 // Deliberate staleness window: a verified file mutated WITHOUT the manifest
 // changing is only re-detected by the next fresh call (completion) — the

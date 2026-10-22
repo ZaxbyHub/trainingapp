@@ -14,8 +14,9 @@
 // active/install_path (PackManager lifecycle state; mirror: pack_manager.py).
 // supersedes becomes a JSON array of "id@version" strings; any legacy scalar
 // value is wrapped into a single-element array. docs.pack_id's FK is dropped
-// by re-creating docs with the v3 DDL (the FK was inert — no runtime enables
-// PRAGMA foreign_keys — but leaving v2-migrated files with a composite-PK
+// by re-creating docs with the v3 DDL (the FK was inert — connections default
+// foreign_keys OFF and this ladder is the only runtime code that flips them
+// ON — but leaving v2-migrated files with a composite-PK
 // parent reference would break the day enforcement turns on, so the ladder
 // keeps every store byte-consistent with a fresh v3 apply).
 //
@@ -97,10 +98,14 @@ function migrateV1ToV2(db: StoreDb): void {
 function migrateV2ToV3(db: StoreDb): void {
   // Official SQLite schema-change procedure: FK checks must be OFF while the
   // restructure drops parent tables (v2 docs references packs; v2/v3 chunks
-  // reference docs). better-sqlite3 runs with foreign_keys ON by default, and
-  // PRAGMA foreign_keys is a no-op inside a transaction — flip BEFORE the
-  // BEGIN and back ON in the finally. Mirror: contracts/tests/store-interop/
-  // migrate.py.
+  // reference docs). Foreign keys are OFF by default (SQLite's default;
+  // better-sqlite3 issues no pragma), and PRAGMA foreign_keys is a no-op
+  // inside a transaction — flip BEFORE the BEGIN. The finally sets ON
+  // unconditionally: the connection that ran this ladder keeps FKs enforced
+  // until it closes (fresh v3 stores never run it and stay OFF; a reopened
+  // migrated store connects OFF again). The python mirror
+  // (contracts/tests/store-interop/migrate.py) instead restores the pragma's
+  // prior value — a recorded divergence, not to be silently unified.
   db.exec('PRAGMA foreign_keys = OFF');
   try {
     migrateV2ToV3Inner(db);
@@ -154,9 +159,10 @@ function migrateV2ToV3Inner(db: StoreDb): void {
     db.exec('DROP TABLE packs');
     db.exec('ALTER TABLE packs_v3 RENAME TO packs');
 
-    // docs: re-create with the v3 DDL (pack_id FK dropped). FKs are never
-    // enforced today, so the drop is behavior-preserving; re-creating keeps
-    // migrated files identical in shape to a fresh v3 apply.
+    // docs: re-create with the v3 DDL (pack_id FK dropped). Foreign keys are
+    // OFF for the duration of this migration (the pragma flip above), so the
+    // drop is behavior-preserving; re-creating keeps migrated files
+    // identical in shape to a fresh v3 apply.
     db.exec(
       'CREATE TABLE docs_v3 (\n' +
         '    id           TEXT PRIMARY KEY,\n' +

@@ -87,10 +87,13 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
     active=1 (a v2 packs row was a live install), install_path=NULL, supersedes
     normalized to a JSON array (scalar ids wrapped; NULL preserved).
 
-    The FK pragma flip mirrors the Node ladder: better-sqlite3 runs with
-    foreign_keys ON by default and the restructure drops parent tables, so
-    both runtimes disable FK checks for the duration (official SQLite
-    schema-change procedure)."""
+    The FK pragma flip mirrors the Node ladder: sqlite3 leaves foreign_keys
+    OFF by default (better-sqlite3 too — neither driver issues the pragma)
+    and the restructure drops parent tables, so both runtimes ensure FK
+    checks are OFF for the duration (official SQLite schema-change
+    procedure). This mirror restores the pragma's prior value; the Node
+    ladder leaves FKs ON for the connection that ran the migration
+    (recorded divergence — see store/migrate.ts)."""
     was_on = conn.execute("PRAGMA foreign_keys").fetchone()[0]
     if was_on:
         conn.execute("PRAGMA foreign_keys = OFF")

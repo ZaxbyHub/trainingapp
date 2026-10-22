@@ -179,11 +179,11 @@ describe('d4 AC3 (issue #80): superseding content removes its stale links rows',
         .get(OLD_CHUNK_ID) as { n: number };
       expect(seededLink.n).toBe(1);
 
-      // better-sqlite3 enforces PRAGMA foreign_keys = ON by default, and the
-      // base schema declares links.chunk_id REFERENCES chunks(id) with no ON
+      // sqlite leaves PRAGMA foreign_keys = OFF by default (nothing in the
+      // runtime enables them outside the migration ladder), and the base
+      // schema declares links.chunk_id REFERENCES chunks(id) with no ON
       // DELETE action — so at base (where NO writer cleans links rows) the
-      // stale row would make the supersede DELETE abort with a constraint
-      // error instead of leaving the orphan behind. The behavior under test
+      // stale row is simply left behind as an orphan. The behavior under test
       // is the EXPLICIT stale-links cleanup on supersede (mirroring how the
       // pipeline already deletes embeddings/chunks_fts rows by hand because
       // FKs cannot be enforced on virtual tables), which must not depend on

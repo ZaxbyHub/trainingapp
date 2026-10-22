@@ -64,9 +64,22 @@ async function failureOf(p: Promise<unknown>): Promise<ExternalProviderError> {
   throw new Error('expected a failure');
 }
 
-const SENTINEL_MS = 8_000;
-function bounded<T>(p: Promise<T>): Promise<T | 'sentinel'> {
-  return Promise.race([p, new Promise<'sentinel'>((resolve) => setTimeout(() => resolve('sentinel'), SENTINEL_MS))]);
+// CI evidence: the fixed harness sentinel repeatedly loses this race on the
+// loaded windows runners of agent deploy 20261015.610 — run 39633198589
+// abandoned both 8 MiB legs at 8020ms/8016ms when the 8s sentinel fired, and
+// at 18s they STILL had not settled (run 39709274631: file 37.9s, both legs
+// abandoned at the sentinel while the other twelve tests passed in ~2s). The
+// failures track the runner deploy, not the code: in every failing run the
+// other cap assertions in this file PASSED, and the 8 MiB cap itself never
+// misfired — the harness sentinel fired first. The 18s sentinel stays under
+// this file's smallest per-test budget (20s); the two 8 MiB closeout legs get
+// their own, much larger harness budget (CAP_SENTINEL_MS under a 120s
+// per-test timeout) because on that agent their settle time demonstrably
+// exceeds 18s.
+const SENTINEL_MS = 18_000;
+const CAP_SENTINEL_MS = 45_000;
+function bounded<T>(p: Promise<T>, ms: number = SENTINEL_MS): Promise<T | 'sentinel'> {
+  return Promise.race([p, new Promise<'sentinel'>((resolve) => setTimeout(() => resolve('sentinel'), ms))]);
 }
 
 const waitFor = async (cond: () => boolean, ms: number): Promise<boolean> => {
@@ -237,7 +250,11 @@ describe('F-003 (closeout): the streamed answer as a whole is capped in UTF-8 by
   // characters against 8 Mi would never trip and the stream would finish OK.
   const DELTA = '€'.repeat(1024);
   const DELTA_BYTES = Buffer.byteLength(DELTA);
-  const FRAMES = 4096;
+  // 2800 frames = 8.6 MiB written: still "more than 8 MiB", the cap still
+  // trips mid-stream (at frame 2731) with frames still in flight, and the
+  // pathological agents above cost ~1 event-loop turn per frame — so the
+  // stream is kept just over the cap instead of 1.5x over it.
+  const FRAMES = 2800;
 
   const frameFor = (protocol: ExternalProtocol): string =>
     protocol === 'openai'
@@ -278,6 +295,7 @@ describe('F-003 (closeout): the streamed answer as a whole is capped in UTF-8 by
             },
           }),
         ),
+        CAP_SENTINEL_MS,
       );
       expect(result).not.toBe('sentinel');
       const err = result as ExternalProviderError;
@@ -287,7 +305,7 @@ describe('F-003 (closeout): the streamed answer as a whole is capped in UTF-8 by
       expect(emittedBytes).toBeLessThanOrEqual(MAX_STREAMED_ANSWER_BYTES);
       expect(emittedBytes).toBeGreaterThan(MAX_STREAMED_ANSWER_BYTES - DELTA_BYTES);
       expect(await waitFor(up.closed, 2_000)).toBe(true);
-    }, 30_000);
+    }, 120_000);
   }
 });
 

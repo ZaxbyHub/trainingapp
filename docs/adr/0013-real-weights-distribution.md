@@ -103,8 +103,8 @@ rejected for the reasons recorded above.
   at every launch, so a missing or corrupted sidecar fails closed with named
   files rather than crashing. Honest limit: the manifest is unsigned
   (manifest-verifier.ts — protected only by write access to the install
-  directory, none for portable builds per ADR-0011), so against a
-  ADVERSARIAL sidecar writer this anchor proves self-consistency, not
+  directory, none for portable builds per ADR-0011), so against
+  an ADVERSARIAL sidecar writer this anchor proves self-consistency, not
   provenance; the signature coverage that closes that gap is part of #171's
   scope, as the first Consequences bullet states.
 - **SCOPE BOUNDARY (stated explicitly rather than left to be discovered):
