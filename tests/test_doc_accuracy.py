@@ -390,13 +390,21 @@ def test_changelog_correction_markers_present():
 # the class's spellings vary; each shape carries a liveness sample so a pattern
 # edit cannot silently drop coverage.
 _TRACE_CITATION_PATTERNS = (
-    (re.compile(r"issue-traces", re.IGNORECASE), ".agents/issue-traces/whatever"),
-    (re.compile(r"c1-out", re.IGNORECASE), "c1-out/whatever_transcripts.js"),
+    (re.compile(r"issue-traces", re.IGNORECASE), ".agents/issue-traces/x"),
+    (re.compile(r"c1-out", re.IGNORECASE), "c1-out/x"),
     (
         re.compile(r"trace.?s localization log", re.IGNORECASE),
         "the #78 trace's localization log",
     ),
-    (re.compile(r"finding h\d", re.IGNORECASE), "finding H4 of that run"),
+    (re.compile(r"finding h\d", re.IGNORECASE), "finding H4"),
+)
+# The shape set the class actually takes, pinned so a pattern cannot be
+# deleted or renamed out of the guard without this probe failing.
+_TRACE_CITATION_PATTERN_ROSTER = (
+    "issue-traces",
+    "c1-out",
+    "trace.?s localization log",
+    "finding h\\d",
 )
 
 
@@ -433,4 +441,11 @@ def test_trace_citation_shape_patterns_are_alive():
         not dead
     ), "trace-citation shapes no longer match their liveness samples: " + ", ".join(
         dead
+    )
+    rostered = tuple(pattern.pattern for pattern, _sample in _TRACE_CITATION_PATTERNS)
+    assert rostered == _TRACE_CITATION_PATTERN_ROSTER, (
+        "trace-citation shape roster drifted: expected "
+        + str(_TRACE_CITATION_PATTERN_ROSTER)
+        + ", got "
+        + str(rostered)
     )
