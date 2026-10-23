@@ -122,13 +122,15 @@ async function waitForErrorLine(
     const hit = errorMessages(spy).find((m) => m.includes(substring));
     if (hit !== undefined) return hit;
     if (Date.now() > deadline) {
-      // issue #210 (PRR-051): the timeout dump is BOUNDED (first 12 lines,
-      // each truncated to 200 chars) and REDACTED (long hex runs - tokens,
-      // hashes - replaced), so a failing diagnostic cannot exfiltrate an
-      // unbounded unredacted buffer into the test report.
+      // issue #210 (PRR-051): THIS timeout dump is BOUNDED (first 12 lines)
+      // and REDACTED (long hex runs - tokens, hashes - are replaced). The
+      // redaction runs BEFORE the truncation, so a hex run that straddles
+      // the cut cannot survive as an unredacted fragment. Scope: this
+      // helper's timeout dump - the other assertions in this file print
+      // their own captured buffers, unscrubbed.
       const dump = errorMessages(spy)
         .slice(0, 12)
-        .map((m) => m.slice(0, 200).replace(/[0-9a-f]{24,}/gi, '[redacted-hex]'));
+        .map((m) => m.replace(/[0-9a-f]{24,}/gi, '[redacted-hex]').slice(0, 200));
       throw new Error(
         `timed out waiting for a console.error line containing "${substring}" (captured up to 12 lines, truncated to 200 chars, hex-redacted: ${JSON.stringify(dump)})`,
       );

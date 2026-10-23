@@ -26,6 +26,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { nativeDepsDescribeGroup, nativeDepsIt } from './fixtures/native-deps-gate.js';
 
 import { StubEngine } from '../../main/backend/engine.js';
 import { NodeBackendHost, recoverOrDegradeStore } from '../../main/backend/index.js';
@@ -63,12 +64,22 @@ function logMessages(spy: { mock: { calls: unknown[][] } }): string[] {
   return spy.mock.calls.map((args) => String(args[0]));
 }
 
+/**
+ * Scrub a captured line before it goes into a failure message: long hex runs
+ * (tokens, hashes) are redacted FIRST and the line is truncated afterwards,
+ * so a run that straddles the cut cannot survive as an unredacted fragment.
+ * (issue #210 PRR-051, applied to both dump helpers of this batch.)
+ */
+function redactForDump(line: string): string {
+  return line.replace(/[0-9a-f]{24,}/gi, '[redacted-hex]').slice(0, 200);
+}
+
 function requireLine(messages: string[], needle: string, label: string): string {
   const hit = messages.find((m) => m === needle);
   if (hit === undefined) {
     throw new Error(
       `${label}: expected the EXACT contract line ${JSON.stringify(needle)}; captured: ${JSON.stringify(
-        messages.slice(0, 12).map((m) => m.slice(0, 200)),
+        messages.slice(0, 12).map((m) => redactForDump(m)),
       )}`,
     );
   }
@@ -369,7 +380,16 @@ async function startStubSidecarHost(
 // ---------------------------------------------------------------------------
 // Group 3 (C3): pack-manager warning lines
 // ---------------------------------------------------------------------------
-describe('pack-manager-lines (#201 AC3: exact install-warning and manifest-degrade lines)', () => {
+// issue #193 D2: this group opens a REAL store (openStore below), so it goes
+// through the shared native-deps gate - SKIP locally when the addon is
+// absent, FAIL loudly under CI. The describe title is unchanged (the frozen
+// C3 driver selects on the 'pack-manager-lines' token).
+const packManagerGroup = nativeDepsDescribeGroup(
+  'pack-manager-lines (#201 AC3: exact install-warning and manifest-degrade lines)',
+);
+const describePackManager = packManagerGroup.describeGroup;
+
+describePackManager(() => {
   async function makeWorkspace() {
     const root = makeTempDir('i201-packmgr-');
     tempDirs.push(root);
@@ -486,6 +506,9 @@ describe('pack-manager-lines (#201 AC3: exact install-warning and manifest-degra
 // Group 4 (C4): doc-comment invariants become executable assertions
 // ---------------------------------------------------------------------------
 describe('comment-contracts (#201 AC4: the prose promise is now an assertion)', () => {
+  // issue #193 D2: the it-level gate for the single row in this group that
+  // opens a REAL store.
+  const itReal = nativeDepsIt('logline store rows');
   it('protocol.ts keeps the exactly-once contract prose and the bootstrap has a single call site', () => {
     // Named mutant: delete the comment or add a second registerAppProtocol(
     // call site in bootstrap - either flips this row.
@@ -498,7 +521,9 @@ describe('comment-contracts (#201 AC4: the prose promise is now an assertion)', 
     expect(handlerSites, 'protocol.handle("app") lives only in registerAppProtocol').toHaveLength(1);
   });
 
-  it('pipeline per-file failure resolves success:false and never throws for an embedding-stage failure', async () => {
+  // issue #193 D2: this row opens a REAL store, so it goes through the shared
+  // native-deps gate (skip locally without the addon, fail under CI).
+  itReal('pipeline per-file failure resolves success:false and never throws for an embedding-stage failure', async () => {
     // Named mutant: rethrow from ingestOne instead of catching -> reject red.
     const root = makeTempDir('i201-pipeline-');
     tempDirs.push(root);

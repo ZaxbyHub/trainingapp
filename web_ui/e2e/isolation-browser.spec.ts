@@ -1425,7 +1425,10 @@ function relayC7StoryHtml(appOrigin: string, wsPort: number): string {
   }
   // The injected relay now answers the worker's open: the document is served
   // (200, hostile body — proof the injected relay served it) and its response
-  // CSP is read back for the forced-CSP assertion.
+  // CSP is captured as ANNOTATION only. This row never asserts it: the
+  // discriminating CSP evidence here is the browser-generated security-source
+  // entries the row asserts, and the forced-CSP assertion itself lives in the
+  // frozen #145 row - the only reader of r.mintedCsp.
   try {
     var res = await fetch(MINTED, { cache: 'no-store' });
     r.mintedStatus = res.status;
@@ -1479,66 +1482,84 @@ test('relay course injection: CSP evidence-independence is recorded test-side, n
   await new Promise<void>((resolve) => sinkServer.listen(0, '127.0.0.1', () => resolve()));
   const wsPort = (sinkServer.address() as { port: number }).port;
   const securityEntries: string[] = [];
-  if (browserName === 'chromium') {
-    const session = await page.context().newCDPSession(page);
-    session.on('Log.entryAdded', (e: { entry: { source?: string; text?: string } }) => {
-      const en = e.entry;
-      if (en && en.source === 'security' && typeof en.text === 'string') securityEntries.push(en.text);
-    });
-    await session.send('Log.enable');
-  }
-  await page.goto('/');
-  const appOrigin = new URL(page.url()).origin;
-  await installReportCollector(page);
-  await page.getByRole('button', { name: 'Documents', exact: true }).click();
-  await expect(page.getByTestId('packs-panel')).toBeVisible({ timeout: 45_000 });
-  await install(page, await packZip(RELAY_PACK, '1.0.0', { 'story.html': relayC7StoryHtml(appOrigin, wsPort) }), 'relay.zip', RELAY_PACK, '1.0.0');
-  await page.getByRole('button', { name: 'Training', exact: true }).click();
-  const option = page.getByTestId('training-pack-select').locator('option', { hasText: RELAY_PACK });
-  await expect(option).toHaveCount(1, { timeout: 30_000 });
-  await page.getByTestId('training-pack-select').selectOption((await option.getAttribute('value')) ?? '');
-  const r = await courseReport<{
-    ancestorOrigin: string | null;
-    controllerReady: boolean;
-    bootFrame: string;
-    routeB: string;
-    mintedStatus: number | string;
-    mintedBody: string;
-    minted: { violations: string[]; attempts: Record<string, string> } | string | null;
-  }>(page, 'relay-probe', appOrigin, 90_000);
-  expect(r.controllerReady, 'the course document is controlled by /training/sw.js').toBe(true);
-  expect(r.bootFrame, 'the sibling boot frame was reachable from the course').toBe('found');
-  expect(r.routeB, 'the course posted the relay port through the boot frame realm').toBe('posted');
-  expect(r.mintedStatus, 'the injected relay served the minted document').toBe(200);
-  expect(r.mintedBody, 'the minted body came from the injected relay, not the pack').toContain('MINTED-BY-INJECTED-RELAY');
-  const mintedRecord = r.minted !== null && typeof r.minted !== 'string' ? r.minted : null;
-  // Annotation (never gate evidence): the self-report exists and is shaped.
-  expect(mintedRecord, 'the framed minted document posted a self-report (annotation only)').not.toBeNull();
-  await page.waitForTimeout(1000);
-  // (a) Cross-engine enforcement channel: nothing may reach the test-owned
-  //     WS sink (connect-src refused the probe before dispatch).
-  expect(wsUpgrades, 'zero minted probes reached the network sink under forced CSP').toEqual([]);
-  // (b) Chromium positive-violation channel: browser-generated refusals for
-  //     every probed directive. The relay cannot forge security-source Log
-  //     entries; fabricated self-report bytes do not satisfy this.
-  if (browserName === 'chromium') {
-    const wanted: Array<[string, (t: string) => boolean]> = [
-      ['connect-src', (t) => t.includes('connect-src') && t.includes('/__relay-sink/minted/fetch')],
-      ['img-src', (t) => t.includes('img-src') && t.includes('/__relay-sink/minted/img')],
-      ['form-action', (t) => t.includes('form-action') && t.includes('/__relay-sink/minted/form')],
-      // Blink truncates the child-navigation blocked URL to the origin for
-      // frame-src (probe-observed): match wording + directive.
-      ['frame-src', (t) => t.includes('frame-src') && t.startsWith('Framing ')],
-      ['connect-src-ws', (t) => t.includes('connect-src') && t.includes(String(wsPort))],
-    ];
-    for (const [label, pred] of wanted) {
-      expect(
-        securityEntries.some(pred),
-        'browser-generated CSP refusal recorded for ' + label,
-      ).toBe(true);
+  let cdpSession: Awaited<ReturnType<ReturnType<Page['context']>['newCDPSession']>> | undefined;
+  try {
+    if (browserName === 'chromium') {
+      cdpSession = await page.context().newCDPSession(page);
+      cdpSession.on('Log.entryAdded', (e: { entry: { source?: string; text?: string } }) => {
+        const en = e.entry;
+        if (en && en.source === 'security' && typeof en.text === 'string') securityEntries.push(en.text);
+      });
+      await cdpSession.send('Log.enable');
     }
+    await page.goto('/');
+    const appOrigin = new URL(page.url()).origin;
+    await installReportCollector(page);
+    await page.getByRole('button', { name: 'Documents', exact: true }).click();
+    await expect(page.getByTestId('packs-panel')).toBeVisible({ timeout: 45_000 });
+    await install(page, await packZip(RELAY_PACK, '1.0.0', { 'story.html': relayC7StoryHtml(appOrigin, wsPort) }), 'relay.zip', RELAY_PACK, '1.0.0');
+    await page.getByRole('button', { name: 'Training', exact: true }).click();
+    const option = page.getByTestId('training-pack-select').locator('option', { hasText: RELAY_PACK });
+    await expect(option).toHaveCount(1, { timeout: 30_000 });
+    await page.getByTestId('training-pack-select').selectOption((await option.getAttribute('value')) ?? '');
+    const r = await courseReport<{
+      ancestorOrigin: string | null;
+      controllerReady: boolean;
+      bootFrame: string;
+      routeB: string;
+      mintedStatus: number | string;
+      mintedBody: string;
+      minted: { violations: string[]; attempts: Record<string, string> } | string | null;
+    }>(page, 'relay-probe', appOrigin, 90_000);
+    expect(r.controllerReady, 'the course document is controlled by /training/sw.js').toBe(true);
+    expect(r.bootFrame, 'the sibling boot frame was reachable from the course').toBe('found');
+    expect(r.routeB, 'the course posted the relay port through the boot frame realm').toBe('posted');
+    expect(r.mintedStatus, 'the injected relay served the minted document').toBe(200);
+    expect(r.mintedBody, 'the minted body came from the injected relay, not the pack').toContain('MINTED-BY-INJECTED-RELAY');
+    const mintedRecord = r.minted !== null && typeof r.minted !== 'string' ? r.minted : null;
+    // Annotation (never gate evidence): the self-report exists and is shaped.
+    expect(mintedRecord, 'the framed minted document posted a self-report (annotation only)').not.toBeNull();
+    await page.waitForTimeout(1000);
+    // (a) Cross-engine enforcement channel: nothing may reach the test-owned
+    //     WS sink (connect-src refused the probe before dispatch).
+    expect(wsUpgrades, 'zero minted probes reached the network sink under forced CSP').toEqual([]);
+    // (b) Chromium positive-violation channel: browser-generated refusals for
+    //     every probed directive. The relay cannot forge security-source Log
+    //     entries; fabricated self-report bytes do not satisfy this.
+    if (browserName === 'chromium') {
+      const wanted: Array<[string, (t: string) => boolean]> = [
+        ['connect-src', (t) => t.includes('connect-src') && t.includes('/__relay-sink/minted/fetch')],
+        ['img-src', (t) => t.includes('img-src') && t.includes('/__relay-sink/minted/img')],
+        ['form-action', (t) => t.includes('form-action') && t.includes('/__relay-sink/minted/form')],
+        // Blink truncates the child-navigation blocked URL to the origin for
+        // frame-src (probe-observed): match wording + directive.
+        ['frame-src', (t) => t.includes('frame-src') && t.startsWith('Framing ')],
+        ['connect-src-ws', (t) => t.includes('connect-src') && t.includes(String(wsPort))],
+      ];
+      for (const [label, pred] of wanted) {
+        expect(
+          securityEntries.some(pred),
+          'browser-generated CSP refusal recorded for ' + label,
+        ).toBe(true);
+      }
+    }
+  } finally {
+    // Neither the sink server nor the CDP session may outlive the row: any
+    // failing expect between listen and the end (the designed red path of the
+    // frozen CSP-regression mutant fires exactly one) would otherwise leave a
+    // listening 127.0.0.1 listener - and its ephemeral port - behind in the
+    // workers:1 worker for the rest of the run. This is the idiom the sibling
+    // rows added by this same PR already use (i185 :190-191/:204-205, i169
+    // :315-316/:344-346).
+    if (cdpSession !== undefined) {
+      try {
+        await cdpSession.detach();
+      } catch {
+        /* the page may already be torn down */
+      }
+    }
+    await new Promise<void>((resolve) => sinkServer.close(() => resolve()));
   }
-  sinkServer.close();
 });
 
 test('relay course injection: the egress sink-counter demonstrably counts (#208 AC2)', async ({ page }) => {
@@ -1549,8 +1570,10 @@ test('relay course injection: the egress sink-counter demonstrably counts (#208 
   // NOT a valid proof: apiRequestContext bypasses page.route entirely -
   // plan-critic probe), then withdraws the proof path and requires the
   // minted-path zero within the same counter (frozen sequencing: non-empty
-  // proof -> withdraw -> final zero). Named mutant: delete the page.route
-  // handler - the proof request is never counted -> red.
+  // proof -> withdraw -> final zero), and finally proves the counter was
+  // STILL LIVE across that zero (a separate liveness path must be counted
+  // after it). Named mutant: delete the page.route handler - the proof
+  // request is never counted -> red.
   test.setTimeout(120_000);
   await page.goto('/');
   const appOrigin = new URL(page.url()).origin;
@@ -1572,11 +1595,33 @@ test('relay course injection: the egress sink-counter demonstrably counts (#208 
       message: 'the live sink counter recorded the deliberate proof request',
     })
     .toBeGreaterThan(0);
-  // Withdraw the proof path: with the counter PROVEN live, the minted-path
-  // zero assertion is now falsifiable rather than structurally single-valued.
+  // Withdraw the proof path and observe the minted-path zero. HONEST SCOPE:
+  // this row installs NO pack, NO service worker and NO minted document, so
+  // nothing in it can ever produce a minted-path request - the zero below is
+  // explicitly NON-DISCRIMINATING here (issue #208 AC2 allows "meaningful OR
+  // explicitly labeled non-discriminating"), and the discriminating
+  // minted-path zero is C7's row, which installs the minted document and
+  // asserts zero server-side WS upgrades under the forced CSP.
   await page.waitForTimeout(500);
   expect(
     hits.filter((h) => h.includes('/__relay-sink/minted/')),
     'no minted-path egress reached the (live) counter',
   ).toEqual([]);
+  // The counter must still be LIVE across the observed zero - otherwise the
+  // zero above would be the product of a dead counter rather than of an
+  // absence of minted egress. Issue one more deliberate request on a
+  // separate liveness path and require the SAME counter to count it.
+  await page.evaluate(async () => {
+    try {
+      await fetch('/__relay-sink/counter-liveness/probe', { mode: 'no-cors', cache: 'no-store' });
+    } catch (e) {
+      /* the route records the dispatch regardless of resolution */
+    }
+  });
+  await expect
+    .poll(() => hits.filter((h) => h.includes('/__relay-sink/counter-liveness/probe')).length, {
+      timeout: 10_000,
+      message: 'the counter was still live across the minted-path zero',
+    })
+    .toBeGreaterThan(0);
 });

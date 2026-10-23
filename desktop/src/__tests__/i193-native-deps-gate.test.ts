@@ -14,7 +14,7 @@
 // skip/fail decision could run. They pin (a) the lazy-require shape that
 // keeps the stack import-safe and (b) the end-to-end branch behavior via a
 // nested run of the gated spec with TRAININGAPP_TEST_FORCE_NATIVE_DEPS_ABSENT.
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import Module from 'node:module';
 import os from 'node:os';
 
@@ -42,10 +42,24 @@ const REPO_ROOT = findRepoRoot(THIS_DIR);
 
 /**
  * Run a nested vitest command with issue #210 (PRR-016/052) hygiene: an
- * EXPLICIT hard timeout on spawnSync AND, when the child was killed by that
- * timeout (status === null), a full process-TREE kill (taskkill /T /F on
- * Windows - with shell:true the wrapper's npm/vitest descendants would
- * otherwise survive the parent kill and hold sqlite handles / ports).
+ * EXPLICIT hard timeout AND a full process-TREE kill when the child is still
+ * running at that timeout - with shell:true the wrapper's npm/vitest
+ * descendants would otherwise survive and hold sqlite handles / ports.
+ *
+ * The previous spawnSync form could NOT deliver that: Node kills the direct
+ * child itself when the timeout fires, so the follow-up `taskkill /T /F` was
+ * addressed to an ALREADY-DEAD pid (exit 128, "process not found") and the
+ * descendants survived - proven by the review-round probe (dead-pid taskkill
+ * + a surviving orphan). The async spawn fixes that (the killer sees a LIVE
+ * child) and additionally keeps the vitest worker's event loop alive - a
+ * blocking spawnSync starves the pool RPC heartbeat, which is the same lesson
+ * acceptance-battery-precision.test.ts already documents.
+ *
+ * The tree kill is per platform, and both arms really kill a TREE:
+ *   - Windows: taskkill /T /F /PID <live pid> (the /T flag walks the tree).
+ *   - POSIX:   the child is spawned DETACHED, so it leads its own process
+ *     group; process.kill(-pid, 'SIGKILL') takes the whole group (a
+ *     per-process SIGKILL would leave npm/vitest running).
  */
 interface NestedRun {
   status: number | null;
@@ -56,22 +70,51 @@ function runNestedVitest(
   command: string,
   env: Record<string, string | undefined>,
   timeoutMs: number,
-): NestedRun {
-  const result = spawnSync(command, {
-    shell: true,
-    cwd: REPO_ROOT,
-    env,
-    encoding: 'utf8',
-    timeout: timeoutMs,
+): Promise<NestedRun> {
+  return new Promise((resolve) => {
+    const child = spawn(command, {
+      shell: true,
+      cwd: REPO_ROOT,
+      env,
+      // POSIX only: a detached child becomes its own process-group leader,
+      // which is what makes the group kill below reach the descendants.
+      detached: process.platform !== 'win32',
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (d: string) => {
+      stdout += d;
+    });
+    child.stderr.on('data', (d: string) => {
+      stderr += d;
+    });
+    const killer = setTimeout(() => {
+      if (typeof child.pid !== 'number') return;
+      if (process.platform === 'win32') {
+        spawnSync(`taskkill /T /F /PID ${child.pid}`, { shell: true, encoding: 'utf8' });
+        return;
+      }
+      try {
+        // Kill the whole process GROUP: the detached child is its leader.
+        process.kill(-child.pid, 'SIGKILL');
+      } catch {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          /* already gone */
+        }
+      }
+    }, timeoutMs);
+    child.on('close', (status) => {
+      clearTimeout(killer);
+      resolve({
+        status,
+        stdout: `${stdout}\n${stderr}`,
+      });
+    });
   });
-  if (result.status === null && typeof result.pid === 'number' && process.platform === 'win32') {
-    spawnSync(`taskkill /T /F /PID ${result.pid}`, { shell: true, encoding: 'utf8' });
-  }
-  return {
-    status: result.status,
-    stdout: String(result.stdout ?? ''),
-    stderr: String(result.stderr ?? ''),
-  };
 }
 
 describe('native-deps-gate policy (issue #193 D2: CI fails, local skips)', () => {
@@ -122,13 +165,13 @@ describe('native-deps-gate WIRING (issue #193 AC21: the gate must be reachable)'
     }
   });
 
-  it('wiring: forced-absent locally SKIPS the real suite with the staging instruction', () => {
+  it('wiring: forced-absent locally SKIPS the real suite with the staging instruction', async () => {
     // Named mutant: make describeReal plain `describe` (drop the skip
     // wiring) — the nested real rows then run without a store and the run
     // exits nonzero, so this row must go red.
     const env = { ...process.env, TRAININGAPP_TEST_FORCE_NATIVE_DEPS_ABSENT: '1' };
     delete env.CI;
-    const result = runNestedVitest(
+    const result = await runNestedVitest(
       `npm --prefix desktop test -- src/__tests__/i169-stats-route-real-seed.test.ts --reporter=verbose`,
       env,
       180_000,
@@ -142,7 +185,7 @@ describe('native-deps-gate WIRING (issue #193 AC21: the gate must be reachable)'
     expect(out, out).toMatch(/out-of-scope-fields/);
   }, 200_000);
 
-  it('wiring: forced-absent under CI FAILS loudly with the staging instruction', () => {
+  it('wiring: forced-absent under CI FAILS loudly with the staging instruction', async () => {
     // Named mutant: delete the fail-branch throw in i169's suite-scoped
     // beforeAll — the nested run then degrades to row failures without the
     // instruction, so this row must go red.
@@ -151,7 +194,7 @@ describe('native-deps-gate WIRING (issue #193 AC21: the gate must be reachable)'
       TRAININGAPP_TEST_FORCE_NATIVE_DEPS_ABSENT: '1',
       CI: '1',
     };
-    const result = runNestedVitest(
+    const result = await runNestedVitest(
       `npm --prefix desktop test -- src/__tests__/i169-stats-route-real-seed.test.ts --reporter=verbose`,
       env,
       180_000,
@@ -372,16 +415,34 @@ describe('native-deps batch hygiene residuals (issue #210 AC3)', () => {
   });
 
   it('hygiene: spawn-tree-kill - nested vitest runs are tree-killed with explicit per-test timeouts', () => {
-    // Named mutants: drop the taskkill branch from runNestedVitest, or remove
-    // the timeoutMs argument / the 200_000 per-test bounds from the wiring
-    // rows (PRR-016/052). Pinned from THIS file's source.
+    // Named mutants: drop the taskkill branch from runNestedVitest, replace
+    // the POSIX group kill with a per-process kill, or remove the timeoutMs
+    // argument / the 200_000 per-test bounds from the wiring rows
+    // (PRR-016/052). Pinned from THIS file's source.
     const src = readRepoFile('desktop/src/__tests__/i193-native-deps-gate.test.ts');
     expect(src).toMatch(/function runNestedVitest\(/);
+    // The Windows arm must target a LIVE child (the old sync form killed it
+    // itself and then addressed a dead pid).
     expect(src).toMatch(/taskkill \/T \/F/);
-    expect(src).toMatch(/timeout: timeoutMs/);
-    const wiringRows = src.match(/runNestedVitest\(/g) ?? [];
-    expect(wiringRows.length, 'both forced-absent wiring rows use the hardened helper').toBeGreaterThanOrEqual(2);
+    expect(src).toMatch(/setTimeout\(\(\) => \{/);
+    expect(src).toMatch(/timeoutMs/);
+    // The POSIX arm must kill the whole PROCESS GROUP, not one process.
+    expect(src).toMatch(/detached: process\.platform !== 'win32'/);
+    expect(src).toMatch(/process\.kill\(-child\.pid, 'SIGKILL'\)/);
+    // CALL SITES only - the declaration must not be counted, or reverting
+    // ONE wiring row to a raw spawnSync would leave the count satisfied.
+    const wiringRows = src.match(/await runNestedVitest\(/g) ?? [];
+    expect(wiringRows.length, 'both forced-absent wiring rows use the hardened helper').toBe(2);
     expect(src).toMatch(/}, 200_000\);/);
+    // The same PR ships a SECOND nested-run helper - the acceptance
+    // battery's meta-guard - and rosters THAT spec into the required ubuntu
+    // job, so its timeout killer must tree-kill on POSIX as well: pinning
+    // only this file would certify an invariant the gating platform never
+    // had (review round 1, RC-14 companion finding).
+    const batterySrc = readRepoFile('desktop/src/__tests__/acceptance-battery-precision.test.ts');
+    expect(batterySrc).toMatch(/taskkill \/T \/F/);
+    expect(batterySrc).toMatch(/detached: process\.platform !== 'win32'/);
+    expect(batterySrc).toMatch(/process\.kill\(-child\.pid, 'SIGKILL'\)/);
   });
 
   it('hygiene: lazy-load-before-mkdir - a failed native load leaves no created parent dir (behavioral)', async () => {
@@ -404,12 +465,14 @@ describe('native-deps batch hygiene residuals (issue #210 AC3)', () => {
         return original.call(mod, request, parent, isMain);
       };
       expect(() => openStore({ dbPath, dims: 8, repoRoot: REPO_ROOT })).toThrow(/MODULE_NOT_FOUND|Cannot find module/);
+      // The contract: the load failure precedes ANY filesystem mutation - the
+      // parent directory was never created. The assertion lives INSIDE the
+      // try so the named-mutant red path (mkdir-before-load) still drains
+      // the temp root instead of leaking it.
+      expect(fs.existsSync(path.dirname(dbPath)), 'a failed native load must not create the parent dir').toBe(false);
     } finally {
       mod._load = original;
+      fs.rmSync(root, { recursive: true, force: true });
     }
-    // The contract: the load failure precedes ANY filesystem mutation - the
-    // parent directory was never created.
-    expect(fs.existsSync(path.dirname(dbPath)), 'a failed native load must not create the parent dir').toBe(false);
-    fs.rmSync(root, { recursive: true, force: true });
   });
 });

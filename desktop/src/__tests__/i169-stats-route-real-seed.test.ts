@@ -254,6 +254,14 @@ const FROZEN_CHUNK_COUNTS = [1, 2, 3];
 const FROZEN_CHUNK_TOTAL = 6;
 
 describeReal(() => {
+  beforeAll(() => {
+    // issue #193 D2: this group needs the same suite-scoped guard as group 1.
+    // Under CI with the native deps missing the suite must FAIL loudly with
+    // the staging instruction - never with a null-store error thrown from the
+    // rows themselves (which would hide the real cause).
+    realGroup.guard();
+  });
+
   it('chunk-oracle: GET /stats reports the FROZEN document_count 3 and chunk_count 6 for the seeded corpus', async () => {
     if (store === null) throw new Error('store handle unexpectedly null after seed');
     const response = await fetch(url('/stats'), { headers: { [TOKEN_HEADER]: TOKEN } });

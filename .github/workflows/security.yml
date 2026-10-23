@@ -51,7 +51,12 @@ jobs:
       # i199-backend-surface-lifecycle, reranker-generation-lifecycle), the
       # separate i230-resolver-env-parity pin, the two frozen acceptance
       # surfaces, and — review PRR-008 (pr242) — the two #232-residual frozen
-      # specs i230-host-stop-profile-reset and i230-sampler-liveness
+      # specs i230-host-stop-profile-reset and i230-sampler-liveness, and —
+      # issues #201/#207/#208/#209/#210 (trace
+      # 201-207-208-209-210-test-gate-integrity) — the log-line contract
+      # sweep (logline-contract-sweep.test.ts) and its acceptance-battery
+      # meta-guard (acceptance-battery-precision.test.ts), rostered per the
+      # same PRR-008 precedent.
       # (registry: desktop/src/__tests__/contract-family-registry.ts).
       - name: Set up Node for the contract-spec family
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
