@@ -28,6 +28,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { nativeDepsDecision } from './fixtures/native-deps-gate.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 function findRepoRoot(dir: string): string {
@@ -139,6 +140,25 @@ const BATTERY: ReadonlyArray<readonly [string, string, number]> = [
 describe('acceptance battery precision (trace 201-207-208-209-210 guardrail)', () => {
   for (const [spec, token, rows] of BATTERY) {
     it(`battery-precision: -t ${token} executes exactly ${rows} rows in ${spec.split('/').pop()}`, async (ctx) => {
+      // D2 gate FIRST, from the factory's single source of truth - never
+      // inferred from the nested output: vitest legitimately reports the
+      // -t-DESELECTED rows of each spec as "N skipped", so any output-text
+      // skip detection would misfire on every healthy run (this is exactly
+      // what the first cut of this row did on the ubuntu required job). When
+      // the gate does not say 'run', the exact count cannot be verified on
+      // this box: SKIP locally (the sanctioned staged-deps skip), FAIL loudly
+      // under CI (the deps must be staged there - never a silent hole in the
+      // guardrail).
+      const gateDecision = nativeDepsDecision();
+      if (gateDecision !== 'run') {
+        if (process.env.CI) {
+          expect.fail(
+            `the native-deps gate is '${gateDecision}' UNDER CI - the native deps must be staged ` +
+              `there (D2: CI fails, never silently skips)`,
+          );
+        }
+        ctx.skip();
+      }
       const env = { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' };
       delete env.CI; // local semantics: the D2-gated rows may skip, the
       // executed-pass count guard still demands the token rows run for real
@@ -151,22 +171,6 @@ describe('acceptance battery precision (trace 201-207-208-209-210 guardrail)', (
       // The vitest summary is the ONLY trusted signal (the -t filter name is
       // echoed on the npm command line, so its presence proves nothing).
       const m = result.out.match(/Tests +([0-9]+) passed/);
-      // ANY skipped row means the EXACT count cannot be verified here: the D2
-      // contract (issue #193) skips the native-deps-gated rows when the addon
-      // is absent (locally) and fails them under CI. This meta-guard demands
-      // an executed-pass count, so the honest outcome on a box without the
-      // staged deps is a SKIP - not a red that blames the code under test -
-      // while CI (where the deps MUST be staged) gets a loud failure instead
-      // of a silent hole in the guardrail.
-      if (/\b[0-9]+ skipped\b/.test(result.out)) {
-        if (process.env.CI) {
-          expect.fail(
-            `the nested run skipped rows for -t ${token} UNDER CI - the native deps must be ` +
-              `staged there (D2: CI fails, never silently skips):\n${result.out.slice(-500)}`,
-          );
-        }
-        ctx.skip();
-      }
       expect(m, `no "Tests N passed" summary for -t ${token} (exit ${result.status}):\n${result.out.slice(-500)}`).not.toBeNull();
       expect(Number(m?.[1]), `executed-pass count for -t ${token} in ${spec}`).toBe(rows);
       expect(result.status, `nested run exited nonzero for -t ${token}:\n${result.out.slice(-500)}`).toBe(0);
