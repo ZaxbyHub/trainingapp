@@ -237,7 +237,10 @@ test.describe('axe gate production path (issue #207 AC2)', () => {
     // common case - runs zero rounds -> red). The surface is a settled blank
     // page, so the scan itself is clean: the row asserts the gate's
     // BEHAVIOUR (it re-measures after the grow snapshot), not a violation.
-    await page.setContent('<!doctype html><html><body><main><p>settled surface</p></main></body></html>');
+    await page.setContent(
+      '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Settled surface</title></head>' +
+        '<body><main><h1>Settled surface</h1><p>This page never changes after it loads.</p></main></body></html>',
+    );
     const result = await wholePageAxeExpectClean(page, { key: 'production-remeasure', knownBaseline: {} });
     expect(
       result.stabilizationRounds,

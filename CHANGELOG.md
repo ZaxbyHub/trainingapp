@@ -10,8 +10,10 @@
   the new `logline-contract-sweep.test.ts` pins all 17 residual log-line /
   doc-comment contracts by exact interpolated text plus the paired state
   write; the whole-page axe gate now fails loud naming the surface when the
-  viewport never converges and re-fits through bounded stabilization rounds
-  so late content cannot hide below the fold (the vacuous 900px pass #146
+  viewport never converges, and re-measures through bounded stabilization
+  rounds after the grow snapshot on every path (production surfaces
+  included), so content that arrives after the snapshot is re-fitted instead
+  of being left below the fold (the vacuous 900px pass #146
   removed can no longer silently return); the relay-injection CSP evidence
   moved from attacker-authorable document bytes to test-owned channels -
   a WebSocket sink that bypasses the service worker (zero upgrades under
