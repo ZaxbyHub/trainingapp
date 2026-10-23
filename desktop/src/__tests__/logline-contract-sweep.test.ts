@@ -171,8 +171,12 @@ describe('index-degrade-lines (#201 AC1: exact contract line + degraded state)',
     // Scoped mock (i103 recipe): resolveRerankerModelDir throws. Disclosed
     // limitation (same as i103): the throw fires pre-construction, so the
     // private reranker/resumable/idle null-outs are structurally satisfied
-    // (never constructed); the observable pairing pinned here is that
-    // retrieval continues to serve (fused ordering) and start never fails.
+    // (never constructed); the observable pairing pinned here is the exact
+    // line (the production text names the fused-ordering degradation) and
+    // that host start never fails - degrade, not crash. The engine.search
+    // probe below only asserts the search path still answers (with the
+    // surface detached that is the deterministic B3 stub row, not a live
+    // fused-ordering proof - the fused path itself belongs to b7).
     const dir = makeTempDir('i201-reranker-');
     tempDirs.push(dir);
     vi.stubEnv('TRAININGAPP_DESKTOP_REPO_ROOT', path.join(dir, 'no-such-repo-root'));
