@@ -224,3 +224,24 @@ test.describe('axe gate post-condition rows (issue #207)', () => {
     ).rejects.toThrow(/stabilization-late-violation/);
   });
 });
+
+test.describe('axe gate production path (issue #207 AC2)', () => {
+  test.use({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+
+  test('axe gate production path: a no-seam surface still re-measures after the grow snapshot', async ({ page }) => {
+    // The production path passes NO onAfterGrow seam: the row above pins the
+    // seam path, and only THIS row sees what a real surface scan does.
+    // Named mutants: delete the stabilization loop in axe-full-page.ts (the
+    // gate then runs ZERO re-measure rounds -> this row goes red), or
+    // re-gate that loop on fit.converged (a converged surface - which is the
+    // common case - runs zero rounds -> red). The surface is a settled blank
+    // page, so the scan itself is clean: the row asserts the gate's
+    // BEHAVIOUR (it re-measures after the grow snapshot), not a violation.
+    await page.setContent('<!doctype html><html><body><main><p>settled surface</p></main></body></html>');
+    const result = await wholePageAxeExpectClean(page, { key: 'production-remeasure', knownBaseline: {} });
+    expect(
+      result.stabilizationRounds,
+      'the gate re-measures after the grow snapshot on every path (no seam required)',
+    ).toBeGreaterThanOrEqual(1);
+  });
+});

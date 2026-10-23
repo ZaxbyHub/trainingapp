@@ -21,7 +21,7 @@
 // rostered via the convention (the 6 original members plus
 // backend-env-repo-root-contract, i230-resolver-env-parity,
 // roster-exclusion-evidence-contract and frozen-recipe-replay-contract)
-// + 8 excluded; six rostered specs are named OUTSIDE the convention and
+// + 8 excluded; eight rostered specs are named OUTSIDE the convention and
 // are therefore invisible to the census — backend-lifecycle-capture-once-
 // census, backend-memory-tick-lifecycle, i199-backend-surface-lifecycle,
 // reranker-generation-lifecycle, i230-host-stop-profile-reset and
