@@ -20,7 +20,7 @@ import { LlamaEngine, type LlamaEngineBackend, type LlamaEngineOptions } from '.
 // #200 AC2; previously copy-pasted here). The zero-arg form preserves this
 // spec's historical payload exactly: 'test-embedder' (asserted below) + the
 // 2-doc (2+3 chunks) DEFAULT_DOCS corpus.
-import { makeFakeSurface } from './fixtures/document-surface-fake.js';
+import { makeFakeSurface, withGatedList } from './fixtures/document-surface-fake.js';
 
 const GB = 1024 ** 3;
 
@@ -56,6 +56,24 @@ function stageDummyModels(): { quality: string; fast: string; dir: string } {
   fs.writeFileSync(quality, 'x', 'utf8');
   fs.writeFileSync(fast, 'x', 'utf8');
   return { quality, fast, dir };
+}
+
+/** Bound the enteredGate so a getStats that never enters listDocuments fails
+ *  fast with a descriptive error instead of hanging to the 30s suite timeout
+ *  (issue #210 PRR-039 - the i185 twin already bounds this; parity here). */
+async function awaitEntered(entered: Promise<void>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error('getStats never entered listDocuments (enteredGate timeout)')),
+      5000,
+    );
+  });
+  try {
+    await Promise.race([entered, timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 function makeEngine(overrides: Partial<LlamaEngineOptions> = {}): LlamaEngine {
@@ -119,17 +137,14 @@ describe('issue #169: LlamaEngine.getStats reads the attached document surface',
     const releaseGate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    engine.attachDocumentSurface({
-      ...base,
-      async listDocuments() {
-        entered();
-        await releaseGate;
-        return base.listDocuments();
-      },
-    });
+    // issue #209 AC1 / #210 PRR-039: non-shadowing wrap keeps counters live
+    // and the gate await is bounded via awaitEntered below.
+    engine.attachDocumentSurface(
+      withGatedList(base, { onEnter: () => entered(), release: releaseGate }),
+    );
 
     const pending = engine.getStats();
-    await enteredGate; // getStats is now suspended INSIDE listDocuments
+    await awaitEntered(enteredGate); // getStats is now suspended INSIDE listDocuments
     engine.attachDocumentSurface(null); // detach lands in the await window
     release();
     const stats = await pending;

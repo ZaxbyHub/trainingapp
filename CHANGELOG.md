@@ -1,6 +1,42 @@
 # Changelog
 
 ## [Unreleased]
+- **Test-gate integrity: assertions that could not fail now can (issues #201,
+  #207, #208, #209, #210)**: five collated follow-ups from the PR #202 review
+  round closed under one defect class - gates whose observable can never
+  diverge from the expectation. 13 frozen NEW-SURFACE acceptance checks
+  (trace 201-207-208-209-210-test-gate-integrity; anchor receipts v1-v5
+  published on the issues) each proven RED-at-base / GREEN-at-head:
+  the new `logline-contract-sweep.test.ts` pins all 17 residual log-line /
+  doc-comment contracts by exact interpolated text plus the paired state
+  write; the whole-page axe gate now fails loud naming the surface when the
+  viewport never converges, and re-measures through bounded stabilization
+  rounds after the grow snapshot on every path (production surfaces
+  included), so content that arrives after the snapshot is re-fitted instead
+  of being left below the fold (the vacuous 900px pass #146
+  removed can no longer silently return); the relay-injection CSP evidence
+  moved from attacker-authorable document bytes to test-owned channels -
+  a WebSocket sink that bypasses the service worker (zero upgrades under
+  forced CSP, red on both engines under the CSP-regression mutant, an
+  executed honest/passthrough/fabricate probe matrix) plus browser-generated
+  chromium CDP security refusals (a forged console line records nothing),
+  with the sink-counter liveness now demonstrably countable; the shared fake
+  surface counts every mutating method and `withGatedList` replaces the
+  spread wraps that froze the accessors to zero; the engine->HTTP
+  rejection->500 contract (`server.ts` generic catch) got its first real-route
+  tests; the /stats chunk oracle is frozen literals (1/2/3, total 6) instead
+  of values re-derived from the chunker it certifies; /stats gained a
+  negative-auth row, a falsy-embedder-id shape pin, bounded gate awaits, and
+  six hygiene rows (afterAll wiring, named restore-source, capped+redacted
+  diagnostics, nested-spawn tree-kill + per-test timeouts). One production
+  delta: `openStore` loads the native addons before creating the store's
+  parent directory, so a load failure no longer leaves a stray directory
+  (PRR-043). Recurrence guardrail: `acceptance-battery-precision.test.ts`
+  re-executes every batch (spec, -t token, expected-row-count) triple in CI -
+  the vitest zero-match exit-0 trap class can no longer hide a renamed or
+  silently-skipped row - and both it and the logline spec are rostered into
+  the required `security` job (PRR-008 precedent; run-line/registry sync
+  pinned by the contract gate).
 - **CI signal honesty and comment/doc truthfulness (issues #243, #184, #187,
   #128)**: the two F-003 streamed-cap tests no longer lose their 8s harness
   race on loaded CI runners (sentinel 8s -> 18s with the runner-deploy

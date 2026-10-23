@@ -21,11 +21,14 @@
 // rostered via the convention (the 6 original members plus
 // backend-env-repo-root-contract, i230-resolver-env-parity,
 // roster-exclusion-evidence-contract and frozen-recipe-replay-contract)
-// + 8 excluded; six rostered specs are named OUTSIDE the convention and
+// + 8 excluded; eight rostered specs are named OUTSIDE the convention and
 // are therefore invisible to the census — backend-lifecycle-capture-once-
 // census, backend-memory-tick-lifecycle, i199-backend-surface-lifecycle,
 // reranker-generation-lifecycle, i230-host-stop-profile-reset and
-// i230-sampler-liveness (the last two rostered by review PRR-008) — so
+// i230-sampler-liveness (the last two rostered by review PRR-008), plus
+// logline-contract-sweep.test.ts and acceptance-battery-precision.test.ts
+// (the trace 201-207-208-209-210 acceptance battery and its meta-guard,
+// rostered per the same PRR-008 precedent) — so
 // the ROSTER, not the naming convention, is the closed set a new spec
 // must be added to.
 //

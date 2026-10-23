@@ -51,6 +51,12 @@ export const FAMILY_ROSTER: string[] = [
   // The frozen acceptance surfaces of this issue ride the same gate.
   'roster-exclusion-evidence-contract.test.ts',
   'frozen-recipe-replay-contract.test.ts',
+  // Trace 201-207-208-209-210 (collated test-gate-integrity batch): the
+  // batch's acceptance battery and its meta-guard had no other
+  // merge-blocking home - same disposition as the #232-residual specs
+  // (review PRR-008, pr242-20261021).
+  'logline-contract-sweep.test.ts',
+  'acceptance-battery-precision.test.ts',
 ];
 
 /** Convention-matching specs owned by another CI context, with run-line evidence. */

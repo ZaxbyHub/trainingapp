@@ -162,3 +162,89 @@ test.describe('axe gate wiring (issue #146: the gate itself must grow)', () => {
     );
   });
 });
+
+test.describe('axe gate post-condition rows (issue #207)', () => {
+  test.use({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+
+  test('axe gate convergence: a chasey never-settling surface makes the shared gate fail loud naming it', async ({ page }) => {
+    // Frozen C5 row (driver repro/check-c5.sh). The chasey element keeps its
+    // height 800px ahead of the viewport: every growth the loop performs is
+    // answered by new overflow, so the 6-iteration budget AND the
+    // MAX_SCAN_HEIGHT cap end with the page STILL scrolling. The gate must
+    // throw naming the surface instead of scanning anyway - the exact
+    // silent fall-out this row kills (named mutant: delete the convergence
+    // post-condition in axe-full-page.ts and the gate scans a
+    // still-scrolling page, this expect never rejects -> red).
+    await openSettings(page);
+    await page.evaluate(() => {
+      const scroller = document.querySelector('.ui-shell__main') ?? document.body;
+      const chasey = document.createElement('div');
+      chasey.id = 'convergence-chasey';
+      const grow = () => {
+        chasey.style.height = `${window.innerHeight + 800}px`;
+      };
+      grow();
+      window.addEventListener('resize', grow);
+      scroller.append(chasey);
+    });
+    await expect(
+      wholePageAxeExpectClean(page, { key: 'convergence-chasey', knownBaseline: {} }),
+    ).rejects.toThrow(/convergence-chasey did not converge/);
+  });
+
+  test('axe gate stabilization: content appended after the grow snapshot is re-fitted before the scan', async ({ page }) => {
+    // Frozen C6 row (driver repro/check-c6.sh). The late plant is appended
+    // through the gate's row-controlled onAfterGrow seam (a wall-clock timer
+    // could race the grow snapshot). With stabilization in place the gate
+    // re-measures, re-fits, and the scan REPORTS the late below-fold
+    // contrast violation (rejects naming it). Named mutant: delete the
+    // stabilization re-measure (settle -> grow -> scan once, the base
+    // sequence) - the plant stays below the scanned fold, axe defers it as
+    // offscreen `incomplete`, the gate goes vacuously green -> red.
+    await openSettings(page);
+    await expect(
+      wholePageAxeExpectClean(page, {
+        key: 'stabilization-late',
+        knownBaseline: {},
+        onAfterGrow: async (target) => {
+          await target.evaluate(() => {
+            const scroller = (document.querySelector('.ui-shell__main') ?? document.body) as HTMLElement;
+            if (getComputedStyle(scroller).position === 'static') scroller.style.position = 'relative';
+            const node = document.createElement('p');
+            node.id = 'stabilization-late-violation';
+            node.textContent = 'deliberate late below-fold contrast violation planted after the grow snapshot';
+            node.style.position = 'absolute';
+            node.style.top = `${scroller.scrollHeight + 400}px`;
+            node.style.color = '#cfcfcf';
+            node.style.background = '#ffffff';
+            scroller.append(node);
+          });
+        },
+      }),
+    ).rejects.toThrow(/stabilization-late-violation/);
+  });
+});
+
+test.describe('axe gate production path (issue #207 AC2)', () => {
+  test.use({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+
+  test('axe gate production path: a no-seam surface still re-measures after the grow snapshot', async ({ page }) => {
+    // The production path passes NO onAfterGrow seam: the row above pins the
+    // seam path, and only THIS row sees what a real surface scan does.
+    // Named mutants: delete the stabilization loop in axe-full-page.ts (the
+    // gate then runs ZERO re-measure rounds -> this row goes red), or
+    // re-gate that loop on fit.converged (a converged surface - which is the
+    // common case - runs zero rounds -> red). The surface is a settled blank
+    // page, so the scan itself is clean: the row asserts the gate's
+    // BEHAVIOUR (it re-measures after the grow snapshot), not a violation.
+    await page.setContent(
+      '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Settled surface</title></head>' +
+        '<body><main><h1>Settled surface</h1><p>This page never changes after it loads.</p></main></body></html>',
+    );
+    const result = await wholePageAxeExpectClean(page, { key: 'production-remeasure', knownBaseline: {} });
+    expect(
+      result.stabilizationRounds,
+      'the gate re-measures after the grow snapshot on every path (no seam required)',
+    ).toBeGreaterThanOrEqual(1);
+  });
+});
