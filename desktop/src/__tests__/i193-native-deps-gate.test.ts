@@ -111,7 +111,8 @@ function runNestedVitest(
       clearTimeout(killer);
       resolve({
         status,
-        stdout: `${stdout}\n${stderr}`,
+        stdout,
+        stderr,
       });
     });
   });
