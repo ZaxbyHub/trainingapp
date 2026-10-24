@@ -670,7 +670,7 @@ describe('gpu-test-drain (AC5: the whole-operation gpuTest swap flight)', () => 
     // bumped verdictSeq twice (observable here as two writes / a flipping
     // holder). No stored verdict: the boot flight itself runs the full probe.
     // (Settle observation: the implementation resolves the armed gate's
-    // PROMISE without nulling the armed object — settle is pinned by awaiting
+    // promise; settle ALSO de-arms the current gate (gpu-probe.ts identity guard) — settle is pinned by awaiting
     // the CAPTURED promise, not by gpuVerdictGate() === null.)
     const rig = await startHostRig({});
     activeHosts.push(rig.stop);
@@ -695,7 +695,7 @@ describe('gpu-test-drain (AC5: the whole-operation gpuTest swap flight)', () => 
     // path — a storeless host then left its gate armed forever (every
     // default-awaiter query hung) and a stop->start cycle stayed fenced on
     // the stale stoppedAt epoch. (Settle pinned by awaiting the CAPTURED gate
-    // promise; the armed object itself is not nulled on settle.)
+    // promise; the armed object de-arms on settle when current.)
     const rig = await startHostRig({ storeless: true });
     activeHosts.push(rig.stop);
     const firstGate = gpuVerdictGate();

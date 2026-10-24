@@ -71,8 +71,14 @@ describe('wizard-gpu-verdict-preference: the holder-first read at desktop/main/i
     const holderFirst = 'activeGpuVerdict() ??';
     const gateArm = 'gpuVerdictGate() !== null';
     const rawRead = 'readGpuProbeVerdict(path.dirname(storePath))';
+    // 4.5 review R2-1: the PENDING branch DIRECTION is part of the contract —
+    // an armed gate must yield null, the raw read belongs to the ELSE. Without
+    // this token an inverted operand list (`armed ? rawRead : null`) keeps all
+    // three markers in order and survives (the reviewer's executed mutant).
+    const pendingThenRaw = 'gpuVerdictGate() !== null ? null : readGpuProbeVerdict';
     if (!source.includes(holderFirst)) return { ok: false, why: 'missing the holder-first read' };
     if (!source.includes(gateArm)) return { ok: false, why: 'missing the armed-gate PENDING branch' };
+    if (!source.includes(pendingThenRaw)) return { ok: false, why: 'the armed-gate branch must yield null (PENDING), not consume the sidecar' };
     if (!source.includes(rawRead)) return { ok: false, why: 'missing the raw sidecar fallback read' };
     const a = source.indexOf(holderFirst);
     const b = source.indexOf(gateArm);
@@ -103,9 +109,15 @@ describe('wizard-gpu-verdict-preference: the holder-first read at desktop/main/i
       // A second shape that must also be rejected: holder preference present
       // but the pending branch dropped (mid-validation sidecar consumption).
       'const gpuVerdict = activeGpuVerdict() ?? readGpuProbeVerdict(path.dirname(storePath));',
+      // 4.5 review R2-1: the DIRECTION-INVERTED operand list — all three
+      // markers in the required order, but the armed branch consumes the raw
+      // sidecar exactly while validation is pending. Must also be rejected.
+      'const gpuVerdict = activeGpuVerdict() ?? (gpuVerdictGate() !== null ? readGpuProbeVerdict(path.dirname(storePath)) : null);',
     ].join('\n');
-    const verdict = matchesHolderFirstContract(mutant);
-    expect(verdict.ok, `the base raw read must be REJECTED by the contract (got: ${verdict.why})`).toBe(false);
+    for (const line of mutant.split('\n')) {
+      const verdict = matchesHolderFirstContract(line);
+      expect(verdict.ok, `this defect shape must be REJECTED by the contract: ${line} (got: ${verdict.why})`).toBe(false);
+    }
   });
 
   it('branch 1: a published holder value WINS — even with an armed gate and a valid sidecar present', async () => {
