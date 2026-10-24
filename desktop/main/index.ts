@@ -718,10 +718,13 @@ export function bootstrap(): void {
       // state. The module holder carries what the boot-admission flight
       // validated THIS lifecycle; while validation is still pending (holder
       // null with an armed gate) the verdict is treated as absent — the RAM
-      // rule decides, never an unvalidated sidecar record (a device-mismatched
-      // or device-less record must not force the fast recommendation). The
-      // raw sidecar is read only when no validation is in flight and none has
-      // published (pre-host first run) — through the same stale-aware reader.
+      // rule decides, never an unvalidated sidecar record (a device-less
+      // record must not force the fast recommendation). The raw sidecar is
+      // read only when no validation is in flight and none has published
+      // (pre-host first run); at this idle call shape no adapter identity is
+      // available, so a device-MISMATCHED record is undetectable here — the
+      // approved plan's bounded-staleness disposition (one recommendation,
+      // until the boot probe rewrites the sidecar).
       const gpuVerdict =
         activeGpuVerdict() ?? (gpuVerdictGate() !== null ? null : readGpuProbeVerdict(path.dirname(storePath)));
       const recommendation = autoSelectProfile({

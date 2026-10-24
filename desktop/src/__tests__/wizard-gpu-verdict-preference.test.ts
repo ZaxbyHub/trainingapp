@@ -11,8 +11,14 @@
 // published; (2) holder null + ARMED gate = PENDING (null — the raw sidecar is
 // never consumed mid-validation, so an unvalidated record cannot drive the
 // RAM-rule recommendation, including on the completion path); (3) holder null
-// + no gate = the raw sidecar through the STALE-AWARE reader (a no-device or
-// mismatched record reads as never-probed).
+// + no gate = the raw sidecar through the stale-aware reader AT THIS CALL
+// SHAPE (no currentDevice argument): a no-device record reads as
+// never-probed. A device-MISMATCHED record is UNDETECTABLE here — mismatch
+// rejection requires passing the current adapter identity, which the wizard
+// does not have in this idle branch. That residual is the approved plan's
+// bounded-staleness disposition (07-approved-plan.md B3): a mismatched record
+// can influence one wizard recommendation until the boot probe rewrites the
+// sidecar; re-evaluation trigger = that rewrite.
 //
 // Driving the real wizard flow in vitest is impractical: it lives inline in
 // desktop/main/index.ts's Electron bootstrap (the e2-first-run-wizard spec
@@ -139,7 +145,7 @@ describe('wizard-gpu-verdict-preference: the holder-first read at desktop/main/i
     expect(composeWizardVerdict(mod, sidecarDir), 'pending validation must read as NO verdict, never the raw record').toBeNull();
   });
 
-  it('branch 3: holder null + no gate = the stale-aware raw read (no-device record -> never-probed)', async () => {
+  it('branch 3: holder null + no gate = the raw read (no-device -> never-probed; mismatch undetectable at this call shape per the plan bounded-staleness disposition)', async () => {
     const mod = await freshGpuModule();
     const sidecarDir = makeTempDir('wizard-raw-');
     // The gate on this fresh module instance has never been armed.

@@ -132,9 +132,15 @@ profile auto-selection.
   the probe), `true` (force the GPU) or `false` (force CPU). The probe runs in
   a separate OS process, so a driver fault cannot take the app down; its
   verdict and a human-readable reason persist in `gpu-probe.json` beside the
-  other profile sidecars and are reported by `GET /status/models`. A GPU load
-  that fails on the automatic path retries once on CPU and records why; an
-  explicitly forced GPU surfaces the error instead of degrading silently.
+  other profile sidecars and are reported by `GET /status/models` (issue #246:
+  only verdicts carrying the adapter identity persist — a device-less or
+  device-mismatched record is stale at the next boot, which re-probes). A GPU
+  load rejected by node-llama-cpp's free-VRAM admission estimate retries once
+  with the safety estimate bypassed so the real allocation decides, and an
+  estimate-class rejection is session-only (nothing is persisted for it); a
+  non-estimate GPU failure retries once on CPU and persists the CPU verdict
+  only after that retry settles, carrying the adapter identity; an explicitly
+  forced GPU surfaces the error instead of degrading silently.
 - **Model location**: `TRAININGAPP_INFERENCE_MODEL_DIR` env (or dev-server
   `--model-dir`) -> `<userData>/models` (Electron injects the path) ->
   `~/.trainingapp/models` headless fallback. A missing model makes `/ask` and
