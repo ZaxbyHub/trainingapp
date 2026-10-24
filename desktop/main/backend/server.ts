@@ -727,6 +727,13 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
               return;
             }
             if (path === '/ask') {
+              // Issue #246 (AC5): a gpu-test swap refuses with the same 503 as
+              // the stream preflight — before any generation work starts.
+              const askPausedReason = engine.queriesPaused?.() ?? null;
+              if (askPausedReason !== null) {
+                sendJson(res, 503, { detail: `${askPausedReason} Retry in a moment.` }, cors);
+                return;
+              }
               let result;
               try {
                 result = await runGeneration(() =>
@@ -777,6 +784,13 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
               // a missing model must answer its 503 immediately, never queue
               // behind an in-flight generation. Only the actual
               // generation-carrying stream runs under the scheduler.
+              // Issue #246 (AC5): a gpu-test swap refuses here with the same
+              // 503, BEFORE any SSE byte is written — never a 200-then-error.
+              const pausedReason = engine.queriesPaused?.() ?? null;
+              if (pausedReason !== null) {
+                sendJson(res, 503, { detail: `${pausedReason} Retry in a moment.` }, cors);
+                return;
+              }
               try {
                 await engine.preflight?.();
               } catch (err) {

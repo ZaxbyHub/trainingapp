@@ -13,13 +13,56 @@
 // answers identically would make first boot needlessly slow. Each LFM profile
 // ships exactly one file (model.gguf; no image adapter), so the fast GGUF
 // figure IS the profile total.
+//
+// Issue #246 (AC2): the load is admitted by the REAL allocation for this
+// child's 512-token context, not node-llama-cpp's default-context VRAM
+// estimate — `ignoreMemorySafetyChecks: true` rides the exported option
+// builders below, and the module only self-runs as the process ENTRY so
+// tests can import it side-effect-free and drive the same builders.
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type * as Nlc from 'node-llama-cpp';
 
 const PROMPT = 'Reply with only the word: OK';
 /** Small on purpose: this measures whether the device produces coherent output,
  *  not how fast it is. Speed is the bench harness's job, not the probe's. */
 const MAX_TOKENS = 12;
+
+/**
+ * The `getLlama` options the probe child uses (issue #155 AC12: CUDA excluded —
+ * the installer does not ship it; `build: 'never'` turns a missing prebuilt
+ * into an immediate NoBinaryFoundError instead of a from-source cmake build).
+ * Exported so specs pin exactly what the production call site passes.
+ */
+export const PROBE_LLAMA_OPTIONS: Nlc.LlamaOptions = {
+  gpu: { type: 'auto', exclude: ['cuda'] },
+  build: 'never',
+};
+
+/** The probe's REAL context: 512 tokens (see module header). */
+export const PROBE_CONTEXT_SIZE = 512;
+
+/**
+ * Issue #246 (AC2): loadModel options for the probe. The admission estimate
+ * inside node-llama-cpp sizes the request against the model's DEFAULT context,
+ * which the probe never creates — its real context is the 512-token one below —
+ * so the estimate over-asks and a misreported free-VRAM figure can reject a
+ * load that trivially fits. `ignoreMemorySafetyChecks: true` lets the real
+ * allocation decide (LlamaModel.d.ts:162 documents the option).
+ */
+export function probeModelLoadOptions(modelPath: string): { modelPath: string; gpuLayers: 'max'; ignoreMemorySafetyChecks: true } {
+  return { modelPath, gpuLayers: 'max', ignoreMemorySafetyChecks: true };
+}
+
+/**
+ * Issue #246 (AC2): createContext options for the probe — the context-size
+ * resolver runs its own VRAM estimate, so the bypass rides here too
+ * (LlamaContext/types.d.ts:171 documents the option).
+ */
+export function probeContextOptions(): { threads: number; contextSize: number; ignoreMemorySafetyChecks: true } {
+  return { threads: 2, contextSize: PROBE_CONTEXT_SIZE, ignoreMemorySafetyChecks: true };
+}
 
 function emit(report: Record<string, unknown>): void {
   process.stdout.write(JSON.stringify(report));
@@ -30,33 +73,39 @@ function fail(reason: string, device: string | null = null): void {
   process.exit(0);
 }
 
-async function main(): Promise<void> {
-  const modelPath = process.argv[2];
-  if (typeof modelPath !== 'string' || modelPath === '') {
-    fail('GPU probe received no model path.');
-    return;
+/** Issue #246 (AC4): the device-only mode's report — no sample by contract;
+ * gpu-probe.ts's deviceOnly parser reads only {ok, device, backend}. */
+async function runDeviceOnly(llama: Nlc.Llama): Promise<void> {
+  let device: string | null = null;
+  try {
+    const names = await llama.getGpuDeviceNames();
+    device = Array.isArray(names) && names.length > 0 ? names.join(', ') : null;
+  } catch {
+    // A device name is a nicety; never let it fail the query.
+    device = null;
   }
-  if (!fs.existsSync(modelPath)) {
-    fail(`GPU probe: the probe model is not staged at ${modelPath}.`);
-    return;
+  emit({ ok: true, backend: 'vulkan', device });
+  await llama.dispose().catch(() => {});
+}
+
+async function main(): Promise<void> {
+  const deviceOnly = process.argv[2] === '--device-only';
+  const modelPath = deviceOnly ? undefined : process.argv[2];
+  if (!deviceOnly) {
+    if (typeof modelPath !== 'string' || modelPath === '') {
+      fail('GPU probe received no model path.');
+      return;
+    }
+    if (!fs.existsSync(modelPath)) {
+      fail(`GPU probe: the probe model is not staged at ${modelPath}.`);
+      return;
+    }
   }
 
   let llama: Nlc.Llama;
   try {
     const nlc = await import('node-llama-cpp');
-    const options: Nlc.LlamaOptions = {
-      // CUDA is excluded on purpose (issue #155 AC12): the installer does not
-      // ship it, so an NVIDIA host must fall back rather than half-work.
-      gpu: { type: 'auto', exclude: ['cuda'] },
-      // `build: 'never'` is load-bearing. Under ELECTRON_RUN_AS_NODE this
-      // process is plain Node as far as the library is concerned, where its
-      // documented default is "auto" - which attempts a FROM-SOURCE build when
-      // no prebuilt binary matches. That is a multi-minute failure mode. With
-      // "never" a missing binary throws NoBinaryFoundError immediately, which
-      // is exactly the signal this probe exists to report.
-      build: 'never',
-    };
-    llama = await nlc.getLlama(options);
+    llama = await nlc.getLlama(PROBE_LLAMA_OPTIONS);
   } catch (err) {
     fail(`GPU probe: no usable GPU backend (${err instanceof Error ? err.message : String(err)}).`);
     return;
@@ -69,14 +118,19 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (deviceOnly) {
+    await runDeviceOnly(llama);
+    return;
+  }
+
   let model: Nlc.LlamaModel | undefined;
   let context: Nlc.LlamaContext | undefined;
   try {
     // Explicit gpuLayers (llama.cpp #29277: a wrong free-memory report must not
-    // silently decide the offload size). 'max' is validated by the probe
-    // itself - if it cannot fit, the load throws and the parent reports CPU.
-    model = await llama.loadModel({ modelPath, gpuLayers: 'max' });
-    context = await model.createContext({ threads: 2, contextSize: 512 });
+    // silently decide the offload size). Admission is by real allocation for
+    // the 512-token context (issue #246 AC2) — see probeModelLoadOptions.
+    model = await llama.loadModel(probeModelLoadOptions(modelPath as string));
+    context = await model.createContext(probeContextOptions());
   } catch (err) {
     await context?.dispose().catch(() => {});
     await model?.dispose().catch(() => {});
@@ -85,6 +139,11 @@ async function main(): Promise<void> {
     return;
   }
 
+  // The generation leg: EVERY terminal path disposes first and emits/exits
+  // LAST (issue #246: `fail()` exits the process, so recording the failure and
+  // disposing here — instead of exiting inside the catch — is what keeps the
+  // awaited teardown on the generation-failure path too).
+  let generationFailure: string | null = null;
   try {
     const { LlamaChatSession } = await import('node-llama-cpp');
     const session = new LlamaChatSession({
@@ -133,14 +192,32 @@ async function main(): Promise<void> {
       sample: String(sample ?? ''),
     });
   } catch (err) {
-    fail(`GPU probe: the GPU failed to generate (${err instanceof Error ? err.message : String(err)}).`);
-  } finally {
-    await context.dispose().catch(() => {});
-    await model.dispose().catch(() => {});
-    await llama.dispose().catch(() => {});
+    generationFailure = err instanceof Error ? err.message : String(err);
+  }
+  await context.dispose().catch(() => {});
+  await model.dispose().catch(() => {});
+  await llama.dispose().catch(() => {});
+  if (generationFailure !== null) {
+    fail(`GPU probe: the GPU failed to generate (${generationFailure}).`);
   }
 }
 
-void main().catch((err: unknown) => {
-  fail(`GPU probe crashed: ${err instanceof Error ? err.message : String(err)}`);
-});
+// Self-run ONLY as the process entry (issue #246: importing this module from a
+// spec must be side-effect-free). argv[1] is this script under
+// ELECTRON_RUN_AS_NODE; resolve both sides through real paths so a junctioned
+// or differently-cased checkout still matches.
+function isProcessEntry(): boolean {
+  const entry = process.argv[1];
+  if (typeof entry !== 'string' || entry === '') return false;
+  try {
+    return path.resolve(fileURLToPath(import.meta.url)) === path.resolve(entry);
+  } catch {
+    return false;
+  }
+}
+
+if (isProcessEntry()) {
+  void main().catch((err: unknown) => {
+    fail(`GPU probe crashed: ${err instanceof Error ? err.message : String(err)}`);
+  });
+}

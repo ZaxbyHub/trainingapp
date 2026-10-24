@@ -28,11 +28,14 @@ import { resolvePacksSecurity } from './packs/pack-extract.js';
 import { loadSettingsSnapshot, saveSettingsSnapshot } from './settings-store.js';
 import {
   readGpuProbeVerdict,
+  resetGpuVerdictLifecycle,
+  runGpuDeviceQuery,
   runGpuProbe,
   setActiveGpuVerdict,
   terminateProbeChild,
   writeGpuProbeVerdict,
   type GpuProbeVerdict,
+  type GpuVerdictGate,
 } from './inference/gpu-probe.js';
 import { loadExternalSnapshot, replayExternalSnapshot, saveExternalSnapshot } from './external-store.js';
 import { OnnxEmbedder, resolveEmbedder, type EmbeddingSurface } from './ingest/embedder.js';
@@ -327,7 +330,43 @@ export class NodeBackendHost implements BackendHost {
    */
   private probeRun: typeof runGpuProbe = runGpuProbe;
 
-  startGpuProbe = async (): Promise<GpuProbeVerdict> => {
+  /**
+   * Issue #246 (AC4): the device-query runner, injectable for the same reason
+   * `probeRun` is — replacing the boot-admission logic itself would bypass
+   * exactly the fencing under test; tests drive the real flight with a
+   * controlled adapter answer.
+   */
+  private deviceQueryRun: typeof runGpuDeviceQuery = runGpuDeviceQuery;
+
+  /**
+   * Issue #246 (rev-3 critic R3-1/R3-2): lifecycle epochs and flight state.
+   * `stoppedAt` is stamped at the TOP of stop() and fences every flight side
+   * effect; `verdictSeq` is the adoption latest-wins counter; the boot flight
+   * and gpuTest whole-operation memos serialize the two host-side orderings.
+   */
+  private stoppedAt: number | null = null;
+  private verdictSeq = 0;
+  private bootAdmissionFlight: Promise<void> | null = null;
+  private gpuTestFlight: Promise<GpuProbeVerdict> | null = null;
+  /** Issue #246 (AC4): the gate object THIS lifecycle's boot flight resolves. */
+  private bootGate: GpuVerdictGate | null = null;
+
+  /**
+   * Issue #246 (AC4/AC5): the SINGLE guarded verdict publisher. Every host
+   * adoption flows through here — stopped-fenced (a stop during validation
+   * adopts nothing) and latest-wins (a flight whose `seqAtStart` no longer
+   * matches was overtaken by a newer adoption and defers to it). `adoptGpuVerdict`
+   * stays as the raw adopter for direct/legacy callers; flights never call it.
+   */
+  private publishVerdict = (verdict: GpuProbeVerdict, seqAtStart?: number): boolean => {
+    if (this.stoppedAt !== null) return false;
+    if (seqAtStart !== undefined && this.verdictSeq !== seqAtStart) return false;
+    this.verdictSeq += 1;
+    this.adoptGpuVerdict(verdict);
+    return true;
+  };
+
+  startGpuProbe = async (verdictSeqAtStart?: number): Promise<GpuProbeVerdict> => {
     // Per-probe state. `abandonedByHost` is captured INSIDE onSettled, which
     // runs before the reset - reading this flag after the await was the round-3
     // defect: onSettled reset it first, so the post-await check could never see
@@ -382,7 +421,7 @@ export class NodeBackendHost implements BackendHost {
         this.gpuVerdict = verdict;
         return verdict;
       }
-      this.adoptGpuVerdict(verdict);
+      this.publishVerdict(verdict, verdictSeqAtStart);
       return verdict;
     } catch (err) {
       const verdict: GpuProbeVerdict = {
@@ -391,8 +430,152 @@ export class NodeBackendHost implements BackendHost {
         reason: `GPU probe failed unexpectedly: ${err instanceof Error ? err.message : String(err)}`,
         device: null,
       };
-      this.adoptGpuVerdict(verdict);
+      this.publishVerdict(verdict, verdictSeqAtStart);
       return verdict;
+    }
+  };
+
+  /**
+   * Issue #246 (AC4): the boot-admission flight — the single ordering
+   * authority for verdict validation at start. Validates any stored verdict
+   * against the CURRENT adapter (a bounded, out-of-process, no-model device
+   * query) BEFORE anything is published, warmed, or constructed: the module
+   * gate (armed by resetGpuVerdictLifecycle at start) holds every load until
+   * this flight resolves. Unknown adapter (the native stack cannot answer)
+   * fails OPEN to the stored record; a HOST-KILLED query adopts nothing
+   * (stop owns the lifecycle); a device mismatch resets the holder and runs
+   * the full probe. The gate captured at start resolves on EVERY terminal
+   * path — no waiter ever blocks on an abandoned flight.
+   */
+  private runBootAdmission = async (gate: GpuVerdictGate): Promise<void> => {
+    const seqAtStart = this.verdictSeq;
+    const stoppedEpoch = this.stoppedAt;
+    try {
+      const stored = this.gpuProbeDir !== null ? readGpuProbeVerdict(this.gpuProbeDir) : null;
+      if (stored === null) {
+        await this.startGpuProbe(seqAtStart);
+        return;
+      }
+      let child: { kill: (signal?: NodeJS.Signals) => unknown } | null = null;
+      const current = await this.deviceQueryRun({
+        abandonedChildren: this.abandonedChildren,
+        onChild: (spawned) => {
+          child = spawned;
+          this.probeChildren.add(spawned);
+        },
+        onSettled: () => {
+          if (child !== null) {
+            this.probeChildren.delete(child);
+            this.abandonedChildren.delete(child);
+          }
+        },
+      });
+      // Fence AFTER the await: a stop (or a naturally-completed result racing
+      // one) must not adopt or spawn a full probe post-teardown.
+      if (this.stoppedAt !== stoppedEpoch || current.status === 'cancelled') return;
+      if (current.status === 'unknown') {
+        // Fail-open: the comparison only rejects on positive mismatch.
+        this.publishVerdict(stored, seqAtStart);
+        return;
+      }
+      if (stored.device !== null && stored.device === current.device) {
+        this.publishVerdict(stored, seqAtStart);
+        return;
+      }
+      // Stale: the record describes a different adapter. Reset every trace and
+      // let the full probe re-establish the truth.
+      this.gpuVerdict = null;
+      setActiveGpuVerdict(null);
+      if (this.stoppedAt !== stoppedEpoch) return;
+      await this.startGpuProbe(seqAtStart);
+    } catch {
+      // Never throws to start(): an unvalidated boot leaves the verdict null
+      // (never-probed semantics) and the gate still resolves below.
+    } finally {
+      gate.resolve();
+    }
+  };
+
+  /**
+   * Issue #246 (AC5): the on-demand GPU test — a coordinated whole-operation
+   * flight exposed as an OWN PROPERTY (the b3 duck-type pin idiom) so tests
+   * and callers drive the host's real coordination; the server surface at
+   * start() hands this same instance to the /settings/inference/gpu-test
+   * route. Concurrent calls join ONE operation and receive the same verdict.
+   */
+  gpuTest = async (): Promise<GpuProbeVerdict> => {
+    this.gpuTestFlight ??= this.coordinatedGpuTest();
+    try {
+      return await this.gpuTestFlight;
+    } finally {
+      this.gpuTestFlight = null;
+    }
+  };
+
+  /**
+   * Issue #246 (AC5): the gpuTest body. See the gpuTest route comment for the
+   * contract. The stoppedAt epoch is captured at entry and re-checked after
+   * EVERY await — a stop at any point ends the operation with no
+   * unload/probe/adopt/warmup side effect beyond what already happened, and
+   * the finally never lets this flight leak its pause (resume is an
+   * idempotent clear; stop and the next start's resetLifecycle clear it too).
+   */
+  private coordinatedGpuTest = async (): Promise<GpuProbeVerdict> => {
+    // One ordering authority: never swap while boot validation is in flight.
+    if (this.bootAdmissionFlight !== null) {
+      await this.bootAdmissionFlight.catch(() => {});
+    }
+    const stoppedEpoch = this.stoppedAt;
+    const aborted = (): GpuProbeVerdict => ({
+      backend: 'cpu',
+      ok: false,
+      reason: 'GPU test aborted: the backend is stopping.',
+      device: null,
+    });
+    if (stoppedEpoch !== null) return aborted();
+    // Stale-aware sidecar re-read: a device-less or device-mismatched record
+    // reads as absent — the fresh probe below re-establishes it.
+    if (this.gpuProbeDir !== null) {
+      const stored = readGpuProbeVerdict(this.gpuProbeDir);
+      if (stored !== null) this.gpuVerdict = stored;
+    }
+    const eng = this.engine as {
+      pauseQueries?: (reason: string) => void;
+      resumeQueries?: () => void;
+      queriesPaused?: () => string | null;
+      joinLoadAndQueue?: () => Promise<void>;
+      dispose?: () => Promise<void>;
+      resetLifecycle?: () => void;
+    };
+    const pause = eng.pauseQueries?.bind(eng);
+    const resume = eng.resumeQueries?.bind(eng);
+    const join = eng.joinLoadAndQueue?.bind(eng);
+    const unload = eng.dispose?.bind(eng);
+    if (
+      typeof pause !== 'function' ||
+      typeof resume !== 'function' ||
+      typeof eng.queriesPaused !== 'function' ||
+      typeof join !== 'function' ||
+      typeof unload !== 'function' ||
+      typeof eng.resetLifecycle !== 'function'
+    ) {
+      // Stub/legacy engines: probe-only, exactly the pre-#246 behavior — a
+      // partial swap (some capability methods missing) is never attempted.
+      return await this.startGpuProbe();
+    }
+    const seqAtStart = this.verdictSeq;
+    pause('The GPU test is swapping the inference backend.');
+    try {
+      await join();
+      if (this.stoppedAt !== stoppedEpoch) return aborted();
+      await unload();
+      if (this.stoppedAt !== stoppedEpoch) return aborted();
+      const verdict = await this.startGpuProbe(seqAtStart);
+      if (this.stoppedAt !== stoppedEpoch) return verdict;
+      await this.engine.warmup?.();
+      return verdict;
+    } finally {
+      resume();
     }
   };
 
@@ -659,14 +842,19 @@ export class NodeBackendHost implements BackendHost {
       // issue #155: the profile DIRECTORY is the sidecar home (index.ts:409-412
       // states the convention; dev-server.ts:119 already uses it). A missing or
       // corrupt file reads as null and simply means "not probed yet".
+      //
+      // Issue #246 (AC4): the stored verdict is NO LONGER adopted
+      // synchronously. The boot-admission flight validates it (device-only
+      // query against the current adapter) before ANY publication; until it
+      // settles, this.gpuVerdict is null and the module admission gate holds
+      // every load. The lifecycle reset also guarantees a fresh start: the
+      // engine's lifecycle flags clear and the module holder drops the
+      // previous lifecycle's verdict (a restart must revalidate, never reuse).
       this.gpuProbeDir = path.dirname(storePath);
-      this.gpuVerdict = readGpuProbeVerdict(this.gpuProbeDir);
-      // Adopt the persisted verdict into the HOLDER the engine actually reads
-      // (LlamaEngine's default `gpuVerdict` seam is activeGpuVerdict). Without
-      // this the sidecar was written but never consulted, so a restart lost
-      // the verdict and re-probed regardless - the opposite of what the
-      // comment below claimed.
-      if (this.gpuVerdict !== null) setActiveGpuVerdict(this.gpuVerdict);
+      this.stoppedAt = null;
+      (this.engine as { resetLifecycle?: () => void }).resetLifecycle?.();
+      this.bootGate = resetGpuVerdictLifecycle();
+      this.gpuVerdict = null;
     }
     // #133: the first-run wizard applies the operator's profile choice
     // through the SAME validated seam the settings API uses — live apply +
@@ -724,15 +912,10 @@ export class NodeBackendHost implements BackendHost {
       modelStatus: typeof this.engine.modelStatus === 'function'
         ? () => this.engine.modelStatus!()
         : undefined,
-      // issue #155: the on-demand re-probe. Each call re-reads the sidecar
-      // first so a driver change is what the verdict reflects, then re-runs.
-      gpuTest: async () => {
-        if (this.gpuProbeDir !== null) {
-          const stored = readGpuProbeVerdict(this.gpuProbeDir);
-          if (stored !== null) this.gpuVerdict = stored;
-        }
-        return await this.startGpuProbe();
-      },
+      // issue #155 / #246 (AC5): the on-demand re-probe — the coordinated
+      // whole-operation flight defined as an OWN PROPERTY (see gpuTest); the
+      // route surface hands the same instance through.
+      gpuTest: this.gpuTest,
       // C7 (issue #74): pack lifecycle surface. Provider shape — the
       // PackManager is constructed lazily with the store (see the recovery
       // path below), so resolve it per request; null -> contract-safe 503.
@@ -748,19 +931,33 @@ export class NodeBackendHost implements BackendHost {
       // gate chat on the real load state instead of a time heuristic. The
       // warmup itself never fails host start; single-flight in the engine
       // merges it with a concurrent first query.
-      // issue #155: kick the GPU probe off in the BACKGROUND, next to warmup,
-      // so neither blocks the listener. It runs out of process (gpu-probe.ts),
-      // so a driver fault cannot take the host down; the verdict that lands here
-      // is picked up by the NEXT model load, never by a load already in flight.
-      // Skipped when a verdict is already persisted and adopted above - that is
-      // what makes the sidecar worth writing. The /gpu-test route forces a
-      // re-probe unconditionally, so a changed driver is still recoverable.
-      if (this.gpuVerdict === null) void this.startGpuProbe();
-      void this.engine.warmup?.().catch((err: unknown) => {
-        console.error(
-          `[trainingapp-backend] model warmup crashed: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      });
+      // issue #155: the GPU probe runs out of process (gpu-probe.ts), so a
+      // driver fault cannot take the host down.
+      // issue #246 (AC4/AC6): the boot-ADMISSION flight now owns start-time
+      // verdict resolution — stored-record validation (device-only query) or a
+      // full probe — publishing once before the gate releases; warmup runs
+      // only after it settles, so backend selection sees the validated
+      // verdict, and the engine's admission gate holds any concurrent first
+      // /ask on the same flight (one construction, post-verdict identity).
+      const bootGate = this.bootGate;
+      if (bootGate !== null) {
+        this.bootAdmissionFlight = this.runBootAdmission(bootGate);
+        void this.bootAdmissionFlight
+          .catch(() => {})
+          .finally(() => {
+            void this.engine.warmup?.().catch((err: unknown) => {
+              console.error(
+                `[trainingapp-backend] model warmup crashed: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            });
+          });
+      } else {
+        void this.engine.warmup?.().catch((err: unknown) => {
+          console.error(
+            `[trainingapp-backend] model warmup crashed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+      }
       // B6 store (issue #64): the store is now load-bearing for ingestion.
       // Corruption is recovered BEFORE serving (integrity check + restore/
       // fresh policy via config.onStoreCorruption; auto restore-else-fresh
@@ -973,6 +1170,11 @@ export class NodeBackendHost implements BackendHost {
   };
 
   async stop(): Promise<void> {
+    // Issue #246 (rev-3 critic R3-1): stamp the stop epoch FIRST — every
+    // flight (boot admission, gpuTest, device query) fences its side effects
+    // on this value, so nothing they do after this line adopts, probes, warms,
+    // or resumes into the torn-down lifecycle.
+    this.stoppedAt = Date.now();
     // issue #100 item 1: never tear down under an in-flight start. Await the
     // flight first (a rejection already cleared its own memo) so teardown runs
     // only after it settled — start→stop→start can no longer run two flights
@@ -1090,6 +1292,22 @@ export class NodeBackendHost implements BackendHost {
         }
       }
     }
+    // Issue #246 (AC8): awaited engine teardown — before this, the host never
+    // disposed the engine, so native (llama.cpp) resources could outlive the
+    // process (field-observed stranded GPU memory). The listener is closed, so
+    // no new queries arrive; resume clears any leaked swap pause (idempotent);
+    // the drain waits out an active generation and a load in flight; terminal
+    // shutdown then blocks all later local construction (gate-waiting queries
+    // wake into the stopped engine and fail retryable) and disposes the
+    // resident backend awaited. The gate resolves last, and the flight memos
+    // clear so a restarted host cannot join a dead flight.
+    (this.engine as { resumeQueries?: () => void }).resumeQueries?.();
+    await (this.engine as { joinLoadAndQueue?: () => Promise<void> }).joinLoadAndQueue?.().catch(() => {});
+    await (this.engine as { shutdown?: () => Promise<void> }).shutdown?.().catch(() => {});
+    this.bootGate?.resolve();
+    this.bootGate = null;
+    this.bootAdmissionFlight = null;
+    this.gpuTestFlight = null;
   }
 
 

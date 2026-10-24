@@ -59,6 +59,48 @@ export function setActiveGpuVerdict(verdict: GpuProbeVerdict | null): void {
   activeVerdict = verdict;
 }
 
+/**
+ * Issue #246 (AC4/AC6): the boot admission gate. One gate object per host
+ * lifecycle generation. The host's boot-admission flight arms a gate at
+ * start() and resolves the object it CAPTURED on every terminal path (a
+ * stale flight from a previous lifecycle can only resolve its own, already
+ * settled, object — it can never release a newer generation's admission).
+ * The engine awaits `gpuVerdictGate()` before selecting a backend while the
+ * gate is armed, so no load can construct from a pre-validation verdict.
+ */
+export interface GpuVerdictGate {
+  promise: Promise<void>;
+  resolve(): void;
+}
+
+let armedGate: GpuVerdictGate | null = null;
+
+export function armGpuVerdictGate(): GpuVerdictGate {
+  let resolveGate: () => void = () => {};
+  const promise = new Promise<void>((resolve) => {
+    resolveGate = resolve;
+  });
+  armedGate = { promise, resolve: () => resolveGate() };
+  return armedGate;
+}
+
+/** The currently armed gate's promise, or null when admission is settled. */
+export function gpuVerdictGate(): Promise<void> | null {
+  return armedGate !== null ? armedGate.promise : null;
+}
+
+/**
+ * Reset the module lifecycle state for a new host start: drop the previous
+ * lifecycle's verdict (it was validated for THAT lifecycle — issue #246
+ * R3-3: a retained verdict must never bypass revalidation after a restart)
+ * and arm a fresh gate for the boot-admission flight, which captures and
+ * later resolves the RETURNED object.
+ */
+export function resetGpuVerdictLifecycle(): GpuVerdictGate {
+  activeVerdict = null;
+  return armGpuVerdictGate();
+}
+
 /** The sidecar name, used beside the other profile-dir sidecars. */
 export const GPU_PROBE_SIDECAR = 'gpu-probe.json';
 /** The sidecar schema this build writes AND understands. A record with any other
@@ -83,8 +125,14 @@ function cpuVerdict(reason: string): GpuProbeVerdict {
  * wrong-typed files all read as null; a missing verdict means "never probed",
  * which the engine resolves to CPU (an unprobed host behaves exactly as it did
  * before this feature).
+ *
+ * Issue #246 (AC4): a record is STALE — reads as null — when it carries no
+ * device (a negative verdict must not outlive the machine state it described;
+ * such records re-probe) or when `currentDevice` names the adapter this boot
+ * actually sees and the record disagrees. Callers without adapter knowledge
+ * omit `currentDevice` and still adopt device-bearing records.
  */
-export function readGpuProbeVerdict(dir: string): GpuProbeVerdict | null {
+export function readGpuProbeVerdict(dir: string, currentDevice?: string | null): GpuProbeVerdict | null {
   try {
     const raw = fs.readFileSync(path.join(dir, GPU_PROBE_SIDECAR), 'utf8');
     const parsed = JSON.parse(raw) as unknown;
@@ -100,6 +148,12 @@ export function readGpuProbeVerdict(dir: string): GpuProbeVerdict | null {
     if (typeof record.ok !== 'boolean') return null;
     if (typeof record.reason !== 'string' || record.reason === '') return null;
     const device = record.device;
+    const deviceText = typeof device === 'string' ? device : null;
+    // issue #246 AC4: no device on record means the verdict cannot be bound
+    // to this machine's adapter — treat it as never probed so the boot probe
+    // re-establishes it.
+    if (deviceText === null || deviceText === '') return null;
+    if (typeof currentDevice === 'string' && currentDevice !== '' && currentDevice !== deviceText) return null;
     // #156: `measured` is OPTIONAL within v1 — a record written before the
     // field existed (or by a failure shape that measures nothing) reads back
     // without it, and only a finite number is adopted, never a coerced string
@@ -110,7 +164,7 @@ export function readGpuProbeVerdict(dir: string): GpuProbeVerdict | null {
       backend: record.backend,
       ok: record.ok,
       reason: record.reason,
-      device: typeof device === 'string' ? device : null,
+      device: deviceText,
       ...(typeof measured === 'number' && Number.isFinite(measured) ? { measured } : {}),
     };
   } catch {
@@ -210,8 +264,15 @@ export interface GpuProbeRunOptions {
    */
   onChild?: (child: { kill: (signal?: NodeJS.Signals) => unknown }) => void;
   /** Called once the probe has settled. Lets a caller drop per-probe state
-   *  (the host uses it to clear its shutdown-abandoned flag). */
+   * (the host uses it to clear its shutdown-abandoned flag). */
   onSettled?: () => void;
+  /**
+   * Issue #246 (AC4): run the child in `--device-only` mode — getLlama +
+   * getGpuDeviceNames, no model load, a report with NO sample. The parsing
+   * below skips the sample-sanity contract for this mode. Internal seam used
+   * by runGpuDeviceQuery; full probes never set it.
+   */
+  deviceOnly?: boolean;
 }
 
 interface ProbeChildReport {
@@ -229,19 +290,24 @@ interface ProbeChildReport {
  * rejects: every failure mode - spawn error, timeout, non-zero exit, signal
  * death, unparseable stdout - resolves to a CPU verdict carrying a reason. The
  * caller (the host) therefore has exactly one code path to handle.
+ *
+ * Core contract (issue #246 AC4): in deviceOnly mode an EXTERNAL signal death
+ * resolves `null` (mapped to 'cancelled' by runGpuDeviceQuery) — the internal
+ * deadline always resolves its own timeout verdict before any close event can
+ * arrive, so an unsettled signal close is provably someone else's kill.
  */
-export async function runGpuProbe(opts: GpuProbeRunOptions = {}): Promise<GpuProbeVerdict> {
+async function runGpuProbeCore(opts: GpuProbeRunOptions = {}): Promise<GpuProbeVerdict | null> {
   const command = opts.command ?? [process.execPath, gpuProbeChildPath()];
   const spawnFn = opts.spawnFn ?? spawn;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
 
-  return await new Promise<GpuProbeVerdict>((resolve) => {
+  return await new Promise<GpuProbeVerdict | null>((resolve) => {
     let settled = false;
     let stdout = '';
     let stderr = '';
     let child: ReturnType<typeof spawn>;
 
-    const finish = (verdict: GpuProbeVerdict): void => {
+    const finish = (verdict: GpuProbeVerdict | null): void => {
       if (settled) return;
       settled = true;
       clearTimeout(deadline);
@@ -334,6 +400,14 @@ export async function runGpuProbe(opts: GpuProbeRunOptions = {}): Promise<GpuPro
       // stderr is diagnostic only; never let its failure decide the verdict.
     });
     child.on('close', (code: number | null, signal: string | null) => {
+      // Issue #246 (AC4): a signal death reaching an UNSETTLED device-only
+      // query is an external kill (our own deadline settles first) — the
+      // host's stop(), not a machine property. Full probes keep the historic
+      // cpu-verdict classification for signal deaths.
+      if (signal !== null && opts.deviceOnly === true) {
+        finish(null);
+        return;
+      }
       if (code !== 0) {
         const how = signal !== null ? `signal ${signal}` : `exit code ${code}`;
         const detail = stderr.trim().split('\n').slice(-1)[0] ?? '';
@@ -348,6 +422,18 @@ export async function runGpuProbe(opts: GpuProbeRunOptions = {}): Promise<GpuPro
         report = JSON.parse(lines[lines.length - 1] ?? '') as ProbeChildReport;
       } catch {
         finish(cpuVerdict('GPU probe did not return a readable report.'));
+        return;
+      }
+      // issue #246 (AC4): the device-only leg has its OWN report contract —
+      // {ok, device, backend} with no sample — so the full-probe sample
+      // sanity and backend checks below never apply to it.
+      if (opts.deviceOnly === true) {
+        const dev = typeof report.device === 'string' && report.device !== '' ? report.device : null;
+        if (report.ok === true && report.backend === 'vulkan' && dev !== null) {
+          finish({ backend: 'vulkan', ok: true, reason: 'GPU device query identified the adapter.', device: dev });
+        } else {
+          finish(cpuVerdict('GPU device query did not report a usable Vulkan adapter.'));
+        }
         return;
       }
       if (report.ok !== true) {
@@ -382,6 +468,18 @@ export async function runGpuProbe(opts: GpuProbeRunOptions = {}): Promise<GpuPro
   });
 }
 
+/**
+ * The full-probe surface (never deviceOnly): keeps the historical NEVER-null
+ * contract — every failure mode resolves a CPU verdict with a reason, so the
+ * host has exactly one code path to handle.
+ */
+export async function runGpuProbe(opts: GpuProbeRunOptions = {}): Promise<GpuProbeVerdict> {
+  const verdict = await runGpuProbeCore(opts);
+  // null is producible only in deviceOnly mode (an external kill), which no
+  // full-probe caller sets.
+  return verdict ?? cpuVerdict('GPU probe was terminated before it could report.');
+}
+
 /** Terminate an in-flight probe child. Exported so host shutdown can guarantee
  *  no probe outlives the backend host (sidecar-manager.ts:245-252 shape). */
 export function terminateProbeChild(child: { kill: (signal?: NodeJS.Signals) => unknown } | null): void {
@@ -391,4 +489,58 @@ export function terminateProbeChild(child: { kill: (signal?: NodeJS.Signals) => 
   } catch {
     // already gone
   }
+}
+
+/**
+ * Issue #246 (AC4): the result of a boot-time device-only query.
+ *  - 'device': the child named the current Vulkan adapter.
+ *  - 'unknown': every failure shape (ok:false, empty device list, non-vulkan
+ *    backend, malformed stdout, spawn error, timeout) — callers fail OPEN
+ *    (adopt the stored verdict) because the comparison only rejects on
+ *    positive evidence of mismatch.
+ *  - 'cancelled': OUR OWN shutdown killed the query (the runGpuProbe
+ *    abandonedByHost pattern, extended here) — the caller adopts nothing.
+ */
+export type GpuDeviceQueryResult = { status: 'device'; device: string } | { status: 'unknown' } | { status: 'cancelled' };
+
+export interface GpuDeviceRunOptions extends GpuProbeRunOptions {
+  /** The host's abandoned-children set; a settled child present in it means
+   * host shutdown killed this query — resolve 'cancelled', never fail-open. */
+  abandonedChildren?: ReadonlySet<unknown>;
+}
+
+/**
+ * Ask (out of process, no model load) which Vulkan adapter this machine has
+ * right now. Never throws; see GpuDeviceQueryResult for the outcomes.
+ *
+ * Cancelled has two provable shapes: the caller's abandoned-children set
+ * contains the settled child (the host's stop() kill), or the child died BY
+ * SIGNAL while the query was still unsettled — an external kill, because the
+ * internal deadline resolves timeout-unknown itself before any close event
+ * can arrive.
+ */
+export async function runGpuDeviceQuery(opts: GpuDeviceRunOptions = {}): Promise<GpuDeviceQueryResult> {
+  let child: { kill: (signal?: NodeJS.Signals) => unknown } | null = null;
+  let settledChild: { kill: (signal?: NodeJS.Signals) => unknown } | null = null;
+  const verdict = await runGpuProbeCore({
+    ...opts,
+    deviceOnly: true,
+    args: ['--device-only'],
+    onChild: (spawned) => {
+      child = spawned;
+      opts.onChild?.(spawned);
+    },
+    onSettled: () => {
+      settledChild = child;
+      opts.onSettled?.();
+    },
+  });
+  if (verdict === null) return { status: 'cancelled' };
+  if (settledChild !== null && opts.abandonedChildren?.has(settledChild) === true) {
+    return { status: 'cancelled' };
+  }
+  if (verdict.ok && verdict.backend === 'vulkan' && typeof verdict.device === 'string' && verdict.device !== '') {
+    return { status: 'device', device: verdict.device };
+  }
+  return { status: 'unknown' };
 }

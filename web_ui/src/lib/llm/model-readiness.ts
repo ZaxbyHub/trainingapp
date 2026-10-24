@@ -16,6 +16,7 @@ import { getMemoryBudget } from '../embeddings/memory-aware';
 import { WebLLMService, WEBLLM_DEFAULT_MODEL_ID } from './web-llm-service';
 import { LLM_GGUF_URL } from '../models/model-manifest';
 import { probeAsset } from '../models/probe';
+import { isElectron } from '../desktop-session';
 import type { BrowserEngine } from '../../types/llm';
 
 /**
@@ -111,6 +112,15 @@ function getMemoryTier(availableMB: number): MemoryTier {
  */
 async function isModelAvailable(modelId: string, engine: BrowserEngine): Promise<boolean> {
   if (engine === 'wllama') {
+    // Issue #247 (AC2): inside Electron the truthful answer is "not
+    // available" — the desktop package deliberately ships no browser-LLM
+    // weights (stage-installer-resources.mjs excludes every browser GGUF), so
+    // a presence probe can only 404 (the field console fired one from
+    // Settings on every open). Answer WITHOUT any request: zero
+    // models/llm/* fetches from the desktop renderer, and ChatPage's model
+    // gate correctly blocks a doomed browser-local load instead of unblocking
+    // it into a 404 loop.
+    if (isElectron()) return false;
     // wllama loads the packaged GGUF lazily; "available" means the GGUF is
     // present in the build (same-origin), probed without downloading it.
     // Issue #156: the browser LLM is text-only LFM2-1.2B-RAG — there is no

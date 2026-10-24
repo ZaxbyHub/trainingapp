@@ -471,6 +471,29 @@ export interface EngineSurface {
   /** #133: background model load at app start (chat gating UX). Optional —
    *  hosts without a real engine (CI stub) simply never warm up. */
   warmup?(): Promise<void>;
+  /**
+   * Issue #246 (AC5/AC8): the NATIVE-SWAP capability group — ONE documented
+   * group, consumed all-or-nothing by the host's gpu-test coordination. An
+   * engine that lacks ANY member takes the probe-only fallback; a partial
+   * swap is never attempted. `shutdown` is deliberately NOT part of the
+   * group: it is the separate, host-stop-only terminal teardown.
+   */
+  pauseQueries?(reason: string): void;
+  resumeQueries?(): void;
+  queriesPaused?(): string | null;
+  joinLoadAndQueue?(): Promise<void>;
+  /**
+   * REUSABLE unload: defers behind in-flight generation (queue-tail capture),
+   * joins a load in flight, and disposes the resident backend awaited — the
+   * next query recreates it. Never terminal.
+   */
+  dispose?(): Promise<void>;
+  /** Host start lifecycle reset: clears the terminal flag, any leaked pause,
+   *  and bumps the operation generation (suspended old work fails re-checks). */
+  resetLifecycle?(): void;
+  /** TERMINAL teardown for host stop: blocks all later local construction and
+   *  performs the awaited drain-and-dispose. Host stop only — never the swap. */
+  shutdown?(): Promise<void>;
   search(query: string, nResults?: number): Promise<Array<{ text: string; source: string; similarity: number }>>;
   listDocuments(): Promise<{ documents: Array<{ id: string; chunk_count: number }>; total: number }>;
   clearDocuments(): Promise<void>;

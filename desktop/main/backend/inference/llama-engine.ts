@@ -24,7 +24,14 @@
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { ChatHistoryItem, LlamaChatSession } from 'node-llama-cpp';
+import type {
+  ChatHistoryItem,
+  LlamaChatSession,
+  Llama as NlcLlama,
+  LlamaModel as NlcModel,
+  LlamaContext as NlcContext,
+  LlamaContextSequence as NlcSequence,
+} from 'node-llama-cpp';
 import { StubEngine, type StubSettingsState } from '../engine.js';
 import type { PackManager } from '../store/pack-manager.js';
 import { ModelNotConfiguredError } from '../types.js';
@@ -43,7 +50,13 @@ import type {
   StatsShape,
 } from '../types.js';
 import { filterDeclineSentences } from './decline-filter.js';
-import { activeGpuVerdict, setActiveGpuVerdict, writeGpuProbeVerdict, type GpuProbeVerdict } from './gpu-probe.js';
+import {
+  activeGpuVerdict,
+  setActiveGpuVerdict,
+  writeGpuProbeVerdict,
+  gpuVerdictGate,
+  type GpuProbeVerdict,
+} from './gpu-probe.js';
 import {
   EXTERNAL_SETTING_KEYS,
   ExternalProviderState,
@@ -99,6 +112,18 @@ export interface LlamaEngineFactoryOptions {
   gpuLayers: 'max' | number;
   /** Effective profile the factory call serves (drives generation params). */
   profile: InferenceProfileName;
+  /**
+   * Issue #246 (AC1): set ONLY on the estimate-class bypass retry (and in the
+   * probe child) — the real allocation decides admission instead of the
+   * default-context VRAM estimate. Never on a first attempt, never forced.
+   */
+  ignoreMemorySafetyChecks?: boolean;
+  /**
+   * Issue #246 (AC3/AC4): the adapter identity resolved once `getLlama`
+   * succeeds (`getGpuDeviceNames()`, null when unavailable). The engine stores
+   * it so an incapacity persist can carry the device a later boot compares.
+   */
+  onGpuDevice?: (device: string | null) => void;
 }
 
 /** issue #155: the two compute backends the desktop backend can run. CUDA is
@@ -144,6 +169,17 @@ export interface LlamaEngineOptions {
    * means "never probed", which resolves to CPU.
    */
   gpuVerdict?: () => GpuProbeVerdict | null;
+  /**
+   * Issue #246 (AC6): the boot admission gate oracle. Defaults to the
+   * module-shared `gpuVerdictGate()` (gpu-probe.ts), which the host's
+   * boot-admission flight arms and resolves — the engine is constructed
+   * BEFORE any host exists, so the gate cannot be host-injected constructor
+   * state. While the gate is armed (a non-null promise), an automatic,
+   * non-forced local load awaits it BEFORE selecting profile, model path, or
+   * backend, so an early /ask and the warmup resolve one post-validation
+   * identity and land in the same single-flight load. Injectable for tests.
+   */
+  gpuVerdictAwaiter?: () => Promise<void> | null;
   /**
    * issue #155: called when an automatic ('auto') GPU load fails, so the host
    * can downgrade its in-memory verdict and rewrite the sidecar instead of
@@ -387,8 +423,13 @@ async function resolveReasoningSuppressedWrapper(
 }
 
 
-/** The production backend: node-llama-cpp over one resident loaded model. */
-async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<LlamaEngineBackend> {
+/**
+ * The production backend: node-llama-cpp over one resident loaded model.
+ * Exported (issue #246) so specs drive the PRODUCTION construction path —
+ * stage-precise cleanup and the admission-estimate marker are only provable
+ * through this function, not through an injected replacement factory.
+ */
+export async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<LlamaEngineBackend> {
   // Dynamic import: native code loads only when a model is actually needed.
   const nlc = await import('node-llama-cpp');
   // issue #155: the GPU is no longer hard-disabled. The backend was resolved by
@@ -408,17 +449,111 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
       ? { gpu: { type: 'auto', exclude: ['cuda'] }, build: 'never' }
       : { gpu: false, build: 'never' },
   );
-  // Explicit gpuLayers (llama.cpp #29277: a device whose free-memory figure is
-  // wrong must not silently size the offload from it).
-  const model = await llama.loadModel({ modelPath: opts.modelPath, gpuLayers: opts.gpuLayers });
-  const chatWrapper = await resolveReasoningSuppressedWrapper(nlc, opts.modelPath);
-  const context = await model.createContext({ threads: opts.threads, contextSize: CONTEXT_SIZE });
-  // ONE resident sequence for the lifetime of the backend: v3 allocates
-  // sequences at context creation and `getSequence()` throws once the pool is
-  // exhausted — disposed sequences do NOT return to it. Requests stay
-  // stateless via resetChatHistory() (see generate), and the engine's
-  // per-profile queue guarantees only one generate touches the sequence.
-  const sequence = context.getSequence();
+  try {
+    // Issue #246 (AC3/AC4): resolve the adapter identity once the native stack
+    // is up. Nonfatal by design — a device-name lookup failure must never turn
+    // a usable model load into a construction failure.
+    if (opts.onGpuDevice !== undefined) {
+      let device: string | null = null;
+      try {
+        const names = await llama.getGpuDeviceNames();
+        device = Array.isArray(names) && names.length > 0 ? names.join(', ') : null;
+      } catch {
+        device = null;
+      }
+      opts.onGpuDevice(device);
+    }
+    // Explicit gpuLayers (llama.cpp #29277: a device whose free-memory figure is
+    // wrong must not silently size the offload from it). Issue #246 (AC1): the
+    // bypass flag rides ONLY the estimate-class retry attempt (the engine never
+    // sets it on a first attempt) so the real allocation decides admission.
+    let model: NlcModel;
+    try {
+      model = await llama.loadModel({
+        modelPath: opts.modelPath,
+        gpuLayers: opts.gpuLayers,
+        ...(opts.ignoreMemorySafetyChecks === true ? { ignoreMemorySafetyChecks: true } : {}),
+      });
+    } catch (err) {
+      markAdmissionEstimate(err, nlc);
+      await llama.dispose().catch(() => {});
+      throw err;
+    }
+    let chatWrapper: Awaited<ReturnType<typeof resolveReasoningSuppressedWrapper>>;
+    let context: NlcContext;
+    try {
+      // resolveReasoningSuppressedWrapper is internally fully-tolerant, but it
+      // sits between two acquisitions — a throw here must dispose them too.
+      chatWrapper = await resolveReasoningSuppressedWrapper(nlc, opts.modelPath);
+      context = await model.createContext({
+        threads: opts.threads,
+        contextSize: CONTEXT_SIZE,
+        ...(opts.ignoreMemorySafetyChecks === true ? { ignoreMemorySafetyChecks: true } : {}),
+      });
+    } catch (err) {
+      markAdmissionEstimate(err, nlc);
+      // Issue #246 (AC7): a throw after the model loaded must not leak it —
+      // dispose every ACQUIRED native before propagating, awaited, and never
+      // let a cleanup failure mask the original error.
+      await model.dispose().catch(() => {});
+      await llama.dispose().catch(() => {});
+      throw err;
+    }
+    // ONE resident sequence for the lifetime of the backend: v3 allocates
+    // sequences at context creation and `getSequence()` throws once the pool is
+    // exhausted — disposed sequences do NOT return to it. Requests stay
+    // stateless via resetChatHistory() (see generate), and the engine's
+    // per-profile queue guarantees only one generate touches the sequence.
+    let sequence: NlcSequence;
+    try {
+      sequence = context.getSequence();
+    } catch (err) {
+      markAdmissionEstimate(err, nlc);
+      await context.dispose().catch(() => {});
+      await model.dispose().catch(() => {});
+      await llama.dispose().catch(() => {});
+      throw err;
+    }
+    return makeBackend(llama, model, context, sequence, chatWrapper, opts, nlc);
+  } catch (err) {
+    // Reaching here means an error escaped a stage guard's rethrow path —
+    // re-mark (idempotent) and propagate the ORIGINAL object unchanged.
+    markAdmissionEstimate(err, nlc);
+    throw err;
+  }
+}
+
+/**
+ * Issue #246 (AC1): classify a construction failure as the library's VRAM
+ * ADMISSION ESTIMATE. The installed InsufficientMemoryError never assigns
+ * `this.name` (the property reads "Error"), so name matching cannot work —
+ * this factory boundary is the one place the dynamically-imported binding is
+ * in hand for an instanceof test. The marker is engine-owned; `loadBackend`
+ * reads it, never a name string.
+ */
+function markAdmissionEstimate(err: unknown, nlc: typeof import('node-llama-cpp')): void {
+  if (err instanceof nlc.InsufficientMemoryError) {
+    (err as Error & { gpuAdmissionEstimate?: boolean }).gpuAdmissionEstimate = true;
+  }
+}
+
+/** Issue #246 (AC1): was this failure the library's VRAM admission estimate?
+ *  Reads the engine-owned marker set at the factory boundary — never a name
+ *  string (the installed class's `err.name` is just "Error"). */
+function isAdmissionEstimate(err: unknown): boolean {
+  return (err as { gpuAdmissionEstimate?: boolean } | null | undefined)?.gpuAdmissionEstimate === true;
+}
+
+/** Issue #246 (AC7/AC8): the resident backend over acquired natives. */
+function makeBackend(
+  llama: NlcLlama,
+  model: NlcModel,
+  context: NlcContext,
+  sequence: NlcSequence,
+  chatWrapper: Awaited<ReturnType<typeof resolveReasoningSuppressedWrapper>>,
+  opts: LlamaEngineFactoryOptions,
+  nlc: typeof import('node-llama-cpp'),
+): LlamaEngineBackend {
   let disposed = false;
   return {
     async generate(question, genOpts) {
@@ -598,16 +733,13 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
     async dispose() {
       if (disposed) return;
       disposed = true;
-      try {
-        context.dispose();
-      } catch {
-        // best-effort teardown
-      }
-      try {
-        model.dispose();
-      } catch {
-        // best-effort teardown
-      }
+      // Issue #246 (AC8): native teardown is ASYNCHRONOUS — not awaiting it
+      // lets this promise resolve while device memory is still mapped (the
+      // field-observed stranded modified-pool VRAM). Await every native
+      // disposal; the llama instance itself was never disposed before.
+      await context.dispose().catch(() => {});
+      await model.dispose().catch(() => {});
+      await llama.dispose().catch(() => {});
     },
   };
 }
@@ -751,6 +883,27 @@ export class LlamaEngine implements EngineSurface {
   private loadInFlight: Promise<ResidentEntry> | null = null;
   /** universal-provider-settings-overhaul: external endpoint state (off by default). */
   private readonly external: ExternalProviderState;
+  /** Issue #246 (AC5): why queries are currently refused (null = allowed). */
+  private pauseReason: string | null = null;
+  /**
+   * Issue #246 (AC5/AC8): set by terminal shutdown() only — after it, every
+   * LOCAL load attempt fails fast (post-stop construction is impossible).
+   * Cleared by resetLifecycle() at the next host start. The reusable
+   * dispose() never sets it (the query-after-dispose recreation contract,
+   * b4-engine-edge-cases.test.ts, must keep holding).
+   */
+  private lifecycleStopped = false;
+  /**
+   * Issue #246 (rev-4 critic): lifecycle generation token. Captured by
+   * query()/preflight() at entry and re-checked after every await, so work
+   * suspended mid-operation from an OLD lifecycle cannot revive after a
+   * stop→start cycle cleared the flags.
+   */
+  private operationGeneration = 0;
+  /** Issue #246 (AC3): adapter identity reported by the last factory call. */
+  private lastGpuDevice: string | null = null;
+  /** Issue #246 (AC6): the boot admission gate oracle (module-shared default). */
+  private readonly gpuVerdictAwaiterFn: () => Promise<void> | null;
 
   constructor(options: LlamaEngineOptions = {}) {
     this.freeMemBytes = options.freeMemBytes ?? (() => os.freemem());
@@ -761,6 +914,7 @@ export class LlamaEngine implements EngineSurface {
     this.vulkanSetting = options.vulkan;
     this.threadsSetting = options.threads;
     this.gpuVerdictFn = options.gpuVerdict ?? activeGpuVerdict;
+    this.gpuVerdictAwaiterFn = options.gpuVerdictAwaiter ?? gpuVerdictGate;
     this.onGpuLoadFailure = options.onGpuLoadFailure;
     this.modelDirOption = options.modelDir;
     this.userDataPath = options.userDataPath;
@@ -821,6 +975,112 @@ export class LlamaEngine implements EngineSurface {
   }
 
   /**
+   * Issue #246 (AC5): the gpu-test swap's query gate. While a reason is set,
+   * local queries fail fast with the contract's 503 class (retryable), and
+   * the /ask + /ask/stream preflights refuse before any SSE byte.
+   */
+  pauseQueries(reason: string): void {
+    this.pauseReason = reason;
+  }
+
+  /** Issue #246 (AC5): idempotent clear — stop() and start() both call it, so
+   * a leaked pause from a stop-interrupted swap cannot outlive the lifecycle. */
+  resumeQueries(): void {
+    this.pauseReason = null;
+  }
+
+  /** Issue #246 (AC5): the route preflights' pause oracle (null = allowed). */
+  queriesPaused(): string | null {
+    return this.pauseReason;
+  }
+
+  /**
+   * Issue #246 (AC8): await in-flight work (the generation queue tail AND a
+   * load in flight) without disposing anything. The gpu-test swap drains
+   * through this before unloading the resident backend.
+   */
+  async joinLoadAndQueue(): Promise<void> {
+    if (this.loadInFlight !== null) {
+      await this.loadInFlight.catch(() => {});
+    }
+    await this.queue.catch(() => {});
+  }
+
+  /**
+   * Issue #246 (AC8): REUSABLE unload — dispose the resident backend after
+   * deferring behind in-flight generation. Deliberately does NOT set the
+   * terminal flag: the next query recreates the backend (the
+   * b4-engine-edge-cases recreation contract). The queue tail is captured at
+   * ENTRY, before any caller reassigns `this.queue` to include this call —
+   * that capture order is what keeps a chained disposal from awaiting itself.
+   */
+  async dispose(): Promise<void> {
+    const tail = this.queue;
+    await tail.catch(() => {});
+    if (this.loadInFlight !== null) {
+      await this.loadInFlight.catch(() => {});
+    }
+    const resident = this.resident;
+    this.resident = null;
+    if (resident !== null) {
+      await resident.backend.dispose().catch(() => {});
+    }
+  }
+
+  /**
+   * Issue #246 (AC8): TERMINAL teardown for host stop. Sets the flag that
+   * makes every later LOCAL load attempt fail fast (with the retryable 503
+   * class), bumps the operation generation so suspended old-lifecycle work
+   * cannot revive, then performs the awaited drain-and-dispose.
+   */
+  async shutdown(): Promise<void> {
+    this.lifecycleStopped = true;
+    this.operationGeneration += 1;
+    await this.dispose();
+  }
+
+  /**
+   * Issue #246 (rev-4 critic): lifecycle reset at host start — clears the
+   * terminal flag and any leaked pause, and bumps the operation generation so
+   * pre-reset work fails its post-suspension re-checks rather than reviving.
+   */
+  resetLifecycle(): void {
+    this.lifecycleStopped = false;
+    this.pauseReason = null;
+    this.operationGeneration += 1;
+  }
+
+  /** Issue #246 (AC6): hold admission until the boot verdict validates. Only
+   * the automatic local path waits; forced selections and the external
+   * provider path (checked by callers BEFORE this) never do. Returns the
+   * armed gate's promise or null — callers await ONLY when armed, so an
+   * unprobed lifecycle adds no suspension point and a settings patch racing
+   * query start keeps landing after profile capture (the b4 deferral
+   * contract). */
+  private armedGate(): Promise<void> | null {
+    if (this.gpuIsForced()) return null;
+    return this.gpuVerdictAwaiterFn();
+  }
+
+  /** Issue #246 (AC5): the retryable refusal for paused or stopped engines. */
+  private assertQueriesAllowed(): void {
+    if (this.pauseReason !== null) {
+      throw new ModelNotConfiguredError(`${this.pauseReason} Retry in a moment.`);
+    }
+    if (this.lifecycleStopped) {
+      throw new ModelNotConfiguredError('The inference backend is shutting down; retry once it restarts.');
+    }
+  }
+
+  /** Issue #246 (rev-4 critic): an operation from another lifecycle generation
+   * must not resume into this one — fail retryable instead. */
+  private assertGenerationAlive(generation: number): void {
+    if (generation !== this.operationGeneration) {
+      throw new ModelNotConfiguredError('The inference backend restarted while this request waited; retry.');
+    }
+  }
+
+  /**
    * #133: load the effective-profile model at APP START (background) so the
    * renderer can show "loading, chat disabled" with an honest ETA instead of
    * the old lazy behavior where the first question ate the load. Never
@@ -828,8 +1088,16 @@ export class LlamaEngine implements EngineSurface {
    */
   async warmup(): Promise<void> {
     // An external endpoint generates: no local model is loaded or warmed.
+    // (External early return FIRST — issue #246 rev-4 critic: external
+    // inference never waits on local GPU admission.)
     if (this.external.active()) return;
     try {
+      // Issue #246 (AC6): hold admission until boot validation settles, BEFORE
+      // profile/model selection, so warmup and any early /ask resolve ONE
+      // post-verdict identity into the same single-flight load.
+      const warmGate = this.armedGate();
+      if (warmGate !== null) await warmGate.catch(() => {});
+      this.assertQueriesAllowed();
       const profile = this.effectiveProfile();
       const modelPath = this.assertModelAvailable(profile);
       await this.ensureResident(profile, modelPath);
@@ -996,10 +1264,22 @@ export class LlamaEngine implements EngineSurface {
    * Readiness check the server runs BEFORE writing any response byte, so a
    * missing model surfaces as the contract's 503 rather than a mid-stream
    * error. Throws ModelNotConfiguredError when the model is unavailable.
+   *
+   * Issue #246 (AC6, rev-3 critic): admission runs BEFORE the profile/model
+   * checks — an early /ask/stream must not 503 on the quality model while
+   * the boot verdict would have selected fast. The external early return
+   * stays FIRST (external inference never waits on local admission).
    */
   async preflight(): Promise<void> {
     // AC8: an external endpoint needs no local model file.
     if (this.external.active()) return;
+    const generation = this.operationGeneration;
+    const preGate = this.armedGate();
+    if (preGate !== null) {
+      await preGate.catch(() => {});
+      this.assertGenerationAlive(generation);
+    }
+    this.assertQueriesAllowed();
     this.assertModelAvailable(this.effectiveProfile());
   }
 
@@ -1054,6 +1334,12 @@ export class LlamaEngine implements EngineSurface {
   }
 
   private async loadBackend(profile: InferenceProfileName, modelPath: string): Promise<ResidentEntry> {
+    // Issue #246 (AC6 belt): any future caller that reaches a load without the
+    // query/warmup gate still holds admission here; and a paused/stopped
+    // engine never starts a construction.
+    const beltGate = this.armedGate();
+    if (beltGate !== null) await beltGate.catch(() => {});
+    this.assertQueriesAllowed();
     const old = this.resident;
     if (old !== null) {
       this.resident = null;
@@ -1066,7 +1352,7 @@ export class LlamaEngine implements EngineSurface {
     }
     const threads = this.effectiveThreads();
     let backendName = this.effectiveGpuBackend();
-    let backend: LlamaEngineBackend;
+    let backend: LlamaEngineBackend | undefined;
     this.loadState = 'loading';
     this.loadStartedAt = Date.now();
     this.loadingProfile = profile;
@@ -1080,7 +1366,39 @@ export class LlamaEngine implements EngineSurface {
       // selection is never retried: "force the GPU" that silently degrades to
       // CPU is not force, so that failure surfaces.
       if (backendName === 'vulkan' && !this.gpuIsForced()) {
-        const reason = `GPU load failed, so this machine is now using CPU inference: ${err instanceof Error ? err.message : String(err)}`;
+        // Issue #246 (AC1): classify the failure. An ADMISSION-ESTIMATE
+        // rejection (node-llama-cpp's free-VRAM pre-check, marked by the
+        // production factory via instanceof) is a claim about free VRAM, not
+        // about the device — retry ONCE with the safety estimate bypassed so
+        // the REAL allocation decides. A bypassed success means the GPU works:
+        // no verdict is published or persisted for an estimate rejection.
+        let failure: unknown = err;
+        let entirelyEstimate = isAdmissionEstimate(err);
+        if (entirelyEstimate) {
+          let bypassed: LlamaEngineBackend | null = null;
+          try {
+            bypassed = await this.constructBackend(profile, modelPath, threads, 'vulkan', {
+              ignoreMemorySafetyChecks: true,
+            });
+          } catch (retryErr) {
+            failure = retryErr;
+            entirelyEstimate = isAdmissionEstimate(retryErr);
+          }
+          if (bypassed !== null) {
+            this.loads += 1;
+            this.gpuLoadFailure = null;
+            this.markLoadReady();
+            const okEntry: ResidentEntry = {
+              backend: bypassed,
+              profile,
+              inFlight: 0,
+              backendIdentity: this.identityFrom(profile, modelPath, threads, backendName),
+            };
+            this.resident = okEntry;
+            return okEntry;
+          }
+        }
+        const reason = `GPU load failed, so this machine is now using CPU inference: ${failure instanceof Error ? failure.message : String(failure)}`;
         console.warn(`[trainingapp-backend] ${reason}`);
         // Publish the downgrade to the SHARED holder the default `gpuVerdict`
         // seam reads. This is what makes it work in production: the engine is
@@ -1089,21 +1407,45 @@ export class LlamaEngine implements EngineSurface {
         // means the very next load in this session resolves to cpu instead of
         // re-attempting a failing GPU on every subsequent request.
         setActiveGpuVerdict({ backend: 'cpu', ok: false, reason, device: null });
-        // PRR-003: persist it too. The engine is built before any host exists,
-        // so it cannot route this through `adoptGpuVerdict`; without writing the
-        // sidecar here the downgrade was lost on restart and the next boot
-        // re-read the stale GPU-ok verdict, skipped the probe, and re-paid the
-        // same failing GPU load. Best-effort: a write failure must not lose the
-        // in-memory downgrade that was just published.
-        if (this.gpuVerdictDir !== undefined) {
-          writeGpuProbeVerdict(this.gpuVerdictDir, { backend: 'cpu', ok: false, reason, device: null });
-        }
-        // The optional hook remains for a caller that wants to observe it too.
-        this.onGpuLoadFailure?.({ backend: 'cpu', ok: false, reason, device: null });
+        // Issue #246 (AC3): the adapter identity the FAILED vulkan attempt
+        // resolved (the CPU retry's factory call must not overwrite it).
+        const vulkanDevice = this.lastGpuDevice;
         backendName = 'cpu';
+        let cpuErr: unknown = null;
         try {
           backend = await this.constructBackend(profile, modelPath, threads, 'cpu');
-        } catch (cpuErr) {
+        } catch (caught) {
+          cpuErr = caught;
+        }
+        // Issue #246 (AC3): persist ONLY for incapacity-class chains (a
+        // non-estimate GPU failure somewhere in the chain), ONLY AFTER the CPU
+        // retry settled, and carrying the captured adapter identity so a later
+        // boot's device comparison can invalidate it (AC4). An
+        // entirely-estimate chain said nothing durable about the device —
+        // session-only downgrade, never written, whatever the CPU retry did.
+        // PRR-003 retained for incapacity: without the sidecar the next boot
+        // re-read a stale GPU-ok verdict, skipped the probe, and re-paid the
+        // same failing GPU load. Best-effort: a write failure must not lose the
+        // in-memory downgrade that was just published.
+        if (!entirelyEstimate) {
+          const record: GpuProbeVerdict = { backend: 'cpu', ok: false, reason, device: vulkanDevice };
+          if (this.gpuVerdictDir !== undefined) {
+            // Best-effort by contract: the in-memory downgrade published above
+            // stands even when the sidecar write throws (e.g. the sidecar home
+            // is not a directory). writeGpuProbeVerdict's own catch covers the
+            // write; this guard covers its pre-write mkdir.
+            try {
+              writeGpuProbeVerdict(this.gpuVerdictDir, record);
+            } catch {
+              // logged nowhere by design: the verdict reason already tells the
+              // operator what happened this session
+            }
+          }
+          this.onGpuLoadFailure?.(record);
+        } else {
+          this.onGpuLoadFailure?.({ backend: 'cpu', ok: false, reason, device: null });
+        }
+        if (cpuErr !== null) {
           this.markLoadFailed();
           throw new ModelNotConfiguredError(
             `Failed to load the ${profile} model from ${modelPath}: ${cpuErr instanceof Error ? cpuErr.message : String(cpuErr)}`,
@@ -1126,6 +1468,13 @@ export class LlamaEngine implements EngineSurface {
       }
     }
     this.loads += 1;
+    if (backend === undefined) {
+      // Unreachable belt: every catch path above either assigned `backend`
+      // (bypass recovery, CPU retry success) or threw. Keeps the compiler's
+      // exhaustiveness honest if a future path forgets.
+      this.markLoadFailed();
+      throw new ModelNotConfiguredError(`Failed to load the ${profile} model from ${modelPath}.`);
+    }
     // A load that succeeded clears any prior forced-GPU failure: the reported
     // status must reflect the CURRENT state, not a stale one (PRR-009).
     this.gpuLoadFailure = null;
@@ -1171,6 +1520,7 @@ export class LlamaEngine implements EngineSurface {
     modelPath: string,
     threads: number,
     backendName: GpuBackendName,
+    extra?: { ignoreMemorySafetyChecks?: boolean },
   ): Promise<LlamaEngineBackend> {
     try {
       return await this.llamaFactoryFn({
@@ -1179,6 +1529,10 @@ export class LlamaEngine implements EngineSurface {
         backend: backendName,
         gpuLayers: EXPLICIT_GPU_LAYERS,
         profile,
+        ...(extra?.ignoreMemorySafetyChecks === true ? { ignoreMemorySafetyChecks: true } : {}),
+        onGpuDevice: (device: string | null) => {
+          this.lastGpuDevice = device;
+        },
       });
     } catch (err) {
       throw err instanceof Error ? err : new Error(String(err));
@@ -1186,7 +1540,20 @@ export class LlamaEngine implements EngineSurface {
   }
 
   async query(question: string, opts: EngineQueryOptions = {}): Promise<EngineQueryResult> {
+    // External early return FIRST (issue #246 rev-4 critic: external
+    // inference never waits on local GPU admission or local lifecycle state).
     if (this.external.active()) return this.queryExternal(question, opts);
+    // Issue #246 (AC5/AC6): fail fast when paused/stopped, then hold admission
+    // until boot validation settles — profile, model and backend identity all
+    // resolve POST-verdict so an early /ask and the warmup land in the same
+    // single-flight load with one backend choice.
+    this.assertQueriesAllowed();
+    const generation = this.operationGeneration;
+    const gate = this.armedGate();
+    if (gate !== null) {
+      await gate.catch(() => {});
+      this.assertGenerationAlive(generation);
+    }
     const started = Date.now();
     const profile = this.effectiveProfile();
     // PR #140 review (FB140-006): read the generation overrides together with
@@ -1238,6 +1605,11 @@ export class LlamaEngine implements EngineSurface {
       truncationChars: this.stub.contextTruncationChars(),
     });
     const context = await this.stub.retrieveContext(question, opts.nResults, contextCharCeiling);
+    // Issue #246 (AC5, rev-4 critic): this query suspended during retrieval —
+    // a swap or stop may have begun meanwhile. Re-check before enqueueing so
+    // pre-pause work never reaches the backend.
+    this.assertGenerationAlive(generation);
+    this.assertQueriesAllowed();
     // PRR-007 (PR review): a budget that dropped EVERY row must fall back to
     // the bare question exactly like the no-retrieval path — assembling the
     // grounded instruction with an empty context block would tell the model
@@ -1249,6 +1621,12 @@ export class LlamaEngine implements EngineSurface {
             .map((text, index) => `[${index + 1}] ${text}`)
             .join('\n\n')}\n\n\nQuestion: ${question}`;
     const run = this.queue.then(async () => {
+      // Late-enrollment check (issue #246 AC5): a query that was suspended
+      // BEFORE the gpu-test drain captured the queue tail can still reach
+      // here while the resident is unloaded — it must fail retryable, never
+      // touch a disposed backend.
+      this.assertGenerationAlive(generation);
+      this.assertQueriesAllowed();
       const entry = await this.ensureResident(profile, modelPath);
       entry.inFlight += 1;
       try {
@@ -1563,9 +1941,13 @@ export class LlamaEngine implements EngineSurface {
       const wasActive = this.external.active();
       this.external.commit(externalSubset);
       // Switching to an external endpoint releases a resident local GGUF
-      // (deferred behind any in-flight local generation).
+      // (deferred behind any in-flight local generation). Issue #246 (rev-2
+      // critic): call dispose() DIRECTLY — it captures the queue tail before
+      // this reassignment, so the chained disposal can never await a queue
+      // that contains itself (the old `.then(() => this.dispose())` shape
+      // self-deadlocked once dispose learned to drain).
       if (!wasActive && this.external.active()) {
-        const release = this.queue.then(() => this.dispose());
+        const release = this.dispose();
         this.queue = release.catch(() => {});
       }
     }
@@ -1742,14 +2124,5 @@ export class LlamaEngine implements EngineSurface {
 
   async ingestBatch(inputs?: IngestFileInput[]): Promise<BatchIngestResult> {
     return this.documents !== null ? this.documents.ingestBatch(inputs) : this.stub.ingestBatch(inputs);
-  }
-
-  /** Best-effort teardown of the resident backend (tests, host shutdown). */
-  async dispose(): Promise<void> {
-    const resident = this.resident;
-    this.resident = null;
-    if (resident !== null) {
-      await resident.backend.dispose().catch(() => {});
-    }
   }
 }

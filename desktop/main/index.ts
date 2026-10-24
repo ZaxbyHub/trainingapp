@@ -22,7 +22,7 @@ import {
 } from './backend/index.js';
 import { CONTEXT_SIZE } from './backend/inference/llama-engine.js';
 import { autoSelectProfile, resolveFreeRamBytes } from './first-run/ram-gate.js';
-import { readGpuProbeVerdict } from './backend/inference/gpu-probe.js';
+import { activeGpuVerdict, gpuVerdictGate, readGpuProbeVerdict } from './backend/inference/gpu-probe.js';
 import {
   containedJoin,
   manifestGroupBytes,
@@ -714,7 +714,16 @@ export function bootstrap(): void {
       // PRR-105: the wizard's recommendation must not contradict the
       // runtime's CPU-only rule — a probed CPU-only verdict forces fast here
       // exactly as effectiveProfile() does at query time.
-      const gpuVerdict = readGpuProbeVerdict(path.dirname(storePath));
+      // Issue #246 (AC4, rev-3 critic R3-6): consume ONLY validated verdict
+      // state. The module holder carries what the boot-admission flight
+      // validated THIS lifecycle; while validation is still pending (holder
+      // null with an armed gate) the verdict is treated as absent — the RAM
+      // rule decides, never an unvalidated sidecar record (a device-mismatched
+      // or device-less record must not force the fast recommendation). The
+      // raw sidecar is read only when no validation is in flight and none has
+      // published (pre-host first run) — through the same stale-aware reader.
+      const gpuVerdict =
+        activeGpuVerdict() ?? (gpuVerdictGate() !== null ? null : readGpuProbeVerdict(path.dirname(storePath)));
       const recommendation = autoSelectProfile({
         freeBytes,
         nCtx: CONTEXT_SIZE,

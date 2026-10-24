@@ -170,11 +170,20 @@ describe('issue #155: the verdict sidecar', () => {
   it('round-trips, and reads missing and corrupt files as null without throwing', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 't155-sidecar-'));
     expect(readGpuProbeVerdict(dir)).toBeNull();
-    writeGpuProbeVerdict(dir, CPU_FAIL);
+    // Issue #246 (AC4): only a DEVICE-BEARING record survives the reader — a
+    // device-less (or corrupt/missing) record reads as stale/null so the boot
+    // probe re-establishes it.
+    writeGpuProbeVerdict(dir, { ...CPU_FAIL, device: 'stub-gpu-0' });
     expect(fs.existsSync(path.join(dir, GPU_PROBE_SIDECAR))).toBe(true);
     const reloaded = readGpuProbeVerdict(dir);
     expect(reloaded?.backend).toBe('cpu');
     expect(reloaded?.reason).toBe(CPU_FAIL.reason);
+    expect(reloaded?.device).toBe('stub-gpu-0');
+    writeGpuProbeVerdict(dir, CPU_FAIL);
+    expect(readGpuProbeVerdict(dir), 'a device-less record is stale').toBeNull();
+    writeGpuProbeVerdict(dir, { ...CPU_FAIL, device: 'stub-gpu-0' });
+    expect(readGpuProbeVerdict(dir, 'stub-gpu-9'), 'a device mismatch is stale').toBeNull();
+    expect(readGpuProbeVerdict(dir, 'stub-gpu-0'), 'a device match adopts').not.toBeNull();
     fs.writeFileSync(path.join(dir, GPU_PROBE_SIDECAR), '{ not json', 'utf8');
     expect(readGpuProbeVerdict(dir)).toBeNull();
     fs.rmSync(dir, { recursive: true, force: true });
@@ -587,9 +596,19 @@ describe('issue #155 Round 2: the fixes that had no guard now have one', () => {
         models: { quality: models.quality, fast: models.fast },
       });
       const host = new NodeBackendHost({ engine, token: 't', storePath: store } as never);
+      // Issue #246 (AC4): adoption now happens in the boot-admission flight —
+      // the stored verdict is validated against the CURRENT adapter first.
+      // Inject the device-query RUNNER (the probeRun precedent): answer
+      // "unknown", the fail-open shape — the flight must adopt the stored
+      // verdict without running a full probe.
+      (host as unknown as { deviceQueryRun: unknown }).deviceQueryRun = async () => ({ status: 'unknown' });
       // Drive the store-gated adoption block the way start() does.
       await (host as unknown as { start: () => Promise<void> }).start().catch(() => undefined);
-      const adopted = activeGpuVerdict();
+      let adopted: ReturnType<typeof activeGpuVerdict> = null;
+      for (let i = 0; i < 200 && adopted === null; i += 1) {
+        await new Promise((r) => setTimeout(r, 10));
+        adopted = activeGpuVerdict();
+      }
       expect(adopted, 'a persisted verdict must be adopted, not discarded').not.toBeNull();
       expect(adopted?.backend).toBe('vulkan');
       await (host as unknown as { stop: () => Promise<void> }).stop().catch(() => undefined);
@@ -1045,7 +1064,14 @@ describe('issue #155 review: the reported backend is the backend that runs', () 
         gpuVerdict: () => GPU_OK,
         gpuVerdictDir: dir,
         llamaFactory: async (o) => {
-          if (o.backend === 'vulkan') throw new Error('stub: gpu load failed');
+          if (o.backend === 'vulkan') {
+            // Issue #246 (AC3): the factory resolves the adapter identity via
+            // the seam BEFORE failing, so the incapacity persist carries the
+            // device a later boot compares (AC4) — without it the record
+            // would read as boot-stale.
+            o.onGpuDevice?.('stub-gpu-0');
+            throw new Error('stub: gpu load failed');
+          }
           return { async generate() { return { answer: 'cpu', cancelled: false }; }, async dispose() {} } as LlamaEngineBackend;
         },
       });
@@ -1054,6 +1080,7 @@ describe('issue #155 review: the reported backend is the backend that runs', () 
       expect(stored, 'the downgrade must reach disk, or boot #2 re-reads the stale GPU-ok verdict').not.toBeNull();
       expect(stored?.backend).toBe('cpu');
       expect(stored?.ok).toBe(false);
+      expect(stored?.device, 'issue #246 AC3/AC4: the record carries the adapter identity').toBe('stub-gpu-0');
     } finally {
       setActiveGpuVerdict(null);
       fs.rmSync(dir, { recursive: true, force: true });

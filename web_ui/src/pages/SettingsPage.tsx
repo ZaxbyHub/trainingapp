@@ -1243,7 +1243,16 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
               <div className="settings-row">
                 <span className="settings-label settings-row">
                   Status:
-                  {modelCached ? (
+                  {desktopApp && browserEngine === 'wllama' ? (
+                    // Issue #247 (AC2): the desktop package deliberately ships
+                    // no browser-LLM weights, so "cached or not" is not a
+                    // meaningful question inside Electron — rendering the
+                    // broken-install copy here would misclassify an intentional
+                    // exclusion as a defect.
+                    <span className="settings-text">
+                      Not applicable in the desktop app — the built-in backend generates answers; the browser model is not used here.
+                    </span>
+                  ) : modelCached ? (
                     <StatusBadge status="ready" label="Cached" />
                   ) : (
                     <StatusBadge status="not-ready" label="Not cached" />
