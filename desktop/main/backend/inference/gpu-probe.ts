@@ -80,8 +80,21 @@ export function armGpuVerdictGate(): GpuVerdictGate {
   const promise = new Promise<void>((resolve) => {
     resolveGate = resolve;
   });
-  armedGate = { promise, resolve: () => resolveGate() };
-  return armedGate;
+  const gate: GpuVerdictGate = {
+    promise,
+    // Resolving DE-ARMS the gate when it is still the current generation's:
+    // `gpuVerdictGate()` must read null once admission is settled (the
+    // documented contract), so later loads take the no-suspension fast path —
+    // a resolved-but-still-armed gate would keep suspending every query on a
+    // microtask before profile capture (the b4 settings-race shape). A stale
+    // generation's late resolve touches only its own object.
+    resolve: () => {
+      resolveGate();
+      if (armedGate === gate) armedGate = null;
+    },
+  };
+  armedGate = gate;
+  return gate;
 }
 
 /** The currently armed gate's promise, or null when admission is settled. */

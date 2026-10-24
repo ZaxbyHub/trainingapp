@@ -1072,6 +1072,21 @@ export class LlamaEngine implements EngineSurface {
     }
   }
 
+  /**
+   * Issue #246 (4.5 review Finding 1): the STOPPED-only half of the refusal.
+   * warmup() and loadBackend() use this, NOT assertQueriesAllowed: the gpu-test
+   * swap holds its pause across the post-probe warmup BY DESIGN (the C5
+   * ordering pin), so a pause check there made every successful swap's warmup
+   * throw its own pause reason. The pause refusal belongs to the /ask surface
+   * only (query entry, the queued section, both route preflights); no local
+   * LOAD may ever start on a stopped engine.
+   */
+  private assertEngineActive(): void {
+    if (this.lifecycleStopped) {
+      throw new ModelNotConfiguredError('The inference backend is shutting down; retry once it restarts.');
+    }
+  }
+
   /** Issue #246 (rev-4 critic): an operation from another lifecycle generation
    * must not resume into this one — fail retryable instead. */
   private assertGenerationAlive(generation: number): void {
@@ -1097,7 +1112,7 @@ export class LlamaEngine implements EngineSurface {
       // post-verdict identity into the same single-flight load.
       const warmGate = this.armedGate();
       if (warmGate !== null) await warmGate.catch(() => {});
-      this.assertQueriesAllowed();
+      this.assertEngineActive();
       const profile = this.effectiveProfile();
       const modelPath = this.assertModelAvailable(profile);
       await this.ensureResident(profile, modelPath);
@@ -1339,7 +1354,7 @@ export class LlamaEngine implements EngineSurface {
     // engine never starts a construction.
     const beltGate = this.armedGate();
     if (beltGate !== null) await beltGate.catch(() => {});
-    this.assertQueriesAllowed();
+    this.assertEngineActive();
     const old = this.resident;
     if (old !== null) {
       this.resident = null;

@@ -120,11 +120,14 @@ vi.mock('node-llama-cpp', () => ({
   },
 }));
 
-// gpu-probe: everything real except runGpuDeviceQuery (resolution R-3).
+// gpu-probe: everything real except runGpuDeviceQuery (resolution R-3) and a
+// counting wrapper on writeGpuProbeVerdict (adoption-count observation for the
+// 4.5 exactly-one-adoption rows).
 const deviceQuery = vi.hoisted(() => ({
   impl: null as null | ((opts?: Record<string, unknown>) => Promise<{ status: 'device' | 'unknown' | 'cancelled'; device?: string }>),
   calls: [] as Array<Record<string, unknown> | undefined>,
 }));
+const verdictStore = vi.hoisted(() => ({ writes: [] as Array<{ dir: string; verdict: unknown }> }));
 vi.mock('../../main/backend/inference/gpu-probe.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../main/backend/inference/gpu-probe.js')>();
   return {
@@ -134,12 +137,18 @@ vi.mock('../../main/backend/inference/gpu-probe.js', async (importOriginal) => {
       if (deviceQuery.impl !== null) return deviceQuery.impl(opts);
       return (actual as unknown as { runGpuDeviceQuery?: unknown }).runGpuDeviceQuery?.(opts);
     },
+    writeGpuProbeVerdict: (dir: string, verdict: import('../../main/backend/inference/gpu-probe.js').GpuProbeVerdict) => {
+      verdictStore.writes.push({ dir, verdict });
+      return actual.writeGpuProbeVerdict(dir, verdict);
+    },
   };
 });
 
 import {
   activeGpuVerdict,
+  armGpuVerdictGate,
   gpuVerdictGate,
+  resetGpuVerdictLifecycle,
   setActiveGpuVerdict,
   writeGpuProbeVerdict,
   type GpuProbeVerdict,
@@ -283,6 +292,9 @@ interface HostRig {
   profileDir: string;
   probe: Promise<GpuProbeVerdict>;
   resolveProbe: (verdict: GpuProbeVerdict) => void;
+  rejectProbe: (err: Error) => void;
+  factory: ReturnType<typeof fakeFactory>;
+  resolveDeviceQuery: (result: { status: 'device' | 'unknown' | 'cancelled'; device?: string }) => void;
   stop: () => Promise<void>;
 }
 
@@ -293,10 +305,16 @@ async function startHostRig(opts: {
   deviceQueryResult?: { status: 'device' | 'unknown' | 'cancelled'; device?: string };
   engineOverrides?: Partial<EngineOpts>;
   stageFastOnly?: boolean;
+  /** No storePath: the storeless host shape (no sidecar, full boot probe). */
+  storeless?: boolean;
+  /** Arm a DEFERRED device-query leg instead of an immediate result. */
+  deferDeviceQuery?: boolean;
 }): Promise<HostRig> {
   const profileDir = tempDir('gpu-coord-host-');
   cleanups.push(() => fs.rmSync(profileDir, { recursive: true, force: true }));
-  if (opts.storedVerdict !== undefined) writeGpuProbeVerdict(profileDir, opts.storedVerdict);
+  if (opts.storedVerdict !== undefined && opts.storeless !== true) {
+    writeGpuProbeVerdict(profileDir, opts.storedVerdict);
+  }
   const models = stageModels();
   cleanups.push(() => fs.rmSync(models.dir, { recursive: true, force: true }));
   const events: string[] = [];
@@ -309,11 +327,16 @@ async function startHostRig(opts: {
     llamaFactory: factory.fn,
     ...opts.engineOverrides,
   } as EngineOpts);
-  const host = new NodeBackendHost({ engine, token: TOKEN, env: rigEnv(), storePath: path.join(profileDir, 'store.sqlite') } as never);
+  const hostConfig: Record<string, unknown> = { engine, token: TOKEN, env: rigEnv() };
+  if (opts.storeless !== true) hostConfig.storePath = path.join(profileDir, 'store.sqlite');
+  const host = new NodeBackendHost(hostConfig as never);
   let resolveProbe!: (verdict: GpuProbeVerdict) => void;
-  const probe = new Promise<GpuProbeVerdict>((resolve) => {
+  let rejectProbe!: (err: Error) => void;
+  const probe = new Promise<GpuProbeVerdict>((resolve, reject) => {
     resolveProbe = resolve;
+    rejectProbe = reject;
   });
+  let settleDeviceQuery: (result: { status: 'device' | 'unknown' | 'cancelled'; device?: string }) => void = () => undefined;
   const rig: HostRig = {
     host,
     engine,
@@ -323,6 +346,9 @@ async function startHostRig(opts: {
     profileDir,
     probe,
     resolveProbe,
+    rejectProbe,
+    factory,
+    resolveDeviceQuery: (result) => settleDeviceQuery(result),
     stop: async () => {
       await (host as unknown as { stop: () => Promise<void> }).stop().catch(() => undefined);
     },
@@ -335,13 +361,24 @@ async function startHostRig(opts: {
     events.push('probe-start');
     probeOpts.onChild?.({ kill: () => true });
     probeOpts.onSettled?.();
-    return probe.then((verdict) => {
-      events.push('probe-done');
-      return verdict;
-    });
+    return probe.then(
+      (verdict) => {
+        events.push('probe-done');
+        return verdict;
+      },
+      (err: unknown) => {
+        events.push('probe-failed');
+        throw err;
+      },
+    );
   };
   if (opts.deviceQueryResult !== undefined) {
     deviceQuery.impl = () => Promise.resolve(opts.deviceQueryResult as { status: 'device' | 'unknown' | 'cancelled'; device?: string });
+  } else if (opts.deferDeviceQuery === true) {
+    const deferred = new Promise<{ status: 'device' | 'unknown' | 'cancelled'; device?: string }>((resolve) => {
+      settleDeviceQuery = resolve;
+    });
+    deviceQuery.impl = () => deferred;
   }
   const handle = (await (host as unknown as { start: () => Promise<{ port: number; url: string }> }).start()) as {
     port: number;
@@ -357,6 +394,7 @@ afterEach(async () => {
   for (const stop of activeHosts.splice(0)) await stop().catch(() => undefined);
   while (cleanups.length > 0) cleanups.pop()?.();
   setActiveGpuVerdict(null);
+  verdictStore.writes.length = 0;
   // Drain any still-armed module gate (armed + immediately settled is the
   // safe idle state: no later default-awaiter engine in this file blocks).
   (await import('../../main/backend/inference/gpu-probe.js')).armGpuVerdictGate().resolve();
@@ -584,6 +622,162 @@ describe('gpu-test-drain (AC5: the whole-operation gpuTest swap flight)', () => 
     expect(result.answer).toBe('OK');
     expect((rig.engine as unknown as { queriesPaused: () => string | null }).queriesPaused()).toBeNull();
   }, 30_000);
+
+  it('a SUCCESSFUL gpuTest re-warms under the new verdict: post-swap construction and the next query answer WITHOUT restart (4.5 Finding 1 falsifier)', async () => {
+    // MUTANT this row kills: warmup()/loadBackend() asserting the PAUSE state
+    // — the swap holds its pause across the post-probe warmup BY DESIGN (the
+    // C5 ordering pin), so a pause-asserting warmup threw its own pause on
+    // EVERY successful swap; the throw was swallowed into a 'model warmup
+    // failed' log and no backend was constructed until the next query lazily
+    // reloaded. Construction EVIDENCE (a factory-calls DELTA after the fresh
+    // probe settled) and the ABSENT warmup-error line are the falsifiers: the
+    // 'warmup' EVENT alone cannot bite, because the recordMember wrapper
+    // fires BEFORE the real call — exactly how the earlier ordering row
+    // missed an always-failing warmup.
+    const rig = await startHostRig({ storedVerdict: GPU_OK, deviceQueryResult: { status: 'device', device: 'gpu-a' } });
+    activeHosts.push(rig.stop);
+    recordSwapMembers(rig.engine, rig.events);
+    // The start-time warmup constructs once (its own baseline).
+    await until(() => rig.factory.calls.length >= 1, 5000, 'the start-time warmup construction');
+    const errorLines: string[] = [];
+    const errSpy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      errorLines.push(args.map(String).join(' '));
+    });
+    try {
+      const flight = hostGpuTest(rig.host);
+      await until(() => rig.events.includes('probe-start'), 5000, 'the swap fresh probe');
+      const baseline = rig.factory.calls.length;
+      rig.resolveProbe({ backend: 'vulkan', ok: true, reason: 'fresh post-swap verdict', device: 'gpu-a' });
+      await flight;
+      await until(() => rig.factory.calls.length > baseline, 5000, 'the POST-SWAP re-warm construction');
+      expect(
+        errorLines.filter((line) => /warmup/i.test(line)),
+        'no warmup failure may be logged on a successful swap',
+      ).toEqual([]);
+      expect((rig.engine as unknown as { queriesPaused: () => string | null }).queriesPaused()).toBeNull();
+      // The very next query answers WITHOUT any restart.
+      const result = await rig.engine.query('follow-up without restart');
+      expect(result.answer).toBe('OK');
+    } finally {
+      errSpy.mockRestore();
+    }
+  }, 30_000);
+
+  it('exactly-one adoption: the unexpected-exception probe path adopts ONCE through the centralized publisher', async () => {
+    // MUTANT: the catch-path adoption firing independently of (or twice
+    // through) the centralized publisher — the pre-fix index.ts:374-395 catch
+    // site adopted on its own, so a double-fire wrote the sidecar twice and
+    // bumped verdictSeq twice (observable here as two writes / a flipping
+    // holder). No stored verdict: the boot flight itself runs the full probe.
+    // (Settle observation: the implementation resolves the armed gate's
+    // PROMISE without nulling the armed object — settle is pinned by awaiting
+    // the CAPTURED promise, not by gpuVerdictGate() === null.)
+    const rig = await startHostRig({});
+    activeHosts.push(rig.stop);
+    const bootGate = gpuVerdictGate();
+    await until(() => rig.probeCalls > 0, 5000, 'the boot probe');
+    rig.rejectProbe(new Error('probe runner exploded'));
+    await until(
+      () => /GPU probe failed unexpectedly/.test(String(activeGpuVerdict()?.reason ?? '')),
+      5000,
+      'the catch-path adoption',
+    );
+    const adopted = activeGpuVerdict();
+    expect(adopted?.backend).toBe('cpu');
+    expect(String(adopted?.reason)).toContain('probe runner exploded');
+    expect(verdictStore.writes, 'exactly ONE sidecar write (one verdictSeq bump)').toHaveLength(1);
+    expect(verdictStore.writes[0]?.verdict).toEqual(adopted);
+    if (bootGate !== null) await withTimeout(bootGate, 5000, 'the gate to settle on the failure terminal path');
+  }, 30_000);
+
+  it('every host shape settles its armed gate: the STORELESS host boots, probes, settles, and stop->start is never fenced', async () => {
+    // MUTANT: gate arming + the boot-admission flight wired only on the store
+    // path — a storeless host then left its gate armed forever (every
+    // default-awaiter query hung) and a stop->start cycle stayed fenced on
+    // the stale stoppedAt epoch. (Settle pinned by awaiting the CAPTURED gate
+    // promise; the armed object itself is not nulled on settle.)
+    const rig = await startHostRig({ storeless: true });
+    activeHosts.push(rig.stop);
+    const firstGate = gpuVerdictGate();
+    await until(() => rig.probeCalls > 0, 5000, 'the storeless boot probe (stored=null -> full probe, base parity)');
+    rig.resolveProbe({ backend: 'cpu', ok: false, reason: 'storeless probe verdict', device: 'd' });
+    if (firstGate !== null) await withTimeout(firstGate, 5000, 'the storeless host to settle its armed gate');
+    expect(activeGpuVerdict()?.reason).toBe('storeless probe verdict');
+    await rig.stop();
+    // Restart on the SAME host + engine: the second start must not be fenced.
+    rig.handle = await (rig.host as unknown as { start: () => Promise<{ port: number; url: string }> }).start();
+    const secondGate = gpuVerdictGate();
+    await until(() => rig.probeCalls >= 2, 5000, 'the second start to run its own boot probe (not fenced)');
+    rig.resolveProbe({ backend: 'cpu', ok: false, reason: 'second boot verdict', device: 'd' });
+    if (secondGate !== null) await withTimeout(secondGate, 5000, 'the second generation gate to settle');
+    const result = await rig.engine.query('after storeless restart');
+    expect(result.answer).toBe('OK');
+  }, 30_000);
+
+  it('stop while gpuTest waits behind boot: NO pause/unload/probe/adopt/warmup/resume happens afterwards', async () => {
+    // MUTANT: the post-boot-await continuation of gpuTest proceeding after a
+    // racing stop — any of pause/drain/unload/fresh-probe/adopt/warmup/resume
+    // firing post-stop (the stoppedAt fence after the boot-flight await).
+    const rig = await startHostRig({}); // no stored verdict: the boot flight runs the FULL probe, deferred
+    activeHosts.push(rig.stop);
+    recordSwapMembers(rig.engine, rig.events);
+    const flight = hostGpuTest(rig.host).then(
+      () => undefined,
+      () => undefined,
+    );
+    await until(() => rig.probeCalls > 0, 5000, 'the BOOT probe (the flight the gpuTest waits behind)');
+    await rig.stop();
+    const stopMark = rig.events.length; // NOTHING may be recorded past here
+    // The abandoned boot probe settles AFTER the stop.
+    rig.resolveProbe({ backend: 'vulkan', ok: true, reason: 'POST-STOP-VERDICT', device: 'gpu-x' });
+    await flight;
+    await new Promise((r) => setTimeout(r, 150));
+    // The deferred's own settle bookkeeping ('probe-done') is harness
+    // accounting, not a host side effect: only SWAP-member events and any
+    // post-stop probe SPAWN count as violations.
+    const postStop = rig.events
+      .slice(stopMark)
+      .filter((e) => e === 'probe-start' || (SWAP_MEMBERS as readonly string[]).includes(e));
+    expect(postStop, 'zero swap side effects after the stop').toEqual([]);
+    expect(rig.probeCalls, 'only the BOOT probe ran — the swap fresh probe never spawned').toBe(1);
+    expect(activeGpuVerdict()?.reason ?? '', 'no post-stop adoption').not.toBe('POST-STOP-VERDICT');
+    expect((rig.engine as unknown as { queriesPaused: () => string | null }).queriesPaused()).toBeNull();
+    const bootGate = gpuVerdictGate();
+    if (bootGate !== null) await withTimeout(bootGate, 5000, 'the gate to settle at stop');
+  }, 30_000);
+
+  it('natural device-query completion racing stop (UNKNOWN outcome): adopts nothing and probes nothing', async () => {
+    // MUTANT: a naturally-completing device result adopting (fail-open) or
+    // spawning a full probe AFTER a racing stop — the stoppedAt fence after
+    // the device query, before adoption OR full-probe spawn. (Settle pinned
+    // by awaiting the CAPTURED gate promise.)
+    const rig = await startHostRig({ storedVerdict: GPU_OK, deferDeviceQuery: true });
+    activeHosts.push(rig.stop);
+    const bootGate = gpuVerdictGate();
+    await until(() => deviceQuery.calls.length > 0, 5000, 'the boot device-query leg to be in flight');
+    await rig.stop();
+    // The device query completes NATURALLY after the stop.
+    rig.resolveDeviceQuery({ status: 'unknown' });
+    await new Promise((r) => setTimeout(r, 150));
+    expect(activeGpuVerdict(), 'UNKNOWN after stop must not fail-open-adopt the stored verdict').toBeNull();
+    expect(rig.probeCalls, 'no full probe after stop').toBe(0);
+    if (bootGate !== null) await withTimeout(bootGate, 5000, 'the gate to settle');
+  }, 30_000);
+
+  it('natural device-query completion racing stop (MISMATCH outcome): adopts nothing and probes nothing', async () => {
+    // MUTANT: same fence as the UNKNOWN row; the mismatch branch must not
+    // reset-and-re-probe once the lifecycle is stopped.
+    const rig = await startHostRig({ storedVerdict: GPU_OK, deferDeviceQuery: true });
+    activeHosts.push(rig.stop);
+    const bootGate = gpuVerdictGate();
+    await until(() => deviceQuery.calls.length > 0, 5000, 'the boot device-query leg to be in flight');
+    await rig.stop();
+    rig.resolveDeviceQuery({ status: 'device', device: 'different-adapter' });
+    await new Promise((r) => setTimeout(r, 150));
+    expect(activeGpuVerdict(), 'a stale mismatched record must not be adopted after stop').toBeNull();
+    expect(rig.probeCalls, 'no full re-probe after stop').toBe(0);
+    if (bootGate !== null) await withTimeout(bootGate, 5000, 'the gate to settle');
+  }, 30_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -737,6 +931,48 @@ describe('probe-before-warmup (AC6: the admission gate precedes profile selectio
     expect(observeFactory.calls).toHaveLength(1);
     expect(observeFactory.calls[0]?.profile, 'post-validation the cpu rule forces fast').toBe('fast');
   }, 30_000);
+
+  it('external query/preflight NEVER wait on the local admission gate (early returns precede it)', async () => {
+    // MUTANT: the external-provider early return placed AFTER the admission
+    // gate await — external inference would hang behind local GPU validation
+    // (plan R4-2). Engine-level row: the host path adds nothing here (the
+    // early return lives at the top of query()/preflight()), and the external
+    // endpoint is deliberately unreachable so the row pins the NO-WAIT
+    // property without stubbing external HTTP: a query that awaited the
+    // never-resolved gate would blow the bounded settle below.
+    const events: string[] = [];
+    const models = stageModels();
+    cleanups.push(() => fs.rmSync(models.dir, { recursive: true, force: true }));
+    const factory = fakeFactory(events);
+    setActiveGpuVerdict(null);
+    const gate = armGpuVerdictGate(); // deliberately NEVER resolved
+    const engine = new LlamaEngine({
+      profile: 'fast',
+      freeMemBytes: () => 8 * GB,
+      cpuCount: () => 8,
+      models: { quality: models.quality, fast: models.fast },
+      llamaFactory: factory.fn,
+    } as EngineOpts);
+    expect(
+      engine.applySettingsPatch({
+        'external.enabled': true,
+        'external.baseUrl': 'http://127.0.0.1:9/v1',
+        'external.model': 'stub-model',
+      }).ok,
+    ).toBe(true);
+    await withTimeout(engine.preflight(), 2000, 'external preflight (must not await the gate)');
+    const settled = await withTimeout(
+      engine
+        .query('external question')
+        .then(() => 'resolved')
+        .catch((err: unknown) => `rejected: ${err instanceof Error ? err.message : String(err)}`),
+      5000,
+      'the external query (must not await the gate)',
+    );
+    expect(String(settled).length).toBeGreaterThan(0);
+    expect(factory.calls, 'the external path never constructs a local backend').toHaveLength(0);
+    void gate; // stays armed (never resolved) for the whole row
+  }, 20_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -949,4 +1185,49 @@ describe('awaited-teardown (AC8: awaited, deferring, generation-safe)', () => {
     // Post-stop construction is impossible (terminal shutdown).
     await expect(rig.engine.query('post stop')).rejects.toThrow();
   }, 30_000);
+
+  it('stop/start then LATE release of an old gate-suspended query: it must not construct in the new generation', async () => {
+    // Engine-level row (the host path cannot HOLD the old query's release
+    // past stop() — stop itself resolves the flight's captured gate — so the
+    // deterministic equivalent drives the engine across shutdown ->
+    // resetLifecycle while the OLD gate object stays unresolved until AFTER
+    // the restart, exactly the round-4 timeline).
+    // MUTANT: shutdown()/resetLifecycle() not bumping the operation
+    // generation — the released old query would revive and construct against
+    // the new lifecycle.
+    const events: string[] = [];
+    const models = stageModels();
+    cleanups.push(() => fs.rmSync(models.dir, { recursive: true, force: true }));
+    const factory = fakeFactory(events);
+    setActiveGpuVerdict(null);
+    const gpuModule = await import('../../main/backend/inference/gpu-probe.js');
+    const gateA = gpuModule.armGpuVerdictGate();
+    const engine = new LlamaEngine({
+      profile: 'fast',
+      freeMemBytes: () => 8 * GB,
+      cpuCount: () => 8,
+      models: { quality: models.quality, fast: models.fast },
+      llamaFactory: factory.fn,
+    } as EngineOpts);
+    const oldQuery = engine.query('suspended across lifecycles');
+    await new Promise((r) => setTimeout(r, 100));
+    expect(factory.calls, 'sanity: the old query is gate-suspended, nothing constructed').toHaveLength(0);
+    // stop(): terminal shutdown (bumps the operation generation).
+    await (engine as unknown as { shutdown: () => Promise<void> }).shutdown();
+    // start(): resetLifecycle clears disposed/pause and bumps again; the
+    // host's resetGpuVerdictLifecycle arms the NEW generation's gate.
+    (engine as unknown as { resetLifecycle: () => void }).resetLifecycle();
+    gpuModule.resetGpuVerdictLifecycle();
+    // The LATE release: the old flight settles its OWN captured gate object.
+    gateA.resolve();
+    await expect(oldQuery, 'the old query dies with the retryable 503 error, never constructs').rejects.toBeInstanceOf(
+      ModelNotConfiguredError,
+    );
+    expect(factory.calls).toHaveLength(0);
+    // The new generation is unharmed: settling ITS gate lets a fresh query run.
+    gpuModule.armGpuVerdictGate().resolve();
+    const fresh = await engine.query('fresh generation');
+    expect(fresh.answer).toBe('OK');
+    expect(factory.calls).toHaveLength(1);
+  }, 20_000);
 });

@@ -739,6 +739,20 @@ export class NodeBackendHost implements BackendHost {
     // B8 (issue #66): resolve the memory/concurrency budget and build the
     // governance stack BEFORE the listener exists, so /telemetry/memory and
     // the generation mutex are live from the first request.
+    //
+    // Issue #246 (4.5 review Finding 2): the lifecycle reset is UNCONDITIONAL
+    // and FIRST — stop() stamps stoppedAt and shuts the engine down on every
+    // path, so a start that skipped the reset for any config shape (a host
+    // without a storePath) would stay permanently fenced (publishVerdict
+    // refused, gpuTest aborted, engine terminal after restart). The fresh gate
+    // is likewise armed for EVERY host shape: the boot-admission flight below
+    // settles it whether or not a sidecar exists (stored=null -> full probe),
+    // which is exactly the base behavior where the storeless boot probe ran
+    // too.
+    this.stoppedAt = null;
+    (this.engine as { resetLifecycle?: () => void }).resetLifecycle?.();
+    this.bootGate = resetGpuVerdictLifecycle();
+    this.gpuVerdict = null;
     const env = this.config.env ?? process.env;
     const memoryConfig = resolveMemoryConfig(env);
     const concurrency = resolveConcurrencyConfig(env);
@@ -851,10 +865,6 @@ export class NodeBackendHost implements BackendHost {
       // engine's lifecycle flags clear and the module holder drops the
       // previous lifecycle's verdict (a restart must revalidate, never reuse).
       this.gpuProbeDir = path.dirname(storePath);
-      this.stoppedAt = null;
-      (this.engine as { resetLifecycle?: () => void }).resetLifecycle?.();
-      this.bootGate = resetGpuVerdictLifecycle();
-      this.gpuVerdict = null;
     }
     // #133: the first-run wizard applies the operator's profile choice
     // through the SAME validated seam the settings API uses — live apply +
@@ -940,23 +950,25 @@ export class NodeBackendHost implements BackendHost {
       // verdict, and the engine's admission gate holds any concurrent first
       // /ask on the same flight (one construction, post-verdict identity).
       const bootGate = this.bootGate;
-      if (bootGate !== null) {
-        this.bootAdmissionFlight = this.runBootAdmission(bootGate);
-        void this.bootAdmissionFlight
-          .catch(() => {})
-          .finally(() => {
-            void this.engine.warmup?.().catch((err: unknown) => {
-              console.error(
-                `[trainingapp-backend] model warmup crashed: ${err instanceof Error ? err.message : String(err)}`,
-              );
-            });
-          });
-      } else {
+      const warmupAfterBoot = (): void => {
+        // 4.5 review nit: never warm into a stopped lifecycle — a stop during
+        // boot admission must not log a misleading warmup failure afterwards.
+        if (this.stoppedAt !== null) return;
         void this.engine.warmup?.().catch((err: unknown) => {
           console.error(
             `[trainingapp-backend] model warmup crashed: ${err instanceof Error ? err.message : String(err)}`,
           );
         });
+      };
+      if (bootGate !== null) {
+        this.bootAdmissionFlight = this.runBootAdmission(bootGate);
+        void this.bootAdmissionFlight
+          .catch(() => {})
+          .finally(() => {
+            warmupAfterBoot();
+          });
+      } else {
+        warmupAfterBoot();
       }
       // B6 store (issue #64): the store is now load-bearing for ingestion.
       // Corruption is recovered BEFORE serving (integrity check + restore/

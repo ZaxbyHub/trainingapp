@@ -880,11 +880,11 @@ describe('verdict-freshness (AC4: stale readers, the device-query parser, boot a
       deviceQueryResult: { status: 'cancelled' },
     });
     try {
-      const gatePromise = gpuVerdictGate();
-      let gateSettled = false;
-      if (gatePromise !== null) void gatePromise.then(() => { gateSettled = true; });
       await until(() => deviceQuery.calls.length > 0, 5000, 'the device query leg');
-      await until(() => gateSettled, 5000, 'the captured gate to settle on the cancelled terminal path');
+      // Resolving DE-ARMS the gate (documented module contract): the cancelled
+      // terminal path settles it, so the oracle reads null. (Pre-de-arm this
+      // row awaited the still-armed resolved promise; same settle evidence.)
+      await until(() => gpuVerdictGate() === null, 5000, 'the gate to settle (de-arm) on the cancelled terminal path');
       expect(activeGpuVerdict(), 'a host-killed query must adopt NOTHING').toBeNull();
       expect(rig.probeCalls, 'a cancelled device query must not fall through to a full probe').toBe(0);
       const written = JSON.parse(fs.readFileSync(path.join(rig.profileDir, GPU_PROBE_SIDECAR), 'utf8')) as { reason?: string };
