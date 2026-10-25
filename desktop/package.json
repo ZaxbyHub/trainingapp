@@ -16,7 +16,8 @@
     "build": "npm run compile && node scripts/stage-installer-resources.mjs --skip-renderer-copy && node scripts/build-installer-manifest.mjs --stage-dir installer-resources --out installer-resources/manifest.json && electron-builder --win nsis --x64",
     "desktop:build": "npm --prefix ../web_ui run build:desktop && node scripts/stage-installer-resources.mjs && npm run compile && node scripts/build-installer-manifest.mjs --stage-dir installer-resources --out installer-resources/manifest.json && electron-builder --win nsis --x64",
     "test:e2e": "playwright test --config playwright.config.ts",
-    "typecheck:e2e": "tsc -p tsconfig.e2e.json"
+    "typecheck:e2e": "tsc -p tsconfig.e2e.json",
+    "typecheck:test": "tsc -p tsconfig.test.json"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",

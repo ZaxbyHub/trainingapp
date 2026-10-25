@@ -712,7 +712,28 @@ function makeBackend(
       } catch (err) {
         // The library THROWS rather than returning when an abort lands
         // before any token (LlamaChat.js:2245-2247), so a user cancellation
-        // during prefill arrives here. Distinguish it from a real failure.
+        // during prefill arrives here. Issue #249 (AC9): when the abort is
+        // THIS call's own — the cancellation flag is set, this call's signal
+        // has fired, and the thrown value is exactly this signal's reason —
+        // the query resolves the cancelled contract instead of rejecting, so
+        // the cancelled terminal (not an error) is what callers see. The
+        // `signal.aborted` conjunct closes the undefined-equals-undefined
+        // trap: a non-abort rejection of `undefined` before the controller
+        // fires must not map to cancelled. Any other error — including a
+        // foreign AbortError-shaped value while the flag happens to be set —
+        // still propagates.
+        if (
+          genOpts.cancellationEvent?.isSet() === true &&
+          abort.signal.aborted &&
+          err === abort.signal.reason
+        ) {
+          outcome = 'cancelled';
+          // PRR-108: deliver whatever settled before the abort, filtered the
+          // same way the success path filters (the reasoning echo was already
+          // stripped from `accumulated` as it streamed).
+          flushSurface();
+          return { answer: filterDeclineSentences(accumulated), cancelled: true };
+        }
         outcome = genOpts.cancellationEvent?.isSet() ? 'cancelled' : 'error';
         // PRR-108: a mid-generation error must still deliver whatever the
         // engine generated after the last settled sentence — pre-#156 every

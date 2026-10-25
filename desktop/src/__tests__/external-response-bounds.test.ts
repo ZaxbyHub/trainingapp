@@ -24,6 +24,7 @@ import {
 } from '../../main/backend/net/guarded-request';
 import { ExternalProviderError } from '../../main/backend/net/provider-error';
 import { generateExternal, listExternalModels, type ExternalProtocol } from '../../main/backend/inference/external-generator';
+import { endFor, frameFor, FRAMES, SSE_FRAMES_PER_WRITE } from './fixtures/external-cap-fixture';
 
 const servers: http.Server[] = [];
 afterEach(async () => {
@@ -245,34 +246,26 @@ describe('F-003: byte caps (values shared with the browser app)', () => {
 });
 
 describe('F-003 (closeout): the streamed answer as a whole is capped in UTF-8 bytes', () => {
-  // 1024 x '€' = 1024 characters but 3072 UTF-8 bytes per delta. 4096 deltas
-  // = 12 MiB of answer bytes yet only 4 Mi characters, so a cap that counted
-  // characters against 8 Mi would never trip and the stream would finish OK.
-  const DELTA = '€'.repeat(1024);
-  const DELTA_BYTES = Buffer.byteLength(DELTA);
-  // 2800 frames = 8.6 MiB written: still "more than 8 MiB", the cap still
-  // trips mid-stream (at frame 2731) with frames still in flight, and the
-  // pathological agents above cost ~1 event-loop turn per frame — so the
-  // stream is kept just over the cap instead of 1.5x over it.
-  const FRAMES = 2800;
-
-  const frameFor = (protocol: ExternalProtocol): string =>
-    protocol === 'openai'
-      ? `data: ${JSON.stringify({ choices: [{ delta: { content: DELTA } }] })}\n\n`
-      : `event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: DELTA } })}\n\n`;
-  const endFor = (protocol: ExternalProtocol): string =>
-    protocol === 'openai' ? 'data: [DONE]\n\n' : `event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })}\n\n`;
+  // The fixture pump lives in the shared non-test fixture module (also drives
+  // external-response-bounds-turncount.test.ts). Issue #243: it batches SSE
+  // frames per socket write so the legs' cost is not one event-loop turn per
+  // frame; per-delta cap granularity and the mid-stream trip are preserved.
+  const DELTA_BYTES = Buffer.byteLength('€'.repeat(1024));
 
   for (const protocol of ['openai', 'anthropic'] as const) {
     it(`${protocol}: a stream of more than 8 MiB is cut at the cap, errors, and aborts the request`, async () => {
       const up = await upstream((_req, res) => {
         res.writeHead(200, { 'content-type': 'text/event-stream' });
         const frame = frameFor(protocol);
+        const batch = Array.from({ length: SSE_FRAMES_PER_WRITE }, () => frame).join('');
         let sent = 0;
         const pump = (): void => {
           while (sent < FRAMES) {
-            sent += 1;
-            if (!res.write(frame)) {
+            // One flush per BATCH of frames, not per frame (issue #243).
+            const writeFrames = Math.min(SSE_FRAMES_PER_WRITE, FRAMES - sent);
+            sent += writeFrames;
+            const payload = writeFrames === SSE_FRAMES_PER_WRITE ? batch : frame.repeat(writeFrames);
+            if (!res.write(payload)) {
               res.once('drain', pump);
               return;
             }

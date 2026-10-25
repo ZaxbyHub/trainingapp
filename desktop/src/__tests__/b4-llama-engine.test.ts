@@ -481,6 +481,16 @@ describe('b4-llama-engine Group B (real model, real default backend)', () => {
   itReal(
     'AC4 real cancel: flag after the first token stops streaming <200ms and resolves cancelled',
     async () => {
+      // Issue #249: the original row's prompt ("Count slowly from 1 to 100,
+      // one number per line.") yields output with ZERO sentence terminators,
+      // and the engine only emits at settled sentence boundaries — so the
+      // "first emission" trigger fired only at the post-prompt flush, AFTER
+      // generation finished, and the bridge was never exercised. This row
+      // uses a prompt whose output settles EARLY AND OFTEN (a terminator per
+      // item), guards that the trigger emission was genuinely mid-generation,
+      // and pins the flag→query-settlement latency directly (an emission-based
+      // delta can pass vacuously when nothing further streams after the
+      // abort).
       const flag = { set: false, isSet: () => flag.set };
       let tokenCount = 0;
       let lastEmissionAt = 0;
@@ -488,7 +498,8 @@ describe('b4-llama-engine Group B (real model, real default backend)', () => {
       const firstToken = new Promise<void>((resolve) => {
         releaseOnFirstToken = resolve;
       });
-      const promise = engine.query('Count slowly from 1 to 100, one number per line.', {
+      const startedAt = performance.now();
+      const promise = engine.query('Count from 1 to 5. After each number, write one short sentence about training.', {
         streamCallback: () => {
           tokenCount += 1;
           lastEmissionAt = performance.now();
@@ -497,12 +508,19 @@ describe('b4-llama-engine Group B (real model, real default backend)', () => {
         cancellationEvent: flag,
       });
       await firstToken;
+      // Mid-generation guard: the first emission must have arrived well
+      // before the generation could have completed (the full generation of
+      // this prompt takes tens of seconds; if the first emission ever lands
+      // after ~60s, the settle-based trigger premise is broken again).
+      expect(performance.now() - startedAt).toBeLessThan(60_000);
       const flagSetAt = performance.now();
       flag.set = true;
       const result = await promise;
       expect(result.cancelled).toBe(true);
       expect(tokenCount).toBeGreaterThanOrEqual(1);
-      expect(lastEmissionAt - flagSetAt).toBeLessThan(200);
+      // Direct flag→settlement pin: the query resolves (cancelled) promptly
+      // once the flag is set, regardless of any further emissions.
+      expect(performance.now() - flagSetAt).toBeLessThan(200);
     },
     240_000,
   );

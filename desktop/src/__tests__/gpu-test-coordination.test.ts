@@ -124,18 +124,18 @@ vi.mock('node-llama-cpp', () => ({
 // counting wrapper on writeGpuProbeVerdict (adoption-count observation for the
 // 4.5 exactly-one-adoption rows).
 const deviceQuery = vi.hoisted(() => ({
-  impl: null as null | ((opts?: Record<string, unknown>) => Promise<{ status: 'device' | 'unknown' | 'cancelled'; device?: string }>),
-  calls: [] as Array<Record<string, unknown> | undefined>,
+  impl: null as null | ((opts?: GpuDeviceRunOptions) => Promise<GpuDeviceQueryResult>),
+  calls: [] as Array<GpuDeviceRunOptions | undefined>,
 }));
 const verdictStore = vi.hoisted(() => ({ writes: [] as Array<{ dir: string; verdict: unknown }> }));
 vi.mock('../../main/backend/inference/gpu-probe.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../main/backend/inference/gpu-probe.js')>();
   return {
     ...actual,
-    runGpuDeviceQuery: (opts?: Record<string, unknown>) => {
+    runGpuDeviceQuery: (opts?: GpuDeviceRunOptions) => {
       deviceQuery.calls.push(opts);
       if (deviceQuery.impl !== null) return deviceQuery.impl(opts);
-      return (actual as unknown as { runGpuDeviceQuery?: unknown }).runGpuDeviceQuery?.(opts);
+      return actual.runGpuDeviceQuery(opts);
     },
     writeGpuProbeVerdict: (dir: string, verdict: import('../../main/backend/inference/gpu-probe.js').GpuProbeVerdict) => {
       verdictStore.writes.push({ dir, verdict });
@@ -151,6 +151,8 @@ import {
   resetGpuVerdictLifecycle,
   setActiveGpuVerdict,
   writeGpuProbeVerdict,
+  type GpuDeviceQueryResult,
+  type GpuDeviceRunOptions,
   type GpuProbeVerdict,
 } from '../../main/backend/inference/gpu-probe.js';
 import {
@@ -169,19 +171,9 @@ const GB = 1024 ** 3;
 const GPU_OK: GpuProbeVerdict = { backend: 'vulkan', ok: true, reason: 'stub probe: gpu usable', device: 'gpu-a' };
 const CPU_FAIL: GpuProbeVerdict = { backend: 'cpu', ok: false, reason: 'stub probe: cpu only', device: 'gpu-a' };
 
-/** Options type widened with the contract's new engine field (assignable to
- *  LlamaEngineOptions before AND after the implementation lands). */
-type EngineOpts = LlamaEngineOptions & { gpuVerdictAwaiter?: () => Promise<void> | null };
-type FactoryOpts = LlamaEngineFactoryOptions & { ignoreMemorySafetyChecks?: boolean; onGpuDevice?: (device: string | null) => void };
-const productionFactory = defaultLlamaFactory as unknown as (opts: FactoryOpts) => Promise<LlamaEngineBackend>;
-
-/** The /gpu-test route's response shape (server.ts gpuTest opt). */
-interface GpuTestResponse {
-  backend: 'vulkan' | 'cpu';
-  ok: boolean;
-  reason: string;
-  device?: string | null;
-}
+/** The production factory, driven directly through its REAL exported type —
+ *  a rename of any LlamaEngineFactoryOptions member breaks this compile. */
+const productionFactory: (opts: LlamaEngineFactoryOptions) => Promise<LlamaEngineBackend> = defaultLlamaFactory;
 
 function stageModels(): { quality: string; fast: string; dir: string } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gpu-coord-models-'));
@@ -298,7 +290,7 @@ interface HostRig {
   resolveProbe: (verdict: GpuProbeVerdict) => void;
   rejectProbe: (err: Error) => void;
   factory: ReturnType<typeof fakeFactory>;
-  resolveDeviceQuery: (result: { status: 'device' | 'unknown' | 'cancelled'; device?: string }) => void;
+  resolveDeviceQuery: (result: GpuDeviceQueryResult) => void;
   stop: () => Promise<void>;
 }
 
@@ -306,8 +298,8 @@ const TOKEN = 'gpu-coordination-token';
 
 async function startHostRig(opts: {
   storedVerdict?: GpuProbeVerdict;
-  deviceQueryResult?: { status: 'device' | 'unknown' | 'cancelled'; device?: string };
-  engineOverrides?: Partial<EngineOpts>;
+  deviceQueryResult?: GpuDeviceQueryResult;
+  engineOverrides?: Partial<LlamaEngineOptions>;
   stageFastOnly?: boolean;
   /** No storePath: the storeless host shape (no sidecar, full boot probe). */
   storeless?: boolean;
@@ -330,7 +322,7 @@ async function startHostRig(opts: {
     models: opts.stageFastOnly === true ? { fast: models.fast } : { quality: models.quality, fast: models.fast },
     llamaFactory: factory.fn,
     ...opts.engineOverrides,
-  } as EngineOpts);
+  });
   const hostConfig: Record<string, unknown> = { engine, token: TOKEN, env: rigEnv() };
   if (opts.storeless !== true) hostConfig.storePath = path.join(profileDir, 'store.sqlite');
   const host = new NodeBackendHost(hostConfig as never);
@@ -340,7 +332,7 @@ async function startHostRig(opts: {
     resolveProbe = resolve;
     rejectProbe = reject;
   });
-  let settleDeviceQuery: (result: { status: 'device' | 'unknown' | 'cancelled'; device?: string }) => void = () => undefined;
+  let settleDeviceQuery: (result: GpuDeviceQueryResult) => void = () => undefined;
   const rig: HostRig = {
     host,
     engine,
@@ -377,9 +369,10 @@ async function startHostRig(opts: {
     );
   };
   if (opts.deviceQueryResult !== undefined) {
-    deviceQuery.impl = () => Promise.resolve(opts.deviceQueryResult as { status: 'device' | 'unknown' | 'cancelled'; device?: string });
+    const deviceQueryResult: GpuDeviceQueryResult = opts.deviceQueryResult;
+    deviceQuery.impl = () => Promise.resolve(deviceQueryResult);
   } else if (opts.deferDeviceQuery === true) {
-    const deferred = new Promise<{ status: 'device' | 'unknown' | 'cancelled'; device?: string }>((resolve) => {
+    const deferred = new Promise<GpuDeviceQueryResult>((resolve) => {
       settleDeviceQuery = resolve;
     });
     deviceQuery.impl = () => deferred;
@@ -418,8 +411,8 @@ afterEach(async () => {
 // ---------------------------------------------------------------------------
 
 describe('gpu-test-drain (AC5: the whole-operation gpuTest swap flight)', () => {
-  function hostGpuTest(host: NodeBackendHost): Promise<GpuTestResponse> {
-    return (host as unknown as { gpuTest: () => Promise<GpuTestResponse> }).gpuTest();
+  function hostGpuTest(host: NodeBackendHost): Promise<GpuProbeVerdict> {
+    return host.gpuTest();
   }
 
   it('concurrent callers JOIN one flight: one fresh probe, one shared response', async () => {
@@ -805,7 +798,7 @@ describe('probe-before-warmup (AC6: the admission gate precedes profile selectio
       models: { quality: models.quality, fast: models.fast },
       llamaFactory: factory.fn,
       gpuVerdictAwaiter: () => gate,
-    } as EngineOpts);
+    });
     const early = engine.query('early ask');
     await new Promise((r) => setTimeout(r, 150));
     expect(factory.calls, 'nothing constructs while admission is pending').toHaveLength(0);
@@ -957,7 +950,7 @@ describe('probe-before-warmup (AC6: the admission gate precedes profile selectio
       cpuCount: () => 8,
       models: { quality: models.quality, fast: models.fast },
       llamaFactory: factory.fn,
-    } as EngineOpts);
+    });
     expect(
       engine.applySettingsPatch({
         'external.enabled': true,
@@ -983,12 +976,20 @@ describe('probe-before-warmup (AC6: the admission gate precedes profile selectio
 // ---------------------------------------------------------------------------
 
 describe('construction-cleanup (AC7: every acquisition stage guarded, awaited)', () => {
-  const opts = (models: { fast: string }): FactoryOpts => ({
+  // Issue #252: `onGpuDevice` is one of the production fields these specs pin.
+  // Passing it through this typed literal means a production rename of the
+  // field breaks the compile here (excess-property checking on the fresh
+  // object literal into the typed factory parameter).
+  const reportedDevices: Array<string | null> = [];
+  const opts = (models: { fast: string }): LlamaEngineFactoryOptions => ({
     modelPath: models.fast,
     threads: 2,
     backend: 'vulkan',
     gpuLayers: 'max',
     profile: 'fast',
+    onGpuDevice: (device: string | null) => {
+      reportedDevices.push(device);
+    },
   });
 
   it('a loadModel throw disposes the llama instance and rethrows the SAME error', async () => {
@@ -1050,16 +1051,21 @@ describe('construction-cleanup (AC7: every acquisition stage guarded, awaited)',
   it('backend dispose() AWAITS context -> model -> llama in order', async () => {
     const models = stageModels();
     cleanups.push(() => fs.rmSync(models.dir, { recursive: true, force: true }));
+    const devicesBefore = reportedDevices.length;
     const backend = await productionFactory(opts(models));
     await backend.dispose();
     expect(nlc.state.disposeOrder).toEqual(['context', 'model', 'llama']);
+    // Issue #252: the pinned onGpuDevice field is live, not decorative — the
+    // factory reports the adapter identity through it during load.
+    expect(reportedDevices.length).toBeGreaterThan(devicesBefore);
+    expect(reportedDevices[reportedDevices.length - 1]).toBe('Arc Pro B50');
   });
 });
 
 // ---------------------------------------------------------------------------
 
 describe('awaited-teardown (AC8: awaited, deferring, generation-safe)', () => {
-  function makeEngine(events: string[], extra: Partial<EngineOpts> = {}, deferGenerate?: () => Promise<void>) {
+  function makeEngine(events: string[], extra: Partial<LlamaEngineOptions> = {}, deferGenerate?: () => Promise<void>) {
     const models = stageModels();
     cleanups.push(() => fs.rmSync(models.dir, { recursive: true, force: true }));
     const factory = fakeFactory(events, deferGenerate);
@@ -1070,7 +1076,7 @@ describe('awaited-teardown (AC8: awaited, deferring, generation-safe)', () => {
       models: { quality: models.quality, fast: models.fast },
       llamaFactory: factory.fn,
       ...extra,
-    } as EngineOpts);
+    });
     return { engine, factory, models };
   }
 
@@ -1213,7 +1219,7 @@ describe('awaited-teardown (AC8: awaited, deferring, generation-safe)', () => {
       cpuCount: () => 8,
       models: { quality: models.quality, fast: models.fast },
       llamaFactory: factory.fn,
-    } as EngineOpts);
+    });
     const oldQuery = engine.query('suspended across lifecycles');
     await new Promise((r) => setTimeout(r, 100));
     expect(factory.calls, 'sanity: the old query is gate-suspended, nothing constructed').toHaveLength(0);

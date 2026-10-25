@@ -52,6 +52,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // InsufficientMemoryError(...)`) so `err instanceof nlc.InsufficientMemoryError`
 // in the production factory matches exactly the class it will see.
 // ---------------------------------------------------------------------------
+/** Recorded loadModel/createContext arguments: the production factory-option
+ *  field the pinned reads observe — a rename of ignoreMemorySafetyChecks in
+ *  LlamaEngineFactoryOptions breaks this compile — over the open record the
+ *  mock keeps for every other key. */
+type LoadStageArgs = Record<string, unknown> & Pick<LlamaEngineFactoryOptions, 'ignoreMemorySafetyChecks'>;
 const nlc = vi.hoisted(() => {
   class InsufficientMemoryError extends Error {
     constructor(message: string) {
@@ -60,12 +65,12 @@ const nlc = vi.hoisted(() => {
   }
   const state = {
     getLlamaCalls: [] as Array<Record<string, unknown>>,
-    loadModelCalls: [] as Array<Record<string, unknown>>,
-    createContextCalls: [] as Array<Record<string, unknown>>,
+    loadModelCalls: [] as LoadStageArgs[],
+    createContextCalls: [] as LoadStageArgs[],
     disposeOrder: [] as string[],
     getLlamaImpl: null as null | ((opts: Record<string, unknown>) => unknown),
-    loadModelImpl: null as null | ((args: Record<string, unknown>, callIndex: number) => unknown),
-    createContextImpl: null as null | ((args: Record<string, unknown>) => unknown),
+    loadModelImpl: null as null | ((args: LoadStageArgs, callIndex: number) => unknown),
+    createContextImpl: null as null | ((args: LoadStageArgs) => unknown),
   };
   return { InsufficientMemoryError, state };
 });
@@ -95,7 +100,7 @@ vi.mock('node-llama-cpp', () => ({
       dispose: async () => {
         nlc.state.disposeOrder.push('llama');
       },
-      loadModel: async (args: Record<string, unknown>) => {
+      loadModel: async (args: LoadStageArgs) => {
         nlc.state.loadModelCalls.push(args);
         if (nlc.state.loadModelImpl !== null) {
           const overridden = nlc.state.loadModelImpl(args, nlc.state.loadModelCalls.length);
@@ -105,7 +110,7 @@ vi.mock('node-llama-cpp', () => ({
           dispose: async () => {
             nlc.state.disposeOrder.push('model');
           },
-          createContext: async (args: Record<string, unknown>) => {
+          createContext: async (args: LoadStageArgs) => {
             nlc.state.createContextCalls.push(args);
             if (nlc.state.createContextImpl !== null) {
               const overridden = nlc.state.createContextImpl(args);
@@ -130,17 +135,17 @@ vi.mock('node-llama-cpp', () => ({
 // vi.importActual for the verdict-freshness parser rows.
 // ---------------------------------------------------------------------------
 const deviceQuery = vi.hoisted(() => ({
-  impl: null as null | ((opts?: Record<string, unknown>) => Promise<{ status: 'device' | 'unknown' | 'cancelled'; device?: string }>),
-  calls: [] as Array<Record<string, unknown> | undefined>,
+  impl: null as null | ((opts?: GpuDeviceRunOptions) => Promise<GpuDeviceQueryResult>),
+  calls: [] as Array<GpuDeviceRunOptions | undefined>,
 }));
 vi.mock('../../main/backend/inference/gpu-probe.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../main/backend/inference/gpu-probe.js')>();
   return {
     ...actual,
-    runGpuDeviceQuery: (opts?: Record<string, unknown>) => {
+    runGpuDeviceQuery: (opts?: GpuDeviceRunOptions) => {
       deviceQuery.calls.push(opts);
       if (deviceQuery.impl !== null) return deviceQuery.impl(opts);
-      return (actual as unknown as { runGpuDeviceQuery?: unknown }).runGpuDeviceQuery?.(opts);
+      return actual.runGpuDeviceQuery(opts);
     },
   };
 });
@@ -154,6 +159,8 @@ import {
   resetGpuVerdictLifecycle,
   setActiveGpuVerdict,
   writeGpuProbeVerdict,
+  type GpuDeviceQueryResult,
+  type GpuDeviceRunOptions,
   type GpuProbeRunOptions,
   type GpuProbeVerdict,
 } from '../../main/backend/inference/gpu-probe.js';
@@ -168,13 +175,9 @@ import { NodeBackendHost } from '../../main/backend/index.js';
 const GB = 1024 ** 3;
 const GPU_OK: GpuProbeVerdict = { backend: 'vulkan', ok: true, reason: 'stub probe: gpu usable', device: 'Arc Pro B50' };
 
-/** Factory-option shape the fix adds (contract); cast because the production
- *  type does not carry the new fields until the implementation lands. */
-type FactoryOpts = LlamaEngineFactoryOptions & {
-  ignoreMemorySafetyChecks?: boolean;
-  onGpuDevice?: (device: string | null) => void;
-};
-const productionFactory = defaultLlamaFactory as unknown as (opts: FactoryOpts) => Promise<LlamaEngineBackend>;
+/** The production factory, driven directly through its REAL exported type —
+ *  a rename of any LlamaEngineFactoryOptions member breaks this compile. */
+const productionFactory: (opts: LlamaEngineFactoryOptions) => Promise<LlamaEngineBackend> = defaultLlamaFactory;
 
 function stageModels(): { quality: string; fast: string; dir: string } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gpu-admission-models-'));
@@ -270,7 +273,7 @@ describe('estimate-retry (AC1: only an InsufficientMemoryError estimate earns ex
     nlc.state.loadModelImpl = () => {
       throw thrown;
     };
-    const opts: FactoryOpts = { modelPath: models.fast, threads: 2, backend: 'vulkan', gpuLayers: 'max', profile: 'fast' };
+    const opts: LlamaEngineFactoryOptions = { modelPath: models.fast, threads: 2, backend: 'vulkan', gpuLayers: 'max', profile: 'fast' };
     await expect(productionFactory(opts)).rejects.toBe(thrown);
     // The engine-owned estimate marker rides the SAME error object (the
     // installed class never assigns this.name; the engine reads the marker,
@@ -285,7 +288,7 @@ describe('estimate-retry (AC1: only an InsufficientMemoryError estimate earns ex
     nlc.state.loadModelImpl = () => {
       throw thrown;
     };
-    const opts: FactoryOpts = { modelPath: models.fast, threads: 2, backend: 'vulkan', gpuLayers: 'max', profile: 'fast' };
+    const opts: LlamaEngineFactoryOptions = { modelPath: models.fast, threads: 2, backend: 'vulkan', gpuLayers: 'max', profile: 'fast' };
     await expect(productionFactory(opts)).rejects.toBe(thrown);
     expect((thrown as Error & { gpuAdmissionEstimate?: boolean }).gpuAdmissionEstimate).toBeUndefined();
   });
@@ -657,12 +660,11 @@ describe('verdict-freshness (AC4: stale readers, the device-query parser, boot a
 
   // The REAL parser (the module-level mock passes everything else through, so
   // importActual yields the true runGpuDeviceQuery).
-  async function realDeviceQuery(opts: { spawnFn: NonNullable<GpuProbeRunOptions['spawnFn']>; timeoutMs?: number }): Promise<{ status: string; device?: string }> {
+  async function realDeviceQuery(opts: GpuDeviceRunOptions): Promise<GpuDeviceQueryResult> {
     const actual = await vi.importActual<typeof import('../../main/backend/inference/gpu-probe.js')>(
       '../../main/backend/inference/gpu-probe.js',
     );
-    const run = (actual as unknown as { runGpuDeviceQuery: (o: Record<string, unknown>) => Promise<{ status: string; device?: string }> }).runGpuDeviceQuery;
-    return run(opts);
+    return actual.runGpuDeviceQuery(opts);
   }
 
   it('REAL runGpuDeviceQuery parser: every report shape disposes to device | unknown', async () => {
@@ -733,7 +735,7 @@ describe('verdict-freshness (AC4: stale readers, the device-query parser, boot a
       onChild: (c) => {
         captured = c as { kill: (signal?: string) => boolean };
       },
-    } as unknown as Parameters<typeof realDeviceQuery>[0]);
+    });
     await until(() => captured !== null, 2000, 'child registration');
     (captured as unknown as { kill: (s?: string) => boolean }).kill('SIGTERM');
     await expect(pending, 'host-kill must resolve the DISTINCT cancelled disposition, never fail-open').resolves.toEqual({
@@ -769,7 +771,7 @@ describe('verdict-freshness (AC4: stale readers, the device-query parser, boot a
 
   async function startHostRig(opts: {
     storedVerdict?: GpuProbeVerdict | null;
-    deviceQueryResult: { status: 'device' | 'unknown' | 'cancelled'; device?: string };
+    deviceQueryResult: GpuDeviceQueryResult;
     freshProbeVerdict?: GpuProbeVerdict;
     stageFastOnly?: boolean;
   }): Promise<HostRig> {

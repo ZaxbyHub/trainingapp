@@ -134,9 +134,19 @@ profile auto-selection.
   verdict and a human-readable reason persist in `gpu-probe.json` beside the
   other profile sidecars and are reported by `GET /status/models` (issue
   #246: a persisted verdict is adopted at the next boot only when it carries
-  the adapter identity — a device-less record (every failed GPU probe writes
-  device-less, as does a `getLlama` failure) or a device-mismatched record
-  reads as stale there, and the boot re-probes). A GPU
+  the adapter identity — a device-less record or a device-mismatched record
+  reads as stale there, and the boot re-probes. Issue #251: failed probes
+  whose adapter identity IS resolvable in-process now persist that identity —
+  the probe child captures `getGpuDeviceNames()` once right after the backend
+  loads, and every post-load failure (wrong backend, model-load failure,
+  generation failure, crash) plus the parent's sample/backend rejections
+  carry it into the CPU verdict, so the machine converges after one probe
+  instead of re-running the full model-loading probe on every boot. Shapes
+  whose identity is not resolvable in-process stay device-less by design:
+  failures before the backend loads (missing model, `getLlama` failure) and
+  parent-side infra failures (timeout, spawn error, non-clean exit,
+  unreadable report) carry no report to parse, and the parent never imports
+  node-llama-cpp to enumerate adapters itself). A GPU
   load rejected by node-llama-cpp's free-VRAM admission estimate retries once
   with the safety estimate bypassed so the real allocation decides, and an
   estimate-class rejection is session-only (nothing is persisted for it); a

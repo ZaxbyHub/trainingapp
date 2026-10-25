@@ -128,9 +128,15 @@ export const DEFAULT_PROBE_TIMEOUT_MS = 60_000;
  *  terminate-then-escalate shape proven in sidecar-manager.ts:245-252. */
 const KILL_GRACE_MS = 2_000;
 
-/** A verdict that always falls back to CPU, with a stated reason. */
-function cpuVerdict(reason: string): GpuProbeVerdict {
-  return { backend: 'cpu', ok: false, reason: reason === '' ? 'GPU probe did not report a reason' : reason, device: null };
+/** A verdict that always falls back to CPU, with a stated reason. Issue #251
+ *  (AC5): `device` carries the adapter identity when the failure path knows it
+ *  (a child-reported device on a parsed report), so the persisted CPU verdict
+ *  survives the #246 staleness reader and the boot stops re-probing. Shapes
+ *  with no resolvable in-process identity (spawn/timeout/exit/parse failures)
+ *  pass nothing and stay device-less — the parent must not import
+ *  node-llama-cpp to enumerate adapters itself. */
+function cpuVerdict(reason: string, device: string | null = null): GpuProbeVerdict {
+  return { backend: 'cpu', ok: false, reason: reason === '' ? 'GPU probe did not report a reason' : reason, device };
 }
 
 /**
@@ -457,13 +463,18 @@ async function runGpuProbeCore(opts: GpuProbeRunOptions = {}): Promise<GpuProbeV
       // Defence in depth: the child's own `ok` is NOT taken at face value. A
       // backend that loads but generates garbage (llama.cpp #28648) is rejected
       // here, in the parent, even if the child said otherwise.
+      // Issue #251 (AC5): the child-reported adapter identity survives into
+      // the CPU verdict — a failed probe on a KNOWN adapter persists a
+      // device-bearing record the #246 boot flight can validate, instead of a
+      // device-less one that re-probes every boot.
+      const reportDevice = typeof report.device === 'string' && report.device !== '' ? report.device : null;
       const sample = typeof report.sample === 'string' ? report.sample : '';
       if (!probeOutputIsSane(sample)) {
-        finish(cpuVerdict('GPU probe: the device loaded but produced unusable output, so GPU acceleration was rejected.'));
+        finish(cpuVerdict('GPU probe: the device loaded but produced unusable output, so GPU acceleration was rejected.', reportDevice));
         return;
       }
       if (report.backend !== 'vulkan') {
-        finish(cpuVerdict(`GPU probe: the device selected an unexpected backend (${String(report.backend)}), so GPU acceleration was rejected.`));
+        finish(cpuVerdict(`GPU probe: the device selected an unexpected backend (${String(report.backend)}), so GPU acceleration was rejected.`, reportDevice));
         return;
       }
       finish({

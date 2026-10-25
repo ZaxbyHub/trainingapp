@@ -1,6 +1,32 @@
 # Changelog
 
 ## [Unreleased]
+- **Desktop inference + test-infra: CI-stable streamed-cap harness, GPU-probe
+  convergence, honest real-backend cancellation, and a scoped unit-spec
+  typecheck (issues #243 #251 #249 #252)**: the F-003 8 MiB streamed-cap legs
+  now batch SSE frames per socket write (#243), so their duration no longer
+  scales with one event-loop turn per frame — the shape that raced every
+  sentinel budget on the 20261015.610+ runner deploy — while per-delta cap
+  granularity and the mid-stream trip are preserved, and a frozen turncount
+  spec (with an independent methodology-control row) pins the collapse. GPU
+  probe failures whose adapter identity is resolvable in-process (#251)
+  persist a device-bearing CPU verdict — the probe child captures
+  `getGpuDeviceNames()` once right after the backend loads and every
+  post-load failure plus the parent's sample/backend rejections carry it —
+  so an adapter-bearing machine converges after one probe instead of
+  re-running the full model-loading probe every boot (pre-load and
+  parent-side infra failures stay device-less by design). A real-backend
+  cancel (#249) now resolves the cancelled contract instead of rejecting
+  when the engine's own abort fires with no response segment yet (flag +
+  `signal.aborted` + exact-reason identity), and the AC4 real-cancel row was
+  re-authored so its trigger is genuinely mid-generation (the old prompt's
+  zero-terminator output deferred the first emission to the post-prompt
+  flush). The desktop unit-spec tree gets a scoped typecheck (#252):
+  `tsconfig.test.json` covers the four #250-added GPU specs plus this batch's
+  three new specs, `typecheck:test` runs in `desktop-build.yml`, and the
+  widened intersections / `as` casts that silently absorbed production
+  renames are replaced by typed call paths (rename mutants fail the gate).
+
 - **GPU inference: admission by real allocation, lifecycle coordination, and
   native-resource teardown (issue #246)**: the desktop backend's GPU path now
   decides acceleration by real allocation outcomes instead of
