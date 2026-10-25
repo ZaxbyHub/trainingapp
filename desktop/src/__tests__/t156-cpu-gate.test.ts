@@ -140,7 +140,7 @@ describe('#156 gpu-probe verdict: the optional `measured` field', () => {
     const dir = tempSidecarDir('t156-measured-garbage-');
     try {
       for (const bad of ['fast', null, false]) {
-        writeRawVerdict(dir, { v: 1, backend: 'cpu', ok: false, reason: 'r', device: null, measured: bad });
+        writeRawVerdict(dir, { v: 1, backend: 'cpu', ok: false, reason: 'r', device: 'stub-gpu-0', measured: bad });
         const verdict = readGpuProbeVerdict(dir);
         expect(verdict, `measured:${JSON.stringify(bad)} must not break the read`).not.toBeNull();
         expect(verdict?.measured).toBeUndefined();

@@ -1243,7 +1243,16 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
               <div className="settings-row">
                 <span className="settings-label settings-row">
                   Status:
-                  {modelCached ? (
+                  {desktopApp && browserEngine === 'wllama' ? (
+                    // Issue #247 (AC2): the desktop package deliberately ships
+                    // no browser-LLM weights, so "cached or not" is not a
+                    // meaningful question inside Electron — rendering the
+                    // broken-install copy here would misclassify an intentional
+                    // exclusion as a defect.
+                    <span className="settings-text">
+                      Not applicable in the desktop app — the built-in backend generates answers; the browser model is not used here.
+                    </span>
+                  ) : modelCached ? (
                     <StatusBadge status="ready" label="Cached" />
                   ) : (
                     <StatusBadge status="not-ready" label="Not cached" />
@@ -1283,7 +1292,11 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
                   Weights are bundled with this build — no download needed. The model loads automatically on first use.
                 </p>
               )}
-              {browserEngine === 'wllama' && !modelCached && (
+              {/* PRR-042 (4.5 review): the not-applicable badge above already
+                  tells desktop users the browser model is intentionally unused —
+                  the broken-install copy must not contradict it. The desktop
+                  package ships no browser-LLM weights by design. */}
+              {browserEngine === 'wllama' && !modelCached && !desktopApp && (
                 <p className="settings-text settings-tone--warning">
                   The packaged model is missing from this build. The wllama engine cannot download it. Contact your administrator or rebuild with the weights staged (see PACKAGING.md).
                 </p>

@@ -458,7 +458,7 @@ describe('b4-llama-engine Group B (real model, real default backend)', () => {
   });
 
   afterAll(async () => {
-    // EngineSurface has no dispose in the frozen contract; LlamaEngine may
+    // EngineSurface grew optional lifecycle members in #246 (dispose/shutdown/resetLifecycle as optional capability methods); dispose stays non-mandatory for hosts; LlamaEngine may
     // expose one — call it best-effort so the native model does not leak.
     const maybeDisposable = engine as unknown as { dispose?: () => Promise<void> };
     if (typeof maybeDisposable.dispose === 'function') await maybeDisposable.dispose();

@@ -96,6 +96,7 @@ function migrateLegacyBrowserBlob(input: Record<string, unknown>): Record<string
 }
 
 function loadStoredState(): InferenceModeState {
+  const desktop = isElectron();
   try {
     const stored = localStorage.getItem(INFERENCE_MODE_KEY);
     if (stored) {
@@ -103,7 +104,6 @@ function loadStoredState(): InferenceModeState {
       if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
         parsed = migrateLegacyBrowserBlob(parsed as unknown as Record<string, unknown>) as unknown as StoredInferenceMode;
       }
-      const desktop = isElectron();
       return {
         ...defaultState,
         // Mode allow-list (PR #138 review): browserEngine and ragPreset are
@@ -128,7 +128,12 @@ function loadStoredState(): InferenceModeState {
   } catch {
     // localStorage not available or parse error
   }
-  return defaultState;
+  // Issue #247 (AC1): a fresh install with NO stored blob defaults to the
+  // built-in backend inside Electron — the desktop package deliberately ships
+  // no browser-LLM weights, so 'browser-local' here is a dead end whose only
+  // LLM target 404s (the field failure this fixes). The browser app keeps
+  // 'browser-local' unchanged.
+  return desktop ? { ...defaultState, mode: 'api' as InferenceMode } : defaultState;
 }
 
 function persistState(
