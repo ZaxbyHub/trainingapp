@@ -1110,8 +1110,12 @@ export class LlamaEngine implements EngineSurface {
       // Issue #246 (AC6): hold admission until boot validation settles, BEFORE
       // profile/model selection, so warmup and any early /ask resolve ONE
       // post-verdict identity into the same single-flight load.
+      const generation = this.operationGeneration;
       const warmGate = this.armedGate();
-      if (warmGate !== null) await warmGate.catch(() => {});
+      if (warmGate !== null) {
+        await warmGate.catch(() => {});
+        this.assertGenerationAlive(generation);
+      }
       this.assertEngineActive();
       const profile = this.effectiveProfile();
       const modelPath = this.assertModelAvailable(profile);
@@ -1451,9 +1455,13 @@ export class LlamaEngine implements EngineSurface {
             // write; this guard covers its pre-write mkdir.
             try {
               writeGpuProbeVerdict(this.gpuVerdictDir, record);
-            } catch {
-              // logged nowhere by design: the verdict reason already tells the
-              // operator what happened this session
+            } catch (writeErr) {
+              // 4.5-review PRR-030: the plan's contract is "best-effort ...
+              // logged" — a silent failure would lose PRR-003's cross-restart
+              // persistence with no trace anywhere.
+              console.warn(
+                `[trainingapp-backend] gpu-probe.json write failed (the downgrade stays in memory for this session): ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`,
+              );
             }
           }
           this.onGpuLoadFailure?.(record);

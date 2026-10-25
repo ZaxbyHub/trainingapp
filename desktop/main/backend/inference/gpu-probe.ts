@@ -534,7 +534,11 @@ export interface GpuDeviceRunOptions extends GpuProbeRunOptions {
  */
 export async function runGpuDeviceQuery(opts: GpuDeviceRunOptions = {}): Promise<GpuDeviceQueryResult> {
   let child: { kill: (signal?: NodeJS.Signals) => unknown } | null = null;
-  let settledChild: { kill: (signal?: NodeJS.Signals) => unknown } | null = null;
+  // 4.5-review PRR-003: abandonment must be captured INSIDE onSettled, BEFORE
+  // delegating — the caller's own onSettled prunes the child from its set
+  // (index.ts), so a post-await has() read the pruned set and could never be
+  // true (the check was dead; 'cancelled' rested solely on signal death).
+  let settledChildWasAbandoned = false;
   const verdict = await runGpuProbeCore({
     ...opts,
     deviceOnly: true,
@@ -544,14 +548,12 @@ export async function runGpuDeviceQuery(opts: GpuDeviceRunOptions = {}): Promise
       opts.onChild?.(spawned);
     },
     onSettled: () => {
-      settledChild = child;
+      settledChildWasAbandoned =
+        child !== null && opts.abandonedChildren?.has(child) === true;
       opts.onSettled?.();
     },
   });
-  if (verdict === null) return { status: 'cancelled' };
-  if (settledChild !== null && opts.abandonedChildren?.has(settledChild) === true) {
-    return { status: 'cancelled' };
-  }
+  if (verdict === null || settledChildWasAbandoned) return { status: 'cancelled' };
   if (verdict.ok && verdict.backend === 'vulkan' && typeof verdict.device === 'string' && verdict.device !== '') {
     return { status: 'device', device: verdict.device };
   }

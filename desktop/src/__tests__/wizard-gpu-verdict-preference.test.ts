@@ -1,7 +1,7 @@
 // wizard-gpu-verdict-preference.test.ts — 4.5 implementation-review Finding 3
 // (collated issues #246 + #247, trace .agents/issue-traces/collated-246-247).
 //
-// The first-run wizard's GPU verdict input (desktop/main/index.ts:726) must
+// The first-run wizard's GPU verdict input (desktop/main/index.ts:728-729) must
 // read VALIDATED state in holder-first order:
 //
 //   const gpuVerdict =
@@ -69,7 +69,7 @@ function composeWizardVerdict(mod: GpuModule, sidecarDir: string): GpuProbeVerdi
   return mod.activeGpuVerdict() ?? (mod.gpuVerdictGate() !== null ? null : mod.readGpuProbeVerdict(sidecarDir));
 }
 
-describe('wizard-gpu-verdict-preference: the holder-first read at desktop/main/index.ts:726', () => {
+describe('wizard-gpu-verdict-preference: the holder-first read at desktop/main/index.ts:728-729', () => {
   const indexTsPath = fileURLToPath(new URL('../../main/index.ts', import.meta.url));
 
   /** The source contract: holder-first, gate-pending, then the stale-aware read. */

@@ -715,16 +715,19 @@ export function bootstrap(): void {
       // runtime's CPU-only rule — a probed CPU-only verdict forces fast here
       // exactly as effectiveProfile() does at query time.
       // Issue #246 (AC4, rev-3 critic R3-6): consume ONLY validated verdict
-      // state. The module holder carries what the boot-admission flight
-      // validated THIS lifecycle; while validation is still pending (holder
-      // null with an armed gate) the verdict is treated as absent — the RAM
-      // rule decides, never an unvalidated sidecar record (a device-less
-      // record must not force the fast recommendation). The raw sidecar is
-      // read only when no validation is in flight and none has published
-      // (pre-host first run); at this idle call shape no adapter identity is
-      // available, so a device-MISMATCHED record is undetectable here — the
-      // approved plan's bounded-staleness disposition (one recommendation,
-      // until the boot probe rewrites the sidecar).
+      // state. The module holder carries verdicts published THIS lifecycle —
+      // the boot-admission flight's validated verdict, but ALSO the engine's
+      // own automatic-load CPU downgrade (llama-engine.ts), which no flight
+      // validated. While validation is still pending (holder null with an
+      // armed gate) the verdict is treated as absent — the RAM rule decides,
+      // never an unvalidated sidecar record (a device-less record must not
+      // force the fast recommendation). The raw sidecar is read only when no
+      // validation is in flight and none has published — pre-host first run,
+      // or a lifecycle that settled without publishing (e.g. models never
+      // staged); at this idle call shape no adapter identity is available, so
+      // a device-MISMATCHED record is undetectable here — the approved plan's
+      // bounded-staleness disposition (one recommendation, until the boot
+      // probe rewrites the sidecar).
       const gpuVerdict =
         activeGpuVerdict() ?? (gpuVerdictGate() !== null ? null : readGpuProbeVerdict(path.dirname(storePath)));
       const recommendation = autoSelectProfile({

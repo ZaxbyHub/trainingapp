@@ -2,7 +2,7 @@
  * model-chip-backend-profile.test.ts — issue #247 R3 (collated trace
  * .agents/issue-traces/collated-246-247, approved plan rev 5, AC12).
  *
- * AC12 is a PIN ONLY (no production change; 4.5 mutates the producer):
+ * AC12 is a PIN ONLY (no production change; this diff pins the pre-existing producer (model-chip.ts is unchanged here; the review-round mutation probe mutates it in the working tree only)):
  * in api mode (the desktop backend) with a real llama.cpp engine the chip
  * names the desktop PROFILE — 'Quality profile' / 'Fast profile' — resolved
  * from residentProfile first, then desktopModels.profile, and NEVER from the

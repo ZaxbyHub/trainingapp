@@ -269,18 +269,22 @@ function fakeFactory(events: string[], deferGenerate?: () => Promise<void>) {
 }
 
 /**
- * RIG ISOLATION (implementer-agreed): rerank OFF + an explicit EMPTY
- * embedding-model dir, so resolveEmbedder degrades to null (the pinned B5
- * contract — retrieval surface detached, engine keeps stub retrieval) and no
- * ONNX/worker_thread is ever wired from ambient staged weights. Without this,
- * host rows are machine-dependent: a machine with real weights stages an
- * OnnxEmbedder + reranker worker whose worker_thread dies under vitest and
- * failAll() rejects the retrieval leg of every query.
+ * RIG ISOLATION (PRR-001-corrected): rerank OFF + the deterministic HASH
+ * embedder — the pattern 11 other desktop specs use. The first draft set an
+ * EMPTY TRAININGAPP_EMBEDDING_MODEL_DIR believing resolveEmbedder degrades to
+ * null; the explicit dir is actually resolveEmbedder's FALLBACK model dir
+ * (embedder.ts), so on CI (LFS-pointer weights) the host bound a real
+ * OnnxEmbedder to the empty dir and store-backed queries died on a missing
+ * tokenizer.json — deterministic, machine-state-dependent, not timing.
  */
-function rigEnv(): { TRAININGAPP_RETRIEVAL_RERANK: string; TRAININGAPP_EMBEDDING_MODEL_DIR: string } {
-  const dir = tempDir('gpu-spec-noembedder-');
-  cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return { TRAININGAPP_RETRIEVAL_RERANK: 'false', TRAININGAPP_EMBEDDING_MODEL_DIR: dir };
+function rigEnv(): { TRAININGAPP_RETRIEVAL_RERANK: string; TRAININGAPP_DESKTOP_EMBEDDER: string } {
+  // 4.5-review PRR-001: the hash embedder (the 11-other-specs pattern) is the
+  // isolation that actually works. An EMPTY TRAININGAPP_EMBEDDING_MODEL_DIR is
+  // NOT a disable — resolveEmbedder treats an explicit dir as its fallback
+  // (embedder.ts), so on CI (LFS-pointer weights) the host bound a real
+  // OnnxEmbedder to the empty dir and every store-backed query died on a
+  // missing tokenizer.json. Deterministic, not timing.
+  return { TRAININGAPP_RETRIEVAL_RERANK: 'false', TRAININGAPP_DESKTOP_EMBEDDER: 'hash' };
 }
 
 interface HostRig {
@@ -609,7 +613,8 @@ describe('gpu-test-drain (AC5: the whole-operation gpuTest swap flight)', () => 
       () => undefined,
       () => undefined,
     );
-    await until(() => true, 100, 'settle');
+    // (settle: the awaited flight above already drained every continuation —
+    // until(() => true, N) is a 0ms no-op, PRR-058.)
     expect(
       activeGpuVerdict()?.reason === 'KILLED-PROBE-VERDICT' ? 'adopted a killed probe' : 'ok',
       'a host-killed probe verdict must not be adopted',

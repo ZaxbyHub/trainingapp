@@ -8,12 +8,13 @@
   the admission estimate (`InsufficientMemoryError`, classified by instanceof
   at the factory boundary) earns exactly one retry with
   `ignoreMemorySafetyChecks` so the real allocation decides, and an
-  estimate-class rejection is session-only: no capability verdict is published
-  or persisted for it. Incapacity-class failures still persist (PRR-003
+  estimate-class rejection is session-only: the session downgrades to CPU and
+  nothing is persisted for it. Incapacity-class failures still persist (PRR-003
   preserved) but only AFTER the same-profile CPU retry settles and carrying
   the adapter identity, so a later boot's device comparison can invalidate
-  them: `readGpuProbeVerdict` treats a device-less or device-mismatched record
-  as stale and the new boot-admission flight (a bounded out-of-process
+  them: `readGpuProbeVerdict` treats a device-less record as stale (a
+  device-mismatched record is invalidated by the boot flight's adapter
+  comparison) and the new boot-admission flight (a bounded out-of-process
   `--device-only` adapter query) validates before anything is published,
   warmed, or constructed - unknown adapter fails open to the stored record, a
   host-killed query adopts nothing. The GPU test route is now a coordinated
@@ -27,15 +28,17 @@
   self-deadlock, and host `stop()` drains and shuts the engine down so native
   resources cannot outlive the process (the field-observed stranded
   modified-pool VRAM). First-boot sequencing closes the early-ask race:
-  warmup (and an early `/ask` or stream preflight) awaits the boot verdict
-  before selecting profile, model, or backend, landing in the same
-  single-flight load.
+  on the automatic local path, warmup (and an early `/ask` or stream
+  preflight) awaits the boot verdict before selecting profile, model, or
+  backend, landing in the same single-flight load (forced and external-endpoint
+  selections are exempt by design).
 - **Desktop renderer: default fresh installs to the built-in backend and stop
   probing unshipped browser-LLM weights (issue #247)**: inside Electron a
   fresh install with no stored mode blob now starts in `api` mode - the
-  desktop package deliberately ships no browser-LLM weights, so the old
-  `browser-local` default was a dead end whose only LLM target 404'd (the
-  field failure); the browser app keeps `browser-local`. The wllama
+  desktop package deliberately ships no browser-LLM weights, so a
+  `browser-local` selection's only LLM target 404s (the field failure was the
+  Settings presence probe firing on every open); the browser app keeps
+  `browser-local`. The wllama
   readiness branch answers "not available" under Electron without issuing any
   request (zero `models/llm/*` fetches from the desktop renderer), and the
   Settings browser-model cache row renders a not-applicable state instead of

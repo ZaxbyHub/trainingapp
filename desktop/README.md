@@ -134,9 +134,9 @@ profile auto-selection.
   verdict and a human-readable reason persist in `gpu-probe.json` beside the
   other profile sidecars and are reported by `GET /status/models` (issue
   #246: a persisted verdict is adopted at the next boot only when it carries
-  the adapter identity — a device-less record (written when `getLlama` itself
-  failed) or a device-mismatched record reads as stale there, and the boot
-  re-probes). A GPU
+  the adapter identity — a device-less record (every failed GPU probe writes
+  device-less, as does a `getLlama` failure) or a device-mismatched record
+  reads as stale there, and the boot re-probes). A GPU
   load rejected by node-llama-cpp's free-VRAM admission estimate retries once
   with the safety estimate bypassed so the real allocation decides, and an
   estimate-class rejection is session-only (nothing is persisted for it); a

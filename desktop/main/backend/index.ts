@@ -533,8 +533,11 @@ export class NodeBackendHost implements BackendHost {
       device: null,
     });
     if (stoppedEpoch !== null) return aborted();
-    // Stale-aware sidecar re-read: a device-less or device-mismatched record
-    // reads as absent — the fresh probe below re-establishes it.
+    // Stale-aware sidecar re-read: a device-LESS record reads as absent (the
+    // fresh probe below re-establishes it). Device-MISMATCH detection is the
+    // boot-admission flight's own comparison — this call passes no
+    // currentDevice, so a mismatched-but-device-bearing record reads as
+    // present here (the flight re-validates before anything adopts).
     if (this.gpuProbeDir !== null) {
       const stored = readGpuProbeVerdict(this.gpuProbeDir);
       if (stored !== null) this.gpuVerdict = stored;
@@ -1281,46 +1284,47 @@ export class NodeBackendHost implements BackendHost {
     this.reranker = null;
     const store = this.store;
     this.store = null;
+    // 4.5-review PRR-078: the engine tail below (resume → drain → shutdown →
+    // gate resolve) must run even when an earlier teardown step throws — a
+    // skipped tail leaves the module gate armed forever (every later load
+    // wedges) and the engine's natives undisposed.
     try {
-      if (reranker !== null && typeof (reranker as WorkerReranker).dispose === 'function') {
-        await (reranker as WorkerReranker).dispose();
-      }
-    } finally {
       try {
-        if (store !== null) closeStore(store);
+        if (reranker !== null && typeof (reranker as WorkerReranker).dispose === 'function') {
+          await (reranker as WorkerReranker).dispose();
+        }
       } finally {
-        // The listener must close even if the store close throws. The
-        // renderer holds keep-alive sockets that would keep server.close()
-        // pending forever (issue #67 e2e: app quit hung on them) — drop
-        // idle/remaining connections explicitly before awaiting close.
-        if (server !== null) {
-          if (typeof (server as unknown as { closeIdleConnections?: () => void }).closeIdleConnections === 'function') {
-            (server as unknown as { closeIdleConnections: () => void }).closeIdleConnections();
+        try {
+          if (store !== null) closeStore(store);
+        } finally {
+          // The listener must close even if the store close throws. The
+          // renderer holds keep-alive sockets that would keep server.close()
+          // pending forever (issue #67 e2e: app quit hung on them) — drop
+          // idle/remaining connections explicitly before awaiting close.
+          if (server !== null) {
+            if (typeof (server as unknown as { closeIdleConnections?: () => void }).closeIdleConnections === 'function') {
+              (server as unknown as { closeIdleConnections: () => void }).closeIdleConnections();
+            }
+            (server as unknown as { closeAllConnections?: () => void }).closeAllConnections?.();
+            dbg('connections dropped; awaiting server close');
+            await new Promise<void>((resolve) => server.close(() => resolve()));
+            dbg('server closed');
           }
-          (server as unknown as { closeAllConnections?: () => void }).closeAllConnections?.();
-          dbg('connections dropped; awaiting server close');
-          await new Promise<void>((resolve) => server.close(() => resolve()));
-          dbg('server closed');
         }
       }
+    } finally {
+      (this.engine as { resumeQueries?: () => void }).resumeQueries?.();
+      await (this.engine as { joinLoadAndQueue?: () => Promise<void> }).joinLoadAndQueue?.().catch(() => {});
+      await (this.engine as { shutdown?: () => Promise<void> }).shutdown?.().catch(() => {});
+      this.bootGate?.resolve();
+      this.bootGate = null;
+      this.bootAdmissionFlight = null;
+      this.gpuTestFlight = null;
     }
-    // Issue #246 (AC8): awaited engine teardown — before this, the host never
-    // disposed the engine, so native (llama.cpp) resources could outlive the
-    // process (field-observed stranded GPU memory). The listener is closed, so
-    // no new queries arrive; resume clears any leaked swap pause (idempotent);
-    // the drain waits out an active generation and a load in flight; terminal
-    // shutdown then blocks all later local construction (gate-waiting queries
-    // wake into the stopped engine and fail retryable) and disposes the
-    // resident backend awaited. The gate resolves last, and the flight memos
-    // clear so a restarted host cannot join a dead flight.
-    (this.engine as { resumeQueries?: () => void }).resumeQueries?.();
-    await (this.engine as { joinLoadAndQueue?: () => Promise<void> }).joinLoadAndQueue?.().catch(() => {});
-    await (this.engine as { shutdown?: () => Promise<void> }).shutdown?.().catch(() => {});
-    this.bootGate?.resolve();
-    this.bootGate = null;
-    this.bootAdmissionFlight = null;
-    this.gpuTestFlight = null;
   }
+    // (Issue #246 AC8: the awaited engine teardown — resume → drain →
+    // terminal shutdown → gate resolve → memo clear — now lives in the
+    // finally above so it runs on every stop path.)
 
 
 }

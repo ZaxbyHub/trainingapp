@@ -196,16 +196,37 @@ describe('desktop-readiness-gate: Settings browser-LLM cache row (AC11 rendering
     });
   }
 
-  test('Electron: the cache row renders the not-applicable state — no "Not cached" badge, no administrator copy', async () => {
+  test('Electron + browser-local (the rendered state): the cache row shows the not-applicable copy — no "Not cached", no administrator copy, zero probes (PRR-004: prime the mode that RENDERS the section)', async () => {
     electron.on = true;
-    primeInferenceMode('api');
+    // PRR-004: prime 'browser-local', the mode that actually mounts the
+    // browser-engine section — priming 'api' replaced the whole section with
+    // the muted hidden-paragraph, so the old absence assertions passed
+    // structurally and the not-applicable copy was never exercised.
+    primeInferenceMode('browser-local');
     render(React.createElement(SettingsPage));
-    // Bounded settle: any (incorrect) async probe/verdict must have landed by
-    // now, so the absence assertions below cannot pass by winning a race.
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    // The not-applicable state must be PRESENT (a mutant rendering nothing
+    // must fail), and the broken-install copy must be absent (PRR-042: the
+    // administrator paragraph is now desktopApp-gated).
+    await waitFor(
+      () => {
+        expect(screen.getByText(/Not applicable in the desktop app/)).toBeTruthy();
+      },
+      { timeout: 3000 },
+    );
     expect(screen.queryByText('Not cached'), 'no browser-cache verdict inside Electron').toBeNull();
     expect(screen.queryByText(/administrator/i), 'no rebuild/administrator copy inside Electron').toBeNull();
     expect(probeAssetMock, 'the Settings layer never probes inside Electron either').not.toHaveBeenCalled();
+  });
+
+  test('Electron + api mode (the shipped default): the whole browser-engine section is replaced by the muted hidden paragraph', async () => {
+    electron.on = true;
+    primeInferenceMode('api');
+    render(React.createElement(SettingsPage));
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(screen.queryByText('Not cached')).toBeNull();
+    expect(screen.queryByText(/administrator/i)).toBeNull();
+    expect(screen.queryByText(/Not applicable in the desktop app/)).toBeNull();
+    expect(probeAssetMock).not.toHaveBeenCalled();
   });
 
   test('browser app: an uncached wllama row still shows the honest browser copy (unchanged path)', async () => {
