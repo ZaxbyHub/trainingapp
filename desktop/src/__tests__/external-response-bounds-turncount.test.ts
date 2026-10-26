@@ -110,7 +110,7 @@ describe('F-003 turncount (issue #243): the 8 MiB cap legs are insensitive to pe
     // (same-host socket behavior changed), not that the fix regressed.
     const http = await import('node:http');
     const delta = '€'.repeat(1024); // 3072 UTF-8 bytes, same as the F-003 fixture
-    const totalFrames = 700; // small enough to finish under CI pacing (~700 events worst case)
+    const totalFrames = 60; // tiny on purpose: 60 unbatched events cost ~2.5s even at the worst observed CI pacing (~40ms/event); the relational assertion needs only ENOUGH events to track the pump, not the full 8 MiB volume
     const serve = (framesPerWrite: number): Promise<{ port: number; dataEvents: () => number; bytesSeen: () => number; done: Promise<void> }> => {
       const frames: string[] = [];
       for (let i = 0; i < totalFrames; i += 1) {
@@ -178,10 +178,10 @@ describe('F-003 turncount (issue #243): the 8 MiB cap legs are insensitive to pe
     await batched.done;
 
     expect(unbatched.bytesSeen()).toBeGreaterThan(batched.bytesSeen() ? 0 : 1);
-    expect(unbatched.bytesSeen()).toBeGreaterThan(CAP_BYTES / 4); // same byte volume per pump (700 x 3072 ≈ 2.05 MiB)
+    expect(unbatched.bytesSeen()).toBeGreaterThan(60 * DELTA_BYTES * 3 / 4); // both pumps deliver the same ~60-frame byte volume
     expect(
       unbatched.dataEvents(),
       'the one-write-per-frame control pump must read MORE socket data events than the batched pump on the same host — if it does not, the subject rows are not counting real socket data events',
     ).toBeGreaterThan(batched.dataEvents());
-  }, 120_000);
+  }, 60_000);
 });
