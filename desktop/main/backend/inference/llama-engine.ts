@@ -1641,7 +1641,11 @@ export class LlamaEngine implements EngineSurface {
     const cappedHistory = capContractHistory(opts.history);
     const seededTurns = cappedHistory.slice(-MAX_HISTORY_TURNS);
     const contextCharCeiling = groundedContextBudgetChars({
-      answerTokens: overrides.maxTokens ?? PROFILE_GENERATION[profile].maxTokens,
+      // Issue #223 AC4: a per-call budget (bench driver) sizes the reservation
+      // when no settings override exists; settings still win, and the profile
+      // default applies when neither is set. Product callers never pass the
+      // option, so their reservation is unchanged.
+      answerTokens: overrides.maxTokens ?? opts.maxTokens ?? PROFILE_GENERATION[profile].maxTokens,
       systemPrompt: SYSTEM_PROMPT,
       groundedInstruction: GROUNDED_INSTRUCTION,
       question,
@@ -1685,6 +1689,12 @@ export class LlamaEngine implements EngineSurface {
           streamCallback: opts.streamCallback,
           cancellationEvent: opts.cancellationEvent,
           ...(overrides.maxTokens !== undefined ? { maxTokens: overrides.maxTokens } : {}),
+          // Issue #223 AC4: per-call budget reaches the real sampler when no
+          // settings override exists (absent-shape preserved — the key stays
+          // absent when neither source sets it).
+          ...(overrides.maxTokens === undefined && opts.maxTokens !== undefined
+            ? { maxTokens: opts.maxTokens }
+            : {}),
           ...(overrides.temperature !== undefined ? { temperature: overrides.temperature } : {}),
         });
         const out: EngineQueryResult = {
@@ -1745,6 +1755,11 @@ export class LlamaEngine implements EngineSurface {
         contextTexts: context?.texts ?? null,
         history: opts.history,
         ...(overrides.maxTokens !== undefined ? { maxTokens: overrides.maxTokens } : {}),
+        // Issue #223 AC4: same per-call fallback on the external path
+        // (settings override wins; absent-shape preserved).
+        ...(overrides.maxTokens === undefined && opts.maxTokens !== undefined
+          ? { maxTokens: opts.maxTokens }
+          : {}),
         ...(overrides.temperature !== undefined ? { temperature: overrides.temperature } : {}),
         streamCallback: opts.streamCallback,
         cancellationEvent: opts.cancellationEvent,

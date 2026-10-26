@@ -41,10 +41,12 @@
  * Exit code non-zero on any failure.
  */
 import { createHash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
+import { createReadStream, realpathSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { StagingLockHeld, withStagingLockSync } from './staging-lock.mjs';
 
 const SCRIPT = 'build-installer-manifest';
 const CHUNK_BYTES = 8 * 1024 * 1024;
@@ -52,6 +54,18 @@ const CHUNK_BYTES = 8 * 1024 * 1024;
 const errors = [];
 function fail(message) {
   errors.push(`${message}`);
+}
+
+/** Collected generation/verify failures, thrown OUT of the locked region so
+ *  the staging lock is released before the process exits (issue #174: a
+ *  process.exit inside the guarded region would strand the lock). */
+class ManifestFailure extends Error {
+  constructor(kind, problems) {
+    super(`${kind} FAILED (${problems.length} problem${problems.length === 1 ? '' : 's'})`);
+    this.name = 'ManifestFailure';
+    this.problems = problems;
+    this.kind = kind;
+  }
 }
 
 function usage() {
@@ -98,7 +112,10 @@ function parseArgs(argv) {
   return out;
 }
 
-async function sha256File(absolutePath) {
+/** Streamed sha256 in 8 MiB chunks (issue #174 AC2 pins this against the
+ *  verifier's readSync loop in the manifest-verifier on a committed
+ *  cross-boundary fixture). Exported for that committed spec. */
+export async function sha256File(absolutePath) {
   const hash = createHash('sha256');
   const stream = createReadStream(absolutePath, { highWaterMark: CHUNK_BYTES });
   for await (const chunk of stream) hash.update(chunk);
@@ -339,36 +356,62 @@ async function main() {
   if (stageStat === null || !stageStat.isDirectory()) throw new Error(`stage dir is not a directory: ${stage}`);
   const outPath = path.resolve(args.out ?? path.join(stage, 'manifest.json'));
 
-  if (args.verify) {
-    try {
-      await fs.access(outPath);
-    } catch {
-      throw new Error(`--verify requires an existing manifest at ${outPath} (generate first; verify never regenerates)`);
+  // Issue #174 AC1: enumeration + manifest write run under the SAME exclusive
+  // staging lock the stager holds (<stage-dir>.lock, a sibling of the staged
+  // tree), so a concurrent staging run can no longer wipe the tree mid-walk or
+  // interleave two manifest writes. --verify takes the lock too (a verify
+  // racing a wipe would report torn-tree failures that name no concurrency).
+  // process.exit stays OUT of the guarded region: failures throw
+  // ManifestFailure (the lock is released inside withStagingLockSync) and only
+  // the catch below sets the exit status.
+  await withStagingLockSync(stage, async () => {
+    if (args.verify) {
+      try {
+        await fs.access(outPath);
+      } catch {
+        throw new Error(`--verify requires an existing manifest at ${outPath} (generate first; verify never regenerates)`);
+      }
+      const fileCount = await verify(stage, outPath);
+      if (errors.length > 0) throw new ManifestFailure('verify', errors);
+      console.log(`${SCRIPT}: verify clean (${fileCount} staged files match the manifest at ${path.relative(process.cwd(), outPath) || outPath})`);
+      return;
     }
-    const fileCount = await verify(stage, outPath);
-    if (errors.length > 0) {
-      for (const message of errors) console.error(`${SCRIPT}: FAIL ${message}`);
-      console.error(`${SCRIPT}: verify FAILED (${errors.length} problem${errors.length === 1 ? '' : 's'})`);
-      process.exit(1);
-    }
-    console.log(`${SCRIPT}: verify clean (${fileCount} staged files match the manifest at ${path.relative(process.cwd(), outPath) || outPath})`);
-    return;
-  }
 
-  const manifest = await buildManifest(stage, outPath, args.note, args.airgap);
-  if (errors.length > 0) {
-    for (const message of errors) console.error(`${SCRIPT}: FAIL ${message}`);
-    console.error(`${SCRIPT}: generation FAILED (${errors.length} problem${errors.length === 1 ? '' : 's'}); no manifest written`);
-    process.exit(1);
-  }
-  await fs.mkdir(path.dirname(outPath), { recursive: true });
-  await fs.writeFile(outPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
-  for (const line of componentSummary(manifest)) console.log(`${SCRIPT}: ${line}`);
-  console.log(`${SCRIPT}: wrote ${outPath} (${manifest.models.length} model entries, ${manifest.packs.length} pack entries)`);
+    const manifest = await buildManifest(stage, outPath, args.note, args.airgap);
+    if (errors.length > 0) throw new ManifestFailure('generation', errors);
+    await fs.mkdir(path.dirname(outPath), { recursive: true });
+    await fs.writeFile(outPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+    for (const line of componentSummary(manifest)) console.log(`${SCRIPT}: ${line}`);
+    console.log(`${SCRIPT}: wrote ${outPath} (${manifest.models.length} model entries, ${manifest.packs.length} pack entries)`);
+  });
 }
 
-main().catch((err) => {
-  console.error(`${SCRIPT}: ${err instanceof Error ? err.message : err}`);
-  console.error(usage());
-  process.exit(1);
-});
+// Entry guard (issue #174 AC2 prerequisite): importing this module must not
+// run the CLI — the committed multi-chunk sha256 spec imports sha256File.
+// Case-folded endsWith so a case-varied invocation path still counts as a
+// direct run (the stager's PRR-122 precedent).
+function isDirectInvocation(metaUrl) {
+  if (process.argv[1] === undefined) return false;
+  try {
+    return realpathSync(process.argv[1]).toLowerCase() === realpathSync(fileURLToPath(metaUrl)).toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectInvocation(import.meta.url)) {
+  main().catch((err) => {
+    if (err instanceof ManifestFailure) {
+      for (const message of err.problems) console.error(`${SCRIPT}: FAIL ${message}`);
+      console.error(`${SCRIPT}: ${err.message}${err.kind === 'generation' ? '; no manifest written' : ''}`);
+      process.exit(1);
+    }
+    if (err instanceof StagingLockHeld) {
+      console.error(`${SCRIPT}: FAIL ${err.message}`);
+      process.exit(1);
+    }
+    console.error(`${SCRIPT}: ${err instanceof Error ? err.message : err}`);
+    console.error(usage());
+    process.exit(1);
+  });
+}

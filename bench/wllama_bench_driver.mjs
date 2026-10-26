@@ -252,6 +252,9 @@ async function run() {
     mode,
     threads: nThreads,
     prompt_tokens: promptTokens,
+    // Issue #223 AC5 (review round 1): the decode budget is a real wllama
+    // measurement input (n_ctx sizing + generation budget) — record it.
+    max_tokens: maxTokens,
     machine,
     crossOriginIsolated: self.crossOriginIsolated === true,
     sharedArrayBuffer: typeof SharedArrayBuffer !== 'undefined',

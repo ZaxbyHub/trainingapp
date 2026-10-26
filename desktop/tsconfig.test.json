@@ -10,6 +10,10 @@
     "src/__tests__/gpu-lifecycle-contract-sweep.test.ts",
     "src/__tests__/external-response-bounds-turncount.test.ts",
     "src/__tests__/gpu-probe-device-identity.test.ts",
-    "src/__tests__/b4-cancel-abort-throw.test.ts"
+    "src/__tests__/b4-cancel-abort-throw.test.ts",
+    "src/__tests__/harness-trace-hygiene.test.ts",
+    "src/__tests__/e174-staging-isolation.test.ts",
+    "src/__tests__/e174-multichunk-sha256.test.ts",
+    "src/__tests__/e174-stager-negatives.test.ts"
   ]
 }

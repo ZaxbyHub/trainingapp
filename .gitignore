@@ -50,6 +50,7 @@ desktop/renderer/
 desktop/release/
 desktop/desktop-release/
 desktop/installer-resources/
+desktop/installer-resources.lock
 
 # Agent working state (issue traces, session artifacts — not committed)
 .zcode/
