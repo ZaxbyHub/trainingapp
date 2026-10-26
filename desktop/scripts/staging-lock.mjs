@@ -63,7 +63,8 @@ export function acquireStagingLock(stageDir, { pid = process.pid, now = () => ne
     if (err && /** @type {NodeJS.ErrnoException} */ (err).code === 'EEXIST') {
       let holder = { pid: '?', since: '?' };
       try {
-        holder = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+        const parsed = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+        if (parsed && typeof parsed === 'object' && 'pid' in parsed) holder = parsed;
       } catch {
         // Unreadable/foreign lock: still refuse, with the raw path as evidence.
       }
@@ -87,6 +88,7 @@ export function releaseStagingLock(stageDir, { pid = process.pid } = {}) {
   } catch {
     return false; // nothing to release (or unreadable): never unlink blind
   }
+  if (holder === null || typeof holder !== 'object') return false;
   if (Number(holder.pid) !== Number(pid)) return false;
   try {
     fs.unlinkSync(lockPath);
@@ -104,7 +106,15 @@ export function releaseStagingLock(stageDir, { pid = process.pid } = {}) {
  */
 export function withStagingLockSync(stageDir, fn, opts = {}) {
   acquireStagingLock(stageDir, opts);
-  const release = () => releaseStagingLock(stageDir, opts);
+  // Release errors must NEVER mask the guarded fn's own failure.
+  const release = () => {
+    try {
+      return releaseStagingLock(stageDir, opts);
+    } catch (releaseErr) {
+      console.error('staging-lock: release failed: ' + (releaseErr instanceof Error ? releaseErr.message : String(releaseErr)));
+      return false;
+    }
+  };
   let result;
   try {
     result = fn();

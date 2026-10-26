@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ERR_JUNCTION_LEFT,
+  resolveMainRoot,
   ERR_REFUSED_STUB_MAIN_CHECKOUT,
   ERR_REFUSED_UNRESOLVED_ROOT,
   assertNotMainCheckout,
@@ -52,10 +53,14 @@ const spawnNode = (args: string[]) =>
 describe('trace-hygiene-guard-refusal (issue #183 AC15)', () => {
   it('refuses stub planting on the main checkout and allows a disposable root, in-process', () => {
     const absent = path.join(REPO_ROOT, 'desktop', 'node_modules', '@playwright', 'definitely-absent-e174');
+    // The MAIN checkout root (derived, not assumed): the suite must hold from
+    // any environment — a linked worktree makes REPO_ROOT a disposable root
+    // by definition (review round: worktree blindness).
+    const mainRoot = resolveMainRoot(REPO_ROOT);
     // The main checkout itself, package absent → the #131 incident is refused.
     let thrown: unknown = null;
     try {
-      assertStubPlantAllowed({ repoRoot: REPO_ROOT, packagePath: absent });
+      assertStubPlantAllowed({ repoRoot: mainRoot, packagePath: absent });
     } catch (err) {
       thrown = err;
     }
@@ -64,7 +69,7 @@ describe('trace-hygiene-guard-refusal (issue #183 AC15)', () => {
     // The generic main-checkout refusal also bites on the main checkout.
     let generic: unknown = null;
     try {
-      assertNotMainCheckout(REPO_ROOT);
+      assertNotMainCheckout(mainRoot);
     } catch (err) {
       generic = err;
     }
@@ -74,7 +79,7 @@ describe('trace-hygiene-guard-refusal (issue #183 AC15)', () => {
     // refused, never "allowed" by an exact-equality blind spot.
     let subdir: unknown = null;
     try {
-      assertStubPlantAllowed({ repoRoot: path.join(REPO_ROOT, 'docs'), packagePath: absent });
+      assertStubPlantAllowed({ repoRoot: path.join(mainRoot, 'docs'), packagePath: absent });
     } catch (err) {
       subdir = err;
     }
@@ -95,8 +100,10 @@ describe('trace-hygiene-guard-refusal (issue #183 AC15)', () => {
       fs.rmSync(nonGit, { recursive: true, force: true });
     }
 
-    // Canonical comparison: forward slashes + case folding must not defeat it.
-    expect(canonicalPath(path.join(REPO_ROOT, 'docs'))).toBe(canonicalPath(path.join(REPO_ROOT, 'docs')));
+    // Canonical comparison: forward slashes + case folding must not defeat
+    // it (win32: backslashes and drive-letter case fold).
+    expect(canonicalPath(path.join(mainRoot, 'Docs'))).toBe(canonicalPath(path.join(mainRoot, 'docs')));
+    expect(canonicalPath(mainRoot.replace(/\\/g, '/'))).toBe(canonicalPath(mainRoot));
   });
 
   it('allows stub planting when the package is present or the root is a disposable worktree', () => {
@@ -110,7 +117,8 @@ describe('trace-hygiene-guard-refusal (issue #183 AC15)', () => {
 
   it('refuse-stub CLI: exit 2 with the named error on the main checkout; import-safe module', async () => {
     const absent = path.join(REPO_ROOT, 'desktop', 'node_modules', '@playwright', 'definitely-absent-e174');
-    const refused = await spawnNode([GUARD, 'refuse-stub', '--repo-root', REPO_ROOT, '--package', absent]);
+    const mainRoot = resolveMainRoot(REPO_ROOT);
+    const refused = await spawnNode([GUARD, 'refuse-stub', '--repo-root', mainRoot, '--package', absent]);
     expect(refused.code).toBe(2);
     expect(refused.stderr).toContain('TRACE_HYGIENE_REFUSED_STUB_MAIN_CHECKOUT');
 

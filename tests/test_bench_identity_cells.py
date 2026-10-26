@@ -366,6 +366,16 @@ SCENARIOS = [
 ]
 
 
+EXPECTED_SCENARIO_IDS = frozenset(s[0] for s in SCENARIOS)
+
+
+def test_max_tokens_identity_roster():
+    # Frozen-check drift guard: the frozen -k filter rides these ids; a
+    # renamed/deleted scenario silently shrinks coverage (review round).
+    assert len(EXPECTED_SCENARIO_IDS) == 14
+    assert all(i.startswith("max-tokens-identity-") for i in EXPECTED_SCENARIO_IDS)
+
+
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=[s[0] for s in SCENARIOS])
 def test_max_tokens_identity(scenario, tmp_path):
     scenario[1](tmp_path)

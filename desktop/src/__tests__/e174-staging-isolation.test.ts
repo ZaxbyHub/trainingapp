@@ -50,7 +50,6 @@ function findRepoRoot(dir: string): string {
 
 const REPO_ROOT = findRepoRoot(path.dirname(fileURLToPath(import.meta.url)));
 const SCRIPTS = path.join(REPO_ROOT, 'desktop', 'scripts');
-const REAL_STAGE_DIR = path.join(REPO_ROOT, 'desktop', 'installer-resources');
 const REAL_CONTRACTS_OUT = path.join(REPO_ROOT, 'desktop', 'dist', 'contracts');
 
 const spawnNode = (args: string[], env: Record<string, string> = {}) =>
@@ -210,8 +209,10 @@ describe('real stager against a temporary replica (issue #174 AC1)', () => {
   });
 
   afterAll(() => {
+    // Review round: NEVER touch the real checkout's lock file (a live build
+    // may hold it - deleting it would destroy the mutual exclusion this PR
+    // installs). Replica cleanup only.
     fs.rmSync(replica, { recursive: true, force: true });
-    fs.rmSync(stagingLockPathFor(REAL_STAGE_DIR), { force: true });
   });
 
   it('staging-isolation-concurrent: held-lock refusal precedes the wipe; release admits a full run; zero writes outside the replica', { timeout: 120_000 }, async () => {
@@ -240,9 +241,9 @@ describe('real stager against a temporary replica (issue #174 AC1)', () => {
     expect(fs.existsSync(path.join(replicaStage, 'packs'))).toBe(true);
     expect(fs.existsSync(path.join(replica, 'desktop', 'dist', 'contracts', 'store.schema.sql'))).toBe(true);
 
-    // 3. Zero writes outside the replica: the real checkout's lock was never
-    //    created and its staged contracts were never touched.
-    expect(fs.existsSync(stagingLockPathFor(REAL_STAGE_DIR))).toBe(false);
+    // 3. Zero writes outside the replica: the real checkout's staged
+    //    contracts were never touched. (The real lock file is deliberately
+    //    NOT asserted or deleted - machine state, review round.)
     for (const [entry, before] of Object.entries(realContractMtimesBefore)) {
       expect(fs.statSync(path.join(REAL_CONTRACTS_OUT, entry)).mtimeMs).toBe(before);
     }

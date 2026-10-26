@@ -15,7 +15,7 @@
   identity cell (required on PASS rows; historical 10-cell rows keep the old
   schema, never colliding with 11-cell rows), while the `llama-cpp-python` /
   `llama-bench` producers keep prompt length as a real identity cell alongside
-  the budget (their prompts genuinely size from it). #177's residuals: two
+  the budget (their prompts genuinely size from it). The wllama surface records and identity-binds its budget too (row field, trailing column, identity cell, REQUIRED on PASS rows), and the registry's empty-table append placement bug is fixed and pinned. #177's residuals: two
   stale wall-size comments now state the real values (job 45, step 32), the
   in-page `/packs` smoke fetch carries its own abort, and the bounds census +
   watchdog-disarm contract are pinned by

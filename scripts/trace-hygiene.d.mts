@@ -2,6 +2,8 @@
 export declare const ERR_REFUSED_MAIN_CHECKOUT: 'TRACE_HYGIENE_REFUSED_MAIN_CHECKOUT';
 export declare const ERR_REFUSED_STUB_MAIN_CHECKOUT: 'TRACE_HYGIENE_REFUSED_STUB_MAIN_CHECKOUT';
 export declare const ERR_REFUSED_UNRESOLVED_ROOT: 'TRACE_HYGIENE_REFUSED_UNRESOLVED_ROOT';
+export declare const ERR_REFUSED_UNRESOLVED_ROOT: 'TRACE_HYGIENE_REFUSED_UNRESOLVED_ROOT';
+export declare const ERR_JOURNAL_CORRUPT: 'TRACE_HYGIENE_JOURNAL_CORRUPT';
 export declare const ERR_JUNCTION_LEFT: 'TRACE_HYGIENE_JUNCTION_LEFT';
 export declare class TraceHygieneRefused extends Error {
   code: string;
@@ -18,5 +20,5 @@ export declare function createJunction(link: string, target: string, journalPath
   target: string;
   pid: number;
 };
-export declare function removeJournaledJunctions(journalPath: string): number;
-export declare function main(argv: string[]): 0 | 2;
+export declare function removeJournaledJunctions(journalPath: string): number; // entries processed (already-gone links count as processed)
+export declare function main(argv: string[]): 0; // throws TraceHygieneRefused on refusal; the entry guard maps that to exit 2

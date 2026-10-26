@@ -307,5 +307,5 @@ jobs:
   # .github/workflows/conformance.yml as pack-fixture-build and gained the
   # build-storyline leg (issue #87): the fixture-pack signal now runs
   # path-scoped via the `pack` bucket instead of living inside this
-  # 30-minute Windows job. This workflow's own `paths:` filter is unchanged
+  # 45-minute Windows job. This workflow's own `paths:` filter is unchanged
   # and still includes `packtool/**`, so packtool-only diffs still run it.
