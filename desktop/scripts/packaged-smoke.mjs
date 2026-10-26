@@ -114,7 +114,6 @@ export const DUMP_TAIL_LINES = 200;
 const EVAL_BOUND_PROBE_MS = 10_000;
 const EVAL_BOUND_CLOSE_MS = 5_000;
 const EVAL_BOUND_LADDER_MS = 120_000;
-const EVAL_BOUND_PACKS_MS = 10_000;
 const BROWSER_CLOSE_MS = 10_000;
 
 // ---- driver selection + DevTools endpoint parsing (shared code paths) ------
@@ -931,7 +930,7 @@ export async function main(argv, env, io) {
         const token = await window.desktopApi.getAuthToken();
         const res = await fetch(`${info.url}/packs`, {
           headers: { 'X-Desktop-Token': token },
-          signal: AbortSignal.timeout(EVAL_BOUND_PACKS_MS),
+          signal: AbortSignal.timeout(10_000),
         });
         return { status: res.status, body: await res.text() };
       } catch (err) {
