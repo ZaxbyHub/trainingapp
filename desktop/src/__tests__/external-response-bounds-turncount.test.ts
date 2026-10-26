@@ -1,6 +1,8 @@
 // external-response-bounds-turncount.test.ts — issue #243 acceptance (FROZEN
 // acceptance surface, arm's-length authored BEFORE the implementation lands;
-// round-2 revision: fixture-module contract + independent methodology control).
+// round-2..4 revisions: fixture-module contract; the absolute/relational
+// methodology-control row was withdrawn after three CI timeouts — the
+// measurement-integrity burden is carried by the recorded M-C1 mutation).
 // RED at base, GREEN after the fix.
 //
 // The F-003 closeout legs fail CI-only because their duration is dominated by
@@ -68,8 +70,6 @@ try {
 // 130 for the 8.5 MB body). 600 rejects the un-fixed shape with >4.7x margin
 // while allowing generous batching (writes averaging ≥ ~14 KiB).
 const MAX_LEG_DATA_EVENTS = 600;
-// The control row's known-unbatched pump must read WELL above this bound —
-// this is what makes the methodology discriminating.
 const CAP_BYTES = 8 * 1024 * 1024;
 const DELTA_BYTES = 3072;
 

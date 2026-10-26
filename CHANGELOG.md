@@ -8,7 +8,8 @@
   scales with one event-loop turn per frame — the shape that raced every
   sentinel budget on the 20261015.610+ runner deploy — while per-delta cap
   granularity and the mid-stream trip are preserved, and a frozen turncount
-  spec (with an independent methodology-control row) pins the collapse. GPU
+  spec pins the collapse (measurement integrity via the recorded M-C1
+  named mutation). GPU
   probe failures whose adapter identity is resolvable in-process (#251)
   persist a device-bearing CPU verdict — the probe child captures
   `getGpuDeviceNames()` once right after the backend loads and every

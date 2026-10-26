@@ -712,7 +712,7 @@ function makeBackend(
       } catch (err) {
         // The library THROWS rather than returning when an abort lands
         // before any token (LlamaChat.js:2245-2247), so a user cancellation
-        // during prefill arrives here. Issue #249 (AC9): when the abort is
+        // during prefill arrives here. Issue #249 (AC1): when the abort is
         // THIS call's own — the cancellation flag is set, this call's signal
         // has fired, and the thrown value is exactly this signal's reason —
         // the query resolves the cancelled contract instead of rejecting, so

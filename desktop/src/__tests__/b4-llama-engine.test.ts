@@ -518,6 +518,10 @@ describe('b4-llama-engine Group B (real model, real default backend)', () => {
       const result = await promise;
       expect(result.cancelled).toBe(true);
       expect(tokenCount).toBeGreaterThanOrEqual(1);
+      // Streaming stops with the flag: the last emission lands at most one
+      // poll/settle window after the flag was set (flushSurface's terminal
+      // emission is the only legitimate post-flag emission).
+      expect(lastEmissionAt - flagSetAt).toBeLessThan(200);
       // Direct flag→settlement pin: the query resolves (cancelled) promptly
       // once the flag is set, regardless of any further emissions.
       expect(performance.now() - flagSetAt).toBeLessThan(200);

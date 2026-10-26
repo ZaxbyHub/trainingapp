@@ -21,10 +21,10 @@ import {
   MAX_SSE_LINE_BYTES,
   MAX_STREAMED_ANSWER_BYTES,
   RESPONSE_QUEUE_HIGH_WATER_BYTES,
-} from '../../main/backend/net/guarded-request';
-import { ExternalProviderError } from '../../main/backend/net/provider-error';
-import { generateExternal, listExternalModels, type ExternalProtocol } from '../../main/backend/inference/external-generator';
-import { endFor, frameFor, FRAMES, SSE_FRAMES_PER_WRITE } from './fixtures/external-cap-fixture';
+} from '../../main/backend/net/guarded-request.js';
+import { ExternalProviderError } from '../../main/backend/net/provider-error.js';
+import { generateExternal, listExternalModels, type ExternalProtocol } from '../../main/backend/inference/external-generator.js';
+import { endFor, frameFor, FRAMES, SSE_FRAMES_PER_WRITE } from './fixtures/external-cap-fixture.js';
 
 const servers: http.Server[] = [];
 afterEach(async () => {

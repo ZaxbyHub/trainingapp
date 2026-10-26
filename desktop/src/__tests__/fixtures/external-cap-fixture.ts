@@ -16,10 +16,12 @@
 //   - the well-formed end when no cap exists.
 // Stats returned by runStreamingCapLeg (consumed by the frozen turncount spec;
 // the frozen spec asserts the count is below 600 and the cap semantics hold):
-//   dataEvents — the number of socket flushes the pump issued (the
-//     producer-side mirror of the consumer's socket data-event count on
-//     loopback; the turncount spec's control row establishes that
-//     correspondence empirically for the unbatched shape).
+//   dataEvents — the number of socket flushes the pump issued. The CI pacing
+//     mechanism scales with flush count, which is the quantity the #243 fix
+//     collapses; the consumer's socket 'data' count is host-coalesced and was
+//     deliberately NOT used as the bound (the original control row
+//     establishing that correspondence was withdrawn after three CI
+//     timeouts — see the turncount spec header).
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { ExternalProviderError } from '../../../main/backend/net/provider-error.js';

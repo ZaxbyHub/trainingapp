@@ -41,7 +41,7 @@ jobs:
     # timeout room to land a VERDICT inside the wall (review PRR-007: with
     # the old 35-min job wall the wall beat the watchdog and killed the run
     # without dumps).
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 

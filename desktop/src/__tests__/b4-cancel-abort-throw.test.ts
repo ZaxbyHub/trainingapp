@@ -1,7 +1,7 @@
-// Issue #249 (AC9): the abort-throw contract at the engine boundary.
+// Issue #249 (AC4): the abort-throw contract at the engine boundary.
 //
 // node-llama-cpp 3.20.0 THROWS `signal.reason` when an abort lands before any
-// response segment exists (LlamaChat.js:885/1071/2246), and the engine's
+// response segment exists (node-llama-cpp 3.20.0: LlamaChat.js:1071-1072 and :2245-2247), and the engine's
 // generate() catch used to re-throw unconditionally — a genuine user cancel
 // surfaced as a rejected query instead of the cancelled contract. The fix
 // maps the abort to `{ cancelled: true }` ONLY when it is THIS call's own
@@ -31,11 +31,18 @@ const NLC = vi.hoisted(() => {
     // genuinely mid-flight rather than pre-set.
     entered: Promise<void> | null;
     signalEntered: ((v: void) => void) | null;
+    // Rows 3/4: the mock waits on this latch before throwing, so the test
+    // can set the flag FIRST and the engine's catch deterministically
+    // observes isSet() === true (no microtask-ordering dependence).
+    proceed: Promise<void> | null;
+    resolveProceed: ((v: void) => void) | null;
   } = {
     prompts: [],
     mode: 'resolve-ok',
     entered: null,
     signalEntered: null,
+    proceed: null,
+    resolveProceed: null,
   };
   return state;
 });
@@ -47,9 +54,19 @@ vi.mock('node-llama-cpp', () => {
     resetChatHistory(): void {}
     async prompt(_question: string, options: Record<string, unknown>): Promise<string> {
       NLC.prompts.push(options);
+      // Emit a chunk so the engine's surface/accumulated state is exercised:
+      // row 1's cancelled answer is the flushSurface projection of this text.
+      if (typeof options.onTextChunk === 'function') {
+        (options.onTextChunk as (c: string) => void)('Ok. ');
+      }
       const signal = options.signal as AbortSignal | undefined;
       if (NLC.mode !== 'resolve-ok') {
         NLC.signalEntered?.();
+        if (NLC.mode === 'reject-generic' || NLC.mode === 'reject-foreign-abort') {
+          // Deterministic ordering: the flag is already set (the test set it
+          // after `entered`) — wait for the test's go-ahead, then throw.
+          await NLC.proceed;
+        }
         if (NLC.mode === 'abort-latched') {
           // Reject with the EXACT AbortReason object of THIS call's signal
           // once the engine's own controller aborts it (identity mapping).
@@ -138,6 +155,9 @@ describe('b4-cancel-abort-throw: the engine maps only its OWN abort to the cance
     flag.set = true;
     const result = await promise;
     expect(result.cancelled).toBe(true);
+    // flushSurface ran: the streamed chunk ('Ok. ') is projected into the
+    // cancelled answer through filterDeclineSentences.
+    expect(result.answer).toContain('Ok.');
     expect(NLC.prompts).toHaveLength(1);
   });
 
@@ -163,6 +183,7 @@ describe('b4-cancel-abort-throw: the engine maps only its OWN abort to the cance
     const promise = engine.query('answer me', { cancellationEvent: flag });
     await NLC.entered;
     flag.set = true;
+    NLC.resolveProceed?.();
     await expect(promise).rejects.toThrow('boom: non-abort failure');
     expect(NLC.prompts).toHaveLength(1);
   });
@@ -177,6 +198,7 @@ describe('b4-cancel-abort-throw: the engine maps only its OWN abort to the cance
     const promise = engine.query('answer me', { cancellationEvent: flag });
     await NLC.entered;
     flag.set = true;
+    NLC.resolveProceed?.();
     await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
     expect(NLC.prompts).toHaveLength(1);
   });
