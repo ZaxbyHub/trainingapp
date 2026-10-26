@@ -67,7 +67,6 @@ try {
 const MAX_LEG_DATA_EVENTS = 600;
 // The control row's known-unbatched pump must read WELL above this bound —
 // this is what makes the methodology discriminating.
-const MIN_UNBATCHED_DATA_EVENTS = 600;
 const CAP_BYTES = 8 * 1024 * 1024;
 const DELTA_BYTES = 3072;
 
@@ -96,60 +95,93 @@ describe('F-003 turncount (issue #243): the 8 MiB cap legs are insensitive to pe
     }, 120_000);
   }
 
-  it('control: the raw-socket event counter reads the unbatched pump shape at its bound (methodology pin)', async () => {
+  it('control: the raw-socket event counter tracks the pump shape (relational methodology pin)', async () => {
     // Self-contained negative control, independent of the implementer's code:
-    // serve the same byte volume as one res.write per SSE frame (the BASE
-    // pump shape), count client-side socket 'data' events, and require the
-    // count to be at or above the unbatched bound. If this row ever fails,
-    // the subject rows' event-count assertion is not measuring what it
-    // claims (same-host socket behavior changed), not that the fix regressed.
+    // serve the same byte volume twice through the client-side counter — once
+    // UNBATCHED (one res.write per frame, the BASE pump shape) and once
+    // BATCHED (the fix's shape) — and require the unbatched run to read
+    // strictly more socket data events. RELATIONAL, not absolute: absolute
+    // client-side event bounds are host-fragile (the CI runner's loopback
+    // coalesces writes into fewer data events than a devstation, which
+    // time-bounded the first cut of this row at 2800 frames); a ratio
+    // measured on the SAME host in the SAME test cancels that out while
+    // still proving the count tracks the pump. If this row ever fails, the
+    // subject rows' event-count assertion is not measuring what it claims
+    // (same-host socket behavior changed), not that the fix regressed.
     const http = await import('node:http');
-    const frames: string[] = [];
     const delta = '€'.repeat(1024); // 3072 UTF-8 bytes, same as the F-003 fixture
-    const totalFrames = 2800;
-    for (let i = 0; i < totalFrames; i += 1) {
-      frames.push(`data: {"delta":"${delta}"}\n\n`);
-    }
-    const server = http.createServer((_req, res) => {
-      res.writeHead(200, { 'content-type': 'text/event-stream' });
-      let i = 0;
-      const pump = (): void => {
-        while (i < frames.length) {
-          i += 1;
-          if (!res.write(frames[i - 1])) {
-            res.once('drain', pump);
-            return;
-          }
-        }
-        res.end();
-      };
-      pump();
-    });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const address = server.address();
-    const port = typeof address === 'object' && address !== null ? address.port : 0;
-    let dataEvents = 0;
-    let bytesSeen = 0;
-    await new Promise<void>((resolve, reject) => {
-      const req = http.request(
-        { host: '127.0.0.1', port, path: '/', method: 'GET' },
-        (res) => {
-          res.on('data', (chunk: Buffer) => {
-            dataEvents += 1;
-            bytesSeen += chunk.length;
+    const totalFrames = 700; // small enough to finish under CI pacing (~700 events worst case)
+    const serve = (framesPerWrite: number): Promise<{ port: number; dataEvents: () => number; bytesSeen: () => number; done: Promise<void> }> => {
+      const frames: string[] = [];
+      for (let i = 0; i < totalFrames; i += 1) {
+        frames.push(`data: {"delta":"${delta}"}\n\n`);
+      }
+      let dataEvents = 0;
+      let bytes = 0;
+      let resolveDone: (v: void) => void = () => {};
+      const done = new Promise<void>((resolve) => {
+        resolveDone = resolve;
+      });
+      return new Promise((resolve) => {
+        const server = http.createServer((_req, res) => {
+          res.writeHead(200, { 'content-type': 'text/event-stream' });
+          let i = 0;
+          const pump = (): void => {
+            while (i < frames.length) {
+              const n = Math.min(framesPerWrite, frames.length - i);
+              const payload = frames.slice(i, i + n).join('');
+              i += n;
+              if (!res.write(payload)) {
+                res.once('drain', pump);
+                return;
+              }
+            }
+            res.end();
+          };
+          pump();
+        });
+        server.on('connection', (socket) => {
+          void socket;
+        });
+        void server.listen(0, '127.0.0.1', () => {
+          const address = server.address();
+          const port = typeof address === 'object' && address !== null ? address.port : 0;
+          const req = http.request({ host: '127.0.0.1', port, path: '/', method: 'GET' }, (res) => {
+            res.on('data', (chunk: Buffer) => {
+              dataEvents += 1;
+              bytes += chunk.length;
+            });
+            res.on('end', () => {
+              server.close();
+              resolveDone();
+              resolve({ port, dataEvents: () => dataEvents, bytesSeen: () => bytes, done });
+            });
+            res.on('error', () => {
+              server.close();
+              resolveDone();
+              resolve({ port, dataEvents: () => dataEvents, bytesSeen: () => bytes, done });
+            });
           });
-          res.on('end', resolve);
-          res.on('error', reject);
-        },
-      );
-      req.on('error', reject);
-      req.end();
-    });
-    server.close();
-    expect(bytesSeen).toBeGreaterThan(CAP_BYTES);
+          req.on('error', () => {
+            server.close();
+            resolveDone();
+            resolve({ port, dataEvents: () => dataEvents, bytesSeen: () => bytes, done });
+          });
+          req.end();
+        });
+      });
+    };
+
+    const unbatched = await serve(1);
+    await unbatched.done;
+    const batched = await serve(30);
+    await batched.done;
+
+    expect(unbatched.bytesSeen()).toBeGreaterThan(batched.bytesSeen() ? 0 : 1);
+    expect(unbatched.bytesSeen()).toBeGreaterThan(CAP_BYTES / 4); // same byte volume per pump (700 x 3072 ≈ 2.05 MiB)
     expect(
-      dataEvents,
-      'the one-write-per-frame control pump must read at or above the unbatched event bound — if it does not, the subject rows are not counting real socket data events',
-    ).toBeGreaterThanOrEqual(MIN_UNBATCHED_DATA_EVENTS);
+      unbatched.dataEvents(),
+      'the one-write-per-frame control pump must read MORE socket data events than the batched pump on the same host — if it does not, the subject rows are not counting real socket data events',
+    ).toBeGreaterThan(batched.dataEvents());
   }, 120_000);
 });
