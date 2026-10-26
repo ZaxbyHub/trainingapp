@@ -41,7 +41,7 @@
  * Exit code non-zero on any failure.
  */
 import { createHash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
+import { createReadStream, realpathSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -390,10 +390,16 @@ async function main() {
 // run the CLI — the committed multi-chunk sha256 spec imports sha256File.
 // Case-folded endsWith so a case-varied invocation path still counts as a
 // direct run (the stager's PRR-122 precedent).
-if (
-  process.argv[1] !== undefined &&
-  process.argv[1].toLowerCase().endsWith('build-installer-manifest.mjs')
-) {
+function isDirectInvocation(metaUrl) {
+  if (process.argv[1] === undefined) return false;
+  try {
+    return realpathSync(process.argv[1]).toLowerCase() === realpathSync(fileURLToPath(metaUrl)).toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectInvocation(import.meta.url)) {
   main().catch((err) => {
     if (err instanceof ManifestFailure) {
       for (const message of err.problems) console.error(`${SCRIPT}: FAIL ${message}`);

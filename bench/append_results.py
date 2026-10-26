@@ -120,6 +120,9 @@ REQUIRED_KEYS = {
         "decode_tokens_per_second",
         "machine",
         "outcome",
+        # Issue #223 review: the identity is ENGINE-AWARE (cells[8] selects the
+        # tuple), so the engine cell must be recorded, never defaulted.
+        "engine",
         # Issue #223 AC5: the decode budget is part of the native identity and
         # every in-repo producer records it (llama_bench_driver.py already
         # did; node_bench_driver.mjs gained it with this issue), so a native
@@ -178,7 +181,9 @@ ALWAYS_REQUIRED = ("surface", "machine", "outcome")
 # value columns are excluded: re-measuring the same cell must append-or-fail,
 # not silently overwrite.
 IDENTITY_CELLS = {
-    "native": (0, 1, 2, 3, 4, 8),  # machine, model, quant, threads, prompt, engine
+    # native is ENGINE-AWARE and resolved by identity_cells_for() below -
+    # never read from this dict (review: the stale constant contradicted the
+    # shipped rule).
     "native-vulkan": (0, 1, 2),  # machine, model, bin
     "wllama": (0, 1, 2, 3, 4, 8),
     # machine, model, mode, threads, prompt_tokens, max_tokens — prompt
@@ -220,12 +225,12 @@ NATIVE_IDENTITY_LEGACY = (0, 1, 2, 3, 4, 8, 10)  # + prompt length (a real input
 
 def identity_cells_for(surface: str, cells: list) -> tuple:
     """Identity cell indices for a row, engine-aware on the native surface."""
-    if surface != "native":
-        return IDENTITY_CELLS[surface]
-    engine = str(cells[8]) if len(cells) > 8 else ""
-    if engine == NATIVE_NODE_ENGINE:
-        return NATIVE_IDENTITY_NODE
-    return NATIVE_IDENTITY_LEGACY
+    if surface == "native":
+        engine = str(cells[8]) if len(cells) > 8 else ""
+        if engine == NATIVE_NODE_ENGINE:
+            return NATIVE_IDENTITY_NODE
+        return NATIVE_IDENTITY_LEGACY
+    return IDENTITY_CELLS[surface]
 
 
 REGISTRY_HEADING = "## Machine registry"
@@ -269,7 +274,7 @@ def row_cells(row: dict) -> list:
             fmt(row.get("top30_ms")),
             row.get("outcome", ""),
         ]
-    if row.get("surface") == "desktop-retrieval":
+    elif row.get("surface") == "desktop-retrieval":
         cells = [
             row.get("machine", ""),
             row.get("embedder", ""),
@@ -423,7 +428,11 @@ def append_row(row: dict, results_path: Path = RESULTS) -> None:
     new_line = row_to_markdown(row)
     for ridx in body_rows:
         existing = split_row(lines[ridx])
-        pending = existing[outcome_idx].strip() == "PENDING"
+        # Outcome probe is LENGTH-GUARDED: a truncated/malformed row must
+        # never IndexError here (review round: ordering regression).
+        pending = len(existing) > outcome_idx and existing[outcome_idx].strip() == "PENDING"
+        if len(existing) != len(cells) and not pending:
+            continue
         if pending and len(existing) != len(cells):
             # Issue #223 review round 2: a PRE-SCHEMA PENDING placeholder
             # (recorded before the surface gained max_tokens) still fills in

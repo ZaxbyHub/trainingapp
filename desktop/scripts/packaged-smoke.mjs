@@ -114,6 +114,7 @@ export const DUMP_TAIL_LINES = 200;
 const EVAL_BOUND_PROBE_MS = 10_000;
 const EVAL_BOUND_CLOSE_MS = 5_000;
 const EVAL_BOUND_LADDER_MS = 120_000;
+const EVAL_BOUND_PACKS_MS = 10_000;
 const BROWSER_CLOSE_MS = 10_000;
 
 // ---- driver selection + DevTools endpoint parsing (shared code paths) ------
@@ -920,6 +921,9 @@ export async function main(argv, env, io) {
     // 5. /packs must answer 200 through the loopback token gate. Issue #177
     // AC-b hardening (deliberate smoke-policy tightening): the in-page fetch
     // carries its own abort so a wedged renderer fetch cannot outlive the
+    // evaluate race unnoticed. Verdict-class note: an aborted fetch lands as a
+    // recorded step FAILURE (exit 1), not INFRA - the probe answered, the
+    // payload was wrong.
     // evaluate race unnoticed.
     const packsProbe = await evaluate(async () => {
       try {
@@ -927,7 +931,7 @@ export async function main(argv, env, io) {
         const token = await window.desktopApi.getAuthToken();
         const res = await fetch(`${info.url}/packs`, {
           headers: { 'X-Desktop-Token': token },
-          signal: AbortSignal.timeout(10_000),
+          signal: AbortSignal.timeout(EVAL_BOUND_PACKS_MS),
         });
         return { status: res.status, body: await res.text() };
       } catch (err) {

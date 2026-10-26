@@ -63,8 +63,14 @@ export function canonicalPath(p) {
  * checkout. The 201-trace idiom (check-c1.sh), committed at last.
  */
 export function resolveMainRoot(repoRoot) {
+  // Strip git env overrides: GIT_DIR/GIT_COMMON_DIR/GIT_WORK_TREE would make
+  // this lookup resolve an unrelated repository and fail the refusal OPEN
+  // (review round: GIT_DIR redirection probe).
+  const gitEnv = { ...process.env };
+  for (const key of ['GIT_DIR', 'GIT_COMMON_DIR', 'GIT_WORK_TREE']) delete gitEnv[key];
   const commonDir = execFileSync('git', ['-C', repoRoot, 'rev-parse', '--path-format=absolute', '--git-common-dir'], {
     encoding: 'utf8',
+    env: gitEnv,
   }).trim();
   const stripped = commonDir.replace(/[\\/]+\.git[\\/]*$/i, '');
   return stripped.length > 0 ? stripped : path.dirname(commonDir);
@@ -125,15 +131,29 @@ export function assertStubPlantAllowed({ repoRoot, packagePath }) {
 }
 
 function readJournal(journalPath) {
+  let text;
   try {
-    return fs
-      .readFileSync(journalPath, 'utf8')
-      .split(/\r?\n/)
-      .filter((line) => line.trim().length > 0)
-      .map((line) => JSON.parse(line));
-  } catch {
-    return [];
+    text = fs.readFileSync(journalPath, 'utf8');
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return []; // no journal yet
+    // An unreadable journal must fail LOUD: a silent [] would let
+    // removeJournaledJunctions report success while destroying the record
+    // (review round: corrupt-journal probe).
+    throw new TraceHygieneRefused('TRACE_HYGIENE_JOURNAL_CORRUPT', journalPath + ' is unreadable: ' + (err instanceof Error ? err.message : String(err)));
   }
+  const entries = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (line.trim().length === 0) continue;
+    try {
+      entries.push(JSON.parse(line));
+    } catch (err) {
+      throw new TraceHygieneRefused(
+        'TRACE_HYGIENE_JOURNAL_CORRUPT',
+        journalPath + ' has an unparsable line (' + (err instanceof Error ? err.message : String(err)) + ') - fix or delete the journal before continuing; the links it records may still exist',
+      );
+    }
+  }
+  return entries;
 }
 
 function rewriteJournal(journalPath, entries) {
@@ -157,10 +177,10 @@ function rewriteJournal(journalPath, entries) {
  */
 export function createJunction(link, target, journalPath) {
   const intent = { link: path.resolve(link), target: path.resolve(target), pid: process.pid };
-  const entries = readJournal(journalPath);
-  entries.push(intent);
   fs.mkdirSync(path.dirname(journalPath), { recursive: true });
-  fs.writeFileSync(journalPath, `${entries.map((e) => JSON.stringify(e)).join('\n')}\n`, 'utf8');
+  // Append (never rewrite): concurrent creators cannot lose each other's
+  // entries, and an interrupted append cannot corrupt earlier lines.
+  fs.appendFileSync(journalPath, JSON.stringify(intent) + '\n', 'utf8');
   try {
     fs.symlinkSync(path.resolve(target), path.resolve(link), process.platform === 'win32' ? 'junction' : 'dir');
   } catch (err) {
@@ -180,7 +200,7 @@ export function createJunction(link, target, journalPath) {
  * that case so a retry can finish the job.
  */
 export function removeJournaledJunctions(journalPath) {
-  const entries = readJournal(journalPath);
+  const entries = readJournal(journalPath); // throws TRACE_HYGIENE_JOURNAL_CORRUPT on damage
   const survivors = [];
   for (const entry of entries) {
     // lstat (never existsSync — it follows links and lies for dangling ones).
@@ -228,8 +248,10 @@ function selfcheck() {
   const results = [];
   const tmp = fs.mkdtempSync(path.join(import.meta.dirname, 'selfcheck-'));
   try {
-    // 1. Main-checkout stub refusal (the #131 incident mechanism).
-    const repoRoot = process.cwd();
+    // 1. Main-checkout stub refusal (the #131 incident mechanism). The root
+    // under test is the MAIN checkout of whatever repo we run in - NOT cwd,
+    // which in a linked worktree is a disposable root by definition.
+    const repoRoot = resolveMainRoot(process.cwd());
     const absentPackage = path.join(tmp, 'absent-package');
     let refused = null;
     try {
@@ -330,7 +352,16 @@ export function main(argv) {
 
 // Entry guard: importing this module (the committed spec does) must never run
 // the CLI.
-if (process.argv[1] !== undefined && process.argv[1].toLowerCase().endsWith('trace-hygiene.mjs')) {
+function isDirectInvocation(metaUrl) {
+  if (process.argv[1] === undefined) return false;
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(metaUrl));
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectInvocation(import.meta.url)) {
   try {
     process.exitCode = main(process.argv.slice(2));
   } catch (err) {
