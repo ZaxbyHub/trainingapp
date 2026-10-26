@@ -10,9 +10,14 @@ files (never the real registry):
 - legacy native producers (`llama-cpp-python`, `llama-bench`): the prompt
   length IS a real input (the prompt is sized from `--prompt-tokens` and
   passed as `-p`), so it stays an identity cell alongside the budget.
-- `max_tokens` is required on native PASS rows (fail-closed provenance).
-- Identical-configuration duplicate refusal is preserved; historical 10-cell
-  rows (pre-#223 schema) never collide with new 11-cell rows.
+- wllama rows: budget AND prompt length are both real inputs — the budget is
+  recorded (implementation-review round 1) and identity-bound.
+- `max_tokens` is required on native and wllama PASS rows (fail-closed
+  provenance).
+- Identical-configuration duplicate refusal is preserved; historical rows
+  recorded under a pre-#223 schema never collide with new rows; the runbook
+  PENDING-placeholder fill survives the schema extension (pre-schema
+  placeholders fill on their carried identity cells).
 
 Every scenario is a parametrize id of `test_max_tokens_identity` so the frozen
 acceptance filter (`-k max-tokens-identity`, hyphens literal) selects the whole
@@ -31,56 +36,42 @@ sys.path.insert(0, str(REPO_ROOT))
 
 append_results = importlib.import_module("bench.append_results")
 
-# The table header is DERIVED from the schema so it can neither drift from
+# The table headers are DERIVED from the schema so they can neither drift from
 # HEADER_CELLS nor trip flake8's 100-column limit (11 columns are >100 chars).
 _NATIVE_HEADER = "| " + " | ".join(append_results.HEADER_CELLS["native"]) + " |"
 _NATIVE_SEPARATOR = "|" + "---|" * len(append_results.HEADER_CELLS["native"])
+_WLLAMA_HEADER = "| " + " | ".join(append_results.HEADER_CELLS["wllama"]) + " |"
+_WLLAMA_SEPARATOR = "|" + "---|" * len(append_results.HEADER_CELLS["wllama"])
 
-RESULTS_SKELETON = f"""# Benchmarks
-
-## Machine registry
-
-### celltest
-identity-contract test host (issue #223)
-
-## Native llama.cpp CPU results
-
-{_NATIVE_HEADER}
-{_NATIVE_SEPARATOR}
-"""
-
-
-WLLAMA_SKELETON = (
-    "# Benchmarks\n\n## Machine registry\n\n### celltest\nhost\n\n"
-    "## wllama (browser WASM) results\n\n"
-    + "| "
-    + " | ".join(append_results.HEADER_CELLS["wllama"])
-    + " |\n|"
-    + "---|" * len(append_results.HEADER_CELLS["wllama"])
-    + "\n"
+RESULTS_SKELETON = (
+    "# Benchmarks\n"
+    "\n"
+    "## Machine registry\n"
+    "\n"
+    "### celltest\n"
+    "identity-contract test host (issue #223)\n"
+    "\n"
+    "## Native llama.cpp CPU results\n"
+    "\n" + _NATIVE_HEADER + "\n" + _NATIVE_SEPARATOR + "\n"
 )
 
+WLLAMA_SKELETON = (
+    "# Benchmarks\n"
+    "\n"
+    "## Machine registry\n"
+    "\n"
+    "### celltest\n"
+    "host\n"
+    "\n"
+    "## wllama (browser WASM) results\n"
+    "\n" + _WLLAMA_HEADER + "\n" + _WLLAMA_SEPARATOR + "\n"
+)
 
-def make_wllama_row(max_tokens=128, decode=51.8, threads=4):
-    return {
-        "surface": "wllama",
-        "machine": "celltest",
-        "model": "lfm2-1.2b-rag",
-        "mode": "threaded",
-        "threads": threads,
-        "prompt_tokens": 256,
-        "decode_tokens_per_second": decode,
-        "first_token_ms": 650.0,
-        "outcome": "pass",
-        "max_tokens": max_tokens,
-    }
-
-
-def append_wllama(tmp_path, row):
-    results = tmp_path / "RESULTS.md"
-    if not results.exists():
-        results.write_text(WLLAMA_SKELETON, encoding="utf-8", newline="\n")
-    append_results.append_row(row, results)
+# An 8-cell PRE-#223 wllama PENDING placeholder (the reference-i5 runbook row).
+_WLLAMA_PENDING_LINE = (
+    "| reference-i5 | lfm2.5-vl-450m | threaded | 4 | 256 "
+    "| PENDING | PENDING | PENDING |\n"
+)
 
 
 def make_row(engine="node-llama-cpp", prompt_tokens=64, max_tokens=128, decode=12.5):
@@ -100,11 +91,37 @@ def make_row(engine="node-llama-cpp", prompt_tokens=64, max_tokens=128, decode=1
     }
 
 
+def make_wllama_row(max_tokens=128, decode=51.8, threads=4):
+    return {
+        "surface": "wllama",
+        "machine": "celltest",
+        "model": "lfm2-1.2b-rag",
+        "mode": "threaded",
+        "threads": threads,
+        "prompt_tokens": 256,
+        "decode_tokens_per_second": decode,
+        "first_token_ms": 650.0,
+        "outcome": "pass",
+        "max_tokens": max_tokens,
+    }
+
+
 def append(tmp_path, row):
     results = tmp_path / "RESULTS.md"
     if not results.exists():
         results.write_text(RESULTS_SKELETON, encoding="utf-8", newline="\n")
     append_results.append_row(row, results)
+
+
+def append_wllama(tmp_path, row, skeleton=None):
+    results = tmp_path / "RESULTS.md"
+    if not results.exists():
+        results.write_text(skeleton or WLLAMA_SKELETON, encoding="utf-8", newline="\n")
+    append_results.append_row(row, results)
+
+
+def expect_duplicate(raised):
+    assert raised is not None and "row already recorded" in raised
 
 
 def native_rows(tmp_path):
@@ -115,10 +132,6 @@ def native_rows(tmp_path):
         for ln in section.splitlines()
         if ln.startswith("|") and not ln.startswith("|--") and "machine" not in ln
     ]
-
-
-def expect_duplicate(raised):
-    assert raised is not None and "row already recorded" in raised
 
 
 def sc_node_tuple(tmp_path):
@@ -140,10 +153,7 @@ def sc_legacy_tuple(tmp_path):
 
 
 def sc_other_surfaces(tmp_path):
-    assert (
-        append_results.identity_cells_for("wllama", [])
-        == append_results.IDENTITY_CELLS["wllama"]
-    )
+    assert append_results.identity_cells_for("wllama", []) == (0, 1, 2, 3, 4, 8)
     assert append_results.identity_cells_for("onnx-embed", []) == (0, 1)
 
 
@@ -213,8 +223,8 @@ def sc_historical_boundary(tmp_path):
     )
     text = results.read_text(encoding="utf-8")
     text = text.replace(
-        "|---|---|---|---|---|---|---|---|---|---|---|\n",
-        "|---|---|---|---|---|---|---|---|---|---|---|\n" + legacy_line,
+        _NATIVE_SEPARATOR + "\n",
+        _NATIVE_SEPARATOR + "\n" + legacy_line,
     )
     results.write_text(text, encoding="utf-8", newline="\n")
     # A new-schema row for the SAME logical cell appends rather than matching
@@ -278,6 +288,60 @@ def sc_real_results_tables_match_schema(tmp_path):
         ), f"{surface}: malformed separator"
 
 
+def sc_wllama_pending_placeholder_fills(tmp_path):
+    # Implementation-review round 2: the runbook PENDING-fill flow survives
+    # the schema extension — a PRE-schema (8-cell) wllama placeholder fills
+    # in place when the identity cells it carries match, and the filled row
+    # then refuses duplicates like any recorded measurement. (The placeholder
+    # carries machine=celltest here so the registry gate passes; the real
+    # reference-i5 tag is registered in the production registry.)
+    pending_line = _WLLAMA_PENDING_LINE.replace("| reference-i5 |", "| celltest |")
+    results = tmp_path / "RESULTS.md"
+    results.write_text(WLLAMA_SKELETON + pending_line, encoding="utf-8", newline="\n")
+    append_results.append_row(
+        {
+            "surface": "wllama",
+            "machine": "celltest",
+            "model": "lfm2.5-vl-450m",
+            "mode": "threaded",
+            "threads": 4,
+            "prompt_tokens": 256,
+            "decode_tokens_per_second": 51.83,
+            "first_token_ms": 658.1,
+            "outcome": "pass",
+            "max_tokens": 16,
+        },
+        results,
+    )
+    lines = results.read_text(encoding="utf-8").splitlines()
+    body = [ln for ln in lines if ln.startswith("| celltest")]
+    assert len(body) == 1, f"expected in-place fill, got {len(body)} celltest rows"
+    assert "PENDING" not in body[0]
+    assert "51.83" in body[0] and "| 16 |" in body[0]
+    # The filled row is a recorded measurement: a second identical append
+    # refuses (the placeholder exception does not become a duplicate hole).
+    raised = None
+    try:
+        append_results.append_row(
+            {
+                "surface": "wllama",
+                "machine": "celltest",
+                "model": "lfm2.5-vl-450m",
+                "mode": "threaded",
+                "threads": 4,
+                "prompt_tokens": 256,
+                "decode_tokens_per_second": 99.9,
+                "first_token_ms": 111.0,
+                "outcome": "pass",
+                "max_tokens": 16,
+            },
+            results,
+        )
+    except SystemExit as exc:
+        raised = str(exc)
+    expect_duplicate(raised)
+
+
 SCENARIOS = [
     ("max-tokens-identity-node-tuple-drops-prompt", sc_node_tuple),
     ("max-tokens-identity-legacy-tuple-keeps-prompt", sc_legacy_tuple),
@@ -293,14 +357,12 @@ SCENARIOS = [
         "max-tokens-identity-empty-table-placement",
         sc_empty_table_first_append_after_separator,
     ),
-    (
-        "max-tokens-identity-wllama-budget-splits",
-        sc_wllama_budget_splits,
-    ),
+    ("max-tokens-identity-wllama-budget-splits", sc_wllama_budget_splits),
     (
         "max-tokens-identity-real-tables-match-schema",
         sc_real_results_tables_match_schema,
     ),
+    ("max-tokens-identity-wllama-pending-fills", sc_wllama_pending_placeholder_fills),
 ]
 
 

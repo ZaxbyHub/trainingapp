@@ -13,7 +13,9 @@ with their machine tag. The append is fail-closed:
     in the target table aborts the append - existing recorded measurements are
     never silently overwritten or duplicated. The one exception: an
     exact-identity match against a PENDING placeholder row fills the slot in
-    place, which is the runbook flow for the pre-seeded reference-i5 cells.
+    place, which is the runbook flow for the pre-seeded reference-i5 cells -
+    and a placeholder recorded under the PRE-schema cell count still fills,
+    matched on the identity cells it carries (issue #223 review round 2).
     Issue #223 schema boundary: rows recorded before a surface's schema gained
     columns (native and wllama gained trailing `max_tokens` at #223) carry the
     OLD cell count, and the length guard means a new row can never
@@ -421,9 +423,22 @@ def append_row(row: dict, results_path: Path = RESULTS) -> None:
     new_line = row_to_markdown(row)
     for ridx in body_rows:
         existing = split_row(lines[ridx])
-        if len(existing) != len(cells) or [existing[i] for i in ident_idx] != identity:
+        pending = existing[outcome_idx].strip() == "PENDING"
+        if pending and len(existing) != len(cells):
+            # Issue #223 review round 2: a PRE-SCHEMA PENDING placeholder
+            # (recorded before the surface gained max_tokens) still fills in
+            # place — the runbook flow for the pre-seeded reference-i5 cells.
+            # It is matched on the identity cells the placeholder actually
+            # carries; the schema-boundary length guard keeps separating
+            # RECORDED historical measurements, never placeholders.
+            overlap = [i for i in ident_idx if i < len(existing)]
+            if [existing[i] for i in overlap] != [str(cells[i]) for i in overlap]:
+                continue
+        elif (
+            len(existing) != len(cells) or [existing[i] for i in ident_idx] != identity
+        ):
             continue
-        if existing[outcome_idx].strip() == "PENDING":
+        if pending:
             # A PENDING placeholder occupies this identity slot: filling it in
             # is the runbook flow, not an overwrite of a recorded measurement.
             lines[ridx] = new_line
