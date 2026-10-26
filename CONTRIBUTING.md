@@ -172,3 +172,25 @@ in-repo so they are not tribal knowledge):
    precision probes that strengthen the same surface should not be blocked from
    landing — so they are declared, inventoried, and covered by the full suite
    instead of silently riding a filter or silently sitting outside every check.
+
+3. **Trace check-wrapper hygiene is guarded by committed code, not folklore**
+   (issue #183). Future traces' check wrappers run in disposable worktrees and
+   must use the committed guard instead of re-deriving root/junction logic per
+   trace: `scripts/trace-hygiene.mjs` exports
+   `assertStubPlantAllowed({ repoRoot, packagePath })` (refuses — named
+   `TRACE_HYGIENE_REFUSED_STUB_MAIN_CHECKOUT`, nonzero exit — planting any
+   stub when the wrapper root resolves to the main checkout or anything inside
+   it and the target package is absent; the realized 2026-10-13 incident
+   replaced the main checkout's real `@playwright/test` through exactly this
+   hole), and the journaled junction pair
+   `createJunction(link, target, journal)` / `removeJournaledJunctions(journal)`
+   (create records the intent before creation; removal unlinks links ONLY —
+   never recurses a real tree — and verifies absence with lstat semantics,
+   throwing `TRACE_HYGIENE_JUNCTION_LEFT` on any survivor). Run
+   `node scripts/trace-hygiene.mjs selfcheck` after authoring wrappers; it
+   drives the real main-checkout refusal and the full lifecycle end-to-end.
+   The hazard census at guard-installation time: 133 local trace scripts
+   create junctions, 97 remove them, 36 never do, 0 verify removal, and 2
+   plant the `@playwright/test` stub behind an existence-only guard — all
+   frozen by contract and counted here rather than amended; NEW wrappers use
+   the guard.

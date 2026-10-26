@@ -122,7 +122,13 @@ from prompt-processing throughput and marks it `derived`). All 36
 reference-i5 matrix cells are PENDING until the laptop run; dev-station
 cells are appended per recorded run.
 
-| machine | model | quant | threads | prompt_tokens | decode_tok_s | first_token_ms | peak_rss_mb | engine | outcome |
+Schema note (issue #223): rows appended from the `node-llama-cpp` driver carry a
+trailing `max_tokens` cell (the recorded decode budget). Historical rows below were
+recorded under the pre-#223 10-column schema and keep their original meaning; the
+row identity is engine-aware (`prompt_tokens` counts toward the identity only for
+the legacy engines whose prompt it actually sizes).
+
+| machine | model | quant | threads | prompt_tokens | decode_tok_s | first_token_ms | peak_rss_mb | engine | outcome | max_tokens |
 |---|---|---|---|---|---|---|---|---|---|
 | devstation | lfm2.5-vl-450m | Q4_K_M | 4 | 1024 | 95.97 | 1200.1 | 496.7 | llama-cpp-python | pass |
 | devstation | lfm2.5-vl-450m | Q4_K_M | 8 | 1024 | 80.15 | 1311.9 | 497.3 | llama-cpp-python | pass |

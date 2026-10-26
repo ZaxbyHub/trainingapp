@@ -134,10 +134,14 @@ export function resolveManifestPath(options: {
 /** Chunk size for streaming-style hashing: the Quality LLM GGUF is ~2.6 GB,
  *  far above any buffer a startup path should allocate whole (E1, issue #84).
  *  Reading in fixed chunks keeps the hash synchronous (this module's API is
- *  sync by contract) without a whole-file allocation. */
-const HASH_CHUNK_BYTES = 8 * 1024 * 1024;
+ *  sync by contract) without a whole-file allocation. Exported for the
+ *  committed cross-boundary fixture spec (issue #174 AC2), which pins this
+ *  readSync loop and the generator's stream path to one digest. */
+export const HASH_CHUNK_BYTES = 8 * 1024 * 1024;
 
-function sha256File(absolutePath: string): string {
+/** Exported for the committed cross-boundary fixture spec (issue #174 AC2);
+ *  the module's internal callers are unchanged. */
+export function sha256File(absolutePath: string): string {
   const hash = createHash('sha256');
   const fd = openSync(absolutePath, 'r');
   try {

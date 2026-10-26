@@ -447,15 +447,22 @@ def test_install_bundled_quant_matches_adr_decision():
     ), "bundled quant %s != ADR-0002 decision quant %s" % (bundled.group(1), adr_quant)
 
 
-def test_packaged_licenses_gap_tracked_until_84():
-    """electron-builder.yml copies no docs/ into packaged resources today, so the
-    wizard's packaged licensesPath stays empty until #84 wires packaging (ADR-0002
-    Consequences 1). When #84 adds that extraResources entry, UPDATE this pin —
-    its failure is the signal the packaging contract changed."""
+def test_packaged_docs_resources_mapping():
+    """#84 wired the packaged docs: the extraResources mapping copies the staged
+    docs tree (installer-resources/docs) into the packaged resources as docs/.
+    This replaces the pre-#84 "gap tracked" pin, whose regex only rejected a
+    literal `from: docs` line and therefore kept passing (vacuously) after the
+    real `from: installer-resources/docs` entry landed (issue #174 round-1
+    critic). The five-entry mapping's structural pin lives in
+    desktop/src/__tests__/e174-stager-negatives.test.ts; this pin guards the
+    ADR-0002-visible consequence: the packaged licensesPath is no longer empty."""
     builder = _load(BUILDER_REL)
-    assert not re.search(r"extraResources:[\s\S]*?from:\s*['\"]?docs\b", builder), (
-        "electron-builder.yml now copies docs/ — update ADR-0002 Consequences 1 "
-        "and the first-run wizard packaged-path expectations"
+    assert re.search(
+        r"extraResources:[\s\S]*?from:\s*['\"]?installer-resources/docs", builder
+    ), (
+        "electron-builder.yml no longer copies installer-resources/docs into the "
+        "packaged resources — the first-run wizard's packaged licensesPath contract "
+        "changed; update ADR-0002 Consequences 1 and e174-stager-negatives.test.ts"
     )
 
 

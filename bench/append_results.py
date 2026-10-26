@@ -42,7 +42,10 @@ SECTION_HEADINGS = {
 
 # surface -> header cells of the table that accepts the surface's rows. The
 # ONNX section hosts two tables (embed, rerank); matching on header cells is
-# what routes rows to the right one.
+# what routes rows to the right one. Issue #223 AC5: the native table gains a
+# trailing `max_tokens` column (index 10) — appended, never inserted, so the
+# pre-schema historical rows (10 cells) keep their column meaning and can
+# never false-match a new 11-cell row.
 HEADER_CELLS = {
     "native": [
         "machine",
@@ -55,6 +58,7 @@ HEADER_CELLS = {
         "peak_rss_mb",
         "engine",
         "outcome",
+        "max_tokens",
     ],
     "native-vulkan": ["machine", "model", "bin", "decode_tok_s", "outcome", "crash"],
     "wllama": [
@@ -104,6 +108,11 @@ REQUIRED_KEYS = {
         "decode_tokens_per_second",
         "machine",
         "outcome",
+        # Issue #223 AC5: the decode budget is part of the native identity and
+        # every in-repo producer records it (llama_bench_driver.py already
+        # did; node_bench_driver.mjs gained it with this issue), so a native
+        # PASS row without it fails closed instead of colliding as "-".
+        "max_tokens",
     ),
     "native-vulkan": ("surface", "model", "bin", "machine", "outcome"),
     "wllama": (
@@ -170,6 +179,39 @@ IDENTITY_CELLS = {
         4,
     ),  # machine, embedder, reranker, topk, multiplier
 }
+
+# Issue #223 AC5 (recorded maintainer decision, comment 6280336819): the
+# NATIVE surface's identity is ENGINE-AWARE. For the node producer
+# (`node-llama-cpp`) `--prompt-tokens` never sizes the measured prompt — the
+# prompt is sized from `--max-tokens` — so the label LEAVES the identity and
+# the decode budget (`max_tokens`, appended column index 10) enters it: two
+# runs of one workload with different labels stop splitting into two cells,
+# and two runs with different budgets become distinct. For the legacy
+# producers (`llama-cpp-python`, `llama-bench`) the prompt length IS a real
+# measurement input (the prompt is sized from `--prompt-tokens` and passed as
+# `-p`), so it stays an identity cell alongside the budget. Other surfaces
+# keep their static tuples.
+NATIVE_NODE_ENGINE = "node-llama-cpp"
+NATIVE_IDENTITY_NODE = (
+    0,
+    1,
+    2,
+    3,
+    8,
+    10,
+)  # machine, model, quant, threads, engine, max_tokens
+NATIVE_IDENTITY_LEGACY = (0, 1, 2, 3, 4, 8, 10)  # + prompt length (a real input there)
+
+
+def identity_cells_for(surface: str, cells: list) -> tuple:
+    """Identity cell indices for a row, engine-aware on the native surface."""
+    if surface != "native":
+        return IDENTITY_CELLS[surface]
+    engine = str(cells[8]) if len(cells) > 8 else ""
+    if engine == NATIVE_NODE_ENGINE:
+        return NATIVE_IDENTITY_NODE
+    return NATIVE_IDENTITY_LEGACY
+
 
 REGISTRY_HEADING = "## Machine registry"
 
@@ -257,6 +299,7 @@ def row_cells(row: dict) -> list:
             fmt(row.get("peak_rss_mb")),
             row.get("engine", row.get("outcome", "")),
             row.get("outcome", ""),
+            fmt(row.get("max_tokens")),
         ]
     return cells
 
@@ -322,7 +365,13 @@ def find_target_table(lines: list[str], heading: str, surface: str):
         if is_table_start:
             header = split_row(ln)
             if header == want:
-                insert_at = i + 1
+                # First body insert lands AFTER the separator row (i+2), never
+                # between header and separator — an empty table used to get its
+                # first appended row placed at i+1, corrupting the GFM table
+                # (found by the #223 identity tests; the PENDING-placeholder
+                # flow masked it because production tables always carry body
+                # rows).
+                insert_at = i + 2
                 body_rows = []
                 j = i + 2
                 while j < len(lines) and lines[j].startswith("|"):
@@ -351,9 +400,9 @@ def append_row(row: dict, results_path: Path = RESULTS) -> None:
     lines = text.splitlines()
     insert_at, body_rows = find_target_table(lines, heading, surface)
 
-    ident_idx = IDENTITY_CELLS[surface]
-    outcome_idx = HEADER_CELLS[surface].index("outcome")
     cells = row_cells(row)
+    ident_idx = identity_cells_for(surface, cells)
+    outcome_idx = HEADER_CELLS[surface].index("outcome")
     identity = [str(cells[i]) for i in ident_idx]
     new_line = row_to_markdown(row)
     for ridx in body_rows:

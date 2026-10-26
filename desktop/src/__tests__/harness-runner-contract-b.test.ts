@@ -8,8 +8,9 @@
  * node_bench_driver carries two extra issue-#221 flag-validation tests under
  * the same key prefix.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -31,6 +32,80 @@ import {
   main as wllamaMain,
   VALUE_FLAGS,
 } from '../../../bench/wllama_bench_driver.mjs';
+import {
+  LlamaEngine,
+  type LlamaEngineBackend,
+} from '../../main/backend/inference/llama-engine.js';
+
+// Issue #223 AC4 layer 3 (real sampler seam): the driver's per-call
+// `--max-tokens` budget must reach the REAL generation path. The production
+// defaultLlamaFactory dynamically imports node-llama-cpp; this fake records
+// the options that reach LlamaChatSession.prompt (the settings-wiring-honesty
+// pattern, self-contained here so the frozen -t filter selects one file).
+const NLC = vi.hoisted(() => ({
+  prompts: [] as Array<Record<string, unknown>>,
+}));
+vi.mock('node-llama-cpp', () => {
+  class LlamaChatSession {
+    constructor() {}
+    setChatHistory(): void {}
+    resetChatHistory(): void {}
+    async prompt(_question: string, options: Record<string, unknown>): Promise<string> {
+      NLC.prompts.push(options);
+      return 'ok';
+    }
+  }
+  return {
+    readGgufFileInfo: async () => ({ metadata: { general: { architecture: 'lfm2', name: 'LFM2.5 2.6B' } } }),
+    getLlama: async () => ({
+      loadModel: async () => ({
+        createContext: async () => ({ getSequence: () => ({}), dispose: () => undefined }),
+        dispose: () => undefined,
+      }),
+    }),
+    LlamaChatSession,
+  };
+});
+
+const GB = 1024 ** 3;
+
+/** LlamaEngine on the production default factory (the mocked real sampler). */
+function realSamplerEngine(profile: 'quality' | 'fast') {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'contract-b-budget-'));
+  const model = path.join(dir, 'm.gguf');
+  fs.writeFileSync(model, 'x');
+  return new LlamaEngine({
+    profile,
+    freeMemBytes: () => 8 * GB,
+    cpuCount: () => 8,
+    models: { quality: model, fast: model },
+  });
+}
+
+class RecordingBackend implements LlamaEngineBackend {
+  calls: Array<Record<string, unknown>> = [];
+  async generate(_question: string, opts: Record<string, unknown>): Promise<{ answer: string; cancelled: boolean }> {
+    this.calls.push(opts);
+    return { answer: 'ok', cancelled: false };
+  }
+  async dispose(): Promise<void> {}
+}
+
+/** LlamaEngine on the injected recording backend (option-forwarding layer). */
+function engineWithRecorder(profile: 'quality' | 'fast') {
+  const backend = new RecordingBackend();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'contract-b-recorder-'));
+  const model = path.join(dir, 'm.gguf');
+  fs.writeFileSync(model, 'x');
+  const engine = new LlamaEngine({
+    profile,
+    freeMemBytes: () => 8 * GB,
+    cpuCount: () => 8,
+    models: { quality: model, fast: model },
+    llamaFactory: async () => backend,
+  });
+  return { engine, backend };
+}
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -180,6 +255,23 @@ describe('harness runner contracts B (issue #223)', () => {
       process.argv = origArgv;
     }
 
+    // Issue #223 AC1 completion (plan-critic round 1): a BARE terminal
+    // --profile used to slip past the whitelist as `undefined` and reach the
+    // engine import. It joins the value-required parse class, both at the
+    // end of argv and when another flag follows.
+    expect(() => nodeBenchParseArgs(['--model', 'm', '--gguf', 'g', '--profile'])).toThrow(
+      '--profile requires a value',
+    );
+    expect(() => nodeBenchParseArgs(['--model', 'm', '--gguf', 'g', '--profile', '--threads', '4'])).toThrow(
+      '--profile requires a value',
+    );
+    try {
+      process.argv = [process.execPath, 'node_bench_driver.mjs', '--model', 'm', '--gguf', 'g', '--profile'];
+      await expect(nodeBenchMain()).resolves.toBe(2);
+    } finally {
+      process.argv = origArgv;
+    }
+
     // ...and the whitelist must NOT still exist after the import, which is
     // where it used to sit. The named mutant for this AC is exactly that move.
     const source = readRel('bench/node_bench_driver.mjs');
@@ -214,6 +306,59 @@ describe('harness runner contracts B (issue #223)', () => {
     const b = nodeBenchParseArgs(['--model', 'm', '--gguf', 'g', '--prompt-tokens', '999', '--max-tokens', '256']);
     expect(a['max-tokens']).toBe(b['max-tokens']);
     expect(a['prompt-tokens']).not.toBe(b['prompt-tokens']);
+  });
+
+  it('runner-contract: node_bench_driver max-tokens-budget bounds generation, reaches the real sampler, and is recorded in the row', async () => {
+    // Issue #223 AC4 — three evidence layers (plan-critic rounds 2-3):
+    //
+    // Layer 1 (bench driver): the measured engine.query forwards the flag as
+    // the generation budget and the emitted row records it. The driver's
+    // engine arrives via a dynamic import of desktop/dist (absent in unit
+    // runs), so the forwarding is pinned structurally at the two exact sites.
+    const driverSrc = readRel('bench/node_bench_driver.mjs');
+    expect(driverSrc).toMatch(/maxTokens: args\['max-tokens'\]/);
+    expect(driverSrc).toMatch(/max_tokens: args\['max-tokens'\]/);
+    // The forwarding sits INSIDE the measured call's options, not on the
+    // warmup (the warmup is unmeasured).
+    const measuredAt = driverSrc.indexOf('const measured = await engine.query(');
+    const forwardAt = driverSrc.indexOf("maxTokens: args['max-tokens']");
+    const warmupAt = driverSrc.indexOf("engine.query('Reply with exactly: OK')");
+    expect(measuredAt).toBeGreaterThan(-1);
+    expect(forwardAt).toBeGreaterThan(measuredAt);
+    expect(warmupAt).toBeGreaterThan(-1);
+    expect(forwardAt).toBeGreaterThan(warmupAt);
+
+    // Layer 2 (engine): a per-call budget reaches the backend generate()
+    // options — settings override wins, and the absent shape is preserved
+    // (the settings-wiring-honesty absent-key contract).
+    const engineSrc = readRel('desktop/main/backend/inference/llama-engine.ts');
+    expect(engineSrc).toMatch(
+      /overrides\.maxTokens \?\? opts\.maxTokens \?\? PROFILE_GENERATION\[profile\]\.maxTokens/,
+    );
+    expect(engineSrc).toMatch(/overrides\.maxTokens === undefined && opts\.maxTokens !== undefined/);
+    const { engine, backend } = engineWithRecorder('fast');
+    await engine.query('budget question', { maxTokens: 55 });
+    expect(backend.calls[0]).toMatchObject({ maxTokens: 55 });
+    const { engine: settingsWin, backend: settingsBackend } = engineWithRecorder('fast');
+    settingsWin.applySettingsPatch({ rag_max_tokens: 300 });
+    await settingsWin.query('budget question', { maxTokens: 55 });
+    expect(settingsBackend.calls[0]).toMatchObject({ maxTokens: 300 });
+    const { engine: absent, backend: absentBackend } = engineWithRecorder('fast');
+    await absent.query('budget question', {});
+    expect(absentBackend.calls[0]).not.toHaveProperty('maxTokens');
+
+    // Layer 3 (real sampler seam): the per-call budget is what actually
+    // bounds the decode — it reaches session.prompt, the settings override
+    // beats it there, and omitting both yields the profile default (fast=384).
+    const sampler = realSamplerEngine('fast');
+    await sampler.query('sampler question', { maxTokens: 77 });
+    expect(NLC.prompts[0]).toMatchObject({ maxTokens: 77 });
+    sampler.applySettingsPatch({ rag_max_tokens: 300 });
+    await sampler.query('sampler question', { maxTokens: 77 });
+    expect(NLC.prompts[1]).toMatchObject({ maxTokens: 300 });
+    const noBudget = realSamplerEngine('fast');
+    await noBudget.query('sampler question', {});
+    expect(NLC.prompts[2]).toMatchObject({ maxTokens: 384 });
   });
 
   it('runner-contract: wllama_bench_driver wllama-numeric-validate rejects non-integer, NaN and sub-1 token flags', async () => {

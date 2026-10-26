@@ -1,6 +1,37 @@
 # Changelog
 
 ## [Unreleased]
+- **Bench identity + packaging + trace-hygiene hardening: per-call bench decode
+  budget, engine-aware native results identity, an exclusive staging lock, a
+  committed multi-chunk sha256 oracle, and the trace-wrapper hygiene guard
+  (issues #223 #177 #174 #183)**: `--max-tokens` on `bench/node_bench_driver.mjs`
+  now actually bounds the measured generation — it rides a new per-call
+  `EngineQueryOptions.maxTokens` to the real sampler (settings override wins;
+  the key stays absent when nothing sets it; the external path honors the same
+  precedence) and is recorded in the row — while a bare `--profile` joins the
+  exit-2 parse class (#223 AC1 residue). The native results identity is
+  ENGINE-AWARE (`bench/append_results.py`): the `node-llama-cpp` producer drops
+  the `prompt_tokens` label from its identity and gains a trailing `max_tokens`
+  identity cell (required on PASS rows; historical 10-cell rows keep the old
+  schema, never colliding with 11-cell rows), while the `llama-cpp-python` /
+  `llama-bench` producers keep prompt length as a real identity cell alongside
+  the budget (their prompts genuinely size from it). #177's residuals: two
+  stale wall-size comments now state the real values (job 45, step 32), the
+  in-page `/packs` smoke fetch carries its own abort, and the bounds census +
+  watchdog-disarm contract are pinned by
+  `harness-packaged-smoke-bounds.test.ts`. #174: both staging writers hold an
+  exclusive out-of-tree lock (`desktop/scripts/staging-lock.mjs`,
+  `<stage-dir>.lock`, loud `STAGING_LOCK_HELD` refusal, release-on-throw with
+  `process.exit` removed from the guarded regions; the packager read window is
+  disclosed residual), a committed deterministic 8 MiB+4 KiB fixture pins the
+  verifier and generator hash paths to one independently computed digest, the
+  generator/stager negative paths and the five-entry extraResources mapping are
+  pinned by committed specs, and the stale vacuous docs pin in
+  `test_adr_0002_llm_profiles.py` is replaced with a correct-mapping assertion.
+  #183: `scripts/trace-hygiene.mjs` commits the trace-wrapper guard (main-
+  checkout stub-plant refusal, journaled junction create→remove→lstat-verify,
+  `selfcheck` CLI) and CONTRIBUTING.md documents the conventions; the frozen
+  historical wrappers stay untouched (census disclosed).
 - **Desktop inference + test-infra: CI-stable streamed-cap harness, GPU-probe
   convergence, honest real-backend cancellation, and a scoped unit-spec
   typecheck (issues #243 #251 #249 #252)**: the F-003 8 MiB streamed-cap legs

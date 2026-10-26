@@ -69,7 +69,7 @@ export function parseArgs(argv) {
       case '--max-tokens': args['max-tokens'] = readPositiveInt(argv, i, '--max-tokens'); i += 1; break;
       case '--prompt-tokens': args['prompt-tokens'] = readPositiveInt(argv, i, '--prompt-tokens'); i += 1; break;
       case '--json': args.json = argv[++i]; break;
-      case '--profile': args.profile = argv[++i]; break;
+      case '--profile': args.profile = readValueArgv(argv, i, '--profile'); i += 1; break;
       default: throw new Error(`unknown argument: ${argv[i]}`);
     }
   }
@@ -141,6 +141,9 @@ export async function main() {
         if (firstTokenAt === 0) firstTokenAt = performance.now();
         tokens.push(token);
       },
+      // Issue #223 AC4: the flag is the measured generation budget — it must
+      // bound the decode, not only size the prompt.
+      maxTokens: args['max-tokens'],
     },
   );
   const doneAt = performance.now();
@@ -160,6 +163,8 @@ export async function main() {
     quant: args.quant ?? 'Q4_K_M',
     threads: args.threads,
     prompt_tokens: args['prompt-tokens'],
+    // Issue #223 AC4: the decode budget is a measurement input and is recorded.
+    max_tokens: args['max-tokens'],
     decode_tokens_per_second: Number(decodeTokS.toFixed(2)),
     first_token_ms: Number(firstTokenMs.toFixed(1)),
     peak_rss_mb: Math.round(process.memoryUsage.rss() / (1024 * 1024)),

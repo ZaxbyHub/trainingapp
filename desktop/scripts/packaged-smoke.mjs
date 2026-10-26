@@ -96,8 +96,10 @@ const DEVTOOLS_STDERR_SAMPLE =
  * healthy run reaches its bounds rarely, and a wedged run usually trips a
  * per-phase bound first. The walls around it are sized so a verdict always
  * lands inside them: the smoke step carries timeout-minutes 32 and the job
- * 40 (review finding PRR-007 — the previous 30-min watchdog could never fire
- * before the old 35-min job wall, which counts from job start ~8 min earlier).
+ * 45 (review finding PRR-007 — the previous 30-min watchdog could never fire
+ * before the old 35-min job wall, which counts from job start ~8 min earlier;
+ * the job wall was raised 40 -> 45 in 1f4850f0 — issue #177 AC9 keeps this
+ * docblock tied to the real values).
  */
 export const WATCHDOG_DEFAULT_MS = 30 * 60_000;
 export const WATCHDOG_MIN_MS = 60_000;
@@ -915,12 +917,18 @@ export async function main(argv, env, io) {
     );
     check(4, 'wizard completes', completion?.ok === true, completion?.detail ?? '');
 
-    // 5. /packs must answer 200 through the loopback token gate.
+    // 5. /packs must answer 200 through the loopback token gate. Issue #177
+    // AC-b hardening (deliberate smoke-policy tightening): the in-page fetch
+    // carries its own abort so a wedged renderer fetch cannot outlive the
+    // evaluate race unnoticed.
     const packsProbe = await evaluate(async () => {
       try {
         const info = await window.desktopApi.getBackendInfo();
         const token = await window.desktopApi.getAuthToken();
-        const res = await fetch(`${info.url}/packs`, { headers: { 'X-Desktop-Token': token } });
+        const res = await fetch(`${info.url}/packs`, {
+          headers: { 'X-Desktop-Token': token },
+          signal: AbortSignal.timeout(10_000),
+        });
         return { status: res.status, body: await res.text() };
       } catch (err) {
         return { status: 0, body: String(err) };

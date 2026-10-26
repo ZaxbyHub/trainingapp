@@ -238,6 +238,12 @@ export interface EngineQueryOptions {
   history?: unknown[];
   streamCallback?: (token: string) => void;
   cancellationEvent?: CancellationFlag;
+  /**
+   * Per-call generation budget (issue #223 AC4). Settings override wins when
+   * set; the profile default applies when neither is set. Product callers
+   * never pass it — the bench driver does.
+   */
+  maxTokens?: number;
 }
 
 /** One Learn-panel entry (issue #82 / D6) — mirrors api_server.py LearnResult. */

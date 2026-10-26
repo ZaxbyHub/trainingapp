@@ -47,7 +47,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { StagingLockHeld, withStagingLockSync } from './staging-lock.mjs';
+
 const SCRIPT = 'stage-installer-resources';
+
+/** Collected validation failures, thrown OUT of the locked region so the lock
+ *  is released before the process exits (issue #174 round-1 critic: a
+ *  process.exit inside the guarded region would strand the lock). */
+class StagingFailure extends Error {
+  constructor(problems) {
+    super(`staging FAILED (${problems.length} problem${problems.length === 1 ? '' : 's'})`);
+    this.name = 'StagingFailure';
+    this.problems = problems;
+  }
+}
 
 const args = {
   fixtureModels:
@@ -647,27 +660,47 @@ function assertNoWeightOverlap() {
 }
 
 function main() {
-  rmSyncBestEffort(stageDir);
-  fs.mkdirSync(stageDir, { recursive: true });
-  stageModels();
-  stagePacks();
-  stageDocs();
-  stageContracts();
-  // issue #173 AC1: evaluated on EVERY invocation and BEFORE the
-  // --skip-renderer-copy branch below. `build` passes that flag, so a check
-  // placed inside the copy path would never run on the path that needs it.
-  const freshnessProblem = rendererFreshnessProblem({
-    skipRendererCopy: args.skipRendererCopy,
-  });
-  if (freshnessProblem !== null) fail(freshnessProblem);
-  if (!args.skipRendererCopy) copyRenderer();
-  if (args.fixtureModels) console.log('MODE: fixture-models');
-  if (errors.length > 0) {
-    for (const message of errors) console.error(`${SCRIPT}: FAIL ${message}`);
-    console.error(`${SCRIPT}: staging FAILED (${errors.length} problem${errors.length === 1 ? '' : 's'})`);
-    process.exit(1);
+  // Issue #174 AC1: the ENTIRE wipe+copy+validate body runs under the
+  // exclusive staging lock (a sibling file, <stage-dir>.lock — never wiped by
+  // this script, never walked by the manifest generator). Two overlapping
+  // staging runs on one machine can no longer interleave wipes and copies;
+  // the loser fails loud with STAGING_LOCK_HELD. process.exit stays OUT of
+  // the guarded region: validation failures throw (releasing the lock inside
+  // withStagingLockSync) and only the catch below sets the exit status.
+  try {
+    withStagingLockSync(stageDir, () => {
+      rmSyncBestEffort(stageDir);
+      fs.mkdirSync(stageDir, { recursive: true });
+      stageModels();
+      stagePacks();
+      stageDocs();
+      stageContracts();
+      // issue #173 AC1: evaluated on EVERY invocation and BEFORE the
+      // --skip-renderer-copy branch below. `build` passes that flag, so a check
+      // placed inside the copy path would never run on the path that needs it.
+      const freshnessProblem = rendererFreshnessProblem({
+        skipRendererCopy: args.skipRendererCopy,
+      });
+      if (freshnessProblem !== null) fail(freshnessProblem);
+      if (!args.skipRendererCopy) copyRenderer();
+      if (args.fixtureModels) console.log('MODE: fixture-models');
+      if (errors.length > 0) throw new StagingFailure(errors);
+      console.log(`${SCRIPT}: staging complete -> ${path.relative(repoRoot, stageDir)}`);
+    });
+  } catch (err) {
+    if (err instanceof StagingLockHeld) {
+      console.error(`${SCRIPT}: FAIL ${err.message}`);
+      process.exitCode = 1;
+      return;
+    }
+    if (err instanceof StagingFailure) {
+      for (const message of err.problems) console.error(`${SCRIPT}: FAIL ${message}`);
+      console.error(`${SCRIPT}: ${err.message}`);
+      process.exitCode = 1;
+      return;
+    }
+    throw err;
   }
-  console.log(`${SCRIPT}: staging complete -> ${path.relative(repoRoot, stageDir)}`);
 }
 
 // Run only when executed directly (not when imported by the specs). Case

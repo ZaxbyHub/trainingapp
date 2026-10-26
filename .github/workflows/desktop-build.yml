@@ -37,10 +37,11 @@ jobs:
     # The smoke's worst-case internal stack is ~30-31 min (both boots x
     # [DevTools wait + page-target wait + attach retries + renderer wait],
     # the ladder polls/evaluates, the relaunch poll, and the close windows).
-    # 40 gives the ~8-min build prefix plus the smoke step's own 32-min
+    # 45 gives the ~8-min build prefix plus the smoke step's own 32-min
     # timeout room to land a VERDICT inside the wall (review PRR-007: with
     # the old 35-min job wall the wall beat the watchdog and killed the run
-    # without dumps).
+    # without dumps; the wall was raised 40 -> 45 in 1f4850f0 — issue #177
+    # AC9 keeps this comment tied to the real value).
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
