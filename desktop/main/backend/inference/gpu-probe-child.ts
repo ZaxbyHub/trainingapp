@@ -73,6 +73,32 @@ function fail(reason: string, device: string | null = null): void {
   process.exit(0);
 }
 
+// Issue #251 (AC1): the ADAPTER identity captured ONCE per full probe,
+// immediately after `getLlama` succeeds and before any disposal, so every
+// post-getLlama CPU failure (wrong backend, model-load failure, generation
+// failure) can persist a device-bearing CPU verdict. The capture lives at
+// module scope so the main()-rejection handler — which runs outside main()'s
+// scope — can carry it too (a NATIVE abort emits no report and stays
+// device-less by design). Null means the identity is not resolvable
+// in-process (lookup failed, adapter list empty, or the failure happened
+// before `getLlama`), which keeps the pre-existing device-less semantics for
+// those shapes. Driver-supplied names are sanitized (control chars stripped)
+// and length-capped before they touch the sidecar or the API.
+let probeAdapterDevice: string | null = null;
+
+async function captureAdapterDevice(llama: Nlc.Llama): Promise<void> {
+  try {
+    const names = await llama.getGpuDeviceNames();
+    probeAdapterDevice =
+      Array.isArray(names) && names.length > 0
+        ? names.join(', ').replace(/[\x00-\x1f\x7f]/g, '').slice(0, 200) || null
+        : null;
+  } catch {
+    // A device name is a nicety; never let the capture fail the probe.
+    probeAdapterDevice = null;
+  }
+}
+
 /** Issue #246 (AC4): the device-only mode's report — no sample by contract;
  * gpu-probe.ts's deviceOnly parser reads only {ok, device, backend}. */
 async function runDeviceOnly(llama: Nlc.Llama): Promise<void> {
@@ -111,10 +137,20 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Issue #251 (AC1): capture the adapter identity BEFORE any disposal or
+  // failure decision — `getGpuDeviceNames()` throws after dispose
+  // (Llama.js _ensureNotDisposed), so this is the only point every
+  // post-getLlama failure path can share. Device-only mode skips it: its
+  // report carries its own fresh lookup, so no double native enumeration on
+  // the boot-blocking query path.
+  if (!deviceOnly) {
+    await captureAdapterDevice(llama);
+  }
+
   const selected = llama.gpu;
   if (selected !== 'vulkan') {
     await llama.dispose().catch(() => {});
-    fail(`GPU probe: this host selected "${String(selected)}" rather than a usable Vulkan device.`);
+    fail(`GPU probe: this host selected "${String(selected)}" rather than a usable Vulkan device.`, probeAdapterDevice);
     return;
   }
 
@@ -135,7 +171,7 @@ async function main(): Promise<void> {
     await context?.dispose().catch(() => {});
     await model?.dispose().catch(() => {});
     await llama.dispose().catch(() => {});
-    fail(`GPU probe: the GPU could not load the probe model (${err instanceof Error ? err.message : String(err)}).`);
+    fail(`GPU probe: the GPU could not load the probe model (${err instanceof Error ? err.message : String(err)}).`, probeAdapterDevice);
     return;
   }
 
@@ -171,16 +207,10 @@ async function main(): Promise<void> {
         : null;
     // The ADAPTER identity, not the backend name. `selected` is just the string
     // "vulkan", which is the same on every machine and so cannot distinguish
-    // devices or support adapter-change detection. Llama exposes
-    // getGpuDeviceNames(): Promise<string[]>.
-    let device: string | null = null;
-    try {
-      const names = await llama.getGpuDeviceNames();
-      device = Array.isArray(names) && names.length > 0 ? names.join(', ') : null;
-    } catch {
-      // A device name is a nicety; never let it fail the probe.
-      device = null;
-    }
+    // devices or support adapter-change detection. Issue #251 (AC5): this
+    // reuses the single capture taken right after `getLlama` — no second,
+    // potentially inconsistent lookup.
+    const device = probeAdapterDevice;
     emit({
       ok: true,
       backend: 'vulkan',
@@ -198,7 +228,7 @@ async function main(): Promise<void> {
   await model.dispose().catch(() => {});
   await llama.dispose().catch(() => {});
   if (generationFailure !== null) {
-    fail(`GPU probe: the GPU failed to generate (${generationFailure}).`);
+    fail(`GPU probe: the GPU failed to generate (${generationFailure}).`, probeAdapterDevice);
   }
 }
 
@@ -218,6 +248,8 @@ function isProcessEntry(): boolean {
 
 if (isProcessEntry()) {
   void main().catch((err: unknown) => {
-    fail(`GPU probe crashed: ${err instanceof Error ? err.message : String(err)}`);
+    // Issue #251 (AC5): a crash after `getLlama` carries the captured adapter
+    // identity; before it, the capture is still null (device-less).
+    fail(`GPU probe crashed: ${err instanceof Error ? err.message : String(err)}`, probeAdapterDevice);
   });
 }

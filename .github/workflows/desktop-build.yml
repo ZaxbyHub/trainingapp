@@ -41,7 +41,7 @@ jobs:
     # timeout room to land a VERDICT inside the wall (review PRR-007: with
     # the old 35-min job wall the wall beat the watchdog and killed the run
     # without dumps).
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -66,6 +66,12 @@ jobs:
       # Playwright-under-Electron specs (desktop/e2e) get their own typecheck.
       - name: Typecheck the desktop e2e specs
         run: npm --prefix desktop run typecheck:e2e
+
+      # Issue #252: desktop/tsconfig.json covers main/** only, so the vitest
+      # unit-spec tree gets a scoped typecheck (tsconfig.test.json) — the
+      # specs' pinned production fields must fail the build when renamed.
+      - name: Typecheck the desktop unit specs
+        run: npm --prefix desktop run typecheck:test
 
       # Issue #73: packtool must be built BEFORE the desktop vitest run — the
       # c6-prebuilt-install test shells out to node packtool/dist/cli.js to

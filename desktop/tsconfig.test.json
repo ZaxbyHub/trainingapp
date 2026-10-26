@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "src/__tests__/gpu-admission-recovery.test.ts",
+    "src/__tests__/gpu-test-coordination.test.ts",
+    "src/__tests__/wizard-gpu-verdict-preference.test.ts",
+    "src/__tests__/gpu-lifecycle-contract-sweep.test.ts",
+    "src/__tests__/external-response-bounds-turncount.test.ts",
+    "src/__tests__/gpu-probe-device-identity.test.ts",
+    "src/__tests__/b4-cancel-abort-throw.test.ts"
+  ]
+}
