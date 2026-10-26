@@ -50,6 +50,39 @@ identity-contract test host (issue #223)
 """
 
 
+WLLAMA_SKELETON = (
+    "# Benchmarks\n\n## Machine registry\n\n### celltest\nhost\n\n"
+    "## wllama (browser WASM) results\n\n"
+    + "| "
+    + " | ".join(append_results.HEADER_CELLS["wllama"])
+    + " |\n|"
+    + "---|" * len(append_results.HEADER_CELLS["wllama"])
+    + "\n"
+)
+
+
+def make_wllama_row(max_tokens=128, decode=51.8, threads=4):
+    return {
+        "surface": "wllama",
+        "machine": "celltest",
+        "model": "lfm2-1.2b-rag",
+        "mode": "threaded",
+        "threads": threads,
+        "prompt_tokens": 256,
+        "decode_tokens_per_second": decode,
+        "first_token_ms": 650.0,
+        "outcome": "pass",
+        "max_tokens": max_tokens,
+    }
+
+
+def append_wllama(tmp_path, row):
+    results = tmp_path / "RESULTS.md"
+    if not results.exists():
+        results.write_text(WLLAMA_SKELETON, encoding="utf-8", newline="\n")
+    append_results.append_row(row, results)
+
+
 def make_row(engine="node-llama-cpp", prompt_tokens=64, max_tokens=128, decode=12.5):
     return {
         "surface": "native",
@@ -207,6 +240,44 @@ def sc_empty_table_first_append_after_separator(tmp_path):
     assert lines[header_idx + 2].startswith("| celltest")
 
 
+def sc_wllama_budget_splits(tmp_path):
+    # Implementation-review round 1: the wllama decode budget is a REAL input
+    # (n_ctx sizing + generation cap) — two runs differing only in budget are
+    # distinct measurements, never an append-or-fail collision.
+    append_wllama(tmp_path, make_wllama_row(max_tokens=16))
+    append_wllama(tmp_path, make_wllama_row(max_tokens=512, decode=48.2))
+    text = (tmp_path / "RESULTS.md").read_text(encoding="utf-8")
+    section = text.split("## wllama (browser WASM) results", 1)[1]
+    rows = [ln for ln in section.splitlines() if ln.startswith("| celltest")]
+    assert len(rows) == 2
+    assert rows[0].rstrip().endswith("| 16 |")
+    assert rows[1].rstrip().endswith("| 512 |")
+
+
+def sc_real_results_tables_match_schema(tmp_path):
+    # Implementation-review round 1: the REAL bench/RESULTS.md tables must
+    # carry header + separator cell counts matching HEADER_CELLS (the GFM
+    # rule — a mismatch silently un-tables the section for every renderer).
+    real = (REPO_ROOT / "bench" / "RESULTS.md").read_text(encoding="utf-8")
+    for surface in ("native", "wllama"):
+        heading = append_results.SECTION_HEADINGS[surface]
+        section = real.split(heading, 1)[1].split("\n## ", 1)[0]
+        lines = section.splitlines()
+        header_idx = next(i for i, ln in enumerate(lines) if ln.startswith("| machine"))
+        header = [c.strip() for c in lines[header_idx].strip().strip("|").split("|")]
+        separator = [
+            c.strip() for c in lines[header_idx + 1].strip().strip("|").split("|")
+        ]
+        want = list(append_results.HEADER_CELLS[surface])
+        assert header == want, f"{surface}: header {header} != schema {want}"
+        assert len(separator) == len(
+            header
+        ), f"{surface}: separator has {len(separator)} cells for {len(header)} header cells"
+        assert all(
+            set(cell) <= {"-"} for cell in separator
+        ), f"{surface}: malformed separator"
+
+
 SCENARIOS = [
     ("max-tokens-identity-node-tuple-drops-prompt", sc_node_tuple),
     ("max-tokens-identity-legacy-tuple-keeps-prompt", sc_legacy_tuple),
@@ -221,6 +292,14 @@ SCENARIOS = [
     (
         "max-tokens-identity-empty-table-placement",
         sc_empty_table_first_append_after_separator,
+    ),
+    (
+        "max-tokens-identity-wllama-budget-splits",
+        sc_wllama_budget_splits,
+    ),
+    (
+        "max-tokens-identity-real-tables-match-schema",
+        sc_real_results_tables_match_schema,
     ),
 ]
 

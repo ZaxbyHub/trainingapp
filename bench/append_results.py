@@ -14,6 +14,11 @@ with their machine tag. The append is fail-closed:
     never silently overwritten or duplicated. The one exception: an
     exact-identity match against a PENDING placeholder row fills the slot in
     place, which is the runbook flow for the pre-seeded reference-i5 cells.
+    Issue #223 schema boundary: rows recorded before a surface's schema gained
+    columns (native and wllama gained trailing `max_tokens` at #223) carry the
+    OLD cell count, and the length guard means a new row can never
+    duplicate-refuse against a historical one (and vice versa) - read
+    historical sections under their recorded schema.
 
 Usage:
   python bench/append_results.py --row-file out.json
@@ -70,6 +75,11 @@ HEADER_CELLS = {
         "decode_tok_s",
         "first_token_ms",
         "outcome",
+        # Issue #223 AC5 (implementation-review round 1): the wllama decode
+        # budget is a REAL measurement input (n_ctx sizing + generation
+        # budget) — appended at index 8 like the native column, so historical
+        # 8-cell rows keep their meaning under the length guard.
+        "max_tokens",
     ],
     "onnx-embed": ["machine", "model", "encode_ms", "embeddings_per_second", "outcome"],
     "onnx-rerank": ["machine", "model", "top15_ms", "top30_ms", "outcome"],
@@ -125,6 +135,7 @@ REQUIRED_KEYS = {
         "first_token_ms",
         "machine",
         "outcome",
+        "max_tokens",
     ),
     "onnx-embed": (
         "surface",
@@ -167,7 +178,9 @@ ALWAYS_REQUIRED = ("surface", "machine", "outcome")
 IDENTITY_CELLS = {
     "native": (0, 1, 2, 3, 4, 8),  # machine, model, quant, threads, prompt, engine
     "native-vulkan": (0, 1, 2),  # machine, model, bin
-    "wllama": (0, 1, 2, 3, 4),  # machine, model, mode, threads, prompt_tokens
+    "wllama": (0, 1, 2, 3, 4, 8),
+    # machine, model, mode, threads, prompt_tokens, max_tokens — prompt
+    # length AND decode budget are both real inputs on the wllama surface
     "onnx-embed": (0, 1),  # machine, model
     "onnx-rerank": (0, 1),  # machine, model
     "desktop-ingest": (0, 1),  # machine, model (mirrors onnx-embed)
@@ -286,6 +299,7 @@ def row_cells(row: dict) -> list:
             fmt(row.get("decode_tokens_per_second")),
             fmt(row.get("first_token_ms")),
             row.get("outcome", ""),
+            fmt(row.get("max_tokens")),
         ]
     else:  # native
         cells = [

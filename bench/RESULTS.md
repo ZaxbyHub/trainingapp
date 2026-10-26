@@ -123,13 +123,16 @@ reference-i5 matrix cells are PENDING until the laptop run; dev-station
 cells are appended per recorded run.
 
 Schema note (issue #223): rows appended from the `node-llama-cpp` driver carry a
-trailing `max_tokens` cell (the recorded decode budget). Historical rows below were
-recorded under the pre-#223 10-column schema and keep their original meaning; the
-row identity is engine-aware (`prompt_tokens` counts toward the identity only for
-the legacy engines whose prompt it actually sizes).
+trailing `max_tokens` cell (the recorded decode budget), and from the same issue
+the wllama table gained the same trailing column (the budget is real there too:
+n_ctx sizing and the generation cap). Historical rows in BOTH tables were
+recorded under their pre-#223 schemas and keep their original meaning; the
+native row identity is engine-aware (`prompt_tokens` counts toward the identity
+only for the legacy engines whose prompt it actually sizes), while the wllama
+identity counts both prompt length and budget.
 
 | machine | model | quant | threads | prompt_tokens | decode_tok_s | first_token_ms | peak_rss_mb | engine | outcome | max_tokens |
-|---|---|---|---|---|---|---|---|---|---|
+|---|---|---|---|---|---|---|---|---|---|---|
 | devstation | lfm2.5-vl-450m | Q4_K_M | 4 | 1024 | 95.97 | 1200.1 | 496.7 | llama-cpp-python | pass |
 | devstation | lfm2.5-vl-450m | Q4_K_M | 8 | 1024 | 80.15 | 1311.9 | 497.3 | llama-cpp-python | pass |
 | devstation | gemma-4-e2b-it | Q4_K_M | 4 | 1024 | 3.65 | 36813 | 2761.2 | llama-cpp-python | pass |
@@ -160,8 +163,8 @@ the known failure mode motivating the crash-as-data rule.
 available, n_threads = min(hardwareConcurrency, 4)); `single` = headers
 stripped (corporate-proxy simulation), crossOriginIsolated false, n_threads 1.
 
-| machine | model | mode | threads | prompt_tokens | decode_tok_s | first_token_ms | outcome |
-|---|---|---|---|---|---|---|---|
+| machine | model | mode | threads | prompt_tokens | decode_tok_s | first_token_ms | outcome | max_tokens |
+|---|---|---|---|---|---|---|---|---|
 | reference-i5 | lfm2.5-vl-450m | threaded | 4 | 256 | PENDING | PENDING | PENDING |
 | reference-i5 | lfm2.5-vl-450m | single | 1 | 256 | PENDING | PENDING | PENDING |
 | devstation | lfm2.5-vl-450m | threaded | 4 | 256 | 51.83 | 658.1 | pass |
@@ -325,7 +328,9 @@ node bench/wllama_bench_driver.mjs --run --model models/lfm2.5-vl-450m/model.ggu
 # 4. ONNX embed/rerank cost
 python bench/onnx_bench_driver.py --assets-dir models
 
-# 5. merge rows (append_results refuses duplicates; never hand-edit numbers)
+# 5. merge rows (append_results refuses duplicates within a schema; pre-#223
+#    historical rows carry the old cell count and are never duplicate-matched
+#    against new rows - never hand-edit numbers)
 python bench/append_results.py --row-file <row.json>   # per emitted row
 
 # 6. fill the reference-i5 floors block below from the recorded rows, then
