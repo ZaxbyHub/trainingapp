@@ -718,6 +718,8 @@ export function __resetLoggingForTests(): void {
   if (monitorHandler !== null) {
     process.off('uncaughtExceptionMonitor', monitorHandler);
     monitorHandler = null;
+    if (rejectionHandler !== null) process.off('unhandledRejection', rejectionHandler);
+    rejectionHandler = null;
   }
   enhancedLevel = false;
   active = false;

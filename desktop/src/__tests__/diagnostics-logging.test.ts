@@ -440,8 +440,10 @@ describe('diagnostics capture-handlers (AC6: unhandled errors and Electron crash
     expect(() => console.error('[test] diskfull probe password=hunter2')).not.toThrow();
     expect(() => console.error('[test] diskfull probe two')).not.toThrow();
     fs.chmodSync(logFile, 0o666);
-    // The failed writes never reached the file; the transport is disabled.
+    // The failed writes never reached the file; the transport is disabled
+    // FOR THE SESSION (a transient failure must not silently resume).
     expect(readLog(ws)).toBe(before);
+    expect(__diagnosticsStateForTests().transportDisabled).toBe(true);
   });
 
   it('capture-handlers: the quit-flush appends buffered pre-activation errors, gated, on will-quit', () => {
