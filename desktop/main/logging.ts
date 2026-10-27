@@ -144,6 +144,7 @@ function nowIso(): string {
 // the test reset) removes the previous registration instead of accumulating
 // listeners on `process`.
 let monitorHandler: ((err: unknown) => void) | null = null;
+let quitFlushHandler: (() => void) | null = null;
 
 /** One-per-session non-recursive warning; a failing warn is swallowed. */
 function warnFailureOnce(detail: string): void {
@@ -325,6 +326,27 @@ export function installLoggingConsoleWrapper(): void {
     emitConsoleLike('error', 'process', ['uncaught exception:', err]);
   };
   process.on('uncaughtExceptionMonitor', monitorHandler);
+  // Quit-flush (class-(1) sibling coverage): fail-fast boot diagnostics that
+  // run BEFORE activation (e.g. transport-security or profile-resolution
+  // refusals) land in the unlevel phase-1 buffer and would otherwise vanish
+  // with the process under the issue's own root cause (packaged stdout
+  // discarded). On quit of a process whose file sink never activated,
+  // best-effort append the admitted (error/warn) buffered entries.
+  if (quitFlushHandler !== null) app.off?.('will-quit', quitFlushHandler);
+  quitFlushHandler = () => {
+    if (active) return;
+    const admitted = phase1.filter((e) => e.level === 'error' || e.level === 'warn');
+    if (admitted.length === 0) return;
+    try {
+      const logsDir = path.join(app.getPath('userData'), 'logs');
+      mkdirSync(logsDir, { recursive: true });
+      const body = admitted.map((e) => persistedForm(formatLine(e))).join('\n') + '\n';
+      appendFileSync(path.join(logsDir, 'main.log'), body);
+    } catch {
+      // Best effort only: a logging failure must never block quit.
+    }
+  };
+  app.on?.('will-quit', quitFlushHandler);
 }
 
 /**
@@ -408,7 +430,14 @@ function registerDiagnosticsIpc(): void {
       trimSeen();
       return { ok: true as const, dropped: 'level' as const };
     }
-    appendEntry({ ts: payload.ts, level: payload.level, scope: payload.scope, message: payload.message });
+    // Re-gate at the main sink (belt and braces per the plan: the renderer
+    // already gates, but the IPC boundary is untrusted — defense in depth).
+    appendEntry({
+      ts: payload.ts,
+      level: payload.level,
+      scope: payload.scope,
+      message: persistedForm(payload.message),
+    });
     seen.add(seenKey);
     trimSeen();
     return { ok: true as const };

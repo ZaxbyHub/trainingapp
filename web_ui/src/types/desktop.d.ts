@@ -120,8 +120,10 @@ export interface DiagnosticsLogEntry {
   level: 'debug' | 'info' | 'warn' | 'error';
   scope: string;
   message: string;
-  sessionId?: string;
-  seq?: number;
+  /** Delivery identity (stop-and-wait dedupe). The main-side validator
+   * rejects entries without both, so they are required here. */
+  sessionId: string;
+  seq: number;
 }
 
 /** Reply of desktop:diagnostics:export (issue #248). Exactly one of the

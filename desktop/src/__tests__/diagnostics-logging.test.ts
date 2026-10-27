@@ -268,6 +268,52 @@ describe('diagnostics export-bundle (AC3: gated bundle to a user-chosen path)', 
     });
   });
 
+  it('export-bundle: gpu-probe.json when present gates into the sidecar map and drives the available:true adapter summary', () => {
+    const ws = makeWorkspace('diag-c3-gpu-');
+    activateDiagnosticsLogging({ userDataPath: ws.userDataPath, storePath: ws.storePath });
+    // A v1 verdict whose reason carries a secret-shaped value: the sidecar
+    // text and the adapter summary must both be gated, never raw.
+    fs.writeFileSync(
+      path.join(ws.profileDir, 'gpu-probe.json'),
+      JSON.stringify({ v: 1, backend: 'vulkan', ok: true, reason: 'probe password=hunter2', device: 'RTX TEST' }),
+      'utf8',
+    );
+    const dest = path.join(ws.profileDir, '..', 'bundle-gpu.json');
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: dest } as never);
+    const reply = handlerFor('desktop:diagnostics:export')(undefined) as Promise<{ ok: boolean; path?: string }>;
+    return reply.then((result) => {
+      expect(result.ok).toBe(true);
+      const bundle = JSON.parse(fs.readFileSync(dest, 'utf8')) as {
+        sidecars: Record<string, string>;
+        adapterSummary: Record<string, unknown>;
+      };
+      expect(bundle.sidecars['gpu-probe.json']).toContain('vulkan');
+      expect(bundle.sidecars['gpu-probe.json']).toContain('password=[redacted]');
+      expect(bundle.sidecars['gpu-probe.json']).not.toContain('hunter2');
+      expect(bundle.adapterSummary).toMatchObject({ available: true, backend: 'vulkan', ok: true });
+      expect(JSON.stringify(bundle.adapterSummary)).toContain('password=[redacted]');
+      expect(JSON.stringify(bundle.adapterSummary)).not.toContain('hunter2');
+    });
+  });
+
+  it('capture-handlers: the main-side IPC ingest re-gates renderer entries at the sink', () => {
+    const ws = makeWorkspace('diag-c6-ingest-');
+    activateDiagnosticsLogging({ userDataPath: ws.userDataPath, storePath: ws.storePath });
+    const reply = handlerFor('desktop:diagnostics:log-entry')(undefined, {
+      ts: new Date().toISOString(),
+      level: 'warn',
+      scope: 'renderer',
+      // The renderer sends the persisted form; a bypassing caller sends raw.
+      message: 'ingest probe password=hunter2',
+      sessionId: 'sess-test',
+      seq: 1,
+    });
+    // The handler answers synchronously under direct invocation.
+    const log = fs.readFileSync(path.join(ws.userDataPath, 'logs', 'main.log'), 'utf8');
+    expect(log).toContain('password=[redacted]');
+    expect(log).not.toContain('hunter2');
+  });
+
   it('export-bundle: a destination canonically equal to a live file is rejected and the file is untouched', () => {
     const ws = makeWorkspace('diag-c3-live-');
     activateDiagnosticsLogging({ userDataPath: ws.userDataPath, storePath: ws.storePath });
