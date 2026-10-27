@@ -145,6 +145,7 @@ function nowIso(): string {
 // listeners on `process`.
 let monitorHandler: ((err: unknown) => void) | null = null;
 let quitFlushHandler: (() => void) | null = null;
+let rejectionHandler: ((reason: unknown) => void) | null = null;
 
 /** One-per-session non-recursive warning; a failing warn is swallowed. */
 function warnFailureOnce(detail: string): void {
@@ -317,15 +318,32 @@ export function installLoggingConsoleWrapper(): void {
   console.info = wrap('info', console.info) as typeof console.info;
   console.warn = wrap('warn', console.warn) as typeof console.warn;
   console.error = wrap('error', console.error) as typeof console.error;
-  // Monitor-only (05-fix-plan.md rejection policy): observes fatal exceptions
-  // WITHOUT changing the default termination behavior. No unhandledRejection
-  // listener is registered — the default fatal-rejection path reaches this
-  // monitor with origin 'unhandledRejection'.
+  // Fatal-capture pair (05-fix-plan.md rejection policy, probe-proven
+  // 2026-10-27, output in 08): uncaughtExceptionMonitor observes fatal
+  // exceptions WITHOUT changing the default termination behavior; the
+  // conditional unhandledRejection listener below exists because ELECTRON
+  // swallows fatal rejections entirely (probe: warn-and-continue, exit 0,
+  // monitor never fires) — plain Node would crash and the monitor alone
+  // would only fire there.
   if (monitorHandler !== null) process.off('uncaughtExceptionMonitor', monitorHandler);
   monitorHandler = (err: unknown) => {
     emitConsoleLike('error', 'process', ['uncaught exception:', err]);
   };
   process.on('uncaughtExceptionMonitor', monitorHandler);
+  // Conditional rejection listener (05-fix-plan.md rejection policy, probe-
+  // proven 2026-10-27, output in 08): plain Node terminates on a fatal
+  // unhandled rejection and uncaughtExceptionMonitor observes it with origin
+  // 'unhandledRejection'; ELECTRON swallows it entirely (warn-and-continue,
+  // exit 0, monitor never fires). The probe therefore requires this listener.
+  // Disclosure: in Electron main an unhandled rejection is LOGGED (one error
+  // entry, no re-throw) and does NOT terminate the process — the same
+  // warn-and-continue termination behavior as Electron's own default, plus
+  // the durable record AC6 requires.
+  if (rejectionHandler !== null) process.off('unhandledRejection', rejectionHandler);
+  rejectionHandler = (reason: unknown) => {
+    emitConsoleLike('error', 'process', ['unhandled rejection:', reason]);
+  };
+  process.on('unhandledRejection', rejectionHandler);
   // Quit-flush (class-(1) sibling coverage): fail-fast boot diagnostics that
   // run BEFORE activation (e.g. transport-security or profile-resolution
   // refusals) land in the unlevel phase-1 buffer and would otherwise vanish

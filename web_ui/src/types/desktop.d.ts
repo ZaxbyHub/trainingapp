@@ -139,7 +139,7 @@ export type DiagnosticsExportReply =
 export interface DesktopDiagnosticsBridge {
   getState(): Promise<{ active: boolean; enhanced: boolean }>;
   setEnhancedLevel(enabled: boolean): Promise<{ ok: boolean; detail?: string; enhanced?: boolean }>;
-  logEntry(entry: DiagnosticsLogEntry): Promise<{ ok: boolean; dup?: boolean; detail?: string }>;
+  logEntry(entry: DiagnosticsLogEntry): Promise<{ ok: boolean; dup?: boolean; dropped?: 'level'; detail?: string }>;
   exportDiagnostics(): Promise<DiagnosticsExportReply>;
 }
 

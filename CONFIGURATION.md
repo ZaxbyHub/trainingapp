@@ -668,9 +668,12 @@ A missing or corrupt diagnostics sidecar reads as `enhancedLogging: false` and i
 - **Desktop**: a synchronous, size-rotated file under `<userData>/logs/` — `main.log`,
   `main.log.1`, `main.log.2` (rotation happens before the write that would exceed the cap;
   the chain is `main.log.2` deleted, `main.log.1` -> `main.log.2`, `main.log` -> `main.log.1`),
-  5 MB per file (3 files, ~15 MB total). The file holds main-process console lines, renderer
+  5 MiB per file (3 files, ~15 MiB total). The file holds main-process console lines, renderer
   entries forwarded over IPC (stop-and-wait, exactly-once delivery), captured uncaught
   exceptions (via `uncaughtExceptionMonitor` — the default termination behavior is unchanged),
+  unhandled rejections in the main process (one error entry each; Electron's own default is
+  warn-and-continue, so termination behavior is unchanged there too — a plain Node runtime
+  would crash by default, and the listener is installed only in the Electron main process),
   GPU-process crashes, renderer-process crashes and preload errors.
 - **Browser**: a volatile in-memory ring of the last **5,000 ADMITTED entries** (oldest
   dropped). The ring is not persisted across reloads. A second instance of the desktop app

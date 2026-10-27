@@ -418,6 +418,32 @@ describe('diagnostics capture-handlers (AC6: unhandled errors and Electron crash
     expect(oversized.ok).toBe(false);
     expect(__diagnosticsStateForTests().droppedMalformed).toBe(2);
   });
+  it('capture-handlers: unhandled rejections in the main process reach the file transport', () => {
+    const ws = makeWorkspace('diag-c6-rejection-');
+    activateDiagnosticsLogging({ userDataPath: ws.userDataPath, storePath: ws.storePath });
+    // Simulate the runtime event (process.emit does not trigger Node's own
+    // default rejection machinery — the listener itself is what we test).
+    process.emit('unhandledRejection', new Error('probe rejection'), Promise.resolve());
+    const log = readLog(ws);
+    expect(log).toContain('error [process] unhandled rejection: Error: probe rejection');
+  });
+
+  it('capture-handlers: a transport write failure disables the sink for the session and the app continues', () => {
+    const ws = makeWorkspace('diag-c6-diskfull-');
+    activateDiagnosticsLogging({ userDataPath: ws.userDataPath, storePath: ws.storePath });
+    const before = readLog(ws);
+    // Real transport failure: the read-only attribute makes appendFileSync
+    // throw (destructured fs imports cannot be spied).
+    const logFile = path.join(ws.userDataPath, 'logs', 'main.log');
+    fs.chmodSync(logFile, 0o444);
+    // Must not throw: a logging failure never takes the app down.
+    expect(() => console.error('[test] diskfull probe password=hunter2')).not.toThrow();
+    expect(() => console.error('[test] diskfull probe two')).not.toThrow();
+    fs.chmodSync(logFile, 0o666);
+    // The failed writes never reached the file; the transport is disabled.
+    expect(readLog(ws)).toBe(before);
+  });
+
   it('capture-handlers: the quit-flush appends buffered pre-activation errors, gated, on will-quit', () => {
     const ws = makeWorkspace('diag-c6-quitflush-');
     installLoggingConsoleWrapper();
