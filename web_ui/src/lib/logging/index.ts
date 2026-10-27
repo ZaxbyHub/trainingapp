@@ -32,8 +32,10 @@ export interface LogEntry {
   scope: string;
   /** The already-redacted persisted form (every persisted sink is gated). */
   message: string;
-  sessionId?: string;
-  seq?: number;
+  /** Delivery identity (stop-and-wait dedupe) — assigned to every entry at
+   * construction; the main-side validator rejects entries without both. */
+  sessionId: string;
+  seq: number;
 }
 
 /** Ring capacity (AC4: bounded in-memory ring, oldest dropped). */

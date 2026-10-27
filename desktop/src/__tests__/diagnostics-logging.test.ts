@@ -296,24 +296,6 @@ describe('diagnostics export-bundle (AC3: gated bundle to a user-chosen path)', 
     });
   });
 
-  it('capture-handlers: the main-side IPC ingest re-gates renderer entries at the sink', () => {
-    const ws = makeWorkspace('diag-c6-ingest-');
-    activateDiagnosticsLogging({ userDataPath: ws.userDataPath, storePath: ws.storePath });
-    const reply = handlerFor('desktop:diagnostics:log-entry')(undefined, {
-      ts: new Date().toISOString(),
-      level: 'warn',
-      scope: 'renderer',
-      // The renderer sends the persisted form; a bypassing caller sends raw.
-      message: 'ingest probe password=hunter2',
-      sessionId: 'sess-test',
-      seq: 1,
-    });
-    // The handler answers synchronously under direct invocation.
-    const log = fs.readFileSync(path.join(ws.userDataPath, 'logs', 'main.log'), 'utf8');
-    expect(log).toContain('password=[redacted]');
-    expect(log).not.toContain('hunter2');
-  });
-
   it('export-bundle: a destination canonically equal to a live file is rejected and the file is untouched', () => {
     const ws = makeWorkspace('diag-c3-live-');
     activateDiagnosticsLogging({ userDataPath: ws.userDataPath, storePath: ws.storePath });
@@ -435,5 +417,43 @@ describe('diagnostics capture-handlers (AC6: unhandled errors and Electron crash
     const oversized = (await ingest(undefined, validEntry({ seq: 4, message: 'x'.repeat(8001) }))) as { ok: boolean };
     expect(oversized.ok).toBe(false);
     expect(__diagnosticsStateForTests().droppedMalformed).toBe(2);
+  });
+  it('capture-handlers: the quit-flush appends buffered pre-activation errors, gated, on will-quit', () => {
+    const ws = makeWorkspace('diag-c6-quitflush-');
+    installLoggingConsoleWrapper();
+    console.error('[test] quit-flush probe password=hunter2');
+    app.emit('will-quit');
+    // The quit-flush derives the logs dir from app.getPath('userData') — the
+    // stub's temp dir, not the workspace fixture.
+    const log = fs.readFileSync(path.join(app.getPath('userData'), 'logs', 'main.log'), 'utf8');
+    expect(log).toContain('password=[redacted]');
+    expect(log).not.toContain('hunter2');
+  });
+
+  it('capture-handlers: an activated process quit-flush is a no-op (the file sink owns the record)', () => {
+    const ws = makeWorkspace('diag-c6-quitactive-');
+    activateDiagnosticsLogging({ userDataPath: ws.userDataPath, storePath: ws.storePath });
+    const before = readLog(ws);
+    app.emit('will-quit');
+    expect(readLog(ws)).toBe(before);
+  });
+
+
+  it('capture-handlers: the main-side IPC ingest re-gates renderer entries at the sink', () => {
+    const ws = makeWorkspace('diag-c6-ingest-');
+    activateDiagnosticsLogging({ userDataPath: ws.userDataPath, storePath: ws.storePath });
+    const reply = handlerFor('desktop:diagnostics:log-entry')(undefined, {
+      ts: new Date().toISOString(),
+      level: 'warn',
+      scope: 'renderer',
+      // The renderer sends the persisted form; a bypassing caller sends raw.
+      message: 'ingest probe password=hunter2',
+      sessionId: 'sess-test',
+      seq: 1,
+    });
+    // The handler answers synchronously under direct invocation.
+    const log = fs.readFileSync(path.join(ws.userDataPath, 'logs', 'main.log'), 'utf8');
+    expect(log).toContain('password=[redacted]');
+    expect(log).not.toContain('hunter2');
   });
 });
