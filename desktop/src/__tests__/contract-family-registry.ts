@@ -57,6 +57,10 @@ export const FAMILY_ROSTER: string[] = [
   // (review PRR-008, pr242-20261021).
   'logline-contract-sweep.test.ts',
   'acceptance-battery-precision.test.ts',
+  // Trace 248-41 (issue #248): the redaction-gate parity contract (both twins
+  // byte-identical over the shared corpus, desktop console outcomes) pins
+  // security-adjacent AC5 behavior with no other merge-blocking home.
+  'diagnostics-redact-parity.test.ts',
 ];
 
 /** Convention-matching specs owned by another CI context, with run-line evidence. */

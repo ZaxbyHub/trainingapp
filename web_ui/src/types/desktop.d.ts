@@ -113,6 +113,34 @@ export interface UpdateStatus {
   lastApply: { packId: string; applied: boolean; version?: string; reason?: string; appliedAt: string } | null;
 }
 
+/** A renderer log entry forwarded to the main file sink (issue #248). The
+ * message is the already-redacted persisted form — every persisted sink gates. */
+export interface DiagnosticsLogEntry {
+  ts: string;
+  level: 'debug' | 'info' | 'warn' | 'error';
+  scope: string;
+  message: string;
+  sessionId?: string;
+  seq?: number;
+}
+
+/** Reply of desktop:diagnostics:export (issue #248). Exactly one of the
+ * shapes: ok (written), cancelled (user dismissed the dialog), or the typed
+ * error (live-destination rejection / assembly / write failure). */
+export type DiagnosticsExportReply =
+  | { ok: true; path: string }
+  | { cancelled: true }
+  | { ok: false; error: string };
+
+/** Diagnostics namespace on the preload bridge (issue #248). Optional so an
+ * older main process keeps the renderer on browser-default behavior. */
+export interface DesktopDiagnosticsBridge {
+  getState(): Promise<{ active: boolean; enhanced: boolean }>;
+  setEnhancedLevel(enabled: boolean): Promise<{ ok: boolean; detail?: string; enhanced?: boolean }>;
+  logEntry(entry: DiagnosticsLogEntry): Promise<{ ok: boolean; dup?: boolean; detail?: string }>;
+  exportDiagnostics(): Promise<DiagnosticsExportReply>;
+}
+
 export interface DesktopApiBridge {
   /** Per-launch backend token (never persisted; rotates every app start). */
   getAuthToken(): Promise<string>;
@@ -154,6 +182,9 @@ export interface DesktopApiBridge {
   /** E5 (issue #88): open an allowlisted (GitHub Releases https) update URL
    *  in the OS browser. The shell deny-alls renderer-initiated navigation. */
   openUpdateExternal(url: string): Promise<{ ok: boolean; detail?: string }>;
+  /** Diagnostics logging (issue #248). Optional: an older main process does
+   *  not expose it, and the renderer stays on browser-default behavior. */
+  diagnostics?: DesktopDiagnosticsBridge;
 }
 
 declare global {

@@ -2,10 +2,19 @@
 // see — bootstrap() must start the backend host behind the B2 guard, expose
 // the desktop:get-backend IPC (port discovery for B9), and stop the host on
 // will-quit (no orphan listener). Runs against the electron stub.
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { app, ipcMain, __resetElectronStub } from 'electron';
 import { bootstrap } from '../../main/index';
 import { __resetTransportSecurityForTests } from '../../main/security/index';
+
+// Hermetic userData (issue #248): bootstrap now activates the diagnostics
+// file sink under <userData>/logs, and the stub's getPath defaults to the
+// process cwd — point it at a temp dir so the spec never writes into the
+// checkout.
+const hermeticUserData = fs.mkdtempSync(path.join(os.tmpdir(), 'b3-bootstrap-userdata-'));
 
 async function waitFor<T>(fn: () => T | undefined | null, description: string, timeoutMs = 5000): Promise<T> {
   const t0 = Date.now();
@@ -26,6 +35,9 @@ async function getRegisteredHandler(channel: string): Promise<(...args: unknown[
 
 beforeEach(() => {
   __resetElectronStub();
+  app.getPath.mockImplementation((name: string) =>
+    name === 'userData' ? hermeticUserData : process.cwd(),
+  );
   __resetTransportSecurityForTests();
 });
 
@@ -42,6 +54,7 @@ afterAll(async () => {
   // Stop any host left running by a failed assertion.
   app.emit('will-quit');
   await new Promise((resolve) => setTimeout(resolve, 50));
+  fs.rmSync(hermeticUserData, { recursive: true, force: true });
 });
 
 describe('b3-bootstrap-wiring: the real runtime path (issue #61)', () => {

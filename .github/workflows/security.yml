@@ -89,6 +89,7 @@ jobs:
           src/__tests__/frozen-recipe-replay-contract.test.ts
           src/__tests__/logline-contract-sweep.test.ts
           src/__tests__/acceptance-battery-precision.test.ts
+          src/__tests__/diagnostics-redact-parity.test.ts
 
       - name: Run Safety
         run: |

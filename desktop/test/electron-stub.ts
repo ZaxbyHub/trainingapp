@@ -22,9 +22,17 @@
 //   navigation-lockdown specs can invoke it and check the deny decision.
 // - Call `__resetElectronStub()` from beforeEach in every spec.
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { vi } from 'vitest';
 
 const emitter = new EventEmitter();
+
+// issue #248: `userData` answers a per-process TEMP dir, never the cwd —
+// specs that drive the real bootstrap activate the diagnostics file sink
+// under <userData>/logs, and that must never write into the checkout.
+let stubUserData: string | null = null;
 
 export const app = {
   requestSingleInstanceLock: vi.fn((): boolean => true),
@@ -39,7 +47,13 @@ export const app = {
   emit: (event: string, ...args: unknown[]): boolean => emitter.emit(event, ...args),
   whenReady: vi.fn((): Promise<void> => Promise.resolve()),
   isReady: vi.fn((): boolean => true),
-  getPath: vi.fn((_name: string): string => process.cwd()),
+  getPath: vi.fn((name: string): string => {
+    if (name === 'userData') {
+      stubUserData ??= fs.mkdtempSync(path.join(os.tmpdir(), 'electron-stub-userdata-'));
+      return stubUserData;
+    }
+    return process.cwd();
+  }),
   getAppPath: vi.fn((): string => process.cwd()),
   // Plain boolean, NOT a vi.fn (see file header). Mutate directly in specs.
   isPackaged: false as boolean,
@@ -124,6 +138,11 @@ export const shell = {
 
 export const dialog = {
   showErrorBox: vi.fn(),
+  // issue #248: the diagnostics export's native save dialog. Defaults to
+  // cancelled; specs override the resolved value per case.
+  showSaveDialog: vi.fn((): Promise<{ canceled: boolean; filePath?: string }> =>
+    Promise.resolve({ canceled: true }),
+  ),
 };
 
 /** universal-provider-settings-overhaul: no OS encryption in tests (keys stay session-only). */
@@ -160,4 +179,6 @@ export function __resetElectronStub(): void {
   ipcMain.once.mockClear();
   ipcMain.removeHandler.mockClear();
   dialog.showErrorBox.mockClear();
+  dialog.showSaveDialog.mockClear();
+  dialog.showSaveDialog.mockReturnValue(Promise.resolve({ canceled: true }));
 }

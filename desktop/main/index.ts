@@ -6,6 +6,11 @@
 // #57, decided: the Node main-process backend; the module abstraction stays so
 // the sidecar mode remains reachable without touching this bootstrap). Baseline transport hardening beyond the flags
 // below is Workstream B2 / issue #60.
+
+// Diagnostics logging (issue #248) FIRST: its import-time console wrapper must
+// be installed before any other module evaluates, so dependency-evaluation
+// console output is captured from the very first line.
+import { activateDiagnosticsLogging, attachRendererCapture } from './logging.js';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -164,6 +169,10 @@ export function createMainWindow(): BrowserWindow {
     console.error(`[trainingapp-desktop] failed to load ${validatedURL || '(no url)'}: ${errorDescription} (${errorCode})`);
     win.show();
   });
+  // Diagnostics capture (issue #248, AC6): render-process-gone and
+  // preload-error are NOT console-covered elsewhere (did-fail-load above is,
+  // and is captured through the logging console wrapper — no double wiring).
+  attachRendererCapture(win);
   const url = devStartUrl() ?? 'app://index.html';
   win.loadURL(url).catch(() => { /* failure surfaced via did-fail-load above */ });
   mainWindow = win;
@@ -248,6 +257,12 @@ export function bootstrap(): void {
       app.quit();
       return;
     }
+    // Diagnostics phase 2 (issue #248): the single-instance lock is owned and
+    // storePath is derived, so the level sidecar can be read and the file sink
+    // activated (phase-1 buffer flushed, boot entry, IPC registered) BEFORE
+    // the backend starts and long before the renderer loads. A second
+    // instance never reaches this point — it never touches the primary's log.
+    activateDiagnosticsLogging({ userDataPath, storePath });
     const backupsDir = path.join(userDataPath, 'backups');
     // E1 (issue #84): startup integrity gate. Runs BEFORE engine construction
     // (the per-profile model overrides it derives are constructor-only seams)

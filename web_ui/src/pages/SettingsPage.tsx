@@ -46,7 +46,9 @@ import {
   presetIsNResultsOnly,
   type DesktopPresetState,
 } from '../lib/rag/rag-presets';
-import { clearSessionSettings, clearUserSettings } from '../lib/storage/persisted-keys';
+import { clearSessionSettings, clearUserSettings, DIAGNOSTICS_ENHANCED_KEY } from '../lib/storage/persisted-keys';
+import { enhancedLoggingEnabled, setEnhancedLogging } from '../lib/logging';
+import { exportDiagnostics } from '../lib/logging/export';
 import {
   focusSettingsSection,
   MODEL_CONNECTION_SECTION_ID,
@@ -398,12 +400,163 @@ function deleteEdgeVecBlob(prefix: string): Promise<void> {
 }
 
 // ============================================================================
+// Diagnostics (issue #248): the Enhanced logging toggle (live info→debug,
+// persisted without restart) and the Export diagnostics… button. Inside
+// Electron the main process is the sole persistence authority (the profile's
+// diagnostics-settings.json sidecar); the browser app persists through the
+// registered persisted key. Export writes the bundle to a user-chosen file
+// (native save dialog in Electron; showSaveFilePicker/download fallback in
+// the browser) — nothing leaves the device.
+// ============================================================================
+function DiagnosticsSection(): React.ReactElement {
+  const [enhanced, setEnhancedState] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const electronBridge = window.desktopApi?.diagnostics ?? null;
+
+  useEffect(() => {
+    let cancelled = false;
+    if (electronBridge !== null) {
+      // Reconcile with the main-process authority on mount; the renderer's
+      // own level follows the same state.
+      void electronBridge
+        .getState()
+        .then((state) => {
+          if (cancelled) return;
+          setEnhancedLogging(state.enhanced);
+          setEnhancedState(state.enhanced);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setEnhancedState(enhancedLoggingEnabled());
+        });
+    } else {
+      // Browser app: the persisted key IS the authority on mount; reconcile
+      // the core's live level with it (install.ts already did this at boot,
+      // but the key may have changed in another tab or before this mount).
+      let stored: string | null = null;
+      try {
+        stored = localStorage.getItem(DIAGNOSTICS_ENHANCED_KEY);
+      } catch {
+        /* storage unavailable: keep the core's current level */
+      }
+      const on = stored === '1';
+      setEnhancedLogging(on);
+      setEnhancedState(on);
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [electronBridge]);
+
+  const handleToggle = async (): Promise<void> => {
+    if (enhanced === null) return;
+    const next = !enhanced;
+    setBusy(true);
+    setStatus(null);
+    if (electronBridge !== null) {
+      try {
+        const result = await electronBridge.setEnhancedLevel(next);
+        if (result.ok) {
+          // Main applied + persisted; the renderer applies its own level from
+          // the same call (no restart, both processes).
+          setEnhancedLogging(next);
+          setEnhancedState(next);
+          setStatus(next ? 'Enhanced logging on (debug level, both processes)' : 'Enhanced logging off (info level, both processes)');
+        } else {
+          setStatus(`Could not change the setting: ${result.detail ?? 'unknown error'}`);
+        }
+      } catch (err: unknown) {
+        setStatus(`Could not change the setting: ${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+    // Browser app: the persisted-keys seam + the live renderer level. A
+    // persistence failure reverts (the live level never diverges).
+    try {
+      localStorage.setItem(DIAGNOSTICS_ENHANCED_KEY, next ? '1' : '0');
+    } catch (err: unknown) {
+      setStatus(`Could not save the setting: ${err instanceof Error ? err.message : String(err)}`);
+      setBusy(false);
+      return;
+    }
+    setEnhancedLogging(next);
+    setEnhancedState(next);
+    setStatus(next ? 'Enhanced logging on (debug level)' : 'Enhanced logging off (info level)');
+    setBusy(false);
+  };
+
+  const handleExport = async (): Promise<void> => {
+    setBusy(true);
+    setStatus(null);
+    if (electronBridge !== null) {
+      try {
+        const reply = await electronBridge.exportDiagnostics();
+        if ('cancelled' in reply) setStatus('Export cancelled');
+        else if (reply.ok) setStatus('Diagnostics bundle written');
+        else setStatus(`Export failed: ${reply.error}`);
+      } catch (err: unknown) {
+        setStatus(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+    try {
+      const outcome = await exportDiagnostics();
+      if (outcome.outcome === 'saved') setStatus('Diagnostics bundle saved');
+      else if (outcome.outcome === 'cancelled') setStatus('Export cancelled');
+      else if (outcome.outcome === 'fallback') setStatus('Diagnostics downloaded (save picker unavailable)');
+      else setStatus(`Export failed: ${outcome.detail ?? 'write failed'}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="settings-row">
+        <Checkbox
+          data-testid="diagnostics-enhanced-toggle"
+          checked={enhanced ?? false}
+          disabled={busy || enhanced === null}
+          aria-busy={busy}
+          onChange={() => void handleToggle()}
+          label="Enhanced logging (raises both processes to debug level; applied live, no restart)"
+        />
+        <Button
+          variant="secondary"
+          data-testid="diagnostics-export"
+          disabled={busy}
+          aria-disabled={busy}
+          onClick={() => void handleExport()}
+        >
+          {busy ? 'Exporting…' : 'Export diagnostics…'}
+        </Button>
+        {/* Always-mounted live region (the clear-cache precedent): only the
+            text changes, so the busy/success/cancelled feedback is announced. */}
+        <span id="diagnostics-status" role="status" aria-live="polite" data-testid="diagnostics-status" className="settings-text">
+          {status ?? ''}
+        </span>
+      </div>
+      <p className="settings-text">
+        Diagnostics stay on this device: the desktop app keeps a size-rotated log (three files of 5 MB) under its
+        data folder; the browser app keeps the last 5,000 entries in memory until the page reloads. Every written
+        line passes the redaction gate (tokens, keys and long hashes are removed) before it reaches any file.
+      </p>
+    </>
+  );
+}
+
+// ============================================================================
 // SettingsPage (inner component — uses contexts)
 // ============================================================================
 
 /** The browser-stored user settings Clear Cache removes (persisted-keys.ts USER_SETTING_KEYS). */
 const CLEARED_SETTINGS_COPY =
-  'inference mode, browser engine and response-quality choices, theme, external model connection and API key, sidebar state, last-opened course, course progress and the pack update setting';
+  'inference mode, browser engine and response-quality choices, theme, external model connection and API key, sidebar state, last-opened course, course progress and the pack update setting, and the enhanced-logging (diagnostics) choice';
 
 /**
  * Delay between the final Clear Cache status and the reload (PR #140 review
@@ -1503,6 +1656,8 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
                 Browser memory usage is shown when the built-in model runs in this window.
               </p>
             )}
+            {/* issue #248: Enhanced logging toggle + diagnostics export. */}
+            <DiagnosticsSection />
             <div className="settings-danger-zone">
               <Button
                 variant="danger"

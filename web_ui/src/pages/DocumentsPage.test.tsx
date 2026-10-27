@@ -91,7 +91,7 @@ describe('DocumentsPage', () => {
       });
     });
 
-    it('shows supported file count badge when documents exist', async () => {
+    it('shows document count badge when documents exist', async () => {
       const docs = [{
         id: 'doc-1',
         fileName: 'test.pdf',
@@ -107,7 +107,7 @@ describe('DocumentsPage', () => {
       render(<DocumentsPage />);
 
       await waitFor(() => {
-        expect(screen.getByText(/1 supported file/i)).toBeInTheDocument();
+        expect(screen.getByText(/1 document/i)).toBeInTheDocument();
       });
     });
 
@@ -122,7 +122,7 @@ describe('DocumentsPage', () => {
       render(<DocumentsPage />);
 
       await waitFor(() => {
-        expect(screen.getByText(/2 supported files/i)).toBeInTheDocument();
+        expect(screen.getByText(/2 documents/i)).toBeInTheDocument();
       });
     });
 
@@ -133,7 +133,7 @@ describe('DocumentsPage', () => {
       render(<DocumentsPage />);
 
       await waitFor(() => {
-        expect(screen.queryByText(/supported file/i)).not.toBeInTheDocument();
+        expect(screen.queryByText(/document/i)).not.toBeInTheDocument();
       });
     });
   });

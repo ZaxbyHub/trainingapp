@@ -440,13 +440,15 @@ export class TextChunker {
         // Fall back to a search from the start (overlap may have rewound past
         // the cursor in edge cases). If still not found, leave the offset/page
         // unset rather than attributing incorrectly — but surface it so silent
-        // page-attribution loss is observable (PRR-006).
+        // page-attribution loss is observable (PRR-006). The line carries the
+        // chunk's identity by id + length only, never its text (issue #248
+        // AC5: document content never reaches a log surface).
         idx = normalizedFull.indexOf(needle);
         if (idx === -1) {
           console.warn(
             '[TextChunker] Could not locate a chunk in the normalized full text; ' +
-              'leaving its charOffset/page unset. Chunk preview: ' +
-              needle.slice(0, 60)
+              'leaving its charOffset/page unset. Chunk: ' +
+              `docId=${chunk.docId ?? 'unknown'} chunkIndex=${chunk.chunkIndex} length=${needle.length}`
           );
           continue;
         }

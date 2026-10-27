@@ -398,8 +398,10 @@ export class RAGOrchestrator {
       const before = vectorResults.length;
       vectorResults = vectorResults.filter((r) => r.score >= DEGRADED_VECTOR_COSINE_FLOOR);
       if (vectorResults.length < before) {
+        // issue #248 AC5: the payload carries counts only — the question text
+        // never reaches a log surface.
         console.info('[RAG] content-gap (degraded vector floor)', {
-          query: question,
+          vectorResultsBefore: before,
           droppedByFloor: before - vectorResults.length,
           floor: DEGRADED_VECTOR_COSINE_FLOOR,
         });
@@ -471,8 +473,9 @@ export class RAGOrchestrator {
         // Structured content-gap log for future governance consumers (PR-7 #26
         // wires a real store; the format is stable from now). bestScore is the
         // strongest surviving chunk after the floor (null if all were dropped).
+        // issue #248 AC5: result metadata and counts only — no query text, no
+        // hashed query ids.
         console.info('[RAG] content-gap', {
-          query: question,
           bestScore: contextChunks.length > 0 ? contextChunks[0].score : null,
           droppedByFloor: before - contextChunks.length,
           scale: didRerank ? 'cross-encoder' : 'rrf',
