@@ -877,7 +877,7 @@ export function DocumentsPage() {
 
   return (
     <div className="app-page">
-      {/* Header (Lumen phases 3 and 6): title, the supported-file count, the
+      {/* Header (Lumen phases 3 and 6): title, the document count, the
           Electron-only two-step Clear all, and Upload (opens the dropzone's own
           file input, so there is still exactly one document file input). */}
       <PageHeader
@@ -887,7 +887,7 @@ export function DocumentsPage() {
           <>
             {supportedCount > 0 && (
               <Badge>
-                {supportedCount} supported file{supportedCount !== 1 ? 's' : ''}
+                {supportedCount} document{supportedCount !== 1 ? 's' : ''}
               </Badge>
             )}
             {electronMode && documents.length > 0 && (

@@ -91,7 +91,7 @@ describe('DocumentsPage', () => {
       });
     });
 
-    it('shows supported file count badge when documents exist', async () => {
+    it('shows document count badge when documents exist', async () => {
       const docs = [{
         id: 'doc-1',
         fileName: 'test.pdf',
@@ -107,7 +107,7 @@ describe('DocumentsPage', () => {
       render(<DocumentsPage />);
 
       await waitFor(() => {
-        expect(screen.getByText(/1 supported file/i)).toBeInTheDocument();
+        expect(screen.getByText(/1 document/i)).toBeInTheDocument();
       });
     });
 
@@ -122,7 +122,7 @@ describe('DocumentsPage', () => {
       render(<DocumentsPage />);
 
       await waitFor(() => {
-        expect(screen.getByText(/2 supported files/i)).toBeInTheDocument();
+        expect(screen.getByText(/2 documents/i)).toBeInTheDocument();
       });
     });
 
@@ -132,9 +132,16 @@ describe('DocumentsPage', () => {
 
       render(<DocumentsPage />);
 
+      // Settle first: the loading branch also renders the header, so badge
+      // absence only means something once loading finished (the DropZone
+      // button exists only in the loaded branch). Then target the header
+      // badge itself — the previous /document/i text query matched the
+      // always-present "Documents" heading and could never pass (review
+      // PRR-058, pr255).
       await waitFor(() => {
-        expect(screen.queryByText(/supported file/i)).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /drop files here or click to select/i })).toBeInTheDocument();
       });
+      expect(document.querySelector('.ui-page-header__actions .ui-badge')).toBeNull();
     });
   });
 

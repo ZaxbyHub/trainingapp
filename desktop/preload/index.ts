@@ -58,4 +58,15 @@ contextBridge.exposeInMainWorld('desktopApi', {
       ipcRenderer.removeListener('updates:available', listener);
     };
   },
+  // Diagnostics logging (issue #248): the renderer logging core's ONLY IPC
+  // surface — level state (main is the sole Electron persistence authority),
+  // live level changes, stop-and-wait entry forwarding, and the export
+  // bundle. Optional on the bridge (desktop.d.ts) so an older main keeps the
+  // renderer on browser-default behavior.
+  diagnostics: {
+    getState: () => ipcRenderer.invoke('desktop:diagnostics:get-state'),
+    setEnhancedLevel: (enabled: boolean) => ipcRenderer.invoke('desktop:diagnostics:set-enhanced-level', enabled),
+    logEntry: (entry: unknown) => ipcRenderer.invoke('desktop:diagnostics:log-entry', entry),
+    exportDiagnostics: () => ipcRenderer.invoke('desktop:diagnostics:export'),
+  },
 });

@@ -12,12 +12,13 @@ Comprehensive guide to configuring the Document Q&A Assistant, including environ
 4. [External model (OpenAI- and Anthropic-compatible endpoints)](#external-model-openai--and-anthropic-compatible-endpoints)
 5. [App Settings (desktop and browser app)](#app-settings-desktop-and-browser-app)
    - [Browser app: Knowledge Packs and course player](#browser-app-knowledge-packs-and-course-player)
-6. [LLM Backend Configuration](#llm-backend-configuration)
-7. [RAG Pipeline Configuration](#rag-pipeline-configuration)
-8. [Performance Tuning](#performance-tuning)
-9. [Advanced Features](#advanced-features)
-10. [Configuration File Formats](#configuration-file-formats)
-11. [Troubleshooting Configuration](#troubleshooting-configuration)
+6. [Diagnostics Logging](#diagnostics-logging)
+7. [LLM Backend Configuration](#llm-backend-configuration)
+8. [RAG Pipeline Configuration](#rag-pipeline-configuration)
+9. [Performance Tuning](#performance-tuning)
+10. [Advanced Features](#advanced-features)
+11. [Configuration File Formats](#configuration-file-formats)
+12. [Troubleshooting Configuration](#troubleshooting-configuration)
 
 ## Overview
 
@@ -564,7 +565,8 @@ Clear Cache removes, in this browser profile: the document library and its keywo
 indexes, downloaded WebLLM weights, orphaned data from earlier sessions, and every saved
 setting registered in `web_ui/src/lib/storage/persisted-keys.ts` (inference mode, browser
 engine and response-quality choices, theme, external model connection and API key, sidebar state,
-last-opened course, course progress, pack update setting), and the browser app's installed Knowledge Packs and
+last-opened course, course progress, pack update setting, and the enhanced-logging
+diagnostics choice), and the browser app's installed Knowledge Packs and
 courses. It keeps your chat history (conversations, stored separately from the
 document library) and the internal profile id, migration marker and re-index notice flag, then
 reloads the page. The desktop app removes the same browser-side data from its app window (the
@@ -646,6 +648,105 @@ Build-time pack trust policy (same meaning as the desktop `TRAININGAPP_PACKS_*` 
 | `VITE_TRAININGAPP_PACKS_TRUSTED_KEYS` | `[]` | JSON `[{"key_id","public_key"}]` (base64 DER SPKI); malformed input trusts nothing |
 | `VITE_TRAININGAPP_PACKS_EMBEDDING_MODEL_ID` | `bge-small-en-v1.5` | Embedding-model gate target |
 | `VITE_TRAININGAPP_UPDATE_TRUSTED_KEYS` | the desktop feed key | Update-feed trust anchor |
+
+## Diagnostics Logging
+
+Both apps log diagnostics by default (issue #248). Nothing is configured, networked, or uploaded:
+every log stays on the device, and there is no telemetry transport by design (offline/airgapped).
+
+### Defaults and persistence authorities
+
+| Surface | Default | Persistence authority |
+| --- | --- | --- |
+| Desktop main process + renderer file log | `info` level, always on | `<profileDir>/diagnostics-settings.json` (`{"enhancedLogging": boolean}`; the Electron main process is the sole authority — the renderer keeps no localStorage copy inside Electron) |
+| Browser app ring buffer | `info` level, always on | localStorage key `diagnostics-enhanced-logging` (`"1"` = on), registered in `web_ui/src/lib/storage/persisted-keys.ts` (cleared by Clear Cache) |
+| Enhanced logging toggle (Settings → Storage & privacy) | off | Applies live to BOTH processes with no restart; toggling off restores `info` |
+
+A missing or corrupt diagnostics sidecar reads as `enhancedLogging: false` and is never fatal.
+
+### What is kept, and for how long
+
+- **Desktop**: a synchronous, size-rotated file under `<userData>/logs/` — `main.log`,
+  `main.log.1`, `main.log.2` (rotation happens before the write that would exceed the cap;
+  the chain is `main.log.2` deleted, `main.log.1` → `main.log.2`, `main.log` → `main.log.1`),
+  5 MiB per file (3 files, ~15 MiB total). The file holds main-process console lines, renderer
+  entries forwarded over IPC (stop-and-wait, exactly-once delivery), captured uncaught
+  exceptions (via `uncaughtExceptionMonitor` — the default termination behavior is unchanged),
+  unhandled rejections in the main process (one error entry each; Electron's own default is
+  warn-and-continue, so termination behavior is unchanged there too — a plain Node runtime
+  would crash by default, and the listener is installed only in the Electron main process),
+  GPU-process crashes, renderer-process crashes and preload errors.
+- **Browser**: a volatile in-memory ring of the last **5,000 ADMITTED entries** (oldest
+  dropped). The ring is not persisted across reloads. A second instance of the desktop app
+  never writes to (or rotates) the primary instance's log: it is refused the single-instance
+  lock before its file sink ever activates, and the pre-activation quit-flush is itself
+  guarded to run only in the process that OWNS the lock (`app.hasSingleInstanceLock`,
+  checked at flush time), so a second instance cannot append to the primary's log on quit
+  either.
+
+### Transport policy (the explicit three-way console rule)
+
+Every rendered line is classified by the shared redaction gate
+(`web_ui/src/lib/logging/redact.ts` and its semantic twin `desktop/main/logging-redact.ts` —
+persisted bytes are identical on both platforms by contract):
+
+1. **Clean line** → the console transport passes it through unchanged, with its original
+   arguments (existing devtools behavior preserved).
+2. **Sensitive line matching an `AC7_PINNED_LINE_TEMPLATES` pattern** (desktop only) → the
+   console transport passes it through RAW. This is the FINITE exception exactly as broad as
+   the frozen logline contract sweep's protection (the pack-manager sha/manifest-path lines);
+   `desktop/src/__tests__/diagnostics-console-composition.test.ts` structurally pins the
+   template inventory against that corpus in both directions, and per-template near-miss
+   negatives fall through to the sanitized form, so the exception can never silently widen.
+3. **Any other sensitive line** → the console receives the once-called single-string form
+   `[sanitized] <redacted line>` (the sensitive values leave the console surface).
+4. **Persisted transports — the file log, the renderer ring, IPC-forwarded entries, and every
+   export-bundle field — are ALWAYS gated on both platforms, with no exceptions.** A pinned
+   line's persisted form is the redacted form.
+
+Classification-failure outcomes: when the classifier cannot establish a line's safety, the
+console line is SUPPRESSED and the entry is DROPPED from all persisted sinks, with one safe,
+non-recursive warning per session (a failing warning is swallowed silently). A pinned line
+still passes the console raw in that case — template matching does not depend on the
+redactor. When only the later persisted redaction fails, the console keeps its policy outcome
+and the persisted entry is dropped with one warning.
+
+### Redaction classes and limits
+
+Applied to every persisted (and sanitized console) line, in a fixed order, by the shared
+corpus-pinned classifier (`contracts/diagnostics-redaction-vectors.json`):
+
+| Class | Matches | Replacement |
+| --- | --- | --- |
+| bearer scheme | `bearer <token>` | `[redacted]` |
+| JWT | `eyJ...` (2-3 base64url segments) | `[redacted]` |
+| kv secrets | `password`, `passwd`, `token`, `secret`, `api-key`/`api_key`/`apikey`, `authorization`, `cookie`, `session-id`/`session_id`/`sessionid` in `key=value`, `key: value` and JSON shapes | `[redacted]` |
+| provider keys | `sk-...` | `[redacted]` |
+| long hex | runs of 16+ hex characters | `[redacted-hex]` |
+| user-home paths | Windows and unix home prefixes including the username | `<user-dir>` prefix |
+| emails | address shapes | `[redacted-email]` |
+
+Serialization of captured objects denies the fields `text`, `content`, `prompt`, `query`,
+`chunks`, `documents`, `body` and `payload` (`[redacted-field]`), caps depth at 2 and arrays
+at 20 members, and renders errors as `name: message`. Lines are redacted BEFORE truncation;
+the per-line budget is 2,000 characters (`...[truncated]` suffix), so a secret straddling the
+cut can never survive as a fragment.
+
+### Export diagnostics
+
+Settings → Storage & privacy → **Export diagnostics...** writes a JSON bundle to a
+user-chosen destination (nothing is sent anywhere):
+
+- **Desktop**: a native save dialog, then an atomic write (tmp + fsync + rename). The bundle
+  carries the log files in full, the profile sidecars (`settings.json`,
+  `diagnostics-settings.json`, `gpu-probe.json` with missing/corrupt markers) and the GPU
+  adapter/verdict summary — every field gated through the same classifier. A destination
+  canonically equal to a live file (the logs, the sidecars, the store) is rejected; any
+  failure leaves the destination untouched.
+- **Browser**: `showSaveFilePicker` where available (user cancel is reported; a picker-open
+  failure falls back to an automatic download), with the download fallback also used where
+  the picker does not exist. A write/close failure is surfaced as an error, never silently
+  re-downloaded.
 
 ## LLM Backend Configuration
 

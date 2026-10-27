@@ -1,6 +1,27 @@
 # Changelog
 
 ## [Unreleased]
+- **Diagnostics logging for both apps + the #41 D3 copy fix (issues #248 #41)**: the desktop
+  app now writes a default, size-rotated log (`<userData>/logs/main.log`, 3 files of 5 MiB,
+  rotate-before-write) holding main-process console lines, renderer entries forwarded over a
+  stop-and-wait exactly-once IPC, uncaught exceptions (via `uncaughtExceptionMonitor`, default
+  termination unchanged), GPU/renderer-process crashes and preload errors — and the browser
+  app keeps a volatile ring of the last 5,000 admitted entries. Settings → Storage & privacy
+  gains an "Enhanced logging" toggle (live `info` → `debug` for BOTH processes, no restart;
+  persisted by the Electron main process in `<profileDir>/diagnostics-settings.json` and by
+  the registered localStorage key in the browser app) and an "Export diagnostics…" button
+  (native save dialog + atomic bundle write on desktop; `showSaveFilePicker` with an
+  automatic download fallback in the browser; live-destination rejection; every bundle field
+  gated). Every persisted line passes a shared redaction gate (bearer/JWT/kv-secret/sk-/
+  long-hex/user-home/email classes, structured-object denylist, redact-before-truncate at a
+  2,000-char budget) implemented as semantic twins pinned byte-identical over
+  `contracts/diagnostics-redaction-vectors.json`; the console keeps the frozen logline
+  contracts raw through the finite `AC7_PINNED_LINE_TEMPLATES` exception (drift-pinned in
+  both directions against the frozen sweep) while any other sensitive console line becomes
+  the marked `[sanitized]` form. #41 D3: the Documents header badge reads "N document(s)"
+  instead of "N supported file(s)", with the singular/zero/unsupported boundaries pinned;
+  content-bearing console payloads in the text chunker and RAG orchestrator now log ids,
+  lengths and counts only.
 - **Bench identity + packaging + trace-hygiene hardening: per-call bench decode
   budget, engine-aware native results identity, an exclusive staging lock, a
   committed multi-chunk sha256 oracle, and the trace-wrapper hygiene guard

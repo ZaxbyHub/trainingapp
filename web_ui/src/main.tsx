@@ -1,3 +1,8 @@
+// Diagnostics logging (issue #248) FIRST — before App and every runtime
+// import: the install module's body runs at module evaluation, so its console
+// wrapper captures dependency-evaluation-time output and the level resolves
+// (browser localStorage read / Electron getState) before the first gated entry.
+import './lib/logging/install';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';

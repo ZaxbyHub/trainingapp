@@ -12,6 +12,8 @@
 //   4. completeFirstRun({selectedProfile:'fast', acknowledgedLicenses:true}) → ok
 //   5. GET /packs → 200 (not the 503 'not wired on this host')
 //   6. relaunch fresh (same store) → getFirstRunStatus().needed === false
+//   7. (issue #248 AC1) <userData>/logs/main.log exists with BOTH the main
+//      boot entry and the forwarded renderer startup entry (default logging)
 //
 // Two drivers over the SAME ladder run bodies:
 //   - playwright (DEFAULT, local): windowed _electron.launch + firstWindow.
@@ -938,6 +940,40 @@ export async function main(argv, env, io) {
       }
     });
     check(5, '/packs answers 200', packsProbe?.status === 200, `${String(packsProbe?.status)} ${String(packsProbe?.body ?? '').slice(0, 120)}`);
+
+    // 7 (issue #248 AC1): default file diagnostics. The packaged app writes
+    //    BOTH startup entries to <userData>/logs/main.log with no user
+    //    configuration — the main boot entry from the main process and the
+    //    renderer startup entry forwarded over the diagnostics IPC.
+    //    Poll like step 1 (review PRR-061, pr255): the renderer entry lands
+    //    asynchronously after getState() resolves, so a single unpolled read
+    //    misreports a slow first boot as a missing entry.
+    const diagLogPath = path.join(userDataDir, 'logs', 'main.log');
+    let diagOk = false;
+    let diagDetail = '';
+    let diagLog = '';
+    try {
+      const diagDeadline = Date.now() + 60_000;
+      while (Date.now() < diagDeadline) {
+        try {
+          diagLog = fs.readFileSync(diagLogPath, 'utf8');
+        } catch {
+          diagLog = ''; // not created yet — keep polling
+        }
+        if (diagLog.includes('info [boot] main boot') && diagLog.includes('renderer startup')) break;
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+      }
+      const hasMainBoot = diagLog.includes('info [boot] main boot');
+      const hasRendererStart = diagLog.includes('renderer startup');
+      diagOk = hasMainBoot && hasRendererStart;
+      // Byte length via Buffer, NOT string .length (review PRR-046): the
+      // latter counts UTF-16 code units, which only equals bytes for BMP
+      // ASCII and mislabels multi-byte log content.
+      diagDetail = `mainBoot=${String(hasMainBoot)} rendererStartup=${String(hasRendererStart)} bytes=${String(Buffer.byteLength(diagLog, 'utf8'))}`;
+    } catch (err) {
+      diagDetail = `unreadable: ${err instanceof Error ? err.message : String(err)}`;
+    }
+    check(7, 'diagnostics log holds the main boot AND forwarded renderer startup entries', diagOk, diagDetail);
 
     await session.close();
 

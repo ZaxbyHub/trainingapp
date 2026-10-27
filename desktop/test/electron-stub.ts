@@ -22,9 +22,20 @@
 //   navigation-lockdown specs can invoke it and check the deny decision.
 // - Call `__resetElectronStub()` from beforeEach in every spec.
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { vi } from 'vitest';
 
 const emitter = new EventEmitter();
+
+// issue #248: `userData` answers a per-process TEMP dir, never the cwd —
+// specs that drive the real bootstrap activate the diagnostics file sink
+// under <userData>/logs, and that must never write into the checkout.
+// Review PRR-022 (pr255): the memo is cleared by __resetElectronStub (which
+// also removes the directory, best effort), so every test starts from a
+// fresh dir instead of sharing one per FILE that nothing ever deleted.
+let stubUserData: string | null = null;
 
 export const app = {
   requestSingleInstanceLock: vi.fn((): boolean => true),
@@ -39,7 +50,13 @@ export const app = {
   emit: (event: string, ...args: unknown[]): boolean => emitter.emit(event, ...args),
   whenReady: vi.fn((): Promise<void> => Promise.resolve()),
   isReady: vi.fn((): boolean => true),
-  getPath: vi.fn((_name: string): string => process.cwd()),
+  getPath: vi.fn((name: string): string => {
+    if (name === 'userData') {
+      stubUserData ??= fs.mkdtempSync(path.join(os.tmpdir(), 'electron-stub-userdata-'));
+      return stubUserData;
+    }
+    return process.cwd();
+  }),
   getAppPath: vi.fn((): string => process.cwd()),
   // Plain boolean, NOT a vi.fn (see file header). Mutate directly in specs.
   isPackaged: false as boolean,
@@ -124,6 +141,11 @@ export const shell = {
 
 export const dialog = {
   showErrorBox: vi.fn(),
+  // issue #248: the diagnostics export's native save dialog. Defaults to
+  // cancelled; specs override the resolved value per case.
+  showSaveDialog: vi.fn((): Promise<{ canceled: boolean; filePath?: string }> =>
+    Promise.resolve({ canceled: true }),
+  ),
 };
 
 /** universal-provider-settings-overhaul: no OS encryption in tests (keys stay session-only). */
@@ -139,6 +161,18 @@ export const safeStorage = {
 
 /** Reset all stub state; call from beforeEach in every spec. */
 export function __resetElectronStub(): void {
+  // PRR-022 (pr255 review): release the userData temp dir FIRST — specs that
+  // re-derive paths after the reset must get a FRESH dir, and the old one is
+  // removed best-effort (a handle still open from a leaked sink only delays
+  // the deletion to OS temp cleanup, it never fails the reset).
+  if (stubUserData !== null) {
+    try {
+      fs.rmSync(stubUserData, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch {
+      /* best effort only */
+    }
+    stubUserData = null;
+  }
   app.requestSingleInstanceLock.mockClear();
   app.requestSingleInstanceLock.mockReturnValue(true);
   app.quit.mockClear();
@@ -160,4 +194,6 @@ export function __resetElectronStub(): void {
   ipcMain.once.mockClear();
   ipcMain.removeHandler.mockClear();
   dialog.showErrorBox.mockClear();
+  dialog.showSaveDialog.mockClear();
+  dialog.showSaveDialog.mockReturnValue(Promise.resolve({ canceled: true }));
 }

@@ -113,6 +113,50 @@ export interface UpdateStatus {
   lastApply: { packId: string; applied: boolean; version?: string; reason?: string; appliedAt: string } | null;
 }
 
+/** A renderer log entry forwarded to the main file sink (issue #248). The
+ * message is the already-redacted persisted form — every persisted sink gates. */
+export interface DiagnosticsLogEntry {
+  ts: string;
+  level: 'debug' | 'info' | 'warn' | 'error';
+  scope: string;
+  message: string;
+  /** Delivery identity (stop-and-wait dedupe). The main-side validator
+   * rejects entries without both, so they are required here. */
+  sessionId: string;
+  seq: number;
+}
+
+/** Reply of desktop:diagnostics:export (issue #248). Exactly one of the
+ * shapes: ok (written), cancelled (user dismissed the dialog), or the typed
+ * error (live-destination rejection / assembly / write failure — fs paths
+ * redacted to a `<path>` marker). `transportDisabled` on the ok shape names
+ * the bundle's marker: the file transport failed earlier in the session, so
+ * the bundle carries last-good log content (PRR-002). */
+export type DiagnosticsExportReply =
+  | { ok: true; path: string; transportDisabled?: boolean }
+  | { cancelled: true }
+  | { ok: false; error: string };
+
+/** Diagnostics namespace on the preload bridge (issue #248). Optional so an
+ * older main process keeps the renderer on browser-default behavior.
+ * `sinkHealthy` (PRR-002) is likewise optional for older mains: false means
+ * the main file transport is disabled for the session — forwarded entries
+ * stay in the renderer ring but are not persisted. `persisted:false` on a
+ * logEntry reply names the same session sink failure (the deliberate level
+ * drop replies `dropped:'level'` without it). */
+export interface DesktopDiagnosticsBridge {
+  getState(): Promise<{ active: boolean; enhanced: boolean; sinkHealthy?: boolean }>;
+  setEnhancedLevel(enabled: boolean): Promise<{ ok: boolean; detail?: string; enhanced?: boolean }>;
+  logEntry(entry: DiagnosticsLogEntry): Promise<{
+    ok: boolean;
+    dup?: boolean;
+    dropped?: 'level';
+    persisted?: boolean;
+    detail?: string;
+  }>;
+  exportDiagnostics(): Promise<DiagnosticsExportReply>;
+}
+
 export interface DesktopApiBridge {
   /** Per-launch backend token (never persisted; rotates every app start). */
   getAuthToken(): Promise<string>;
@@ -154,6 +198,9 @@ export interface DesktopApiBridge {
   /** E5 (issue #88): open an allowlisted (GitHub Releases https) update URL
    *  in the OS browser. The shell deny-alls renderer-initiated navigation. */
   openUpdateExternal(url: string): Promise<{ ok: boolean; detail?: string }>;
+  /** Diagnostics logging (issue #248). Optional: an older main process does
+   *  not expose it, and the renderer stays on browser-default behavior. */
+  diagnostics?: DesktopDiagnosticsBridge;
 }
 
 declare global {

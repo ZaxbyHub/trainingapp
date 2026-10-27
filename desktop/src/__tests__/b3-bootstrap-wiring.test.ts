@@ -2,10 +2,20 @@
 // see — bootstrap() must start the backend host behind the B2 guard, expose
 // the desktop:get-backend IPC (port discovery for B9), and stop the host on
 // will-quit (no orphan listener). Runs against the electron stub.
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { app, ipcMain, __resetElectronStub } from 'electron';
 import { bootstrap } from '../../main/index';
 import { __resetTransportSecurityForTests } from '../../main/security/index';
+
+// Hermetic userData (issue #248): bootstrap now activates the diagnostics
+// file sink under <userData>/logs. The electron stub answers getPath('userData')
+// with a per-process temp dir (reset by __resetElectronStub, PRR-022), but this
+// spec pins its OWN dedicated dir so the diagnostics assertions below are
+// independent of whatever any earlier spec in the file left behind.
+const hermeticUserData = fs.mkdtempSync(path.join(os.tmpdir(), 'b3-bootstrap-userdata-'));
 
 async function waitFor<T>(fn: () => T | undefined | null, description: string, timeoutMs = 5000): Promise<T> {
   const t0 = Date.now();
@@ -24,8 +34,36 @@ async function getRegisteredHandler(channel: string): Promise<(...args: unknown[
   }, `ipc handler ${channel}`);
 }
 
+// PRR-016: the phase-1 logging install must be the FIRST import of the
+// desktop entry — it captures dependency-evaluation-time console output and
+// registers the fatal/uncaught handlers before any backend module runs. The
+// renderer twin of this contract is pinned in web_ui's bootstrap-wiring spec;
+// without this scan a reorder silently loses pre-wrapper capture while every
+// runtime suite stays green (the wrapper self-installs only under
+// process.type === 'browser', which vitest never sets).
+describe('desktop entry import order (issue #248 phase 1)', () => {
+  it('imports the logging install before every other module', () => {
+    const source = fs.readFileSync(path.join(__dirname, '..', '..', 'main', 'index.ts'), 'utf8');
+    const importLines = source.split(/\r?\n/).filter((line) => /^import .*;$/.test(line.trim()));
+    expect(importLines.length).toBeGreaterThan(1);
+    // The diagnostics install is the first import, ahead of every backend module.
+    expect(importLines[0]).toMatch(/['"]\.\/logging\.js['"]/);
+    // And nothing but comments/imports precedes it: the file up to the end of
+    // the first import must be header comment + imports only.
+    const upToFirstImport = source.slice(0, source.indexOf(importLines[0]));
+    const codeLines = upToFirstImport
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line !== '' && !line.startsWith('//') && !line.startsWith('*') && !line.startsWith('/*'));
+    expect(codeLines).toEqual([]);
+  });
+});
+
 beforeEach(() => {
   __resetElectronStub();
+  app.getPath.mockImplementation((name: string) =>
+    name === 'userData' ? hermeticUserData : process.cwd(),
+  );
   __resetTransportSecurityForTests();
 });
 
@@ -42,6 +80,7 @@ afterAll(async () => {
   // Stop any host left running by a failed assertion.
   app.emit('will-quit');
   await new Promise((resolve) => setTimeout(resolve, 50));
+  fs.rmSync(hermeticUserData, { recursive: true, force: true });
 });
 
 describe('b3-bootstrap-wiring: the real runtime path (issue #61)', () => {

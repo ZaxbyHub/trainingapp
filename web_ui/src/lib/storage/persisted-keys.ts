@@ -48,6 +48,13 @@ export const TRAINING_PROGRESS_KEY = 'training.progress';
  * (browser-training-parity AC8; desktop keeps it in the profile's updates.json).
  */
 export const PACK_UPDATES_STATE_KEY = 'pack-updates';
+/**
+ * Enhanced diagnostics logging ('1' = debug level). Browser app only: inside
+ * Electron the main process is the sole persistence authority (the profile's
+ * diagnostics-settings.json sidecar), so the renderer never writes this key
+ * there (issue #248 AC2).
+ */
+export const DIAGNOSTICS_ENHANCED_KEY = 'diagnostics-enhanced-logging';
 
 /** User settings: Clear Cache removes every one of these. */
 export const USER_SETTING_KEYS: readonly string[] = [
@@ -61,6 +68,7 @@ export const USER_SETTING_KEYS: readonly string[] = [
   LAST_PACK_KEY,
   TRAINING_PROGRESS_KEY,
   PACK_UPDATES_STATE_KEY,
+  DIAGNOSTICS_ENHANCED_KEY,
 ];
 
 /** Session-scoped user settings (sessionStorage): Clear Cache removes these too. */
