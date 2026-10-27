@@ -201,6 +201,15 @@ describe('diagnostics default-file-logging (AC1: rotated log under <userData>/lo
     const rotated = fs.readFileSync(path.join(ws.userDataPath, 'logs', 'main.log.1'), 'utf8');
     expect(rotated).toContain('main boot');
     expect(fs.readFileSync(ws.logPath, 'utf8')).toContain('crossing write');
+    // PRR-003 (fix-review caught): a SUCCESSFUL rotation must restart the byte
+    // counter — the counter is stat-consistent with the fresh file, and a
+    // second ordinary write must NOT rotate again (a stale counter would churn
+    // a generation per write and destroy history).
+    expect(__diagnosticsStateForTests().byteCount).toBe(fs.statSync(ws.logPath).size);
+    const before = fs.readFileSync(path.join(ws.userDataPath, 'logs', 'main.log.1'), 'utf8');
+    console.log('[test] second ordinary write after the rotation');
+    expect(fs.readFileSync(path.join(ws.userDataPath, 'logs', 'main.log.1'), 'utf8')).toBe(before);
+    expect(fs.readFileSync(ws.logPath, 'utf8')).toContain('second ordinary write');
   });
 
   it('default-file-logging: a failed rotation keeps the history, resyncs the counter, warns once and retries on the next write', () => {

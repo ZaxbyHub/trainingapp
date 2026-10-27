@@ -252,12 +252,19 @@ function appendLine(text: string): boolean {
   const data = `${text}\n`;
   try {
     const bytes = Buffer.byteLength(data, 'utf8');
-    if (byteCount + bytes > ROTATE_BYTES && !rotateNow()) {
-      // PRR-003: the rotation failed — keep the history, resync the counter
-      // from the surviving file, warn once, and STILL append (the next write
-      // retries the rotation because the resynced counter stays over the cap).
-      resyncByteCount();
-      warnRotationFailureOnce();
+    if (byteCount + bytes > ROTATE_BYTES) {
+      if (rotateNow()) {
+        // Success: main.log was renamed away, so the append recreates it from
+        // zero — the counter must restart, or every later write re-trips the
+        // cap and churns a generation per write (PRR-003, fix-review caught).
+        byteCount = 0;
+      } else {
+        // PRR-003: the rotation failed — keep the history, resync the counter
+        // from the surviving file, warn once, and STILL append (the next write
+        // retries the rotation because the resynced counter stays over the cap).
+        resyncByteCount();
+        warnRotationFailureOnce();
+      }
     }
     appendFileSync(mainLogPath, data);
     byteCount += bytes;
