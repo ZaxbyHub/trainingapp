@@ -207,6 +207,45 @@ describe('export (AC4: picker, fallback, cancel, write failure)', () => {
     expect(downloadTextFile).not.toHaveBeenCalled();
   });
 
+  it('a picker WRITE failure aborts the half-written handle so the destination is not left locked (PRR-010)', async () => {
+    recordingSinks();
+    const aborted: string[] = [];
+    stubPicker(async () => ({
+      createWritable: async () => ({
+        write: async () => {
+          throw new Error('disk full');
+        },
+        close: async () => undefined,
+        abort: async () => {
+          aborted.push('aborted');
+        },
+      }),
+    }));
+    const outcome = await exportDiagnostics();
+    expect(outcome.outcome).toBe('error');
+    // The handle is released: without this the user could not delete,
+    // overwrite, or re-export to the chosen path for the rest of the session.
+    expect(aborted).toEqual(['aborted']);
+  });
+
+  it('a picker WRITE failure falls back to close() when the handle has no abort (PRR-010)', async () => {
+    recordingSinks();
+    const closed: string[] = [];
+    stubPicker(async () => ({
+      createWritable: async () => ({
+        write: async () => {
+          throw new Error('disk full');
+        },
+        close: async () => {
+          closed.push('closed');
+        },
+      }),
+    }));
+    const outcome = await exportDiagnostics();
+    expect(outcome.outcome).toBe('error');
+    expect(closed).toEqual(['closed']);
+  });
+
   it('the bundle re-gates every persisted field', async () => {
     recordingSinks();
     createLogger('gate').error('export probe password=hunter2');

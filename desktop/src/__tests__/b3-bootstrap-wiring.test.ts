@@ -11,9 +11,10 @@ import { bootstrap } from '../../main/index';
 import { __resetTransportSecurityForTests } from '../../main/security/index';
 
 // Hermetic userData (issue #248): bootstrap now activates the diagnostics
-// file sink under <userData>/logs, and the stub's getPath defaults to the
-// process cwd — point it at a temp dir so the spec never writes into the
-// checkout.
+// file sink under <userData>/logs. The electron stub answers getPath('userData')
+// with a per-process temp dir (reset by __resetElectronStub, PRR-022), but this
+// spec pins its OWN dedicated dir so the diagnostics assertions below are
+// independent of whatever any earlier spec in the file left behind.
 const hermeticUserData = fs.mkdtempSync(path.join(os.tmpdir(), 'b3-bootstrap-userdata-'));
 
 async function waitFor<T>(fn: () => T | undefined | null, description: string, timeoutMs = 5000): Promise<T> {
@@ -32,6 +33,31 @@ async function getRegisteredHandler(channel: string): Promise<(...args: unknown[
     return call ? (call[1] as (...args: unknown[]) => unknown) : undefined;
   }, `ipc handler ${channel}`);
 }
+
+// PRR-016: the phase-1 logging install must be the FIRST import of the
+// desktop entry — it captures dependency-evaluation-time console output and
+// registers the fatal/uncaught handlers before any backend module runs. The
+// renderer twin of this contract is pinned in web_ui's bootstrap-wiring spec;
+// without this scan a reorder silently loses pre-wrapper capture while every
+// runtime suite stays green (the wrapper self-installs only under
+// process.type === 'browser', which vitest never sets).
+describe('desktop entry import order (issue #248 phase 1)', () => {
+  it('imports the logging install before every other module', () => {
+    const source = fs.readFileSync(path.join(__dirname, '..', '..', 'main', 'index.ts'), 'utf8');
+    const importLines = source.split(/\r?\n/).filter((line) => /^import .*;$/.test(line.trim()));
+    expect(importLines.length).toBeGreaterThan(1);
+    // The diagnostics install is the first import, ahead of every backend module.
+    expect(importLines[0]).toMatch(/['"]\.\/logging\.js['"]/);
+    // And nothing but comments/imports precedes it: the file up to the end of
+    // the first import must be header comment + imports only.
+    const upToFirstImport = source.slice(0, source.indexOf(importLines[0]));
+    const codeLines = upToFirstImport
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line !== '' && !line.startsWith('//') && !line.startsWith('*') && !line.startsWith('/*'));
+    expect(codeLines).toEqual([]);
+  });
+});
 
 beforeEach(() => {
   __resetElectronStub();

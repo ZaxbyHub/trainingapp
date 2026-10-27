@@ -15,9 +15,13 @@ import { persistedForm } from './redact';
 import { downloadTextFile } from '../export/conversation-export';
 
 // Narrow local declaration: the DOM lib does not model showSaveFilePicker.
+// abort is declared because a half-failed createWritable() handle keeps an
+// exclusive lock on the destination until it is closed or aborted (PRR-010):
+// without this the user cannot delete, overwrite, or re-export to that path.
 interface SaveFilePickerWritable {
   write(data: BlobPart): Promise<void>;
   close(): Promise<void>;
+  abort?(): Promise<void>;
 }
 interface SaveFilePickerHandle {
   createWritable(): Promise<SaveFilePickerWritable>;
@@ -102,13 +106,25 @@ export async function exportDiagnostics(): Promise<DiagnosticsExportOutcome> {
     downloadTextFile(content, filename, 'application/json');
     return { outcome: 'fallback', detail: detailOf(err) };
   }
+  let writable: SaveFilePickerWritable | null = null;
   try {
-    const writable = await handle.createWritable();
+    writable = await handle.createWritable();
     await writable.write(new Blob([content], { type: 'application/json' }));
     await writable.close();
     return { outcome: 'saved' };
   } catch (err) {
-    // Write/close failure: surfaced, never a silent fallback download.
+    // Write/close failure: surfaced, never a silent fallback download. The
+    // half-written handle is aborted (falling back to close) so the
+    // destination does not stay locked for the rest of the session (PRR-010);
+    // a failure HERE is swallowed — the original error is what we report.
+    if (writable !== null) {
+      try {
+        if (typeof writable.abort === 'function') await writable.abort();
+        else await writable.close();
+      } catch {
+        /* the destination is already in an unknown state; report the original */
+      }
+    }
     return { outcome: 'error', detail: detailOf(err) };
   }
 }
