@@ -10,7 +10,7 @@
  * WRITE/close failure -> 'error' (no silent download fallback — a half-written
  * destination must be surfaced, not papered over).
  */
-import { admittedEntries, type LogEntry } from './index';
+import { admittedEntries, enhancedLoggingEnabled, type LogLevel, type LogEntry } from './index';
 import { persistedForm } from './redact';
 import { downloadTextFile } from '../export/conversation-export';
 
@@ -33,7 +33,26 @@ export interface DiagnosticsExportOutcome {
 export interface DiagnosticsBundle {
   exportedAt: string;
   version: 1;
-  entries: LogEntry[];
+  /** PRR-049: platform discriminator — desktop and web bundles both carry
+   *  version:1, so `platform` is what tells a consumer which shape to expect
+   *  (the web bundle has no logs/sidecars by design). */
+  platform: 'web';
+  /** PRR-036/PRR-073: the level AT EXPORT TIME — the live level may have been
+   *  toggled since boot, and the name says when the value was sampled. */
+  levelAtExport: LogLevel;
+  entries: DiagnosticsExportEntry[];
+}
+
+/**
+ * One exported entry (PRR-065): ts/level/scope/message only. sessionId and
+ * seq are DELIVERY metadata (stop-and-wait dedupe with main), not diagnostics
+ * — they never leave the device in a bundle.
+ */
+export interface DiagnosticsExportEntry {
+  ts: string;
+  level: LogLevel;
+  scope: string;
+  message: string;
 }
 
 /** Assemble the export JSON (every persisted field passes the gate again). */
@@ -41,7 +60,14 @@ export function buildDiagnosticsBundle(): string {
   const bundle: DiagnosticsBundle = {
     exportedAt: new Date().toISOString(),
     version: 1,
-    entries: admittedEntries().map((entry) => ({ ...entry, message: persistedForm(entry.message) })),
+    platform: 'web',
+    levelAtExport: enhancedLoggingEnabled() ? 'debug' : 'info',
+    entries: admittedEntries().map(({ ts, level, scope, message }: LogEntry): DiagnosticsExportEntry => ({
+      ts,
+      level,
+      scope,
+      message: persistedForm(message),
+    })),
   };
   return JSON.stringify(bundle, null, 2);
 }

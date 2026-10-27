@@ -404,15 +404,43 @@ function deleteEdgeVecBlob(prefix: string): Promise<void> {
 // persisted without restart) and the Export diagnostics… button. Inside
 // Electron the main process is the sole persistence authority (the profile's
 // diagnostics-settings.json sidecar); the browser app persists through the
-// registered persisted key. Export writes the bundle to a user-chosen file
-// (native save dialog in Electron; showSaveFilePicker/download fallback in
-// the browser) — nothing leaves the device.
+// registered persisted key. Inside Electron with an OLDER main (no
+// diagnostics namespace) there is no authority: the controls stay
+// unavailable and the browser key is never written there (PRR-076, pr255).
+// Export writes the bundle to a user-chosen file (native save dialog in
+// Electron; showSaveFilePicker/download fallback in the browser) — nothing
+// leaves the device.
 // ============================================================================
 function DiagnosticsSection(): React.ReactElement {
   const [enhanced, setEnhancedState] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  // PRR-064 (pr255): failures get their own always-mounted alert region
+  // (role=alert + danger tone + focus move) instead of sharing the polite
+  // status span — same affordance as the Updates failures above.
+  const [failure, setFailure] = useState<string | null>(null);
+  const failureRef = React.useRef<HTMLParagraphElement | null>(null);
   const electronBridge = window.desktopApi?.diagnostics ?? null;
+  // PRR-076 (pr255): `window.desktopApi` presence is the electron-detect
+  // seam (lib/desktop-session). Inside Electron with an OLDER main (no
+  // diagnostics namespace) there is no persistence authority at all — the
+  // browser localStorage path must never run there.
+  const inElectron = isElectron();
+
+  const showFailure = (message: string): void => {
+    setFailure(message);
+  };
+  const resetFeedback = (): void => {
+    setStatus(null);
+    setFailure(null);
+  };
+  // PRR-064: move keyboard focus to the failure once its alert region has
+  // MOUNTED (the updates-error precedent's intent; an effect, because the
+  // region renders conditionally and a queueMicrotask at setFailure time
+  // would run before the ref exists).
+  React.useEffect(() => {
+    if (failure !== null) failureRef.current?.focus();
+  }, [failure]);
 
   useEffect(() => {
     let cancelled = false;
@@ -430,7 +458,7 @@ function DiagnosticsSection(): React.ReactElement {
           if (cancelled) return;
           setEnhancedState(enhancedLoggingEnabled());
         });
-    } else {
+    } else if (!inElectron) {
       // Browser app: the persisted key IS the authority on mount; reconcile
       // the core's live level with it (install.ts already did this at boot,
       // but the key may have changed in another tab or before this mount).
@@ -444,16 +472,19 @@ function DiagnosticsSection(): React.ReactElement {
       setEnhancedLogging(on);
       setEnhancedState(on);
     }
+    // Electron with an older main: no bridge and no browser authority — the
+    // toggle stays unavailable (enhanced === null keeps it aria-disabled)
+    // and NOTHING is read from or written to localStorage.
     return () => {
       cancelled = true;
     };
-  }, [electronBridge]);
+  }, [electronBridge, inElectron]);
 
   const handleToggle = async (): Promise<void> => {
     if (enhanced === null) return;
     const next = !enhanced;
     setBusy(true);
-    setStatus(null);
+    resetFeedback();
     if (electronBridge !== null) {
       try {
         const result = await electronBridge.setEnhancedLevel(next);
@@ -464,10 +495,10 @@ function DiagnosticsSection(): React.ReactElement {
           setEnhancedState(next);
           setStatus(next ? 'Enhanced logging on (debug level, both processes)' : 'Enhanced logging off (info level, both processes)');
         } else {
-          setStatus(`Could not change the setting: ${result.detail ?? 'unknown error'}`);
+          showFailure(`Could not change the setting: ${result.detail ?? 'unknown error'}`);
         }
       } catch (err: unknown) {
-        setStatus(`Could not change the setting: ${err instanceof Error ? err.message : String(err)}`);
+        showFailure(`Could not change the setting: ${err instanceof Error ? err.message : String(err)}`);
       } finally {
         setBusy(false);
       }
@@ -478,7 +509,7 @@ function DiagnosticsSection(): React.ReactElement {
     try {
       localStorage.setItem(DIAGNOSTICS_ENHANCED_KEY, next ? '1' : '0');
     } catch (err: unknown) {
-      setStatus(`Could not save the setting: ${err instanceof Error ? err.message : String(err)}`);
+      showFailure(`Could not save the setting: ${err instanceof Error ? err.message : String(err)}`);
       setBusy(false);
       return;
     }
@@ -490,15 +521,15 @@ function DiagnosticsSection(): React.ReactElement {
 
   const handleExport = async (): Promise<void> => {
     setBusy(true);
-    setStatus(null);
+    resetFeedback();
     if (electronBridge !== null) {
       try {
         const reply = await electronBridge.exportDiagnostics();
         if ('cancelled' in reply) setStatus('Export cancelled');
         else if (reply.ok) setStatus('Diagnostics bundle written');
-        else setStatus(`Export failed: ${reply.error}`);
+        else showFailure(`Export failed: ${reply.error}`);
       } catch (err: unknown) {
-        setStatus(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
+        showFailure(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
       } finally {
         setBusy(false);
       }
@@ -509,40 +540,78 @@ function DiagnosticsSection(): React.ReactElement {
       if (outcome.outcome === 'saved') setStatus('Diagnostics bundle saved');
       else if (outcome.outcome === 'cancelled') setStatus('Export cancelled');
       else if (outcome.outcome === 'fallback') setStatus('Diagnostics downloaded (save picker unavailable)');
-      else setStatus(`Export failed: ${outcome.detail ?? 'write failed'}`);
+      else showFailure(`Export failed: ${outcome.detail ?? 'write failed'}`);
     } finally {
       setBusy(false);
     }
   };
 
+  // PRR-026 (pr255): aria-disabled + activation suppression, not native
+  // disabled — the control stays focusable (and keeps focus) through the
+  // async toggle; the Button idiom below supplies the same for the export.
+  const toggleInert = busy || enhanced === null;
   return (
     <>
       <div className="settings-row">
+        {/* PRR-084: short label + the Checkbox description prop (the long
+            sentence used to BE the 81-char accessible name). */}
         <Checkbox
           data-testid="diagnostics-enhanced-toggle"
           checked={enhanced ?? false}
-          disabled={busy || enhanced === null}
-          aria-busy={busy}
-          onChange={() => void handleToggle()}
-          label="Enhanced logging (raises both processes to debug level; applied live, no restart)"
+          aria-disabled={toggleInert || undefined}
+          aria-busy={busy || undefined}
+          aria-describedby="diagnostics-status"
+          onChange={() => {
+            if (toggleInert) return;
+            void handleToggle();
+          }}
+          label="Enhanced logging"
+          description="Raises both processes to debug level; applied live, no restart"
         />
         <Button
           variant="secondary"
           data-testid="diagnostics-export"
-          disabled={busy}
-          aria-disabled={busy}
+          loading={busy}
           onClick={() => void handleExport()}
+          aria-describedby="diagnostics-status"
         >
           {busy ? 'Exporting…' : 'Export diagnostics…'}
         </Button>
-        {/* Always-mounted live region (the clear-cache precedent): only the
-            text changes, so the busy/success/cancelled feedback is announced. */}
-        <span id="diagnostics-status" role="status" aria-live="polite" data-testid="diagnostics-status" className="settings-text">
+        {/* Always-mounted live regions (the clear-cache precedent): only the
+            text changes, so the busy/success/cancelled feedback is announced.
+            PRR-062: atomic + relevant so a replaced text node is announced
+            wholesale, never as a partial diff; PRR-085: both controls point
+            at the region via aria-describedby. */}
+        <span
+          id="diagnostics-status"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          aria-relevant="additions text"
+          data-testid="diagnostics-status"
+          className="settings-text"
+        >
           {status ?? ''}
         </span>
       </div>
+        {/* PRR-064: the failure twin — assertive, danger-toned, focusable
+            (the focus lands here when a toggle/export fails). Mounted WITH
+            its message like the updates-error precedent above, so the page
+            carries no alert role while idle. */}
+        {failure !== null && (
+          <p
+            id="diagnostics-failure"
+            role="alert"
+            ref={failureRef}
+            tabIndex={-1}
+            data-testid="diagnostics-failure"
+            className="settings-text settings-tone--danger settings-focus-target"
+          >
+            {failure}
+          </p>
+        )}
       <p className="settings-text">
-        Diagnostics stay on this device: the desktop app keeps a size-rotated log (three files of 5 MB) under its
+        Diagnostics stay on this device: the desktop app keeps a size-rotated log (three files of 5 MiB) under its
         data folder; the browser app keeps the last 5,000 entries in memory until the page reloads. Every written
         line passes the redaction gate (tokens, keys and long hashes are removed) before it reaches any file.
       </p>

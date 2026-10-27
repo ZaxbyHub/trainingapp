@@ -17,10 +17,23 @@ vi.mock('../../lib/storage/document-store', () => ({
 vi.mock('../../lib/storage/profile', () => ({
   migrateOrphanedNamespaces: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock('../../lib/processing/extractor-factory', () => ({
-  extractDocument: vi.fn(),
-  SUPPORTED_EXTENSIONS: ['.pdf', '.docx', '.xlsx', '.pptx', '.txt', '.md'],
-}));
+// The leaf extractors are mocked so importOriginal below loads the REAL
+// factory (and its real EXTRACTOR_MAP) without pulling pdfjs/mammoth/xlsx/
+// jszip into the jsdom run: SUPPORTED_EXTENSIONS is derived from the real
+// Object.keys(EXTRACTOR_MAP), so a new extension lands here without a
+// hand-copied literal drifting out of sync (review PRR-057, pr255).
+vi.mock('../../lib/processing/pdf-extractor', () => ({ extractPdfText: vi.fn() }));
+vi.mock('../../lib/processing/docx-extractor', () => ({ extractDocxText: vi.fn() }));
+vi.mock('../../lib/processing/xlsx-extractor', () => ({ extractXlsxText: vi.fn() }));
+vi.mock('../../lib/processing/txt-extractor', () => ({ extractTxtText: vi.fn() }));
+vi.mock('../../lib/processing/pptx-extractor', () => ({ extractPptxText: vi.fn() }));
+vi.mock('../../lib/processing/extractor-factory', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/processing/extractor-factory')>();
+  return {
+    extractDocument: vi.fn(),
+    SUPPORTED_EXTENSIONS: [...actual.SUPPORTED_EXTENSIONS],
+  };
+});
 vi.mock('../../lib/embeddings/embedding-service', () => ({
   getEmbeddingService: vi.fn(),
 }));
@@ -103,8 +116,12 @@ describe('Documents header badge count boundaries (AC10, issue #41 D3)', () => {
 
   it('zero supported documents render no badge at all', async () => {
     await renderWith([]);
-    // Let any late render settle before asserting absence.
-    await new Promise((r) => setTimeout(r, 50));
+    // Wait for the SETTLED state, not a fixed sleep (review PRR-056, pr255):
+    // the heading renders in the loading branch too, so absence can only be
+    // asserted once the loading region is gone.
+    await waitFor(() => {
+      expect(document.querySelector('.app-docs__loading')).toBeNull();
+    });
     expect(headerBadgeText()).toBeUndefined();
   });
 
@@ -117,7 +134,11 @@ describe('Documents header badge count boundaries (AC10, issue #41 D3)', () => {
 
   it('only unsupported documents render no badge (exclusion is not a crash)', async () => {
     await renderWith([doc(1, '.exe')]);
-    await new Promise((r) => setTimeout(r, 50));
+    // Same settled-state wait as the zero-docs row (PRR-056): the loading
+    // skeleton must be gone before absence means anything.
+    await waitFor(() => {
+      expect(document.querySelector('.app-docs__loading')).toBeNull();
+    });
     expect(headerBadgeText()).toBeUndefined();
   });
 });

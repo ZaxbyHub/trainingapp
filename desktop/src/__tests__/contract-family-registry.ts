@@ -61,6 +61,16 @@ export const FAMILY_ROSTER: string[] = [
   // byte-identical over the shared corpus, desktop console outcomes) pins
   // security-adjacent AC5 behavior with no other merge-blocking home.
   'diagnostics-redact-parity.test.ts',
+  // Review PRR-018 (pr255): the trace's other two new desktop specs — the
+  // logging core spec (file transport, toggle, export bundle, capture/ingest)
+  // and the console-composition contract — are named OUTSIDE the convention
+  // and had no merge-blocking home; same disposition as the parity spec.
+  'diagnostics-logging.test.ts',
+  'diagnostics-console-composition.test.ts',
+  // Review PRR-015 (pr255): the trace's frozen -t acceptance tokens gain a
+  // committed re-driver (the acceptance-battery-precision pattern) — rostered
+  // with it for the same no-other-home reason.
+  'diagnostics-acceptance-precision.test.ts',
 ];
 
 /** Convention-matching specs owned by another CI context, with run-line evidence. */

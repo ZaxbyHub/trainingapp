@@ -51,7 +51,9 @@ const REPO_ROOT = findRepoRoot(THIS_DIR);
 const SWEEP_PATH = path.join(REPO_ROOT, 'desktop', 'src', '__tests__', 'logline-contract-sweep.test.ts');
 
 const SAMPLE_SHA = 'deadbeef'.repeat(8);
-const SAMPLE_PATH = 'C:\\Users\\brett\\AppData\\Roaming\\trainingapp\\packs\\versioned-a\\2.0.0\\pack.json';
+// PRR-067: a neutral username — the literal must not name a real account in a
+// public repo (the template matches any path, so the swap is contract-neutral).
+const SAMPLE_PATH = 'C:\\Users\\sample-user\\AppData\\Roaming\\trainingapp\\packs\\versioned-a\\2.0.0\\pack.json';
 /** Materialization table for the corpus needles' `${...}` interpolations. */
 const SAMPLES: Record<string, string> = {
   manifestPath: SAMPLE_PATH,

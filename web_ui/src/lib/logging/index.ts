@@ -17,6 +17,7 @@
  * first); tests drive the seams directly.
  */
 import {
+  isSensitiveArgs,
   isSensitiveLine,
   persistedForm,
   renderLine,
@@ -82,6 +83,9 @@ const sendQueue: LogEntry[] = [];
 let inFlight: LogEntry | null = null;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
+/** Retry delay after a delivery failure/rejection (PRR-055: tests import it). */
+export const RETRY_DELAY_MS = 250;
+
 export function enhancedLoggingEnabled(): boolean {
   return enhanced;
 }
@@ -141,6 +145,19 @@ function warnFailureOnce(detail: string): void {
   }
 }
 
+// PRR-002: one-per-session warning that the MAIN file sink is dead — the
+// entries keep flowing to the ring (kept, warnable), they just never persist.
+let warnedTransport = false;
+function warnTransportOnce(detail: string): void {
+  if (warnedTransport) return;
+  warnedTransport = true;
+  try {
+    sinks.error(`[logging] ${detail}`);
+  } catch {
+    /* the warn path itself failed — nothing more can be done safely */
+  }
+}
+
 function pushAdmitted(entry: LogEntry): void {
   ring.push(entry);
   if (ring.length > RING_LIMIT) ring.splice(0, ring.length - RING_LIMIT);
@@ -149,26 +166,68 @@ function pushAdmitted(entry: LogEntry): void {
   pump();
 }
 
+/** A main-side reply of the shape {ok:false,...} (PRR-014). */
+function isRejectionReply(reply: unknown): boolean {
+  return typeof reply === 'object' && reply !== null && (reply as { ok?: unknown }).ok === false;
+}
+
+/** A main-side reply naming an unpersisted delivery (PRR-002). */
+function isUnpersistedReply(reply: unknown): boolean {
+  return typeof reply === 'object' && reply !== null && (reply as { persisted?: unknown }).persisted === false;
+}
+
+/** Rejection/retry: requeue at the head so ordering is preserved. */
+function handleDeliveryFailure(entry: LogEntry): void {
+  inFlight = null;
+  sendQueue.unshift(entry);
+  if (retryTimer === null) {
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      pump();
+    }, RETRY_DELAY_MS);
+  }
+}
+
 function pump(): void {
-  if (forwarder === null || inFlight !== null || sendQueue.length === 0) return;
+  // PRR-013: an admission during the backoff window must NOT bypass the
+  // delay — a pending retryTimer means the wire is cooling down, so the
+  // queue waits for the timer to re-pump (measured re-send at 33ms vs the
+  // 250ms backoff otherwise).
+  if (forwarder === null || inFlight !== null || sendQueue.length === 0 || retryTimer !== null) return;
   const entry = sendQueue.shift();
   if (entry === undefined) return;
   inFlight = entry;
-  void forwarder(entry)
-    .then(() => {
+  let delivery: Promise<unknown>;
+  try {
+    // PRR-041: a forwarder that throws SYNCHRONOUSLY must be treated like a
+    // rejection — an escaping throw would wedge the pump and crash the
+    // console call site.
+    delivery = forwarder(entry);
+  } catch {
+    handleDeliveryFailure(entry);
+    return;
+  }
+  void delivery
+    .then((reply) => {
       inFlight = null;
+      if (isRejectionReply(reply)) {
+        // PRR-014: a resolved {ok:false} is a main-side rejection (malformed
+        // entry, inactive sink) — warn once and do NOT requeue (a retry would
+        // hit the same verdict forever); the entry stays in the ring as the
+        // historical record.
+        warnFailureOnce('a log entry was rejected by the main diagnostics sink');
+        pump();
+        return;
+      }
+      if (isUnpersistedReply(reply)) {
+        // PRR-002: the main file transport is disabled — warn once; the entry
+        // is already in the ring and stays there.
+        warnTransportOnce('the main diagnostics file sink did not persist the entry; it is kept in the in-memory ring only');
+      }
       pump();
     })
     .catch(() => {
-      // Rejection/retry: requeue at the head so ordering is preserved.
-      inFlight = null;
-      sendQueue.unshift(entry);
-      if (retryTimer === null) {
-        retryTimer = setTimeout(() => {
-          retryTimer = null;
-          pump();
-        }, 250);
-      }
+      handleDeliveryFailure(entry);
     });
 }
 
@@ -180,7 +239,7 @@ export function __deliveryStateForTests(): { queued: number; inFlight: boolean }
 /**
  * The single emission path, shared by the console wrapper (scope 'console')
  * and scoped loggers. `sink` overrides the console method used for
- * passthrough (a wrapped console.log passes through console.LOG, not
+ * passthrough (a wrapped console.log passes through console.log, not
  * console.info). Console follows the three-way policy with an EMPTY renderer
  * exception set; persisted sinks are always gated and admitted by level.
  * Classification failures fail closed (matrix rows a/b of the plan).
@@ -190,7 +249,17 @@ export function emitEntry(level: LogLevel, scope: string, args: unknown[], sink?
   let line: string;
   try {
     line = renderLine(args);
-    if (isSensitiveLine(line)) {
+    if (line === '') {
+      // PRR-014: an EMPTY rendered line (console.log() with no arguments)
+      // passes through to the console but never becomes a persisted entry —
+      // the desktop main-side validator rejects empty messages, so the two
+      // halves of the pipeline must agree.
+      sinkMethod(...args);
+      return;
+    }
+    // PRR-031: classify the joined line AND each rendered argument (a
+    // secret split across arguments defeats the joined form alone).
+    if (isSensitiveLine(line) || isSensitiveArgs(args)) {
       // Classification succeeded: sanitized console form, once, one argument.
       sinkMethod(sanitizedConsoleForm(line));
     } else {
@@ -261,6 +330,7 @@ export function __resetLoggingCoreForTests(): void {
     retryTimer = null;
   }
   warnedFailure = false;
+  warnedTransport = false;
   sinks = {
     debug: console.debug,
     info: console.info,

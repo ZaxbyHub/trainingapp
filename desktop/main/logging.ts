@@ -34,9 +34,12 @@ import {
   diagnosticsSettingsPathFor,
   loadDiagnosticsSettings,
   saveDiagnosticsSettings,
+  sweepDiagnosticsSettingsTmp,
 } from './diagnostics-settings.js';
 import {
+  isSensitiveArgs,
   isSensitiveLine,
+  LINE_BUDGET,
   persistedForm,
   redactLine,
   renderLine,
@@ -95,6 +98,7 @@ export function matchesPinnedTemplate(line: string): boolean {
  * the parity/composition specs (and CONFIGURATION.md's stated policy).
  */
 export function consoleOutcomeFor(line: string): ConsoleOutcome {
+  // PRR-031: the joined line alone misses a secret split across arguments.
   if (!isSensitiveLine(line)) return 'raw';
   return matchesPinnedTemplate(line) ? 'raw' : 'sanitized';
 }
@@ -116,6 +120,7 @@ let storePathHolder: string | null = null;
 let byteCount = 0;
 let transportDisabled = false;
 let transportWarned = false;
+let rotationWarned = false;
 let ipcRegistered = false;
 let captureRegistered = false;
 let wrapperInstalled = false;
@@ -151,10 +156,41 @@ let rejectionHandler: ((reason: unknown) => void) | null = null;
 function warnFailureOnce(detail: string): void {
   if (warnedFailure) return;
   warnedFailure = true;
+  const text = `[trainingapp-diagnostics] ${detail}; the entry was dropped`;
   try {
-    sinksForLevel().error(`[trainingapp-diagnostics] ${detail}; the entry was dropped`);
+    sinksForLevel().error(text);
   } catch {
     /* the warn path itself failed — never recurse into the classifier */
+  }
+  // PRR-002: the warn must also attempt the PERSISTED path while the sink is
+  // alive — in packaged builds stdout is discarded, so a console-only warn
+  // would vanish exactly when it matters.
+  if (active && !transportDisabled && mainLogPath !== null) {
+    try {
+      appendEntry({ ts: nowIso(), level: 'warn', scope: 'diagnostics', message: text });
+    } catch {
+      /* best effort only — never recurse into the failure path */
+    }
+  }
+}
+
+/** PRR-003: one-per-session rotation-failure warning (a distinct budget from
+ * the classification-failure warn); also attempts the persisted path. */
+function warnRotationFailureOnce(): void {
+  if (rotationWarned) return;
+  rotationWarned = true;
+  const text = '[trainingapp-diagnostics] log rotation failed; the log overgrew its cap and rotation will retry on the next write';
+  try {
+    sinksForLevel().error(text);
+  } catch {
+    /* console unavailable */
+  }
+  if (active && !transportDisabled && mainLogPath !== null) {
+    try {
+      appendEntry({ ts: nowIso(), level: 'warn', scope: 'diagnostics', message: text });
+    } catch {
+      /* best effort only */
+    }
   }
 }
 
@@ -165,34 +201,67 @@ function formatLine(entry: LogEntry): string {
   return `${entry.ts} ${entry.level} [${entry.scope}] ${entry.message}`;
 }
 
-function rotateNow(): void {
-  if (logsDir === null) return;
-  try {
-    unlinkSync(path.join(logsDir, 'main.log.2'));
-  } catch {
-    /* no prior rotation */
-  }
-  try {
-    renameSync(path.join(logsDir, 'main.log.1'), path.join(logsDir, 'main.log.2'));
-  } catch {
-    /* no prior rotation */
-  }
-  try {
-    renameSync(mainLogPath as string, path.join(logsDir, 'main.log.1'));
-  } catch {
-    /* nothing to rotate */
-  }
-  byteCount = 0;
+function isNotFoundError(err: unknown): boolean {
+  return (
+    err !== null &&
+    typeof err === 'object' &&
+    (err as NodeJS.ErrnoException).code === 'ENOENT'
+  );
 }
 
-function appendLine(text: string): void {
-  if (mainLogPath === null || transportDisabled) return;
+/**
+ * PRR-003: failure-safe rotation chain. Win32 rename REPLACES an existing
+ * destination file (libuv uses MOVEFILE_REPLACE_EXISTING), so the old
+ * pre-unlink of main.log.2 was redundant AND its swallow-everything chain
+ * could destroy a generation mid-chain. Each step must now succeed (a
+ * genuine ENOENT means "nothing to promote", not a failure) before the next
+ * runs; the FIRST real failure (a directory obstacle, an external holder)
+ * aborts WITHOUT renaming main.log away — no generation is lost — and the
+ * caller resyncs the byte counter so the NEXT write retries the rotation
+ * instead of deferring it another 5 MiB.
+ */
+function rotateNow(): boolean {
+  if (logsDir === null || mainLogPath === null) return false;
+  try {
+    renameSync(path.join(logsDir, 'main.log.1'), path.join(logsDir, 'main.log.2'));
+  } catch (err) {
+    return isNotFoundError(err);
+  }
+  try {
+    renameSync(mainLogPath, path.join(logsDir, 'main.log.1'));
+  } catch (err) {
+    // main.log itself missing: the .1 -> .2 promotion already happened, so
+    // the chain is complete; the append recreates main.log from zero.
+    return isNotFoundError(err);
+  }
+  return true;
+}
+
+/** PRR-003: re-stat the live file so a failed rotation resyncs the counter. */
+function resyncByteCount(): void {
+  if (mainLogPath === null) return;
+  try {
+    byteCount = statSync(mainLogPath).size;
+  } catch {
+    byteCount = 0;
+  }
+}
+
+function appendLine(text: string): boolean {
+  if (mainLogPath === null || transportDisabled) return false;
   const data = `${text}\n`;
   try {
     const bytes = Buffer.byteLength(data, 'utf8');
-    if (byteCount + bytes > ROTATE_BYTES) rotateNow();
+    if (byteCount + bytes > ROTATE_BYTES && !rotateNow()) {
+      // PRR-003: the rotation failed — keep the history, resync the counter
+      // from the surviving file, warn once, and STILL append (the next write
+      // retries the rotation because the resynced counter stays over the cap).
+      resyncByteCount();
+      warnRotationFailureOnce();
+    }
     appendFileSync(mainLogPath, data);
     byteCount += bytes;
+    return true;
   } catch {
     // Transport failure disables the transport for the session + ONE warn;
     // the app continues (AC1's logging must never take the app down).
@@ -205,11 +274,19 @@ function appendLine(text: string): void {
         /* console unavailable */
       }
     }
+    return false;
   }
 }
 
-function appendEntry(entry: LogEntry): void {
-  appendLine(formatLine(entry));
+function appendEntry(entry: LogEntry): boolean {
+  // PRR-006: every FIELD of this entry was gated at its first-persistence
+  // point (the console path gates each PHYSICAL line of the rendered line in
+  // emitConsoleLike; the IPC ingest sanitizes newlines away pre-validation
+  // and gates scope/ts/message once) — so there is deliberately NO second
+  // whole-line gate here: the redaction twins' bare-value class redacts to
+  // end-of-line (PRR-011), which makes a re-gate NON-idempotent — it would
+  // eat every legitimate span after the first bare `key=[redacted]` marker.
+  return appendLine(formatLine(entry));
 }
 
 /**
@@ -219,6 +296,10 @@ function appendEntry(entry: LogEntry): void {
  * entry); after activation the level gate applies immediately.
  */
 function recordEntry(entry: LogEntry): void {
+  // PRR-014: an EMPTY rendered line (e.g. console.log() with no arguments)
+  // is never a persisted entry — the IPC validator already rejects empty
+  // messages, so the main process's own console path must agree with it.
+  if (entry.message.length === 0) return;
   if (!active) {
     phase1.push(entry);
     if (phase1.length > PHASE1_LIMIT) phase1.splice(0, phase1.length - PHASE1_LIMIT);
@@ -235,7 +316,7 @@ function recordEntry(entry: LogEntry): void {
  * Classify and route one console-like call. `scope` is 'console' for wrapped
  * console methods and 'electron'/'process' for capture handlers; `sink`
  * overrides the console method used for passthrough (a wrapped console.log
- * passes through console.LOG, not console.info). Console follows the
+ * passes through console.log, not console.info). Console follows the
  * three-way policy with the finite AC7 exception; persisted capture is
  * always gated and level-admitted.
  */
@@ -245,7 +326,8 @@ function emitConsoleLike(level: LogLevel, scope: string, args: unknown[], sink?:
   let sensitive = false;
   try {
     line = renderLine(args);
-    sensitive = isSensitiveLine(line);
+    // PRR-031: the joined line alone misses a secret split across arguments.
+    sensitive = isSensitiveLine(line) || isSensitiveArgs(args);
     classified = true;
   } catch {
     // Classification failed: the safety of a NON-pinned line cannot be
@@ -282,7 +364,15 @@ function emitConsoleLike(level: LogLevel, scope: string, args: unknown[], sink?:
   }
   let persisted: string;
   try {
-    persisted = persistedForm(line);
+    // PRR-006: gate the rendered line per PHYSICAL line — a multi-line
+    // message (e.g. a window-error string carrying embedded newlines) must
+    // not park sensitive content on a physical line that escapes the gate.
+    // This is the single FIRST gate; a later re-gate would be non-idempotent
+    // under the twins' bare-value-to-EOL class (see appendEntry).
+    persisted = line
+      .split('\n')
+      .map((physical) => persistedForm(physical))
+      .join('\n');
   } catch {
     // Failure-matrix row b: console already followed policy; persisted drop.
     warnFailureOnce('a log line could not be redacted for persistence');
@@ -353,6 +443,16 @@ export function installLoggingConsoleWrapper(): void {
   if (quitFlushHandler !== null) app.off?.('will-quit', quitFlushHandler);
   quitFlushHandler = () => {
     if (active) return;
+    // PRR-001: `active === false` alone is ALSO the second-instance
+    // condition, so a second instance could append to the primary's log at
+    // quit. The invariant is code-enforced: the flush may only run in the
+    // process that OWNS the single-instance lock (app.hasSingleInstanceLock,
+    // Electron >= 4; absent on older/test seams, where the flush's
+    // pre-activation purpose is what the specs drive).
+    const appWithLock = app as typeof app & { hasSingleInstanceLock?: () => boolean };
+    if (typeof appWithLock.hasSingleInstanceLock === 'function' && !appWithLock.hasSingleInstanceLock()) {
+      return;
+    }
     const admitted = phase1.filter((e) => e.level === 'error' || e.level === 'warn');
     if (admitted.length === 0) return;
     try {
@@ -388,6 +488,43 @@ export function removeLoggingConsoleWrapper(): void {
 // ---------------------------------------------------------------------------
 // Phase 2 — activation, IPC, capture wiring, export
 // ---------------------------------------------------------------------------
+/**
+ * PRR-006: ingest sanitization at the single IPC choke point. The validator
+ * was character-agnostic, so a renderer (or the legitimate window-error shape
+ * — no renderer compromise needed) could persist RAW scope/ts and forge whole
+ * entries with embedded newlines. Newlines (LF/CRLF/lone CR) become literal
+ * `\n` text; every other C0/C1 control character (and DEL) except tab is
+ * stripped — a persisted entry can therefore never grow a second physical
+ * line, and control characters never reach the file.
+ */
+function sanitizeIngestText(text: string): string {
+  return text
+    .replace(/\r\n|\r|\n/g, '\\n')
+    .replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g, '');
+}
+
+/** Apply PRR-006 sanitization to the string fields of an ingest payload. */
+function sanitizeIngestPayload(payload: unknown): unknown {
+  if (typeof payload !== 'object' || payload === null) return payload;
+  const source = payload as Record<string, unknown>;
+  const out: Record<string, unknown> = { ...source };
+  if (typeof source.scope === 'string') out.scope = sanitizeIngestText(source.scope);
+  if (typeof source.ts === 'string') out.ts = sanitizeIngestText(source.ts);
+  if (typeof source.message === 'string') out.message = sanitizeIngestText(source.message);
+  return out;
+}
+
+/**
+ * PRR-035: raw fs error strings embed absolute profile paths; the renderer
+ * never needs them. Every absolute-path run (Windows drive paths and the
+ * POSIX roots the app runs on) collapses to a `<path>` marker plus the
+ * basename, so the detail stays actionable without disclosing the layout.
+ */
+function redactErrorDetail(text: string): string {
+  const ABSOLUTE_PATH_RE = /(?:[A-Za-z]:[\\/][^\s'"]*|\/(?:home|Users|tmp|var|mnt|opt|root)\/[^\s'"]*)/g;
+  return text.replace(ABSOLUTE_PATH_RE, (matched) => `<path>${path.sep}${path.basename(matched)}`);
+}
+
 function isValidEntryPayload(payload: unknown): payload is LogEntry {
   if (typeof payload !== 'object' || payload === null) return false;
   const p = payload as Record<string, unknown>;
@@ -404,7 +541,13 @@ function registerDiagnosticsIpc(): void {
   if (ipcRegistered) return;
   ipcRegistered = true;
 
-  ipcMain.handle('desktop:diagnostics:get-state', () => ({ active, enhanced: enhancedLevel }));
+  ipcMain.handle('desktop:diagnostics:get-state', () => ({
+    active,
+    enhanced: enhancedLevel,
+    // PRR-002: surface the sink health — a dead file transport must not read
+    // as a healthy sink ({active:true} alone lied about it).
+    sinkHealthy: active && !transportDisabled,
+  }));
 
   ipcMain.handle('desktop:diagnostics:set-enhanced-level', (_event, enabled: unknown) => {
     if (typeof enabled !== 'boolean') {
@@ -417,17 +560,24 @@ function registerDiagnosticsIpc(): void {
       saveDiagnosticsSettings(storePathHolder, { enhancedLogging: enabled });
     } catch (err) {
       // Persistence failure: revert (the live level never diverges from the
-      // persisted state) and surface a typed failure to the renderer.
+      // persisted state) and surface a typed failure to the renderer — with
+      // the fs paths redacted out of the detail (PRR-035).
       return {
         ok: false as const,
-        detail: `could not persist the diagnostics setting: ${err instanceof Error ? err.message : String(err)}`,
+        detail: redactErrorDetail(
+          `could not persist the diagnostics setting: ${err instanceof Error ? err.message : String(err)}`,
+        ),
       };
     }
     enhancedLevel = enabled;
     return { ok: true as const, enhanced: enabled };
   });
 
-  ipcMain.handle('desktop:diagnostics:log-entry', (_event, payload: unknown) => {
+  ipcMain.handle('desktop:diagnostics:log-entry', (_event, rawPayload: unknown) => {
+    // PRR-006: sanitize BEFORE validation — the length checks and every later
+    // consumer see the sanitized form, so control characters cannot ride a
+    // valid-looking payload into the file.
+    const payload = sanitizeIngestPayload(rawPayload);
     if (!isValidEntryPayload(payload)) {
       droppedMalformed += 1;
       return { ok: false as const, detail: 'malformed log entry' };
@@ -443,21 +593,33 @@ function registerDiagnosticsIpc(): void {
     }
     if (payload.level === 'debug' && !enhancedLevel) {
       // Gate at the main sink too (belt and braces; the renderer excludes
-      // debug entries before forwarding at the default level).
+      // debug entries before forwarding at the default level). The drop is
+      // deliberate level admission, NOT a transport failure — no
+      // persisted:false (that reply names a session sink failure only).
       seen.add(seenKey);
       trimSeen();
       return { ok: true as const, dropped: 'level' as const };
     }
     // Re-gate at the main sink (belt and braces per the plan: the renderer
     // already gates, but the IPC boundary is untrusted — defense in depth).
-    appendEntry({
-      ts: payload.ts,
+    // PRR-006: scope and ts pass the gate too — a secret in scope survived
+    // while the same secret in message was gated.
+    const persisted = appendEntry({
+      ts: persistedForm(payload.ts),
       level: payload.level,
-      scope: payload.scope,
+      scope: persistedForm(payload.scope),
       message: persistedForm(payload.message),
     });
     seen.add(seenKey);
     trimSeen();
+    // PRR-002: an unpersisted entry gets a DISTINCT reply so the renderer can
+    // warn and keep the entry in its ring instead of being falsely acked.
+    // Seen is still marked: the file transport never recovers within the
+    // session, so a redelivery would only re-report the same dead sink —
+    // marking seen prevents a duplicate-rewrite attempt against it.
+    if (!persisted) {
+      return { ok: true as const, persisted: false as const, detail: 'file transport disabled' };
+    }
     return { ok: true as const };
   });
 
@@ -473,7 +635,8 @@ function registerDiagnosticsIpc(): void {
     const dest = path.resolve(show.filePath);
     // Live-destination rejection (canonical equality via path.relative on
     // resolved paths): the bundle must never overwrite a file the app itself
-    // reads or writes.
+    // reads or writes. PRR-034: the profile sidecars and the sqlite WAL/SHM
+    // siblings are live files too — an export onto them must be refused.
     const profileDir = path.dirname(storePathHolder);
     const livePaths = [
       mainLogPath,
@@ -483,6 +646,12 @@ function registerDiagnosticsIpc(): void {
       diagnosticsSettingsPathFor(storePathHolder),
       path.join(profileDir, 'gpu-probe.json'),
       storePathHolder,
+      path.join(profileDir, 'secrets.bin'),
+      path.join(profileDir, 'external.json'),
+      path.join(profileDir, 'first-run.json'),
+      path.join(profileDir, 'updates.json'),
+      `${storePathHolder}-wal`,
+      `${storePathHolder}-shm`,
     ];
     for (const live of livePaths) {
       if (path.relative(path.resolve(live), dest) === '') {
@@ -494,11 +663,21 @@ function registerDiagnosticsIpc(): void {
     try {
       const bundle = assembleExportBundleSync();
       atomicWriteSync(dest, JSON.stringify(bundle, null, 2));
+      // PRR-002: when the file transport died earlier in the session the
+      // bundle carries the last-good content plus the transportDisabled
+      // marker — the reply names the marker so the renderer can surface it.
+      if (bundle.transportDisabled) {
+        return { ok: true as const, path: dest, transportDisabled: true as const };
+      }
       return { ok: true as const, path: dest };
     } catch (err) {
       // ANY failure: the tmp file is cleaned up and the destination stays
-      // untouched (atomicWriteSync owns its tmp cleanup).
-      return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+      // untouched (atomicWriteSync owns its tmp cleanup). PRR-035: the fs
+      // error text is path-redacted before it crosses to the renderer.
+      return {
+        ok: false as const,
+        error: redactErrorDetail(err instanceof Error ? err.message : String(err)),
+      };
     }
   });
 }
@@ -519,11 +698,40 @@ function readWithMarker(file: string): string {
   }
 }
 
+/**
+ * PRR-011 interaction: the twins' bare kv value now redacts to END-OF-LINE,
+ * which makes a plain re-gate NON-idempotent — a second pass over an already
+ * gated line eats every legitimate span after the first bare `key=[redacted]`
+ * marker (measured: `password=[redacted] token: [redacted]` collapses to
+ * `password=[redacted]`). The export belt re-gates file/sidecar text that was
+ * already gated at write time, so every existing key=marker PAIR is masked
+ * away before the gate runs and restored after — the belt still gates NEW
+ * raw content while never destroying existing markers.
+ */
+const MARKER_PAIR_RE =
+  /[A-Za-z0-9_-]+\s*[:=]\s*\[(?:redacted|redacted-hex|redacted-email|redacted-field|dropped-external-key)[^\]]*\]/g;
+
+/** Marker-protected gate for ALREADY-gated text (idempotent belt re-gate). */
+function regateLine(line: string): string {
+  const held: string[] = [];
+  const masked = line.replace(MARKER_PAIR_RE, (pair) => {
+    held.push(pair);
+    return `\u0002${held.length - 1}\u0003`;
+  });
+  return redactLine(masked).replace(/\u0002(\d+)\u0003/g, (_all, i) => held[Number(i)] ?? '');
+}
+
+/** Marker-protected gate + per-line budget (sidecar belt re-gate). */
+function regateForm(line: string): string {
+  const gated = regateLine(line);
+  return gated.length <= LINE_BUDGET ? gated : `${gated.slice(0, LINE_BUDGET)}…[truncated]`;
+}
+
 /** Re-gate a multi-line text block per line (idempotent on gated lines). */
 function gateLogText(text: string): string {
   return text
     .split('\n')
-    .map((line) => redactLine(line))
+    .map((line) => regateLine(line))
     .join('\n');
 }
 
@@ -531,14 +739,38 @@ function gateLogText(text: string): string {
 function gateSidecarText(text: string): string {
   return text
     .split('\n')
-    .map((line) => persistedForm(line))
+    .map((line) => regateForm(line))
+    .join('\n');
+}
+
+/**
+ * PRR-008 (belt and braces): a namespaced key like `"external.apiKey"` can
+ * never match the kv-secret gate (the class matches the key BEFORE the dot).
+ * No shipped producer writes such a key today (exposure question ASKed of
+ * the maintainer), but the sidecar text that enters the bundle structurally
+ * drops the VALUE of every external.*-namespaced key, keeping the pretty
+ * JSON line-shaped and parseable.
+ */
+function dropExternalNamespacedKeys(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => line.replace(/^(\s*"external\.[^"]*"\s*:\s*).*(,?)\s*$/, '$1"[dropped-external-key]"$2'))
     .join('\n');
 }
 
 export interface DiagnosticsExportBundle {
   version: 1;
+  /** PRR-049: platform discriminator — desktop and web bundles both carry
+   *  version:1, so `platform` is what tells a consumer which shape to expect. */
+  platform: 'desktop';
   exportedAt: string;
-  level: LogLevel | 'info';
+  /** PRR-036: the level AT EXPORT TIME (the live level may have been toggled
+   *  since boot — the name says when the value was sampled, not what the
+   *  entries were admitted at). */
+  levelAtExport: LogLevel | 'info';
+  /** PRR-002: true when the file transport failed earlier in the session —
+   *  the logs are last-good content, not a complete session record. */
+  transportDisabled: boolean;
   logs: Record<string, string>;
   sidecars: Record<string, string>;
   adapterSummary: Record<string, unknown>;
@@ -562,17 +794,19 @@ function assembleExportBundleSync(): DiagnosticsExportBundle {
         };
   return {
     version: 1,
+    platform: 'desktop',
     exportedAt: nowIso(),
-    level: enhancedLevel ? 'debug' : 'info',
+    levelAtExport: enhancedLevel ? 'debug' : 'info',
+    transportDisabled,
     logs: {
       'main.log': gateLogText(readWithMarker(path.join(logsDir, 'main.log'))),
       'main.log.1': gateLogText(readWithMarker(path.join(logsDir, 'main.log.1'))),
       'main.log.2': gateLogText(readWithMarker(path.join(logsDir, 'main.log.2'))),
     },
     sidecars: {
-      'settings.json': gateSidecarText(readWithMarker(path.join(profileDir, 'settings.json'))),
+      'settings.json': gateSidecarText(dropExternalNamespacedKeys(readWithMarker(path.join(profileDir, 'settings.json')))),
       'diagnostics-settings.json': gateSidecarText(
-        readWithMarker(diagnosticsSettingsPathFor(storePathHolder)),
+        dropExternalNamespacedKeys(readWithMarker(diagnosticsSettingsPathFor(storePathHolder))),
       ),
       'gpu-probe.json': gateSidecarText(readWithMarker(path.join(profileDir, 'gpu-probe.json'))),
     },
@@ -663,6 +897,10 @@ export function activateDiagnosticsLogging(activation: DiagnosticsActivation): v
   const settings = loadDiagnosticsSettings(activation.storePath);
   enhancedLevel = settings.enhancedLogging;
   storePathHolder = activation.storePath;
+  // PRR-044: sweep OUR OWN orphaned tmp files (a hard kill can leave the
+  // diagnostics-settings.json.<pid>.<rand>.tmp of an interrupted atomic
+  // write behind) — best effort, foreign files are never touched.
+  sweepDiagnosticsSettingsTmp(activation.storePath);
   logsDir = path.join(activation.userDataPath, 'logs');
   mainLogPath = path.join(logsDir, 'main.log');
   try {
@@ -701,6 +939,11 @@ export function __diagnosticsStateForTests(): {
   droppedMalformed: number;
   logsDir: string | null;
   phase1Buffered: number;
+  /** PRR-003: the live rotation budget counter (rotation-failure specs assert
+   *  it resyncs to the surviving file). */
+  byteCount: number;
+  /** PRR-003: the one-per-session rotation-failure warn fired. */
+  rotationWarned: boolean;
 } {
   return {
     active,
@@ -709,6 +952,8 @@ export function __diagnosticsStateForTests(): {
     droppedMalformed,
     logsDir,
     phase1Buffered: phase1.length,
+    byteCount,
+    rotationWarned,
   };
 }
 
@@ -729,6 +974,7 @@ export function __resetLoggingForTests(): void {
   byteCount = 0;
   transportDisabled = false;
   transportWarned = false;
+  rotationWarned = false;
   ipcRegistered = false;
   captureRegistered = false;
   warnedFailure = false;

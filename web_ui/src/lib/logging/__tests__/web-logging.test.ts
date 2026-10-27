@@ -23,7 +23,7 @@ import {
   setEnhancedLogging,
   type LogEntry,
 } from '../index';
-import { renderLine } from '../redact';
+import { isSensitiveArgs, renderLine } from '../redact';
 import { buildDiagnosticsBundle, exportDiagnostics } from '../export';
 
 vi.mock('../../export/conversation-export', () => ({
@@ -43,14 +43,22 @@ function findRepoRoot(dir: string): string {
   }
   throw new Error('could not locate the repo root (marker contracts/api.openapi.yaml not found)');
 }
-const CORPUS = JSON.parse(
-  fs.readFileSync(path.join(findRepoRoot(THIS_DIR), 'contracts', 'diagnostics-redaction-vectors.json'), 'utf8'),
-) as Array<{
-  name: string;
-  input: string | { args: unknown[] };
-  persisted: string;
-  console: { desktop: 'raw' | 'sanitized'; renderer: 'raw' | 'sanitized' };
-}>;
+// The corpus carries a {_comment, version, vectors} provenance wrapper
+// (PRR-030/075); the vectors are the pins this spec drives.
+const CORPUS = (
+  JSON.parse(
+    fs.readFileSync(path.join(findRepoRoot(THIS_DIR), 'contracts', 'diagnostics-redaction-vectors.json'), 'utf8'),
+  ) as {
+    _comment: string;
+    version: number;
+    vectors: Array<{
+      name: string;
+      input: string | { args: unknown[] };
+      persisted: string;
+      console: { desktop: 'raw' | 'sanitized'; renderer: 'raw' | 'sanitized' };
+    }>;
+  }
+).vectors;
 
 /** Recording console sinks (silenced) injected into the core. */
 function recordingSinks() {
@@ -239,6 +247,16 @@ describe('redaction (AC5: shared corpus, renderer outcomes + persisted parity)',
     for (const vector of CORPUS) {
       const line = typeof vector.input === 'string' ? vector.input : renderLine(vector.input.args);
       expect(desktopRedact.persistedForm(line), `${vector.name}: desktop twin persisted parity`).toBe(vector.persisted);
+    }
+    // PRR-031: arg-aware classification is part of the twin contract — a
+    // secret split across console args is sensitive, prose is not.
+    for (const args of [
+      ['token', 'gho_synthvalue991'],
+      ['password', 'correct horse battery staple'],
+      ['the secret of', 'the universe'],
+      ['sidecar exited after', 4321, 'ms'],
+    ] as unknown[][]) {
+      expect(desktopRedact.isSensitiveArgs(args), `${args.join(' ')}: desktop twin arg parity`).toBe(isSensitiveArgs(args));
     }
   });
 

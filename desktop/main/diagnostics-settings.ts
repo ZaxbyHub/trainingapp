@@ -10,10 +10,23 @@
 //   - a MISSING or CORRUPT sidecar is never fatal and reads as
 //     { enhancedLogging: false } (the default level is `info`).
 
-import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeSync,
+} from 'node:fs';
 import path from 'node:path';
 
 const DIAGNOSTICS_FILE_NAME = 'diagnostics-settings.json';
+
+/** PRR-044: our OWN atomic-write tmp pattern (never a foreign file). */
+const TMP_PATTERN = /^diagnostics-settings\.json\..+\.tmp$/;
 
 export interface DiagnosticsSettings {
   enhancedLogging: boolean;
@@ -41,6 +54,32 @@ export function loadDiagnosticsSettings(storePath: string): DiagnosticsSettings 
   } catch {
     console.error(`[trainingapp-diagnostics] could not parse settings sidecar at ${file}; using defaults`);
     return { enhancedLogging: false };
+  }
+}
+
+/**
+ * PRR-044: best-effort sweep of OUR OWN orphaned tmp files. A hard kill
+ * between the tmp write and the rename leaves a
+ * `diagnostics-settings.json.<pid>.<rand>.tmp` behind; diagnostics
+ * activation removes every match in the profile dir. Only the exact own
+ * pattern is touched (foreign `*.tmp` files and the live sidecar are never
+ * removed) and every failure is swallowed — a sweep must never block boot.
+ */
+export function sweepDiagnosticsSettingsTmp(storePath: string): void {
+  const file = diagnosticsSettingsPathFor(storePath);
+  let entries: string[];
+  try {
+    entries = readdirSync(path.dirname(file));
+  } catch {
+    return; // profile dir absent/unreadable: nothing to sweep
+  }
+  for (const name of entries) {
+    if (!TMP_PATTERN.test(name)) continue;
+    try {
+      unlinkSync(path.join(path.dirname(file), name));
+    } catch {
+      /* best effort: an undeletable tmp file is harmless clutter */
+    }
   }
 }
 

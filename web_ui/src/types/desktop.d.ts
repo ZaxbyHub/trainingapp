@@ -128,18 +128,32 @@ export interface DiagnosticsLogEntry {
 
 /** Reply of desktop:diagnostics:export (issue #248). Exactly one of the
  * shapes: ok (written), cancelled (user dismissed the dialog), or the typed
- * error (live-destination rejection / assembly / write failure). */
+ * error (live-destination rejection / assembly / write failure — fs paths
+ * redacted to a `<path>` marker). `transportDisabled` on the ok shape names
+ * the bundle's marker: the file transport failed earlier in the session, so
+ * the bundle carries last-good log content (PRR-002). */
 export type DiagnosticsExportReply =
-  | { ok: true; path: string }
+  | { ok: true; path: string; transportDisabled?: boolean }
   | { cancelled: true }
   | { ok: false; error: string };
 
 /** Diagnostics namespace on the preload bridge (issue #248). Optional so an
- * older main process keeps the renderer on browser-default behavior. */
+ * older main process keeps the renderer on browser-default behavior.
+ * `sinkHealthy` (PRR-002) is likewise optional for older mains: false means
+ * the main file transport is disabled for the session — forwarded entries
+ * stay in the renderer ring but are not persisted. `persisted:false` on a
+ * logEntry reply names the same session sink failure (the deliberate level
+ * drop replies `dropped:'level'` without it). */
 export interface DesktopDiagnosticsBridge {
-  getState(): Promise<{ active: boolean; enhanced: boolean }>;
+  getState(): Promise<{ active: boolean; enhanced: boolean; sinkHealthy?: boolean }>;
   setEnhancedLevel(enabled: boolean): Promise<{ ok: boolean; detail?: string; enhanced?: boolean }>;
-  logEntry(entry: DiagnosticsLogEntry): Promise<{ ok: boolean; dup?: boolean; dropped?: 'level'; detail?: string }>;
+  logEntry(entry: DiagnosticsLogEntry): Promise<{
+    ok: boolean;
+    dup?: boolean;
+    dropped?: 'level';
+    persisted?: boolean;
+    detail?: string;
+  }>;
   exportDiagnostics(): Promise<DiagnosticsExportReply>;
 }
 

@@ -1,146 +1,239 @@
-[
-  {
-    "name": "clean-backend-status-line",
-    "input": "[trainingapp-backend] sidecar exited; restarting (attempt 2 after 4321ms backoff)",
-    "persisted": "[trainingapp-backend] sidecar exited; restarting (attempt 2 after 4321ms backoff)",
-    "console": {
-      "desktop": "raw",
-      "renderer": "raw"
-    }
-  },
-  {
-    "name": "long-hex-run",
-    "input": "doc hash deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef computed",
-    "persisted": "doc hash [redacted-hex] computed",
-    "console": {
-      "desktop": "sanitized",
-      "renderer": "sanitized"
-    }
-  },
-  {
-    "name": "bearer-scheme-token",
-    "input": "request rejected: bearer abcdef1234567890abcdef",
-    "persisted": "request rejected: [redacted]",
-    "console": {
-      "desktop": "sanitized",
-      "renderer": "sanitized"
-    }
-  },
-  {
-    "name": "jwt-token",
-    "input": "handoff failed for eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
-    "persisted": "handoff failed for [redacted]",
-    "console": {
-      "desktop": "sanitized",
-      "renderer": "sanitized"
-    }
-  },
-  {
-    "name": "kv-secret-shapes",
-    "input": "connect host=db.internal password=hunter2 token: 8f3a9c1d api_key=\"sk-live-abcdef123456\"",
-    "persisted": "connect host=db.internal password=[redacted] token: [redacted] api_key=[redacted]",
-    "console": {
-      "desktop": "sanitized",
-      "renderer": "sanitized"
-    }
-  },
-  {
-    "name": "sk-provider-key",
-    "input": "provider rejected key sk-proj-AbCdEf1234567890GhIjKl for model x",
-    "persisted": "provider rejected key [redacted] for model x",
-    "console": {
-      "desktop": "sanitized",
-      "renderer": "sanitized"
-    }
-  },
-  {
-    "name": "user-home-path",
-    "input": "model load failed at C:\\Users\\op01/models/quality/model.gguf after 3 tries",
-    "persisted": "model load failed at <user-dir>/models/quality/model.gguf after 3 tries",
-    "console": {
-      "desktop": "sanitized",
-      "renderer": "sanitized"
-    }
-  },
-  {
-    "name": "email-address",
-    "input": "profile owner brett@example.com re-ran setup",
-    "persisted": "profile owner [redacted-email] re-ran setup",
-    "console": {
-      "desktop": "sanitized",
-      "renderer": "sanitized"
-    }
-  },
-  {
-    "name": "multiline-with-secret",
-    "input": "ingest failed\nrow 2: session_id=9182736465abc\nrow 3 skipped",
-    "persisted": "ingest failed\nrow 2: session_id=[redacted]\nrow 3 skipped",
-    "console": {
-      "desktop": "sanitized",
-      "renderer": "sanitized"
-    }
-  },
-  {
-    "name": "secret-straddling-truncation-boundary",
-    "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-    "persisted": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[reda…[truncated]",
-    "console": {
-      "desktop": "sanitized",
-      "renderer": "sanitized"
-    }
-  },
-  {
-    "name": "pinned-corpus-shape-no-live-chunks (AC7 exception)",
-    "input": "[pack-manager] demo-pack@1.2.3: no live chunks for doc deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef; row deactivated",
-    "persisted": "[pack-manager] demo-pack@1.2.3: no live chunks for doc [redacted-hex]; row deactivated",
-    "console": {
-      "desktop": "raw",
-      "renderer": "sanitized"
-    }
-  },
-  {
-    "name": "pinned-corpus-shape-manifest-unreadable (AC7 exception)",
-    "input": "[pack-manager] demo-pack@1.2.3: managed manifest unreadable at C:\\Users\\brett\\AppData\\Roaming\\trainingapp\\packs\\demo-pack\\1.2.3\\pack.json; treating as no docs",
-    "persisted": "[pack-manager] demo-pack@1.2.3: managed manifest unreadable at <user-dir>\\AppData\\Roaming\\trainingapp\\packs\\demo-pack\\1.2.3\\pack.json; treating as no docs",
-    "console": {
-      "desktop": "raw",
-      "renderer": "sanitized"
-    }
-  },
-  {
-    "name": "pinned-corpus-shape-manifest-unparseable (AC7 exception)",
-    "input": "[pack-manager] demo-pack@1.2.3: managed manifest unparseable at C:\\Users\\brett\\AppData\\Roaming\\trainingapp\\packs\\demo-pack\\1.2.3\\pack.json; treating as no docs",
-    "persisted": "[pack-manager] demo-pack@1.2.3: managed manifest unparseable at <user-dir>\\AppData\\Roaming\\trainingapp\\packs\\demo-pack\\1.2.3\\pack.json; treating as no docs",
-    "console": {
-      "desktop": "raw",
-      "renderer": "sanitized"
-    }
-  },
-  {
-    "name": "classification-failure-guard-json-nested-secrets",
-    "input": "{\"session_id\":\"a1b2c3d4e5f6a7b8c9d0\",\"nested\":{\"Authorization\":\"Bearer eyJhbGciOiJIUzI1NiJ9.e30.sig\"}}",
-    "persisted": "{\"session_id\":\"[redacted]\",\"nested\":{\"Authorization\":\"[redacted]\"}}",
-    "console": {
-      "desktop": "sanitized",
-      "renderer": "sanitized"
-    }
-  },
-  {
-    "name": "content-bearing-object-denylist",
-    "input": {
-      "args": [
-        "[RAG] content-gap",
-        {
-          "query": "what is the onboarding password policy?",
-          "droppedByFloor": 2,
-          "floor": 0.12
-        }
-      ]
+{
+  "_comment": "Shared diagnostics-redaction corpus (issue #248, AC5). Regenerate with node contracts/tests/gen-diagnostics-redaction-vectors.mjs — persisted is computed from the real twins (desktop/main/logging-redact.ts and web_ui/src/lib/logging/redact.ts), which must agree. Consumers: desktop diagnostics-redact-parity.test.ts, web_ui web-logging.test.ts. input is a line or {args}; persisted is the twin-computed gated form; console is the per-platform console outcome (raw | sanitized). Secret-shaped literals are deliberately synthetic (sk-test- prefix, example.com, username op01).",
+  "version": 1,
+  "vectors": [
+    {
+      "name": "clean-backend-status-line",
+      "input": "[trainingapp-backend] sidecar exited; restarting (attempt 2 after 4321ms backoff)",
+      "persisted": "[trainingapp-backend] sidecar exited; restarting (attempt 2 after 4321ms backoff)",
+      "console": {
+        "desktop": "raw",
+        "renderer": "raw"
+      }
     },
-    "persisted": "[RAG] content-gap {\"query\":\"[redacted-field]\",\"droppedByFloor\":2,\"floor\":0.12}",
-    "console": {
-      "desktop": "raw",
-      "renderer": "raw"
+    {
+      "name": "long-hex-run",
+      "input": "doc hash deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef computed",
+      "persisted": "doc hash [redacted-hex] computed",
+      "console": {
+        "desktop": "sanitized",
+        "renderer": "sanitized"
+      }
+    },
+    {
+      "name": "bearer-scheme-token",
+      "input": "request rejected: bearer abcdef1234567890abcdef",
+      "persisted": "request rejected: [redacted]",
+      "console": {
+        "desktop": "sanitized",
+        "renderer": "sanitized"
+      }
+    },
+    {
+      "name": "jwt-token",
+      "input": "handoff failed for eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+      "persisted": "handoff failed for [redacted]",
+      "console": {
+        "desktop": "sanitized",
+        "renderer": "sanitized"
+      }
+    },
+    {
+      "name": "kv-secret-shapes",
+      "input": "connect host=db.internal password=\"hunter2\" token: \"8f3a9c1d\" api_key=\"sk-live-abcdef123456\"",
+      "persisted": "connect host=db.internal password=[redacted] token: [redacted] api_key=[redacted]",
+      "console": {
+        "desktop": "sanitized",
+        "renderer": "sanitized"
+      }
+    },
+    {
+      "name": "kv-bare-value-is-rest-of-line",
+      "input": "auth ok password=correct horse battery staple",
+      "persisted": "auth ok password=[redacted]",
+      "console": {
+        "desktop": "sanitized",
+        "renderer": "sanitized"
+      }
+    },
+    {
+      "name": "kv-compound-keys",
+      "input": "oauth client_secret=synth-secret-value-one\nrefresh_token=synth-refresh-value-two\nopenai_api_key=synth-openai-value-three\nsecrets: rotate monthly",
+      "persisted": "oauth client_secret=[redacted]\nrefresh_token=[redacted]\nopenai_api_key=[redacted]\nsecrets: [redacted]",
+      "console": {
+        "desktop": "sanitized",
+        "renderer": "sanitized"
+      }
+    },
+    {
+      "name": "kv-prose-not-mangled",
+      "input": "the secret of the universe remains unknown; tokenizer loaded vocab 51206",
+      "persisted": "the secret of the universe remains unknown; tokenizer loaded vocab 51206",
+      "console": {
+        "desktop": "raw",
+        "renderer": "raw"
+      }
+    },
+    {
+      "name": "sk-provider-key",
+      "input": "provider rejected key sk-test-AbCdAbCdAbCdAbCdAbCd for model x",
+      "persisted": "provider rejected key [redacted] for model x",
+      "console": {
+        "desktop": "sanitized",
+        "renderer": "sanitized"
+      }
+    },
+    {
+      "name": "user-home-path",
+      "input": "model load failed at C:\\Users\\op01/models/quality/model.gguf after 3 tries",
+      "persisted": "model load failed at <user-dir>/models/quality/model.gguf after 3 tries",
+      "console": {
+        "desktop": "sanitized",
+        "renderer": "sanitized"
+      }
+    },
+    {
+      "name": "posix-home-path",
+      "input": "model load failed at /home/op01/models/quality/model.gguf after 3 tries",
+      "persisted": "model load failed at <user-dir>/models/quality/model.gguf after 3 tries",
+      "console": {
+        "desktop": "sanitized",
+        "renderer": "sanitized"
+      }
+    },
+    {
+      "name": "macos-home-path",
+      "input": "cache miss for /Users/op01/Library/Application Support/trainingapp/x.bin",
+      "persisted": "cache miss for <user-dir>/Library/Application Support/trainingapp/x.bin",
+      "console": {
+        "desktop": "sanitized",
+        "renderer": "sanitized"
+      }
+    },
+    {
+      "name": "email-address",
+      "input": "profile owner op01@example.com re-ran setup",
+      "persisted": "profile owner [redacted-email] re-ran setup",
+      "console": {
+        "desktop": "sanitized",
+        "renderer": "sanitized"
+      }
+    },
+    {
+      "name": "zero-width-split-key",
+      "input": "auth scheme token\u200b=hunter2 rejected",
+      "persisted": "auth scheme token=[redacted]",
+      "console": {
+        "desktop": "sanitized",
+        "renderer": "sanitized"
+      }
+    },
+    {
+      "name": "multiline-with-secret",
+      "input": "ingest failed\nrow 2: session_id=9182736465abc\nrow 3 skipped",
+      "persisted": "ingest failed\nrow 2: session_id=[redacted]\nrow 3 skipped",
+      "console": {
+        "desktop": "sanitized",
+        "renderer": "sanitized"
+      }
+    },
+    {
+      "name": "secret-straddling-truncation-boundary",
+      "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      "persisted": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[reda…[truncated]",
+      "console": {
+        "desktop": "sanitized",
+        "renderer": "sanitized"
+      }
+    },
+    {
+      "name": "pinned-corpus-shape-no-live-chunks (AC7 exception)",
+      "input": "[pack-manager] demo-pack@1.2.3: no live chunks for doc deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef; row deactivated",
+      "persisted": "[pack-manager] demo-pack@1.2.3: no live chunks for doc [redacted-hex]; row deactivated",
+      "console": {
+        "desktop": "raw",
+        "renderer": "sanitized"
+      }
+    },
+    {
+      "name": "pinned-corpus-shape-manifest-unreadable (AC7 exception)",
+      "input": "[pack-manager] demo-pack@1.2.3: managed manifest unreadable at C:\\Users\\op01\\AppData\\Roaming\\trainingapp\\packs\\demo-pack\\1.2.3\\pack.json; treating as no docs",
+      "persisted": "[pack-manager] demo-pack@1.2.3: managed manifest unreadable at <user-dir>\\AppData\\Roaming\\trainingapp\\packs\\demo-pack\\1.2.3\\pack.json; treating as no docs",
+      "console": {
+        "desktop": "raw",
+        "renderer": "sanitized"
+      }
+    },
+    {
+      "name": "pinned-corpus-shape-manifest-unparseable (AC7 exception)",
+      "input": "[pack-manager] demo-pack@1.2.3: managed manifest unparseable at C:\\Users\\op01\\AppData\\Roaming\\trainingapp\\packs\\demo-pack\\1.2.3\\pack.json; treating as no docs",
+      "persisted": "[pack-manager] demo-pack@1.2.3: managed manifest unparseable at <user-dir>\\AppData\\Roaming\\trainingapp\\packs\\demo-pack\\1.2.3\\pack.json; treating as no docs",
+      "console": {
+        "desktop": "raw",
+        "renderer": "sanitized"
+      }
+    },
+    {
+      "name": "classification-failure-guard-json-nested-secrets",
+      "input": "{\"session_id\":\"a1b2c3d4e5f6a7b8c9d0\",\"nested\":{\"Authorization\":\"Bearer eyJhbGciOiJIUzI1NiJ9.e30.sig\"}}",
+      "persisted": "{\"session_id\":\"[redacted]\",\"nested\":{\"Authorization\":\"[redacted]\"}}",
+      "console": {
+        "desktop": "sanitized",
+        "renderer": "sanitized"
+      }
+    },
+    {
+      "name": "split-across-console-args",
+      "input": {
+        "args": [
+          "handoff failed",
+          "session_id=a1b2c3d4e5f6a7b8c9d0",
+          "retry 1"
+        ]
+      },
+      "persisted": "handoff failed session_id=[redacted]",
+      "console": {
+        "desktop": "sanitized",
+        "renderer": "sanitized"
+      }
+    },
+    {
+      "name": "content-bearing-object-denylist",
+      "input": {
+        "args": [
+          "[RAG] content-gap",
+          {
+            "query": "what is the onboarding password policy?",
+            "droppedByFloor": 2,
+            "floor": 0.12
+          }
+        ]
+      },
+      "persisted": "[RAG] content-gap {\"query\":\"[redacted-field]\",\"droppedByFloor\":2,\"floor\":0.12}",
+      "console": {
+        "desktop": "raw",
+        "renderer": "raw"
+      }
+    },
+    {
+      "name": "denylist-prefixed-keys",
+      "input": {
+        "args": [
+          "[RAG] gap",
+          {
+            "userText": "what is the onboarding password policy?",
+            "answer": "rotate monthly",
+            "response": "ok",
+            "context": "web",
+            "message": "docx style named List Paragraph"
+          }
+        ]
+      },
+      "persisted": "[RAG] gap {\"userText\":\"[redacted-field]\",\"answer\":\"[redacted-field]\",\"response\":\"[redacted-field]\",\"context\":\"[redacted-field]\",\"message\":\"[redacted-field]\"}",
+      "console": {
+        "desktop": "raw",
+        "renderer": "raw"
+      }
     }
-  }
-]
+  ]
+}

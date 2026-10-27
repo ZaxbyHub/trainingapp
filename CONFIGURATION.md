@@ -565,7 +565,8 @@ Clear Cache removes, in this browser profile: the document library and its keywo
 indexes, downloaded WebLLM weights, orphaned data from earlier sessions, and every saved
 setting registered in `web_ui/src/lib/storage/persisted-keys.ts` (inference mode, browser
 engine and response-quality choices, theme, external model connection and API key, sidebar state,
-last-opened course, course progress, pack update setting), and the browser app's installed Knowledge Packs and
+last-opened course, course progress, pack update setting, and the enhanced-logging
+diagnostics choice), and the browser app's installed Knowledge Packs and
 courses. It keeps your chat history (conversations, stored separately from the
 document library) and the internal profile id, migration marker and re-index notice flag, then
 reloads the page. The desktop app removes the same browser-side data from its app window (the
@@ -659,7 +660,7 @@ every log stays on the device, and there is no telemetry transport by design (of
 | --- | --- | --- |
 | Desktop main process + renderer file log | `info` level, always on | `<profileDir>/diagnostics-settings.json` (`{"enhancedLogging": boolean}`; the Electron main process is the sole authority — the renderer keeps no localStorage copy inside Electron) |
 | Browser app ring buffer | `info` level, always on | localStorage key `diagnostics-enhanced-logging` (`"1"` = on), registered in `web_ui/src/lib/storage/persisted-keys.ts` (cleared by Clear Cache) |
-| Enhanced logging toggle (Settings -> Storage & privacy) | off | Applies live to BOTH processes with no restart; toggling off restores `info` |
+| Enhanced logging toggle (Settings → Storage & privacy) | off | Applies live to BOTH processes with no restart; toggling off restores `info` |
 
 A missing or corrupt diagnostics sidecar reads as `enhancedLogging: false` and is never fatal.
 
@@ -667,7 +668,7 @@ A missing or corrupt diagnostics sidecar reads as `enhancedLogging: false` and i
 
 - **Desktop**: a synchronous, size-rotated file under `<userData>/logs/` — `main.log`,
   `main.log.1`, `main.log.2` (rotation happens before the write that would exceed the cap;
-  the chain is `main.log.2` deleted, `main.log.1` -> `main.log.2`, `main.log` -> `main.log.1`),
+  the chain is `main.log.2` deleted, `main.log.1` → `main.log.2`, `main.log` → `main.log.1`),
   5 MiB per file (3 files, ~15 MiB total). The file holds main-process console lines, renderer
   entries forwarded over IPC (stop-and-wait, exactly-once delivery), captured uncaught
   exceptions (via `uncaughtExceptionMonitor` — the default termination behavior is unchanged),
@@ -677,7 +678,11 @@ A missing or corrupt diagnostics sidecar reads as `enhancedLogging: false` and i
   GPU-process crashes, renderer-process crashes and preload errors.
 - **Browser**: a volatile in-memory ring of the last **5,000 ADMITTED entries** (oldest
   dropped). The ring is not persisted across reloads. A second instance of the desktop app
-  never writes to (or rotates) the primary instance's log — its file sink never activates.
+  never writes to (or rotates) the primary instance's log: it is refused the single-instance
+  lock before its file sink ever activates, and the pre-activation quit-flush is itself
+  guarded to run only in the process that OWNS the lock (`app.hasSingleInstanceLock`,
+  checked at flush time), so a second instance cannot append to the primary's log on quit
+  either.
 
 ### Transport policy (the explicit three-way console rule)
 
@@ -685,15 +690,15 @@ Every rendered line is classified by the shared redaction gate
 (`web_ui/src/lib/logging/redact.ts` and its semantic twin `desktop/main/logging-redact.ts` —
 persisted bytes are identical on both platforms by contract):
 
-1. **Clean line** -> the console transport passes it through unchanged, with its original
+1. **Clean line** → the console transport passes it through unchanged, with its original
    arguments (existing devtools behavior preserved).
-2. **Sensitive line matching an `AC7_PINNED_LINE_TEMPLATES` pattern** (desktop only) -> the
+2. **Sensitive line matching an `AC7_PINNED_LINE_TEMPLATES` pattern** (desktop only) → the
    console transport passes it through RAW. This is the FINITE exception exactly as broad as
    the frozen logline contract sweep's protection (the pack-manager sha/manifest-path lines);
    `desktop/src/__tests__/diagnostics-console-composition.test.ts` structurally pins the
    template inventory against that corpus in both directions, and per-template near-miss
    negatives fall through to the sanitized form, so the exception can never silently widen.
-3. **Any other sensitive line** -> the console receives the once-called single-string form
+3. **Any other sensitive line** → the console receives the once-called single-string form
    `[sanitized] <redacted line>` (the sensitive values leave the console surface).
 4. **Persisted transports — the file log, the renderer ring, IPC-forwarded entries, and every
    export-bundle field — are ALWAYS gated on both platforms, with no exceptions.** A pinned
@@ -729,7 +734,7 @@ cut can never survive as a fragment.
 
 ### Export diagnostics
 
-Settings -> Storage & privacy -> **Export diagnostics...** writes a JSON bundle to a
+Settings → Storage & privacy → **Export diagnostics...** writes a JSON bundle to a
 user-chosen destination (nothing is sent anywhere):
 
 - **Desktop**: a native save dialog, then an atomic write (tmp + fsync + rename). The bundle

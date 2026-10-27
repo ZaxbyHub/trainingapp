@@ -6,8 +6,8 @@
   rotate-before-write) holding main-process console lines, renderer entries forwarded over a
   stop-and-wait exactly-once IPC, uncaught exceptions (via `uncaughtExceptionMonitor`, default
   termination unchanged), GPU/renderer-process crashes and preload errors — and the browser
-  app keeps a volatile ring of the last 5,000 admitted entries. Settings -> Storage & privacy
-  gains an "Enhanced logging" toggle (live `info` -> `debug` for BOTH processes, no restart;
+  app keeps a volatile ring of the last 5,000 admitted entries. Settings → Storage & privacy
+  gains an "Enhanced logging" toggle (live `info` → `debug` for BOTH processes, no restart;
   persisted by the Electron main process in `<profileDir>/diagnostics-settings.json` and by
   the registered localStorage key in the browser app) and an "Export diagnostics…" button
   (native save dialog + atomic bundle write on desktop; `showSaveFilePicker` with an

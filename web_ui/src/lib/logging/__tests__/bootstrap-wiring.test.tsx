@@ -16,10 +16,13 @@ import { DIAGNOSTICS_ENHANCED_KEY } from '../../storage/persisted-keys';
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 /** Fresh module instances with a console snapshot captured before install. */
+let lastInstall: { __uninstallDiagnosticsForTests(): void } | null = null;
+
 async function importFresh() {
   vi.resetModules();
   const core = await import('../index');
   const install = await import('../install');
+  lastInstall = install;
   return { core, install };
 }
 
@@ -40,6 +43,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // PRR-054: detach this evaluation's window handlers so the next importFresh
+  // does not stack another listener layer on the shared jsdom window.
+  lastInstall?.__uninstallDiagnosticsForTests();
+  lastInstall = null;
   console.log = savedConsole.log as typeof console.log;
   console.info = savedConsole.info as typeof console.info;
   console.debug = savedConsole.debug as typeof console.debug;
@@ -172,6 +179,91 @@ describe('renderer bootstrap wiring', () => {
     expect(core.enhancedLoggingEnabled()).toBe(false);
   });
 
+  it('electron: a failed getState recovers via the one-shot retry and installs the forwarder late (PRR-033)', async () => {
+    vi.useFakeTimers();
+    try {
+      silenceConsole();
+      const bridge = {
+        getState: vi
+          .fn<() => Promise<{ active: boolean; enhanced: boolean; sinkHealthy?: boolean }>>()
+          .mockRejectedValueOnce(new Error('ipc not ready'))
+          .mockResolvedValue({ active: true, enhanced: true, sinkHealthy: true }),
+        setEnhancedLevel: vi.fn(async () => ({ ok: true })),
+        logEntry: vi.fn(async (_entry: unknown) => ({ ok: true })),
+        exportDiagnostics: vi.fn(async () => ({ ok: true, path: 'x' })),
+      };
+      (window as { desktopApi?: unknown }).desktopApi = { diagnostics: bridge };
+      const { core, install } = await importFresh();
+      console.info('[boot] buffered during outage');
+      await vi.advanceTimersByTimeAsync(0);
+      // First call rejected: default level, buffer admitted, NO forwarder — a
+      // first-call race used to cost the whole session its forwarder.
+      expect(core.enhancedLoggingEnabled()).toBe(false);
+      expect(bridge.logEntry).not.toHaveBeenCalled();
+      // The recovery retry lands: the forwarder installs, the level follows
+      // main, and the already-admitted ring drains to main.
+      await vi.advanceTimersByTimeAsync(install.GET_STATE_RECOVERY_MS);
+      expect(bridge.getState).toHaveBeenCalledTimes(2);
+      expect(core.enhancedLoggingEnabled()).toBe(true);
+      expect(bridge.logEntry).toHaveBeenCalled();
+      const sent = bridge.logEntry.mock.calls.map((c) => (c[0] as { message: string }).message);
+      expect(sent).toContain('[boot] buffered during outage');
+      expect(sent).toContain('renderer startup');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('electron: a HUNG getState falls back to the default level after the timeout budget (PRR-040)', async () => {
+    vi.useFakeTimers();
+    try {
+      silenceConsole();
+      const bridge = {
+        getState: vi.fn(() => new Promise<{ active: boolean; enhanced: boolean }>(() => undefined)),
+        setEnhancedLevel: vi.fn(async () => ({ ok: true })),
+        logEntry: vi.fn(async (_entry: unknown) => ({ ok: true })),
+        exportDiagnostics: vi.fn(async () => ({ ok: true, path: 'x' })),
+      };
+      (window as { desktopApi?: unknown }).desktopApi = { diagnostics: bridge };
+      const { core, install } = await importFresh();
+      console.info('[boot] pre-state entry');
+      // Inside the budget the renderer stays in the (bounded) pre-state gate.
+      expect(core.admittedEntries()).toEqual([]);
+      await vi.advanceTimersByTimeAsync(install.GET_STATE_TIMEOUT_MS - 1);
+      expect(core.admittedEntries()).toEqual([]);
+      // At the budget the fallback fires: browser default path.
+      await vi.advanceTimersByTimeAsync(1);
+      expect(core.admittedEntries().map((e) => e.message)).toContain('[boot] pre-state entry');
+      expect(core.enhancedLoggingEnabled()).toBe(false);
+      // The recovery retry is bounded too: it also hangs, times out, and the
+      // bootstrap gives up silently (no forwarder, no unhandled rejection).
+      await vi.advanceTimersByTimeAsync(
+        install.GET_STATE_RECOVERY_MS + install.GET_STATE_TIMEOUT_MS + 5,
+      );
+      expect(bridge.getState).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('electron: an unhealthy main sink at mount warns exactly once and the warn joins the ring (PRR-077)', async () => {
+    const spies = silenceConsole();
+    const bridge = {
+      getState: vi.fn(async () => ({ active: true, enhanced: false, sinkHealthy: false })),
+      setEnhancedLevel: vi.fn(async () => ({ ok: true })),
+      logEntry: vi.fn(async (_entry: unknown) => ({ ok: true })),
+      exportDiagnostics: vi.fn(async () => ({ ok: true, path: 'x' })),
+    };
+    (window as { desktopApi?: unknown }).desktopApi = { diagnostics: bridge };
+    const { core } = await importFresh();
+    await vi.waitFor(() => expect(bridge.logEntry).toHaveBeenCalled());
+    const warns = spies.warn.mock.calls.filter((c) => String(c[0]).includes('file sink is disabled'));
+    expect(warns).toHaveLength(1);
+    // The warn rides the wrapped console, so it is itself an admitted ring
+    // entry (survives in the exportable in-memory record).
+    expect(core.admittedEntries().some((e) => e.message.includes('file sink is disabled'))).toBe(true);
+  });
+
   it('window error and unhandledrejection listeners route through the logger (semantics-preserving)', async () => {
     const spies = silenceConsole();
     await importFresh();
@@ -188,6 +280,15 @@ describe('renderer bootstrap wiring', () => {
       'at app://index.html:7',
     );
     expect(spies.error).toHaveBeenCalledWith('unhandled rejection:', 'Error: unhandled boom');
+  });
+
+  it('an empty rendered line passes through to the console but never becomes a persisted entry (PRR-014)', async () => {
+    const spies = silenceConsole();
+    const { core } = await importFresh();
+    console.log();
+    console.log('');
+    expect(spies.log).toHaveBeenCalledTimes(2);
+    expect(core.admittedEntries().map((e) => e.message)).not.toContain('');
   });
 
   it('cross-platform leakage negative: a desktop-pinned-shaped line is [sanitized] on the renderer console', async () => {

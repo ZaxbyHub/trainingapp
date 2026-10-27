@@ -56,7 +56,10 @@ jobs:
       # 201-207-208-209-210-test-gate-integrity) — the log-line contract
       # sweep (logline-contract-sweep.test.ts) and its acceptance-battery
       # meta-guard (acceptance-battery-precision.test.ts), rostered per the
-      # same PRR-008 precedent.
+      # same PRR-008 precedent, and — review PRR-018/015 (pr255) — the trace
+      # 248-41 diagnostics specs diagnostics-redact-parity,
+      # diagnostics-logging, diagnostics-console-composition and the frozen
+      # -t token re-driver diagnostics-acceptance-precision.
       # (registry: desktop/src/__tests__/contract-family-registry.ts).
       - name: Set up Node for the contract-spec family
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -90,6 +93,9 @@ jobs:
           src/__tests__/logline-contract-sweep.test.ts
           src/__tests__/acceptance-battery-precision.test.ts
           src/__tests__/diagnostics-redact-parity.test.ts
+          src/__tests__/diagnostics-logging.test.ts
+          src/__tests__/diagnostics-console-composition.test.ts
+          src/__tests__/diagnostics-acceptance-precision.test.ts
 
       - name: Run Safety
         run: |

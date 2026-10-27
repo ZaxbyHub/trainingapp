@@ -36,12 +36,23 @@ vi.mock('../../lib/storage/document-store', () => ({
 vi.mock('../../lib/storage/profile', () => ({
   migrateOrphanedNamespaces: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock('../../lib/processing/extractor-factory', () => ({
-  extractDocument: vi.fn(),
-  // Same dotted-extension format as the real extractor map keys
-  // (SUPPORTED_EXTENSIONS = Object.keys(EXTRACTOR_MAP)).
-  SUPPORTED_EXTENSIONS: ['.pdf', '.docx', '.xlsx', '.pptx', '.txt', '.md'],
-}));
+// The leaf extractors are mocked so importOriginal below loads the REAL
+// factory (and its real EXTRACTOR_MAP) without pulling pdfjs/mammoth/xlsx/
+// jszip into the jsdom run: SUPPORTED_EXTENSIONS is derived from the real
+// Object.keys(EXTRACTOR_MAP), so a new extension lands here without a
+// hand-copied literal drifting out of sync (review PRR-057, pr255).
+vi.mock('../../lib/processing/pdf-extractor', () => ({ extractPdfText: vi.fn() }));
+vi.mock('../../lib/processing/docx-extractor', () => ({ extractDocxText: vi.fn() }));
+vi.mock('../../lib/processing/xlsx-extractor', () => ({ extractXlsxText: vi.fn() }));
+vi.mock('../../lib/processing/txt-extractor', () => ({ extractTxtText: vi.fn() }));
+vi.mock('../../lib/processing/pptx-extractor', () => ({ extractPptxText: vi.fn() }));
+vi.mock('../../lib/processing/extractor-factory', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/processing/extractor-factory')>();
+  return {
+    extractDocument: vi.fn(),
+    SUPPORTED_EXTENSIONS: [...actual.SUPPORTED_EXTENSIONS],
+  };
+});
 vi.mock('../../lib/embeddings/embedding-service', () => ({
   getEmbeddingService: vi.fn(),
 }));
