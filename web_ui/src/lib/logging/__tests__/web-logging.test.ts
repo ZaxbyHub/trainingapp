@@ -82,7 +82,9 @@ describe('ring buffer (AC4: bounded, admitted-only)', () => {
     const log = createLogger('ring');
     for (let i = 0; i < RING_LIMIT + 2; i += 1) log.info(`entry-${i}`);
     const entries = admittedEntries();
-    expect(entries).toHaveLength(RING_LIMIT);
+    // Literal 5000, not the constant: the bound is a plan-pinned contract, so a
+    // mutated RING_LIMIT must fail here rather than stay self-consistent.
+    expect(entries).toHaveLength(5000);
     expect(entries[0]?.message).toBe('entry-2');
     expect(entries[entries.length - 1]?.message).toBe(`entry-${RING_LIMIT + 1}`);
   });
