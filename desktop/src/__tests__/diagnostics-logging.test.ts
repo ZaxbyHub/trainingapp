@@ -608,12 +608,20 @@ describe('diagnostics capture-handlers (AC6: unhandled errors and Electron crash
     expect(log).not.toContain('hunter2');
   });
 
-  it('capture-handlers: an activated process quit-flush is a no-op (the file sink owns the record)', () => {
+  it('capture-handlers: an activated process quit-flush never duplicates the pre-activation entries', () => {
     const ws = makeWorkspace('diag-c6-quitactive-');
+    // One pre-activation error: activation flushes it to the file exactly once.
+    console.error('[test] pre-activation entry for the quit-flush no-op');
     activateDiagnosticsLogging({ userDataPath: ws.userDataPath, storePath: ws.storePath });
-    const before = readLog(ws);
+    const flushed = readLog(ws);
+    expect(flushed.match(/pre-activation entry for the quit-flush no-op/g) ?? []).toHaveLength(1);
+    // will-quit on an activated process must not append it again. NOTE: the
+    // `if (active) return` guard is structurally equivalent here (activation
+    // drains phase1, so the flush would early-return on an empty buffer
+    // anyway) — this assertion kills a double-flush mutant, and the equivalent
+    // guard mutant is recorded in the PR body's Considered table.
     app.emit('will-quit');
-    expect(readLog(ws)).toBe(before);
+    expect(readLog(ws)).toBe(flushed);
   });
 
 

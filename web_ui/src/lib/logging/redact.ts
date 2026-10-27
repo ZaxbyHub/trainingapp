@@ -85,6 +85,34 @@ const KV_SECRET_KEYS =
  */
 const ZERO_WIDTH_RE = /[\u200B\u200C\u200D\u2060\uFEFF]/g;
 
+/**
+ * PRR-029 (homoglyph half): the key union is ASCII-only, so `passwоrd=` with a
+ * Cyrillic о classifies CLEAN and persists verbatim. A curated confusables map
+ * (the Cyrillic/Greek letters that collide with the Latin ones in the key
+ * union) is applied as a LEAK-AVOIDANCE OVERRIDE in redactLine: the folded
+ * form is used ONLY when the un-folded line would otherwise pass as clean, so
+ * an ordinary non-English log line keeps its original characters.
+ */
+const CONFUSABLES: Record<string, string> = {
+  'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'п': 'p', 'с': 'c',
+  'х': 'x', 'у': 'y', 'і': 'i', 'ѕ': 's', 'т': 't',
+  'н': 'h', 'ј': 'j', 'к': 'k', 'м': 'm', 'в': 'b',
+  'ԁ': 'd', 'ɼ': 'r', 'ᴀ': 'a', 'ᴅ': 'd', 'ᴇ': 'e',
+  'ᴋ': 'k', 'ʟ': 'l', 'ᴏ': 'o', 'ᴘ': 'p', 'ᴛ': 't',
+  'ᴜ': 'u', 'ᴠ': 'v', 'ᴡ': 'w', 'ᴢ': 'z',
+  'α': 'a', 'ε': 'e', 'ι': 'i', 'ο': 'o', 'υ': 'u',
+  'κ': 'k', 'ν': 'v', 'ρ': 'p', 'τ': 't', 'χ': 'c',
+  'μ': 'm', 'Α': 'A', 'Β': 'B', 'Ε': 'E', 'Ζ': 'Z',
+  'Η': 'H', 'Ι': 'I', 'Κ': 'K', 'Μ': 'M', 'Ν': 'N',
+  'Ο': 'O', 'Ρ': 'P', 'Τ': 'T', 'Υ': 'Y', 'Χ': 'X',
+};
+const CONFUSABLE_RE = new RegExp('[' + Object.keys(CONFUSABLES).join('') + ']', 'g');
+
+/** Fold script-confusable letters to their Latin lookalikes (1:1, length-preserving). */
+function foldConfusables(line: string): string {
+  return line.replace(CONFUSABLE_RE, (ch) => CONFUSABLES[ch] as string);
+}
+
 const BEARER_RE = /\bbearer\s+[^"'\s]+/gi;
 const JWT_RE = /\beyJ[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){1,2}/g;
 const SK_KEY_RE = /\bsk-[A-Za-z0-9_-]{8,}/g;
@@ -112,14 +140,9 @@ const KV_BARE_RE = new RegExp(
   'gi',
 );
 
-/** Apply every redaction class, in the fixed order above. */
-export function redactLine(line: string): string {
-  // PRR-029/PRR-005: strip invisible characters, then gate only the first
-  // CLASSIFY_CAP chars. The tail is returned as-is: it is beyond every
-  // persisted surface (LINE_BUDGET truncates to 2,000 first).
-  const stripped = line.replace(ZERO_WIDTH_RE, '');
-  const head = stripped.length > CLASSIFY_CAP ? stripped.slice(0, CLASSIFY_CAP) : stripped;
-  const redactedHead = head
+/** Apply every redaction class, in the fixed order above, to one string. */
+function applyClasses(line: string): string {
+  return line
     .replace(BEARER_RE, '[redacted]')
     .replace(JWT_RE, '[redacted]')
     .replace(KV_JSON_RE, '$1"[redacted]"')
@@ -128,6 +151,23 @@ export function redactLine(line: string): string {
     .replace(HEX_RUN_RE, '[redacted-hex]')
     .replace(USER_HOME_RE, '<user-dir>')
     .replace(EMAIL_RE, '[redacted-email]');
+}
+
+/** Apply every redaction class, in the fixed order above. */
+export function redactLine(line: string): string {
+  // PRR-029/PRR-005: strip invisible characters, then gate only the first
+  // CLASSIFY_CAP chars. The tail is returned as-is: it is beyond every
+  // persisted surface (LINE_BUDGET truncates to 2,000 first).
+  const stripped = line.replace(ZERO_WIDTH_RE, '');
+  const head = stripped.length > CLASSIFY_CAP ? stripped.slice(0, CLASSIFY_CAP) : stripped;
+  const direct = applyClasses(head);
+  // PRR-029 (homoglyph half): only when the direct pass redacts nothing do we
+  // fall back to the confusables-folded form, so a secret spelled with
+  // lookalike letters is still gated while an ordinary non-English line keeps
+  // its original characters.
+  const folded = foldConfusables(head);
+  const foldedRedacted = applyClasses(folded);
+  const redactedHead = direct !== head ? direct : foldedRedacted !== folded ? foldedRedacted : direct;
   return head.length === stripped.length ? redactedHead : redactedHead + stripped.slice(CLASSIFY_CAP);
 }
 

@@ -77,6 +77,17 @@ add('email-address', 'profile owner op01@example.com re-ran setup', sanitized);
 // PRR-029: a zero-width character inside a key must not dodge the union.
 add('zero-width-split-key', 'auth scheme token\u200b=hunter2 rejected', sanitized);
 add('multiline-with-secret', 'ingest failed\nrow 2: session_id=9182736465abc\nrow 3 skipped', sanitized);
+// PRR-029 (homoglyph half): a secret key spelled with Cyrillic/Greek
+// lookalikes must not classify CLEAN. The expected value is the FOLDED,
+// redacted form — the leak-avoidance override only rewrites a line that would
+// otherwise pass as clean, so this is the one case where the persisted text
+// intentionally differs from the input's script.
+add('homoglyph-cyrillic-key', 'auth ok \u043f\u0430ssword=hunter2 rejected', sanitized);
+add('homoglyph-cyrillic-o-key', 'auth ok passw\u043erd=hunter2 rejected', sanitized);
+add('homoglyph-greek-key', 'auth ok p\u03b1ssword=hunter2 rejected', sanitized);
+// Control: an ordinary non-English line keeps its own characters (the override
+// must not rewrite prose that carries no secret).
+add('non-english-prose-unchanged', '\u041f\u0440\u043e\u0432\u0435\u0440\u043a\u0430 \u0441\u0435\u0442\u0438 \u0437\u0430\u0432\u0435\u0440\u0448\u0435\u043d\u0430 \u0443\u0441\u043f\u0435\u0448\u043d\u043e', clean);
 add('secret-straddling-truncation-boundary', `${'x'.repeat(1995)}${'deadbeef'.repeat(8)}`, sanitized);
 add(
   'pinned-corpus-shape-no-live-chunks (AC7 exception)',

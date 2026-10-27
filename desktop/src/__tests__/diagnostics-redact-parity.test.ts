@@ -37,7 +37,7 @@ const CORPUS_PATH = path.join(REPO_ROOT, 'contracts', 'diagnostics-redaction-vec
 const CORPUS_GENERATOR = path.join(REPO_ROOT, 'contracts', 'tests', 'gen-diagnostics-redaction-vectors.mjs');
 // PRR-068: the corpus inventory is an exact count, not a floor — a dropped
 // vector must fail here, not silently shrink the gate's coverage.
-const CORPUS_VECTOR_COUNT = 23;
+const CORPUS_VECTOR_COUNT = 27;
 
 interface Vector {
   name: string;
@@ -82,6 +82,10 @@ describe('redaction parity over the shared corpus (AC5 + reconciled console poli
       'email-address',
       'zero-width-split-key',
       'multiline-with-secret',
+      'homoglyph-cyrillic-key',
+      'homoglyph-cyrillic-o-key',
+      'homoglyph-greek-key',
+      'non-english-prose-unchanged',
       'secret-straddling-truncation-boundary',
       'pinned-corpus-shape-no-live-chunks',
       'pinned-corpus-shape-manifest-unreadable',
