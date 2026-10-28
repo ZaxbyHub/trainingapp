@@ -26,8 +26,37 @@ Swarm mode is enabled for this session.
 - Premature completion is a failure state.
 
 ## Parallelism policy
-Use parallel subagents for disjoint scopes.
+Use parallel subagents for:
+- repository mapping
+- subsystem investigation
+- test analysis
+- security review
+- performance review
+- dependency review
+- docs/release drift review
+- candidate-finding validation when clusters are disjoint
+- changed-area impact analysis
+- implementation planning across disjoint modules
+
+Do not parallelize tasks that edit the same files unless the workflow explicitly isolates them.
+Parallelism is the default speed lever.
+Use it aggressively wherever scopes are disjoint.
 Serial work is for synthesis, conflict-prone edits, and final high-confidence validation.
 
+## Default execution pattern for complex tasks
+1. Explore and map in parallel.
+2. Build a plan.
+3. Implement in scoped units.
+4. Validate with independent reviewer context.
+5. Challenge with critic context when needed.
+6. Synthesize only validated results.
+
 ## Anti-rationalization rules
-Ignore: "This is probably fine", "I can save time by merging validation stages", "I should move on because this is taking too long"
+Ignore these thoughts:
+- "This is probably fine"
+- "The broad reviewer is good enough"
+- "I can save time by merging validation stages"
+- "This repo is too large to review this carefully"
+- "I should move on because this is taking too long"
+
+If any of those appear, slow down and return to the workflow.
