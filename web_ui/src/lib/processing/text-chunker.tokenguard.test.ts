@@ -329,6 +329,21 @@ function makeBatteryFixtures(): Record<string, Fixture> {
     const m2 = mkMixd('X'); mixMarkers.push(m2); mixParts.push(`${m2} anchor.`);
   }
 
+  // Review-round 2 fixture class: the codon class — 3-letter non-vocabulary
+  // short words. 'acg' is not in the model vocab ('ac' + '##g' = 2 real
+  // pieces/word), so a 256-word run encodes to 514 real tokens incl.
+  // specials — the exact magnitude the exact-boundary leg pins as a
+  // violation — and only a per-letter bound (>= 1.0/letter) on non-list
+  // short words can size it. 400 repetitions with marker brackets drive the
+  // accumulate path to an even larger single chunk at base.
+  const mkCodon = makeMarkerFactory();
+  const codonParts: string[] = []; const codonMarkers: string[] = [];
+  {
+    const m1 = mkCodon('G'); codonMarkers.push(m1); codonParts.push(`${m1} anchor.`);
+    codonParts.push(Array.from({ length: 400 }, () => 'acg').join(' '));
+    const m2 = mkCodon('G'); codonMarkers.push(m2); codonParts.push(`${m2} anchor.`);
+  }
+
   return {
     'dense long-sentence': dense,
     'prose with numbers/currency': { text: moneyParts.join(' '), markers: moneyMarkers },
@@ -340,6 +355,7 @@ function makeBatteryFixtures(): Record<string, Fixture> {
     'long technical words': { text: deoxyParts.join('\n\n'), markers: deoxyMarkers },
     'short non-vocabulary words': { text: shortParts.join('\n\n'), markers: shortMarkers },
     'short non-vocab + digits mix': { text: mixParts.join('\n\n'), markers: mixMarkers },
+    'codon-class short words': { text: codonParts.join('\n\n'), markers: codonMarkers },
   };
 }
 
