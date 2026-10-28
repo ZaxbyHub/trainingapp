@@ -19,11 +19,26 @@ import { app, dialog, ipcMain, __resetElectronStub } from 'electron';
 const hoisted = vi.hoisted(() => ({
   createWizardManifest: vi.fn(),
   wizardManifest: vi.fn(),
+  failNextScrub: false,
 }));
 
 vi.mock('../../main/first-run/wizard-manifest.js', () => ({
   createWizardManifest: hoisted.createWizardManifest,
 }));
+
+// Issue #256: the boot-time settings scrub's fail-closed refusal surfaces
+// through the desktop shell's backend-start catch (showErrorBox + quit). The
+// wrapper passes through to the real settings-store unless armed.
+vi.mock('../../main/backend/settings-store.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../main/backend/settings-store.js')>();
+  return {
+    ...actual,
+    saveSettingsSnapshot: (storePath: string, patch: Record<string, unknown>) => {
+      if (hoisted.failNextScrub) throw new Error('EACCES: permission denied, simulated scrub write failure');
+      return actual.saveSettingsSnapshot(storePath, patch);
+    },
+  };
+});
 
 vi.mock('../../main/backend/index.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../main/backend/index.js')>();
@@ -152,6 +167,7 @@ beforeEach(() => {
   hoisted.wizardManifest.mockReset();
   hoisted.createWizardManifest.mockReturnValue({ wizardManifest: hoisted.wizardManifest });
   hoisted.wizardManifest.mockReturnValue(SENTINEL);
+  hoisted.failNextScrub = false;
   resolveNodeEngineMock.mockClear();
   savedEnv = {};
   for (const key of ENV_KEYS) {
@@ -249,5 +265,21 @@ describe('e1 packaged glue hardening (PR #172 review)', () => {
     expect(overrides?.models?.quality).toBe(path.join(stage, 'models', 'llm-quality', 'dummy-lq', 'model.gguf'));
     expect(overrides?.models?.fast).toBeUndefined();
     await waitFor(() => registeredChannels().includes('desktop:get-backend'), 'backend started');
+  });
+
+  it('issue #256: a fail-closed backend start refusal (settings scrub write failure) shows the error box and quits', async () => {
+    hoisted.failNextScrub = true;
+    const profileDir = path.dirname(process.env.TRAININGAPP_DESKTOP_STORE_PATH as string);
+    fs.mkdirSync(profileDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(profileDir, 'settings.json'),
+      JSON.stringify({ rag_n_results: 5, 'external.enabled': true, 'external.apiKey': 'sk-engine-SENTINEL-5150' }),
+    );
+    bootstrap();
+    await waitFor(() => (dialog.showErrorBox as ReturnType<typeof vi.fn>).mock.calls.length > 0, 'dialog shown');
+    const call = (dialog.showErrorBox as ReturnType<typeof vi.fn>).mock.calls[0] as unknown as [string, string];
+    expect(call[0]).toBe('TrainingApp could not start');
+    expect(call[1]).toContain('could not be scrubbed');
+    expect(app.quit).toHaveBeenCalled();
   });
 });

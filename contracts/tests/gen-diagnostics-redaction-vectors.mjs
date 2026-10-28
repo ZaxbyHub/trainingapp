@@ -66,6 +66,14 @@ add(
   'oauth client_secret=synth-secret-value-one\nrefresh_token=synth-refresh-value-two\nopenai_api_key=synth-openai-value-three\nsecrets: rotate monthly',
   sanitized,
 );
+// Issue #256: dotted namespace segments must not dodge the JSON/quoted-key
+// shape. The external vector closes this issue's realized leak; the
+// non-external vector keeps an external-only special case (the rejected
+// Candidate F) from passing the corpus; the dotted non-secret negative keeps
+// the union from redacting ordinary namespaced config.
+add('namespaced-json-external-key', '"external.apiKey": "synth-external-value-seven"', sanitized);
+add('namespaced-json-other-namespace-key', '"db.password": "synth-db-value-eight"', sanitized);
+add('dotted-non-secret-clean', 'loaded {"release.version": "1.2.3"} from config', clean);
 // The prose guard: "the secret of" and "tokenizer" must stay clean (no separator, no bare key).
 add('kv-prose-not-mangled', 'the secret of the universe remains unknown; tokenizer loaded vocab 51206', clean);
 add('sk-provider-key', 'provider rejected key sk-test-AbCdAbCdAbCdAbCdAbCd for model x', sanitized);

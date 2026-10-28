@@ -756,12 +756,14 @@ function gateSidecarText(text: string): string {
  * No shipped producer writes such a key today (exposure question ASKed of
  * the maintainer), but the sidecar text that enters the bundle structurally
  * drops the VALUE of every external.*-namespaced key, keeping the pretty
- * JSON line-shaped and parseable.
+ * JSON line-shaped and parseable. The value match is LAZY so the trailing
+ * comma survives on non-final lines (issue #256: the greedy form ate it and
+ * emitted unparseable JSON for any external.* key that was not last).
  */
 function dropExternalNamespacedKeys(text: string): string {
   return text
     .split('\n')
-    .map((line) => line.replace(/^(\s*"external\.[^"]*"\s*:\s*).*(,?)\s*$/, '$1"[dropped-external-key]"$2'))
+    .map((line) => line.replace(/^(\s*"external\.[^"]*"\s*:\s*).*?(,?)\s*$/, '$1"[dropped-external-key]"$2'))
     .join('\n');
 }
 

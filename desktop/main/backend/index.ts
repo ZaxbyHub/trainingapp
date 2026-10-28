@@ -806,8 +806,32 @@ export class NodeBackendHost implements BackendHost {
       // universal-provider-settings-overhaul: external.* never comes from
       // settings.json (a stale or hand-edited file must not apply or keep an
       // API key there); those settings replay from external.json below.
+      // Issue #256: "or keep" is enforced at boot — a parsed snapshot that
+      // carries external.* keys is rewritten without them before the boot
+      // continues. The rewrite is fail-closed: a failed scrub rejects the
+      // start, so load never returns with a plaintext external key still on
+      // disk. A missing or corrupt file reads as null and never attempts
+      // the write (the settings-store nonfatal-sidecar contract).
+      const rawSnapshot = loadSettingsSnapshot(storePath);
+      if (rawSnapshot !== null) {
+        const externalKeys = Object.keys(rawSnapshot).filter((key) => key.startsWith('external.'));
+        if (externalKeys.length > 0) {
+          const scrubbed = Object.fromEntries(
+            Object.entries(rawSnapshot).filter(([key]) => !key.startsWith('external.')),
+          );
+          try {
+            saveSettingsSnapshot(storePath, scrubbed);
+          } catch (err) {
+            throw new Error(
+              `settings.json carries ${externalKeys.length} external.* key(s) that could not be scrubbed (${
+                err instanceof Error ? err.message : String(err)
+              }); refusing to start with a plaintext external key on disk`,
+            );
+          }
+        }
+      }
       let storedPatch = Object.fromEntries(
-        Object.entries(loadSettingsSnapshot(storePath) ?? {}).filter(([key]) => !key.startsWith('external.')),
+        Object.entries(rawSnapshot ?? {}).filter(([key]) => !key.startsWith('external.')),
       );
       if (Object.keys(storedPatch).length > 0) {
         const applied = this.engine.applySettingsPatch(storedPatch);

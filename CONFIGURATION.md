@@ -458,6 +458,10 @@ loopback); connects to the validated address with the lookup pinned; and follows
   `external.apiKeyBoundOrigin` and `external.airgap`. The non-secret settings are saved in
   `<profile dir>/external.json`, not `settings.json`, so older app versions still load
   `settings.json`. `POST /settings/external/test` tests a draft connection without saving.
+  A `settings.json` that still carries `external.*` keys (older build, hand edit, backup
+  restore) is rewritten without them at startup — the external model does not apply from
+  that file and no plaintext key is kept on disk; if the rewrite itself fails, the backend
+  refuses to start rather than keep the key.
 - **No local model files needed:** with the external model on, the desktop app does not need
   the local GGUF model files (no missing-model overlay, no local warm-up), and
   `GET /status/models` reports engine `external`.

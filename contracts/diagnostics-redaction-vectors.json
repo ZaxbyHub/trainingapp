@@ -66,6 +66,33 @@
       }
     },
     {
+      "name": "namespaced-json-external-key",
+      "input": "\"external.apiKey\": \"synth-external-value-seven\"",
+      "persisted": "\"external.apiKey\": \"[redacted]\"",
+      "console": {
+        "desktop": "sanitized",
+        "renderer": "sanitized"
+      }
+    },
+    {
+      "name": "namespaced-json-other-namespace-key",
+      "input": "\"db.password\": \"synth-db-value-eight\"",
+      "persisted": "\"db.password\": \"[redacted]\"",
+      "console": {
+        "desktop": "sanitized",
+        "renderer": "sanitized"
+      }
+    },
+    {
+      "name": "dotted-non-secret-clean",
+      "input": "loaded {\"release.version\": \"1.2.3\"} from config",
+      "persisted": "loaded {\"release.version\": \"1.2.3\"} from config",
+      "console": {
+        "desktop": "raw",
+        "renderer": "raw"
+      }
+    },
+    {
       "name": "kv-prose-not-mangled",
       "input": "the secret of the universe remains unknown; tokenizer loaded vocab 51206",
       "persisted": "the secret of the universe remains unknown; tokenizer loaded vocab 51206",

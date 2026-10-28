@@ -405,7 +405,13 @@ export function bootstrap(): void {
       });
       backendHandle = await backendHost.start();
     } catch (err) {
-      console.error('[trainingapp-desktop] backend host failed to start:', err instanceof Error ? err.message : err);
+      const detail = err instanceof Error ? err.message : String(err);
+      console.error('[trainingapp-desktop] backend host failed to start:', detail);
+      // Fail-loud surfacing (console.error alone is invisible in a packaged
+      // Electron app) — issue #256: the fail-closed settings scrub can
+      // refuse to start, and that refusal must be visible, not a silent
+      // quit-to-desktop.
+      dialog.showErrorBox('TrainingApp could not start', detail);
       app.quit();
       return;
     }

@@ -405,15 +405,23 @@ describe('diagnostics export-bundle (AC3: gated bundle to a user-chosen path)', 
     });
   });
 
-  it('export-bundle: external.*-namespaced sidecar keys are structurally dropped (the gate cannot match them)', () => {
+  it('export-bundle: external.*-namespaced sidecar values never survive - the gate redacts known secret tails, the belt drops the rest', () => {
     const ws = makeWorkspace('diag-c3-extkey-');
     activateDiagnosticsLogging({ userDataPath: ws.userDataPath, storePath: ws.storePath });
-    // PRR-008: a namespaced key like "external.apiKey" cannot match the kv
-    // gate's anchored quoted-key class, so the sidecar text that enters the
-    // bundle structurally drops such values (belt and braces).
+    // Issue #256: since the kv gate's key union spans dotted namespaces, a
+    // secret-tailed namespaced key ("external.apiKey") is REDACTED by the
+    // gate itself before the belt runs. The belt (PRR-008) remains the only
+    // layer for gate-dodging shapes: an external.* key whose tail is no
+    // known secret morpheme ("external.customSetting") is structurally
+    // dropped to [dropped-external-key]. Either way no external.* VALUE
+    // survives into the bundle.
     fs.writeFileSync(
       path.join(ws.profileDir, 'settings.json'),
-      JSON.stringify({ theme: 'dark', 'external.apiKey': 'hunter2-value-9f1c' }, null, 2),
+      JSON.stringify(
+        { theme: 'dark', 'external.apiKey': 'hunter2-value-9f1c', 'external.customSetting': 'hunter2-value-b2d4' },
+        null,
+        2,
+      ),
       'utf8',
     );
     const dest = path.join(path.dirname(ws.profileDir), 'bundle-extkey.json');
@@ -423,10 +431,14 @@ describe('diagnostics export-bundle (AC3: gated bundle to a user-chosen path)', 
       expect(result.ok).toBe(true);
       const bundle = JSON.parse(fs.readFileSync(dest, 'utf8')) as { sidecars: Record<string, string> };
       const sidecar = bundle.sidecars['settings.json'] as string;
-      expect(sidecar).toContain('"external.apiKey": "[dropped-external-key]"');
+      // Secret-tailed: redacted by the shared gate (issue #256 AC5).
+      expect(sidecar).toContain('"external.apiKey": "[redacted]"');
+      // Gate-dodging tail: structurally dropped by the belt (PRR-008).
+      expect(sidecar).toContain('"external.customSetting": "[dropped-external-key]"');
       expect(sidecar).not.toContain('hunter2-value-9f1c');
+      expect(sidecar).not.toContain('hunter2-value-b2d4');
       expect(sidecar).toContain('"theme": "dark"');
-      // The dropped sidecar text stays parseable JSON (only the value went).
+      // The gated sidecar text stays parseable JSON (only the values went).
       expect(() => JSON.parse(sidecar) as unknown).not.toThrow();
     });
   });
