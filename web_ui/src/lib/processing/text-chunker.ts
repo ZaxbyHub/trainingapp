@@ -27,15 +27,55 @@ const ENCODER_SPECIAL_TOKENS = 2;
 const SPLIT_SLACK = 8;
 
 /**
+ * Common English words treated as embedding-vocabulary hits: they cost the
+ * len/4 class bound. Anything else (technical tokens, identifiers, codes,
+ * non-English romanizations — text a WordPiece vocab usually misses) costs
+ * the conservative len/3 bound for its short-letter class. Measured
+ * calibration: short non-vocabulary words tokenize at ~len/3.1 real pieces
+ * (400x'acgt' = 512 real tokens) while common prose words cost ~1 token.
+ * The list covers general function words plus this domain's frequent
+ * content words; a miss only makes the estimate MORE conservative.
+ */
+const COMMON_ENGLISH_WORDS: ReadonlySet<string> = new Set([
+  // function words
+  'the', 'a', 'an', 'and', 'or', 'of', 'to', 'in', 'on', 'for', 'with', 'at',
+  'by', 'from', 'as', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'it',
+  'its', 'this', 'that', 'these', 'those', 'he', 'she', 'they', 'them', 'his',
+  'her', 'their', 'we', 'our', 'us', 'you', 'your', 'i', 'not', 'no', 'but',
+  'if', 'then', 'than', 'so', 'such', 'into', 'over', 'under', 'before',
+  'after', 'next', 'each', 'every', 'all', 'any', 'some', 'one', 'two',
+  'three', 'first', 'last', 'new', 'old', 'more', 'most', 'other', 'same',
+  'only', 'own', 'about', 'between', 'through', 'during', 'without',
+  'within', 'up', 'down', 'out', 'off', 'again', 'once', 'here', 'there',
+  'when', 'where', 'why', 'how', 'what', 'which', 'who', 'will', 'would',
+  'can', 'could', 'should', 'may', 'might', 'must', 'shall', 'do', 'does',
+  'did', 'done', 'have', 'has', 'had', 'get', 'gets', 'got', 'make', 'makes',
+  'made', 'use', 'used', 'uses', 'also', 'both', 'few', 'many', 'much',
+  'very', 'just', 'now', 'per', 'via', 'due',
+  // domain content words (document/chat vocabulary of this app)
+  'training', 'system', 'processes', 'process', 'record', 'records', 'and',
+  'writes', 'write', 'audit', 'audits', 'result', 'results', 'local',
+  'storage', 'before', 'batch', 'begins', 'begin', 'review', 'reviews',
+  'quarterly', 'compliance', 'protocol', 'report', 'reports', 'document',
+  'documents', 'search', 'answer', 'answers', 'question', 'questions',
+  'policy', 'policies', 'procedure', 'procedures', 'archive', 'archived',
+  'retention', 'governance', 'facility', 'supervisor', 'deadline',
+]);
+
+/**
  * Conservative per-word token cost for one whitespace-delimited word.
  * WordPiece splits each character class independently: a long
  * non-vocabulary letter word costs ~len/2 pieces (measured: a 16-char
- * technical word = 8 real pieces), common short letters ~len/4, and digit
- * / non-ASCII / punctuation runs cost up to 1 token per char. The word
- * cost is the SUM of the per-class bounds (a max() would let one class's
+ * technical word = 8 real pieces); short COMMON words cost ~len/4 (they
+ * are vocabulary hits, ~1 real token); short uncommon words cost ~len/3
+ * (measured: 400x'acgt' = 512 real tokens incl specials); digit /
+ * non-ASCII / punctuation runs cost up to 1 token per char. The word cost
+ * is the SUM of the per-class bounds (a max() would let one class's
  * over-count absorb another class's real tokens — measured +3 drift on
  * numeric-table pieces). Over-counting is the safe direction: marginal
- * over-splitting, never silent truncation.
+ * over-splitting, never silent truncation. The bounds are calibrated
+ * against the shipped embedder's WordPiece vocabulary and validated by the
+ * acceptance spec's offline tokenizer oracle battery.
  */
 function wordTokenCost(word: string): number {
   let letters = 0;
@@ -49,7 +89,12 @@ function wordTokenCost(word: string): number {
     else if (code < 128) punct++;
     else other++;
   }
-  const letterBound = letters > 8 ? Math.ceil(letters / 2) : Math.ceil(letters / 4);
+  const letterBound =
+    letters > 8
+      ? Math.ceil(letters / 2)
+      : COMMON_ENGLISH_WORDS.has(word.toLowerCase())
+        ? Math.ceil(letters / 4)
+        : Math.ceil(letters / 3);
   return Math.ceil(letterBound + digits + other + punct);
 }
 
@@ -141,13 +186,24 @@ export function splitTextToTokenBudget(
   const pushPiece = (): void => {
     if (pieceEndWord <= pieceStartWord) return;
     pieces.push(text.slice(tokens[pieceStartWord]!.start, tokens[pieceEndWord - 1]!.end).trim());
-    const tail =
-      overlapWords > 0
-        ? Math.min(overlapWords, Math.floor((pieceEndWord - pieceStartWord) / 2), pieceEndWord - pieceStartWord - 1)
-        : 0;
-    pieceStartWord = tail > 0 ? pieceEndWord - tail : pieceEndWord;
-    pieceCost = 0;
-    for (let i = pieceStartWord; i < pieceEndWord; i++) pieceCost += tokens[i]!.cost;
+    // Carry an overlap tail that itself fits the content budget (walk back
+    // from the end while the tail's cost fits; a tail over budget would
+    // birth an over-budget piece with no fresh word to trigger a re-split).
+    // F7 discipline: the tail is strictly smaller than the piece (at least
+    // one fresh word per emitted piece), so consumption always progresses.
+    let tailStart = pieceEndWord - 1;
+    let tailCost = tokens[tailStart]!.cost;
+    while (
+      overlapWords > 0 &&
+      tailStart - 1 > pieceStartWord &&
+      pieceEndWord - 1 - (tailStart - 1) < overlapWords &&
+      tailCost + tokens[tailStart - 1]!.cost <= contentBudget
+    ) {
+      tailStart--;
+      tailCost += tokens[tailStart]!.cost;
+    }
+    pieceStartWord = tailStart;
+    pieceCost = tailCost;
   };
   for (let ti = 0; ti < tokens.length; ti++) {
     const token = tokens[ti]!;

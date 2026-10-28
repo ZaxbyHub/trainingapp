@@ -125,9 +125,10 @@ export function capHistoryToBudget(
         role: 'user',
         content: newestUser.content.slice(0, reserve * CHARS_PER_TOKEN),
       };
-      // Rebuild around the newest exchange: the (capped) newest turn plus the
-      // forced user turn, dropping older overflow.
-      const answer = windowed[0]!;
+      // Rebuild around the newest exchange: pair the forced user turn with
+      // the NEWEST kept turn (the latest answer), not the oldest — dropping
+      // the newest answer would discard the most recent context.
+      const answer = windowed[windowed.length - 1]!;
       const answerReserve = Math.max(1, budgetTokens - reserve);
       windowed = [
         userTurn,

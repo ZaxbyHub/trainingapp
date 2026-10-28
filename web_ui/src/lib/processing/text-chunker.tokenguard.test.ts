@@ -33,6 +33,11 @@
  *   caps   max 277 | cjk max 267 | normal prose max 262          (in budget)
  *   long technical words (84 x 'deoxyribonucleic', round-2 fixture):
  *   1428 chars / 675 real wp (677 incl. specials) in ONE chunk    (RED at base)
+ *   short non-vocabulary words (400 x 'acgt', review-round fixture):
+ *   base emits a 404-word chunk = 808 real wp ('acgt' = 'ac'+'##gt',
+ *   2 real pieces/word; chars/4 scores the run ~320)              (RED at base)
+ *   short non-vocab + digits mix (200 x 'acgt'+5-digit, review-round):
+ *   base emits a 402-word chunk = 885 real wp                      (RED at base)
  *   exact boundary (64 x 'deoxyribonucleic', round-3 fixture): content
  *   estimate exactly 512, real encoding 514 incl. specials — must SPLIT (RED at base)
  *   normal-prose fixture: 37 chunks, chunk-texts sha256
@@ -295,6 +300,35 @@ function makeBatteryFixtures(): Record<string, Fixture> {
     const m2 = mkDeoxy('L'); deoxyMarkers.push(m2); deoxyParts.push(`${m2} anchor.`);
   }
 
+  // Review-round fixture class: SHORT non-vocabulary letter words. 'acgt'
+  // is not in the model vocabulary ('ac' + '##gt' = 2 real pieces per word),
+  // so a 256-word run of it encodes to 512 content + 2 specials = 514 real
+  // tokens — while the chars/4 estimator scores the run at ~320 and the
+  // short-letter class needs ceil(len/3) (2 per 'acgt') to bound it. 400
+  // repetitions guarantee an over-window emission at base (the split path
+  // emits a 256-word piece = 514; the accumulate path emits a 404-word
+  // piece = 802). Must be split so every emitted chunk fits 512 ACTUAL.
+  const mkShort = makeMarkerFactory();
+  const shortParts: string[] = []; const shortMarkers: string[] = [];
+  {
+    const m1 = mkShort('S'); shortMarkers.push(m1); shortParts.push(`${m1} anchor.`);
+    shortParts.push(Array.from({ length: 400 }, () => 'acgt').join(' '));
+    const m2 = mkShort('S'); shortMarkers.push(m2); shortParts.push(`${m2} anchor.`);
+  }
+
+  // Review-round companion: short non-vocab words MIXED with digit runs
+  // (both classes under-counted by chars/4; digits at 1.0 real/char, 'acgt'
+  // at 2 real/word -> 7 real tokens per pair).
+  const mkMixd = makeMarkerFactory();
+  const mixParts: string[] = []; const mixMarkers: string[] = [];
+  {
+    const m1 = mkMixd('X'); mixMarkers.push(m1); mixParts.push(`${m1} anchor.`);
+    const mixWords: string[] = [];
+    for (let i = 0; i < 200; i++) { mixWords.push('acgt'); mixWords.push(String(i).padStart(5, '0')); }
+    mixParts.push(mixWords.join(' '));
+    const m2 = mkMixd('X'); mixMarkers.push(m2); mixParts.push(`${m2} anchor.`);
+  }
+
   return {
     'dense long-sentence': dense,
     'prose with numbers/currency': { text: moneyParts.join(' '), markers: moneyMarkers },
@@ -304,6 +338,8 @@ function makeBatteryFixtures(): Record<string, Fixture> {
     'accented unicode': { text: accParts.join(' '), markers: accMarkers },
     'numeric table': { text: tableParts.join('\n'), markers: tableMarkers },
     'long technical words': { text: deoxyParts.join('\n\n'), markers: deoxyMarkers },
+    'short non-vocabulary words': { text: shortParts.join('\n\n'), markers: shortMarkers },
+    'short non-vocab + digits mix': { text: mixParts.join('\n\n'), markers: mixMarkers },
   };
 }
 
