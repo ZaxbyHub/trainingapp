@@ -405,7 +405,18 @@ export function bootstrap(): void {
       });
       backendHandle = await backendHost.start();
     } catch (err) {
-      console.error('[trainingapp-desktop] backend host failed to start:', err instanceof Error ? err.message : err);
+      const detail = err instanceof Error ? err.message : String(err);
+      console.error('[trainingapp-desktop] backend host failed to start:', detail);
+      // Fail-loud surfacing (console.error alone is invisible in a packaged
+      // Electron app) — issue #256: the fail-closed settings scrub can
+      // refuse to start, and that refusal must be visible, not a silent
+      // quit-to-desktop. PACKAGED ONLY (issue #256 review PRR-004): the box
+      // is a synchronous modal that would hang the Playwright-under-Electron
+      // specs and dev runs on a backend failure; dev fails fast through the
+      // console line and app.quit() below.
+      if (app.isPackaged) {
+        dialog.showErrorBox('TrainingApp could not start', detail);
+      }
       app.quit();
       return;
     }

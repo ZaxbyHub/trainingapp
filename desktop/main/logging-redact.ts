@@ -23,9 +23,10 @@
 //   3. kv secrets (any compound/plural of secret|token|password|passwd|
 //      api[-_]key|apikey|authorization|cookie|session[-_]?id|sessionid|
 //      credential — client_secret, refresh_token, openai_api_key, secrets)
-//      in `key=value`, `key: value` and JSON `"key": "value"` shapes; a
-//      QUOTED value redacts the quoted span, a BARE value the rest of the
-//      line (a password phrase is the whole remainder) -> `[redacted]`
+//      optionally under dotted namespace segments ("external.apiKey",
+//      issue #256) in `key=value`, `key: value` and JSON `"key": "value"`
+//      shapes; a QUOTED value redacts the quoted span, a BARE value the rest
+//      of the line (a password phrase is the whole remainder) -> `[redacted]`
 //   4. `sk-…` provider keys                            -> `[redacted]`
 //   5. hex runs of 16+ characters                      -> `[redacted-hex]`
 //   6. user-home paths (Windows `%USERPROFILE%`, unix /home|/Users)
@@ -71,12 +72,21 @@ const DENYLIST_FIELD =
  * Sensitive key union for the kv-secret class: a key is any
  * separator/alphanumeric-prefixed compound of a sensitive morpheme plus an
  * optional plural `s` (PRR-012: client_secret, refresh_token,
- * openai_api_key, secrets). Ordinary prose keeps its following word — the kv
- * shapes below still require a `:`/`=` separator directly after the key, so
- * "the secret of" never matches.
+ * openai_api_key, secrets; issue #256 round 2: hyphenated `api-key`,
+ * `session-id` — the shapes CONFIGURATION.md documents and the SecretStore's
+ * own `external-api-key(-origin)` entry names use), optionally carrying
+ * dotted namespace segments (issue #256: `"external.apiKey"`,
+ * `"db.password"` — the JSON/quoted-key shape cannot match unless the union
+ * itself spans the dot). The namespace repetition is BOUNDED (`{0,8}`
+ * segments): an unbounded star is quadratic on adversarial dotted input
+ * (PRR-002), and real namespaces are shallow. Ordinary prose keeps its
+ * following word — the kv shapes below still require a `:`/`=` separator
+ * directly after the key, so "the secret of" never matches, and a dotted
+ * non-secret (`release.version`) stays clean because the union still has to
+ * END in a sensitive morpheme.
  */
 const KV_SECRET_KEYS =
-  '[A-Za-z0-9_-]*(?:secret|token|password|passwd|api_key|apikey|authorization|cookie|session_id|sessionid|credential)s?';
+  '(?:[A-Za-z0-9_-]+\\.){0,8}[A-Za-z0-9_-]*(?:secret|token|password|passwd|api_key|apikey|api-key|authorization|cookie|session_id|sessionid|session-id|credential)s?';
 
 /**
  * Zero-width/BOM characters stripped before classification (PRR-029's cheap

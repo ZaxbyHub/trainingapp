@@ -751,17 +751,39 @@ function gateSidecarText(text: string): string {
 }
 
 /**
- * PRR-008 (belt and braces): a namespaced key like `"external.apiKey"` can
- * never match the kv-secret gate (the class matches the key BEFORE the dot).
- * No shipped producer writes such a key today (exposure question ASKed of
- * the maintainer), but the sidecar text that enters the bundle structurally
- * drops the VALUE of every external.*-namespaced key, keeping the pretty
- * JSON line-shaped and parseable.
+ * PRR-008 (belt and braces), updated by issue #256: the kv-secret gate now
+ * REDACTS secret-tailed namespaced keys (`"external.apiKey"` and any dotted
+ * namespace ending in a sensitive morpheme), so the belt is the SECOND layer
+ * — it structurally drops the value of every line-led `external.*` key whose
+ * tail the gate does not know (gate-dodging shapes), keeping the pretty JSON
+ * line-shaped and parseable.
+ *
+ * The value match stays GREEDY (linear) and the trailing comma is re-derived
+ * from the match tail with a manual charCode scan. The lazy `.*?` form this
+ * replaces was QUADRATIC on whitespace-heavy lines (issue #256 review PRR-001:
+ * 34 s at a 200k-char line, synchronous in the main process during export);
+ * a regex-based whitespace trim is quadratic the same way, hence the scan.
+ * The scan skips space/tab/CR/LF and re-appends them so CRLF bytes survive.
  */
 function dropExternalNamespacedKeys(text: string): string {
   return text
     .split('\n')
-    .map((line) => line.replace(/^(\s*"external\.[^"]*"\s*:\s*).*(,?)\s*$/, '$1"[dropped-external-key]"$2'))
+    .map((line) =>
+      line.replace(/^(\s*"external\.[^"]*"\s*:\s*).*(,?)\s*$/, (match: string, prefix: string) => {
+        let end = match.length;
+        while (end > 0) {
+          const code = match.charCodeAt(end - 1);
+          if (code === 32 || code === 9 || code === 13 || code === 10) {
+            end -= 1;
+            continue;
+          }
+          break;
+        }
+        const trailing = match.slice(end);
+        const comma = end > 0 && match.charCodeAt(end - 1) === 44 ? ',' : '';
+        return `${prefix}"[dropped-external-key]"${comma}${trailing}`;
+      }),
+    )
     .join('\n');
 }
 

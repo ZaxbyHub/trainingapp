@@ -66,6 +66,42 @@
       }
     },
     {
+      "name": "namespaced-json-external-key",
+      "input": "\"external.apiKey\": \"synth-external-value-seven\"",
+      "persisted": "\"external.apiKey\": \"[redacted]\"",
+      "console": {
+        "desktop": "sanitized",
+        "renderer": "sanitized"
+      }
+    },
+    {
+      "name": "namespaced-json-other-namespace-key",
+      "input": "\"db.password\": \"synth-db-value-eight\"",
+      "persisted": "\"db.password\": \"[redacted]\"",
+      "console": {
+        "desktop": "sanitized",
+        "renderer": "sanitized"
+      }
+    },
+    {
+      "name": "dotted-non-secret-clean",
+      "input": "loaded {\"release.version\": \"1.2.3\"} from config",
+      "persisted": "loaded {\"release.version\": \"1.2.3\"} from config",
+      "console": {
+        "desktop": "raw",
+        "renderer": "raw"
+      }
+    },
+    {
+      "name": "hyphenated-secret-keys",
+      "input": "store {\"external-api-key\": \"synth-store-value-eleven\"} external-api-key-origin=binding; api-key=synth-api-value-twelve; session-id=synth-session-value-thirteen",
+      "persisted": "store {\"external-api-key\": \"[redacted]\"} external-api-key-origin=binding; api-key=[redacted]",
+      "console": {
+        "desktop": "sanitized",
+        "renderer": "sanitized"
+      }
+    },
+    {
       "name": "kv-prose-not-mangled",
       "input": "the secret of the universe remains unknown; tokenizer loaded vocab 51206",
       "persisted": "the secret of the universe remains unknown; tokenizer loaded vocab 51206",

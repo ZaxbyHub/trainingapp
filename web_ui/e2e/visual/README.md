@@ -46,9 +46,15 @@ Delete those generated folders and never commit them. Regenerate on Windows only
    WebGPU-capable machine renders the same text; an overlay diff is therefore a real change, not a machine difference.
    The model-gate opt-out `LUMEN_ALLOW_NO_OVERLAY=1` (a local build with staged weights, no gate) is refused when `CI`
    is set: the spec fails to load rather than silently skipping a gate regression.
-2. `npm run build` from a clean state.
-3. `npx playwright test --config playwright.visual.config.ts --update-snapshots`
-4. Review every changed PNG and include before/after images of the changed
+2. Verify NO staged weights are served: `web_ui/public/models/` must contain only the
+   tracked files (`git status --porcelain web_ui/public/models` empty AND no gitignored
+   binaries — move a local `models/` weight tree aside first if you have one). The Settings
+   baselines embed the model-readiness rows, which render "Ready" when weights are served
+   and "Missing" on the runner; a staged-weights regeneration fails CI exactly like the
+   round-1 failure in PR #257.
+3. `npm run build` from a clean state.
+4. `npx playwright test --config playwright.visual.config.ts --update-snapshots`
+5. Review every changed PNG and include before/after images of the changed
    PNGs in the PR description. Unreviewed bulk snapshot updates are not accepted.
 
 ## Axe baseline regeneration
