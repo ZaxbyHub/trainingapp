@@ -80,7 +80,7 @@ vi.mock('../lib/embeddings/embedding-service', () => ({
 vi.mock('../lib/search/vector-index', () => ({ VectorIndex: vi.fn() }));
 vi.mock('../lib/search/keyword-index', () => ({ KeywordIndex: vi.fn() }));
 vi.mock('../lib/search/reranker', () => ({ Reranker: vi.fn() }));
-vi.mock('../lib/search/rrf-fusion', () => ({ rrfFuse: vi.fn() }));
+vi.mock('../lib/search/rrf-fusion', () => ({ rrfFuse: vi.fn(), dedupeNearDuplicates: vi.fn((results: unknown[]) => results) }));
 
 vi.mock('../lib/inference', () => ({
   InferenceModeProvider: ({ children }: { children: React.ReactNode }) => children,

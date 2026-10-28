@@ -18,7 +18,7 @@
 // derived with the document_processor.py rules (slide docs get the
 // `[training-slide] section=… | title=… | slide_id=…` marker line).
 import type { DocumentChunk } from '../../types/document';
-import { TextChunker } from '../processing/text-chunker';
+import { TextChunker, splitTextToTokenBudget } from '../processing/text-chunker';
 import { getKeywordIndex } from '../search/keyword-index';
 import { getVectorIndex } from '../search/vector-index';
 import { getEmbeddingService } from '../embeddings/embedding-service';
@@ -82,8 +82,16 @@ export function buildPackChunks(manifest: PackManifest, docs: ReadonlyMap<string
     const docId = packDocId(manifest.id, entry.path);
     if (isSlideDocPath(entry.path)) {
       // A slide is one chunk (its marker line must stay first for the
-      // Learn kernel and the pinned-slide resolver).
-      chunks.push({ text, source: entry.path, chunkIndex: 0, docId, packId: manifest.id });
+      // Learn kernel and the pinned-slide resolver). #35-B3: a long
+      // transcript would blow the embedder window on this direct emission
+      // path, so split to the token budget — the word-walk keeps the head
+      // intact, so piece 0 still opens with the marker line, and the
+      // resolver already prefers the marker chunk and falls back to raw
+      // text for marker-less continuations.
+      const pieces = splitTextToTokenBudget(text);
+      pieces.forEach((piece, pieceIndex) => {
+        chunks.push({ text: piece, source: entry.path, chunkIndex: pieceIndex, docId, packId: manifest.id });
+      });
       continue;
     }
     for (const piece of chunker.chunkText(text, entry.path)) {

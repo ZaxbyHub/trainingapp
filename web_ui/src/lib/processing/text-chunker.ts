@@ -6,6 +6,169 @@
 
 import type { DocumentChunk, ExtractedPage } from '../../types/document';
 
+// ---------------------------------------------------------------------------
+// Embedder-window token guard (#35-B3, batch-153-35-rag-quality)
+// ---------------------------------------------------------------------------
+
+/**
+ * Tokens reserved inside `maxChunkTokens` for the encoder's [CLS]/[SEP]
+ * specials: the embedding format wraps every chunk, so content is budgeted
+ * at maxChunkTokens - 2.
+ */
+const ENCODER_SPECIAL_TOKENS = 2;
+
+/**
+ * Splitter safety margin: the word-shape estimator is a calibrated
+ * heuristic, not a tokenizer, so piece sizing leaves room for residual
+ * cross-class drift (observed <= 3 tokens on mixed-class pieces). The
+ * frozen spec's offline WordPiece oracle battery — not this constant — is
+ * the actual <=512 guarantee.
+ */
+const SPLIT_SLACK = 8;
+
+/**
+ * Conservative per-word token cost for one whitespace-delimited word.
+ * WordPiece splits each character class independently: a long
+ * non-vocabulary letter word costs ~len/2 pieces (measured: a 16-char
+ * technical word = 8 real pieces), common short letters ~len/4, and digit
+ * / non-ASCII / punctuation runs cost up to 1 token per char. The word
+ * cost is the SUM of the per-class bounds (a max() would let one class's
+ * over-count absorb another class's real tokens — measured +3 drift on
+ * numeric-table pieces). Over-counting is the safe direction: marginal
+ * over-splitting, never silent truncation.
+ */
+function wordTokenCost(word: string): number {
+  let letters = 0;
+  let digits = 0;
+  let other = 0;
+  let punct = 0;
+  for (const ch of word) {
+    const code = ch.codePointAt(0)!;
+    if (code >= 48 && code <= 57) digits++;
+    else if ((code >= 65 && code <= 90) || (code >= 97 && code <= 122)) letters++;
+    else if (code < 128) punct++;
+    else other++;
+  }
+  const letterBound = letters > 8 ? Math.ceil(letters / 2) : Math.ceil(letters / 4);
+  return Math.ceil(letterBound + digits + other + punct);
+}
+
+/**
+ * Estimate the embedding-model token count of `text` (upper-bound-biased,
+ * word-shape-aware; the shipped embedder is a 512-token BERT WordPiece
+ * model). Empty text estimates to 0.
+ */
+export function estimateChunkTokens(text: string): number {
+  if (!text) return 0;
+  let total = 0;
+  for (const word of text.split(/\s+/)) {
+    if (!word) continue;
+    total += wordTokenCost(word);
+  }
+  return total;
+}
+
+/** Per-character cost used when a single word alone exceeds the budget. */
+function charTokenCost(code: number): number {
+  const isAsciiLetterOrDigit =
+    (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || (code >= 48 && code <= 57);
+  return isAsciiLetterOrDigit || code < 128 ? 0.5 : 1;
+}
+
+/**
+ * Split a single word that alone exceeds the content budget into
+ * character-cost-delimited pieces (CJK/no-space text has no word
+ * boundaries to walk).
+ */
+function charSlice(word: string, contentBudget: number): string[] {
+  const pieces: string[] = [];
+  let start = 0;
+  while (start < word.length) {
+    let cost = 0;
+    let end = start;
+    while (
+      end < word.length &&
+      (cost === 0 || cost + charTokenCost(word.codePointAt(end)!) <= contentBudget)
+    ) {
+      cost += charTokenCost(word.codePointAt(end)!);
+      end++;
+    }
+    pieces.push(word.slice(start, end));
+    start = end;
+  }
+  return pieces;
+}
+
+/**
+ * Split `text` into pieces whose estimateChunkTokens cost fits
+ * `maxChunkTokens - ENCODER_SPECIAL_TOKENS - SPLIT_SLACK` (encoder specials
+ * reserved, calibrated slack for residual estimator drift). Pieces are
+ * SUBSTRINGS of the original text cut at word boundaries, so all internal
+ * line/paragraph structure is preserved — pack slide markers depend on the
+ * first line being exactly the `[training-slide] …` header. Word-walking
+ * with an optional carried overlap tail (F7 discipline: at least 1 word
+ * when overlap is requested, strictly consumption-progressing, never >= the
+ * piece length); a single word over the budget is char-sliced (progress
+ * guarantee). Exported for callers that emit chunk-like text without the
+ * TextChunker state machine (pack slide documents, #35-B3 scope
+ * completion).
+ */
+export function splitTextToTokenBudget(
+  text: string,
+  maxChunkTokens: number = 512,
+  overlapWords: number = 0
+): string[] {
+  const contentBudget = Math.floor(maxChunkTokens) - ENCODER_SPECIAL_TOKENS - SPLIT_SLACK;
+  if (!text) return [];
+  // Word tokens with their [start, end) offsets in the ORIGINAL text, so
+  // pieces are raw slices and newlines inside a piece survive.
+  interface WordToken {
+    start: number;
+    end: number;
+    cost: number;
+  }
+  const tokens: WordToken[] = [];
+  const wordRe = /\S+/g;
+  for (let m = wordRe.exec(text); m !== null; m = wordRe.exec(text)) {
+    tokens.push({ start: m.index, end: m.index + m[0].length, cost: wordTokenCost(m[0]) });
+  }
+  if (tokens.length === 0) return [text];
+
+  const pieces: string[] = [];
+  let pieceStartWord = 0;
+  let pieceEndWord = 0;
+  let pieceCost = 0;
+  const pushPiece = (): void => {
+    if (pieceEndWord <= pieceStartWord) return;
+    pieces.push(text.slice(tokens[pieceStartWord]!.start, tokens[pieceEndWord - 1]!.end).trim());
+    const tail =
+      overlapWords > 0
+        ? Math.min(overlapWords, Math.floor((pieceEndWord - pieceStartWord) / 2), pieceEndWord - pieceStartWord - 1)
+        : 0;
+    pieceStartWord = tail > 0 ? pieceEndWord - tail : pieceEndWord;
+    pieceCost = 0;
+    for (let i = pieceStartWord; i < pieceEndWord; i++) pieceCost += tokens[i]!.cost;
+  };
+  for (let ti = 0; ti < tokens.length; ti++) {
+    const token = tokens[ti]!;
+    if (token.cost > contentBudget) {
+      pushPiece();
+      pieces.push(...charSlice(text.slice(token.start, token.end), contentBudget));
+      pieceStartWord = ti + 1;
+      pieceEndWord = pieceStartWord;
+      pieceCost = 0;
+      continue;
+    }
+    if (pieceCost + token.cost > contentBudget && pieceEndWord > pieceStartWord) {
+      pushPiece();
+    }
+    pieceEndWord++;
+    pieceCost += token.cost;
+  }
+  pushPiece();
+  return pieces;
+}
+
 const ABBREVIATIONS = new Set([
   'dr', 'mr', 'mrs', 'ms', 'prof', 'jr', 'sr', 'st', 'ave', 'blvd',
   'dept', 'rev', 'vol', 'fig', 'ed', 'eds', 'repr', 'trans', 'pt',
@@ -34,15 +197,20 @@ const DOTTED_ABBREVIATIONS: ReadonlyArray<readonly [string, string]> = [
 export class TextChunker {
   private readonly chunkSize: number;
   private readonly chunkOverlap: number;
+  private readonly maxChunkTokens: number;
 
   /**
    * Create a new TextChunker.
    *
    * @param chunkSize - Target number of words per chunk (default: 256)
    * @param chunkOverlap - Number of words to overlap between chunks (default: 100)
+   * @param maxChunkTokens - Embedder window per chunk, in tokens (default: 512).
+   *   Two tokens are reserved for the encoder's [CLS]/[SEP] specials, so the
+   *   content budget is maxChunkTokens - 2; values below 3 are rejected.
    * @throws Error if chunkSize <= 0, chunkOverlap < 0, or chunkOverlap >= chunkSize
+   * @throws Error if maxChunkTokens is not a finite number >= 3
    */
-  constructor(chunkSize: number = 256, chunkOverlap: number = 100) {
+  constructor(chunkSize: number = 256, chunkOverlap: number = 100, maxChunkTokens: number = 512) {
     if (chunkSize <= 0) {
       throw new Error(`chunk_size must be positive, got ${chunkSize}`);
     }
@@ -54,8 +222,14 @@ export class TextChunker {
         `chunk_overlap (${chunkOverlap}) must be less than chunk_size (${chunkSize})`
       );
     }
+    if (!Number.isFinite(maxChunkTokens) || maxChunkTokens < 3) {
+      throw new Error(
+        `max_chunk_tokens must be a finite number >= 3 (two tokens are reserved for the encoder specials), got ${maxChunkTokens}`
+      );
+    }
     this.chunkSize = chunkSize;
     this.chunkOverlap = chunkOverlap;
+    this.maxChunkTokens = maxChunkTokens;
   }
 
   /**
@@ -385,14 +559,52 @@ export class TextChunker {
       });
     }
 
+    // Embedder-window guard (#35-B3): the state machine bounds chunks in
+    // WORD units, but the embedding model truncates silently at a TOKEN
+    // window (512 for the shipped BERT embedder). Re-split any chunk whose
+    // estimate exceeds the content budget, then re-index. In-budget chunks
+    // (all normal prose at production defaults) are untouched.
+    const guarded = this.enforceTokenBudget(chunks);
+
     // F8: assign charOffset + page attribution in a post-processing pass. Build
     // a whitespace-normalized view of the full text and locate each chunk's
     // (similarly normalized) text with a forward-only cursor, so attribution is
     // robust against paragraph-boundary joins. Page boundaries are computed in
     // the SAME normalized space from the cleaned page texts.
-    this.assignOffsetsAndPages(chunks, cleanedText, pages);
+    this.assignOffsetsAndPages(guarded, cleanedText, pages);
 
-    return chunks;
+    return guarded;
+  }
+
+  /**
+   * Embedder-window guard (#35-B3): re-split emitted chunks that exceed the
+   * content token budget (maxChunkTokens minus the two encoder specials) and
+   * re-number chunkIndex sequentially over the final array. Pieces carry an
+   * F7-discipline overlap tail (floor(chunkOverlap/2) words).
+   */
+  private enforceTokenBudget(chunks: DocumentChunk[]): DocumentChunk[] {
+    const contentBudget = this.maxChunkTokens - ENCODER_SPECIAL_TOKENS;
+    let overflow = false;
+    for (const chunk of chunks) {
+      if (estimateChunkTokens(chunk.text) > contentBudget) {
+        overflow = true;
+        break;
+      }
+    }
+    if (!overflow) return chunks;
+
+    const overlapTail = Math.floor(this.chunkOverlap / 2);
+    const out: DocumentChunk[] = [];
+    for (const chunk of chunks) {
+      if (estimateChunkTokens(chunk.text) <= contentBudget) {
+        out.push(chunk);
+        continue;
+      }
+      for (const piece of splitTextToTokenBudget(chunk.text, this.maxChunkTokens, overlapTail)) {
+        out.push({ ...chunk, text: piece });
+      }
+    }
+    return out.map((chunk, i) => ({ ...chunk, chunkIndex: i }));
   }
 
   /**
