@@ -43,6 +43,21 @@
  *   normal-prose fixture: 37 chunks, chunk-texts sha256
  *   ad75c9cc5c99e456086b05e5090f8cb8206bbf7fe61c41c70ed4d5a21f9be713
  *
+ * HOST DEPENDENCY + SKIP SEMANTICS (round 4, CI fix — honest disclosure):
+ * the oracle reads tokenizer.json from the git-ignored model directory
+ * (web_ui/public/models/embeddings/... — .git/info/exclude excludes models/,
+ * so fresh clones and CI runners do not have it). The module-level loader
+ * therefore yields null when the file is absent, and every ORACLE-dependent
+ * test (self-check, adversarial battery, exact-boundary, pack leg)
+ * self-skips via it.skipIf — their names keep the frozen 'token budget
+ * guard' -t token, so they still match the driver filter. The NON-oracle
+ * tests (surface, byte-identical prose pin, ctor validation) are
+ * UNCONDITIONAL and never skip. Consequence: plain `npm test` on a fresh
+ * clone runs the non-oracle subset (3 tests); the acceptance path
+ * (check-c2.sh) junctions the models dir from the main checkout, so the
+ * frozen check always runs all 7. A PRESENT-but-corrupt tokenizer.json
+ * still fails loudly (JSON.parse throws inside loadTokenizerModel).
+ *
  * All test names embed the 'token budget guard' token — the check driver
  * filters on it (vitest -t 'token budget guard').
  */
@@ -91,6 +106,10 @@ interface WordPieceModel {
 function loadTokenizerModel(): WordPieceModel {
   const file = path.join(MODEL_DIR, 'tokenizer.json');
   if (!fs.existsSync(file)) {
+    // Defense in depth: the module-level loader below guards on existsSync
+    // and yields null instead, so reaching here means the file vanished
+    // between the check and the load. A PRESENT-but-corrupt file (bad JSON)
+    // throws from JSON.parse below — that must stay a loud failure.
     throw new Error(
       `WordPiece oracle requires the embedding tokenizer at ${file}. ` +
       'The model files are git-ignored; run the app once to materialize them, ' +
@@ -101,15 +120,29 @@ function loadTokenizerModel(): WordPieceModel {
   return parsed.model;
 }
 
-const TOKENIZER_MODEL = loadTokenizerModel();
-const VOCAB = new Set(Object.keys(TOKENIZER_MODEL.vocab));
-const MAX_INPUT_CHARS_PER_WORD = TOKENIZER_MODEL.max_input_chars_per_word ?? 100;
-const CONTINUATION_PREFIX = TOKENIZER_MODEL.continuing_subword_prefix ?? '##';
-const UNK = TOKENIZER_MODEL.unk_token ?? '[UNK]';
+/**
+ * The tokenizer model, or null when this host lacks the git-ignored model
+ * directory (fresh clones / CI runners). Oracle-dependent tests self-skip
+ * on null (it.skipIf); the non-oracle tests never skip.
+ */
+const TOKENIZER_MODEL: WordPieceModel | null = fs.existsSync(
+  path.join(MODEL_DIR, 'tokenizer.json')
+)
+  ? loadTokenizerModel()
+  : null;
+
+const VOCAB: Set<string> | null = TOKENIZER_MODEL
+  ? new Set(Object.keys(TOKENIZER_MODEL.vocab))
+  : null;
+const MAX_INPUT_CHARS_PER_WORD = TOKENIZER_MODEL?.max_input_chars_per_word ?? 100;
+const CONTINUATION_PREFIX = TOKENIZER_MODEL?.continuing_subword_prefix ?? '##';
+const UNK = TOKENIZER_MODEL?.unk_token ?? '[UNK]';
 
 /** Longest vocab token bounds the greedy longest-match-first lookahead. */
 let LONGEST_VOCAB_TOKEN = 0;
-for (const t of VOCAB) if (t.length > LONGEST_VOCAB_TOKEN) LONGEST_VOCAB_TOKEN = t.length;
+if (VOCAB !== null) {
+  for (const t of VOCAB) if (t.length > LONGEST_VOCAB_TOKEN) LONGEST_VOCAB_TOKEN = t.length;
+}
 
 const CJK_RE =
   /[\u4e00-\u9fff\u3400-\u4dbf\u{20000}-\u{2a6df}\u{2a700}-\u{2b73f}\u{2b740}-\u{2b81f}\u{2b820}-\u{2ceaf}\uf900-\ufaff\u{2f800}-\u{2fa1f}]/u;
@@ -145,6 +178,11 @@ function basicTokenize(text: string): string[] {
 
 /** Greedy longest-match-first WordPiece with ## continuations and [UNK] fallback. */
 function wordpiece(word: string): string[] {
+  if (VOCAB === null) {
+    // Unreachable in practice: every caller is it.skipIf-guarded on
+    // TOKENIZER_MODEL === null. Loud failure if a future test forgets.
+    throw new Error('WordPiece oracle unavailable on this host (tokenizer.json missing).');
+  }
   if (word.length > MAX_INPUT_CHARS_PER_WORD) return [UNK];
   const tokens: string[] = [];
   let start = 0;
@@ -392,7 +430,9 @@ describe('TextChunker token budget guard (#35-B3 / AC2)', () => {
     expect(n).toBeGreaterThan(0);
   });
 
-  it('token budget guard: oracle self-check — the offline WordPiece reader matches the real transformers.js tokenizer', async () => {
+  it.skipIf(TOKENIZER_MODEL === null)(
+    'token budget guard: oracle self-check — the offline WordPiece reader matches the real transformers.js tokenizer',
+    async () => {
     // Fidelity evidence for the oracle used by the battery below: loads the
     // REAL tokenizer offline from the same model dir and compares counts on
     // the adversarial shapes (this passes at base — it validates the oracle,
@@ -422,7 +462,9 @@ describe('TextChunker token budget guard (#35-B3 / AC2)', () => {
     }
   });
 
-  it('token budget guard: adversarial battery — every emitted chunk fits 512 ACTUAL WordPiece tokens, markers preserved in order', () => {
+  it.skipIf(TOKENIZER_MODEL === null)(
+    'token budget guard: adversarial battery — every emitted chunk fits 512 ACTUAL WordPiece tokens, markers preserved in order',
+    () => {
     const battery = makeBatteryFixtures();
     // Also run the byte-identical normal fixture through the same oracle
     // (its markers are pinned by byte-identity instead — see that test).
@@ -452,7 +494,9 @@ describe('TextChunker token budget guard (#35-B3 / AC2)', () => {
     }
   });
 
-  it('token budget guard: exact-boundary — 64 deoxyribonucleic words (content estimate 512, real 514 incl specials) are split so every emitted piece fits 512 real tokens', () => {
+  it.skipIf(TOKENIZER_MODEL === null)(
+    'token budget guard: exact-boundary — 64 deoxyribonucleic words (content estimate 512, real 514 incl specials) are split so every emitted piece fits 512 real tokens',
+    () => {
     // Critic round-3 shape: the fixture's word-shape-aware content estimate
     // is exactly the default maxChunkTokens (64 x ceil(16/2) = 512) while
     // its REAL encoding incl. [CLS]/[SEP] is 514 — the guard must reserve
@@ -517,7 +561,9 @@ describe('TextChunker token budget guard (#35-B3 / AC2)', () => {
     expect(() => new TextChunker(256, 100, 512)).not.toThrow();
   });
 
-  it('token budget guard: pack slide chunks (bypassing TextChunker) are split to fit 512 actual tokens with the leading marker preserved', () => {
+  it.skipIf(TOKENIZER_MODEL === null)(
+    'token budget guard: pack slide chunks (bypassing TextChunker) are split to fit 512 actual tokens with the leading marker preserved',
+    () => {
     // Critic finding 4 (scope completion): pack slide docs are emitted as a
     // single chunk directly from pack-ingest (buildPackChunks ->
     // chunks.push({text, ...}) for docs/slide-*.json), bypassing TextChunker
