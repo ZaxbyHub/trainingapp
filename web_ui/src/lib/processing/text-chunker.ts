@@ -30,11 +30,15 @@ const SPLIT_SLACK = 8;
  * Common English words treated as embedding-vocabulary hits: they cost the
  * len/4 class bound. Anything else (technical tokens, identifiers, codes,
  * non-English romanizations — text a WordPiece vocab usually misses) costs
- * the conservative len/3 bound for its short-letter class. Measured
- * calibration: short non-vocabulary words tokenize at ~len/3.1 real pieces
- * (400x'acgt' = 512 real tokens) while common prose words cost ~1 token.
- * The list covers general function words plus this domain's frequent
- * content words; a miss only makes the estimate MORE conservative.
+ * 1 token per letter for its short-letter class: a TRUE per-character upper
+ * bound (WordPiece emits at most one piece per character). Measured
+ * calibration: short non-vocabulary words tokenize at ~len/2 to ~len/3
+ * real pieces (400x'acg' = 514 real tokens; 400x'qzx' = 770) and the
+ * per-letter bound is the only guarantee that never under-counts the
+ * class; the trade is over-splitting uncommon-word prose, which is the
+ * safe failure mode. The list covers general function words plus this
+ * domain's frequent content words; a miss only makes the estimate MORE
+ * conservative.
  */
 const COMMON_ENGLISH_WORDS: ReadonlySet<string> = new Set([
   // function words
@@ -92,9 +96,9 @@ function wordTokenCost(word: string): number {
   const letterBound =
     letters > 8
       ? Math.ceil(letters / 2)
-      : COMMON_ENGLISH_WORDS.has(word.toLowerCase())
+      : COMMON_ENGLISH_WORDS.has(word.toLowerCase().replace(/[^a-z]/g, ''))
         ? Math.ceil(letters / 4)
-        : Math.ceil(letters / 3);
+        : letters; // true per-character upper bound for non-vocabulary words
   return Math.ceil(letterBound + digits + other + punct);
 }
 
@@ -183,24 +187,33 @@ export function splitTextToTokenBudget(
   let pieceStartWord = 0;
   let pieceEndWord = 0;
   let pieceCost = 0;
-  const pushPiece = (): void => {
+  const pushPiece = (incomingCost: number = 0): void => {
     if (pieceEndWord <= pieceStartWord) return;
     pieces.push(text.slice(tokens[pieceStartWord]!.start, tokens[pieceEndWord - 1]!.end).trim());
-    // Carry an overlap tail that itself fits the content budget (walk back
-    // from the end while the tail's cost fits; a tail over budget would
-    // birth an over-budget piece with no fresh word to trigger a re-split).
-    // F7 discipline: the tail is strictly smaller than the piece (at least
-    // one fresh word per emitted piece), so consumption always progresses.
-    let tailStart = pieceEndWord - 1;
-    let tailCost = tokens[tailStart]!.cost;
+    // Carry an overlap tail that itself fits the content budget TOGETHER
+    // with the incoming trigger token (a tail over budget — with or without
+    // the next word — would birth an over-budget piece no fresh word would
+    // re-split). F7 discipline: the tail is strictly smaller than the piece
+    // (at least one fresh word per emitted piece), so consumption always
+    // progresses; overlapWords = 0 carries no tail at all.
+    let tailStart = overlapWords > 0 ? pieceEndWord - 1 : pieceEndWord;
+    let tailCost = tailStart < pieceEndWord ? tokens[tailStart]!.cost : 0;
     while (
       overlapWords > 0 &&
       tailStart - 1 > pieceStartWord &&
       pieceEndWord - 1 - (tailStart - 1) < overlapWords &&
-      tailCost + tokens[tailStart - 1]!.cost <= contentBudget
+      tailCost + tokens[tailStart - 1]!.cost <= contentBudget - incomingCost
     ) {
       tailStart--;
       tailCost += tokens[tailStart]!.cost;
+    }
+    while (tailCost + incomingCost > contentBudget && tailStart < pieceEndWord - 1) {
+      tailStart++;
+      tailCost -= tokens[tailStart - 1]!.cost;
+    }
+    if (tailCost + incomingCost > contentBudget) {
+      tailStart = pieceEndWord;
+      tailCost = 0;
     }
     pieceStartWord = tailStart;
     pieceCost = tailCost;
@@ -216,7 +229,7 @@ export function splitTextToTokenBudget(
       continue;
     }
     if (pieceCost + token.cost > contentBudget && pieceEndWord > pieceStartWord) {
-      pushPiece();
+      pushPiece(token.cost);
     }
     pieceEndWord++;
     pieceCost += token.cost;
