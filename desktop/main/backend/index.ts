@@ -25,7 +25,7 @@ import { StoreDocumentSurface } from './store/document-surface.js';
 import { PackManager } from './store/pack-manager.js';
 import { createPackSurface } from './packs/surface.js';
 import { resolvePacksSecurity } from './packs/pack-extract.js';
-import { loadSettingsSnapshot, saveSettingsSnapshot } from './settings-store.js';
+import { loadSettingsSnapshot, saveSettingsSnapshot, settingsPathFor } from './settings-store.js';
 import {
   readGpuProbeVerdict,
   resetGpuVerdictLifecycle,
@@ -808,22 +808,25 @@ export class NodeBackendHost implements BackendHost {
       // API key there); those settings replay from external.json below.
       // Issue #256: "or keep" is enforced at boot — a parsed snapshot that
       // carries external.* keys is rewritten without them before the boot
-      // continues. The rewrite is fail-closed: a failed scrub rejects the
-      // start, so load never returns with a plaintext external key still on
-      // disk. A missing or corrupt file reads as null and never attempts
-      // the write (the settings-store nonfatal-sidecar contract).
+      // continues. The key check is case-insensitive (issue #256 review
+      // PRR-003: the redaction gate is case-insensitive, so the file scrub
+      // must agree on what an external key is). The rewrite is fail-closed:
+      // a failed scrub rejects the start, so load never returns with a
+      // plaintext external key still on disk. A missing or corrupt file
+      // reads as null and never attempts the write (the settings-store
+      // nonfatal-sidecar contract).
       const rawSnapshot = loadSettingsSnapshot(storePath);
       if (rawSnapshot !== null) {
-        const externalKeys = Object.keys(rawSnapshot).filter((key) => key.startsWith('external.'));
+        const externalKeys = Object.keys(rawSnapshot).filter((key) => key.toLowerCase().startsWith('external.'));
         if (externalKeys.length > 0) {
           const scrubbed = Object.fromEntries(
-            Object.entries(rawSnapshot).filter(([key]) => !key.startsWith('external.')),
+            Object.entries(rawSnapshot).filter(([key]) => !key.toLowerCase().startsWith('external.')),
           );
           try {
             saveSettingsSnapshot(storePath, scrubbed);
           } catch (err) {
             throw new Error(
-              `settings.json carries ${externalKeys.length} external.* key(s) that could not be scrubbed (${
+              `settings.json (${settingsPathFor(storePath)}) carries ${externalKeys.length} external.* key(s) that could not be scrubbed (${
                 err instanceof Error ? err.message : String(err)
               }); refusing to start with a plaintext external key on disk`,
             );
@@ -831,7 +834,7 @@ export class NodeBackendHost implements BackendHost {
         }
       }
       let storedPatch = Object.fromEntries(
-        Object.entries(rawSnapshot ?? {}).filter(([key]) => !key.startsWith('external.')),
+        Object.entries(rawSnapshot ?? {}).filter(([key]) => !key.toLowerCase().startsWith('external.')),
       );
       if (Object.keys(storedPatch).length > 0) {
         const applied = this.engine.applySettingsPatch(storedPatch);

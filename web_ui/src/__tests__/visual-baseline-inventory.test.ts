@@ -40,12 +40,15 @@ describe('committed win32 visual baseline inventory (issue #256 AC2)', () => {
     for (const state of STATES) {
       // The STATES-array entries use `id: '<state>'`; the overlay/crash
       // describes use `test('<state>'`; the boot-screen states are generated
-      // from the `boot-screen-${mode}` template over ['loading', 'error'].
+      // from the capture loop `for (const mode of ['loading', 'error']...)`
+      // — pin the LOOP (which produces the PNG names), not the type
+      // annotation or prose that merely mention the mode words.
       if (state.startsWith('boot-screen-')) {
         const mode = state.slice('boot-screen-'.length);
         expect(
-          specSource.includes("`boot-screen-${mode}`") && specSource.includes(`'${mode}'`),
-          `boot-screen mode '${mode}' not found in lumen-baseline.spec.ts — update STATES`,
+          specSource.includes("`boot-screen-${mode}`") &&
+            specSource.includes("for (const mode of ['loading', 'error']"),
+          `boot-screen capture loop for '${mode}' not found in lumen-baseline.spec.ts — update STATES`,
         ).toBe(true);
         continue;
       }

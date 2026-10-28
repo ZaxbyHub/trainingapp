@@ -74,6 +74,13 @@ add(
 add('namespaced-json-external-key', '"external.apiKey": "synth-external-value-seven"', sanitized);
 add('namespaced-json-other-namespace-key', '"db.password": "synth-db-value-eight"', sanitized);
 add('dotted-non-secret-clean', 'loaded {"release.version": "1.2.3"} from config', clean);
+// Issue #256 round 2: hyphenated morphemes (the shapes CONFIGURATION.md
+// documents and the SecretStore's own entry names use) must redact too.
+add(
+  'hyphenated-secret-keys',
+  'store {"external-api-key": "synth-store-value-eleven"} external-api-key-origin=binding; api-key=synth-api-value-twelve; session-id=synth-session-value-thirteen',
+  sanitized,
+);
 // The prose guard: "the secret of" and "tokenizer" must stay clean (no separator, no bare key).
 add('kv-prose-not-mangled', 'the secret of the universe remains unknown; tokenizer loaded vocab 51206', clean);
 add('sk-provider-key', 'provider rejected key sk-test-AbCdAbCdAbCdAbCdAbCd for model x', sanitized);

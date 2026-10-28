@@ -1,6 +1,17 @@
 # Changelog
 
 ## [Unreleased]
+- **Issue #256 follow-ups: settings.json `external.*` scrub, namespaced-key redaction,
+  pixel-baseline regeneration**: a `settings.json` carrying `external.*` keys (older
+  build, hand edit, backup restore) is rewritten without them at desktop startup — no
+  plaintext external key stays on disk from a parseable file; an unparseable file is left
+  untouched (external stays off), and a failed rewrite refuses to start with a visible
+  error dialog (packaged builds). The diagnostics redaction gate now covers dotted
+  namespace segments (`"external.apiKey"`, `"db.password"`) and hyphenated key forms
+  (`api-key`, `session-id`, the SecretStore `external-api-key` entry names) on both the
+  desktop and renderer twins, and the export belt keeps multi-line JSON parseable. The
+  46 stale win32 pixel baselines (16 from PR #255's Settings Diagnostics block, 30
+  environmental) are regenerated and pinned by a committed 88-PNG inventory spec.
 - **Diagnostics logging for both apps + the #41 D3 copy fix (issues #248 #41)**: the desktop
   app now writes a default, size-rotated log (`<userData>/logs/main.log`, 3 files of 5 MiB,
   rotate-before-write) holding main-process console lines, renderer entries forwarded over a

@@ -14,9 +14,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { NodeBackendHost } from '../../main/backend';
-import { LlamaEngine } from '../../main/backend/inference/llama-engine';
-import { createMemorySecretStore } from '../../main/security/secret-store';
+import { NodeBackendHost } from '../../main/backend/index.js';
+import { LlamaEngine } from '../../main/backend/inference/llama-engine.js';
+import { createMemorySecretStore } from '../../main/security/secret-store.js';
 
 // The scrub spies/fails through the REAL settings-store module (importOriginal),
 // so every test below drives the genuine load path; only saveSettingsSnapshot
@@ -149,6 +149,20 @@ describe('settings.json external.* scrub at boot (issue #256 AC3/AC4)', () => {
     const applied = await responseSettings(handle);
     expect(applied['external.enabled']).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(profileDir, 'settings.json'), 'utf8'))).toEqual({});
+  });
+
+  it('case-variant External.apiKey keys are scrubbed like their lowercase siblings (declared extra, round-2 PRR-003)', async () => {
+    const profileDir = tmp('scrub-case-');
+    fs.writeFileSync(
+      path.join(profileDir, 'settings.json'),
+      JSON.stringify({ rag_n_results: 5, 'External.apiKey': KEY }),
+    );
+    const { handle } = await boot(profileDir);
+    const applied = await responseSettings(handle);
+    expect(applied['external.apiKeySet']).toBe(false);
+    const onDisk = fs.readFileSync(path.join(profileDir, 'settings.json'), 'utf8');
+    expect(onDisk).not.toContain(KEY);
+    expect(onDisk).not.toContain('External.');
   });
 
   it('a clean settings.json without external.* is not rewritten at boot (declared extra)', async () => {

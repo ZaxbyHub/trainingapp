@@ -6,6 +6,8 @@
     "rootDir": ".."
   },
   "include": [
+    "src/__tests__/settings-external-scrub.test.ts",
+    "src/__tests__/diagnostics-redact-namespaced-key.test.ts",
     "src/__tests__/gpu-admission-recovery.test.ts",
     "src/__tests__/gpu-test-coordination.test.ts",
     "src/__tests__/wizard-gpu-verdict-preference.test.ts",

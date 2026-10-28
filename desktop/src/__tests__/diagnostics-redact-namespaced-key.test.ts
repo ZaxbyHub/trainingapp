@@ -20,6 +20,11 @@ const EXTERNAL_JSON_LINE = '"external.apiKey": "synth-external-value-seven"';
 const OTHER_NAMESPACE_LINE = '"db.password": "synth-db-value-eight"';
 const DOTTED_CLEAN_LINE = 'loaded {"release.version": "1.2.3"} from config';
 const BARE_CONTROL_LINE = 'external.apiKey=synth-external-value-seven';
+// Issue #256 round 2: the hyphenated morphemes CONFIGURATION.md documents and
+// the SecretStore's own entry names use. MUST match the generator's input line
+// byte-for-byte (the corpus persisted form is computed from the same line).
+const HYPHENATED_LINE =
+  'store {"external-api-key": "synth-store-value-eleven"} external-api-key-origin=binding; api-key=synth-api-value-twelve; session-id=synth-session-value-thirteen';
 
 interface Twins {
   persistedForm(line: string): string;
@@ -52,6 +57,15 @@ describe('namespaced secret keys redact through the shared gate on both twins (A
     expect(twin.persistedForm(BARE_CONTROL_LINE)).toBe('external.apiKey=[redacted]');
   });
 
+  it.each(twins)('hyphenated secret keys redact via %s (round-2 PRR-003)', (_name, twin) => {
+    expect(twin.isSensitiveLine(HYPHENATED_LINE)).toBe(true);
+    const persisted = twin.persistedForm(HYPHENATED_LINE);
+    expect(persisted).toContain('"external-api-key": "[redacted]"');
+    expect(persisted).not.toContain('synth-store-value-eleven');
+    expect(persisted).not.toContain('synth-api-value-twelve');
+    expect(persisted).not.toContain('synth-session-value-thirteen');
+  });
+
   it('the corpus carries the namespaced vectors with the twins\' current bytes', () => {
     const corpus = JSON.parse(fs.readFileSync(CORPUS_PATH, 'utf8')) as {
       vectors: Array<{ name: string; input: string; persisted: string; console: { desktop: string; renderer: string } }>;
@@ -61,6 +75,10 @@ describe('namespaced secret keys redact through the shared gate on both twins (A
       ['namespaced-json-other-namespace-key', OTHER_NAMESPACE_LINE, '"db.password": "[redacted]"', 'sanitized'],
       ['dotted-non-secret-clean', DOTTED_CLEAN_LINE, DOTTED_CLEAN_LINE, 'raw'],
     ] as const;
+    const hyphenVector = corpus.vectors.find((v) => v.name === 'hyphenated-secret-keys');
+    expect(hyphenVector, 'corpus vector hyphenated-secret-keys missing').toBeDefined();
+    expect(desktopRedact.persistedForm(HYPHENATED_LINE)).toBe(hyphenVector?.persisted);
+    expect(webRedact.persistedForm(HYPHENATED_LINE)).toBe(hyphenVector?.persisted);
     for (const [name, input, persisted, outcome] of expected) {
       const vector = corpus.vectors.find((v) => v.name === name);
       expect(vector, `corpus vector ${name} missing`).toBeDefined();

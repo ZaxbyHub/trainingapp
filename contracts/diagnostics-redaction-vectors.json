@@ -93,6 +93,15 @@
       }
     },
     {
+      "name": "hyphenated-secret-keys",
+      "input": "store {\"external-api-key\": \"synth-store-value-eleven\"} external-api-key-origin=binding; api-key=synth-api-value-twelve; session-id=synth-session-value-thirteen",
+      "persisted": "store {\"external-api-key\": \"[redacted]\"} external-api-key-origin=binding; api-key=[redacted]",
+      "console": {
+        "desktop": "sanitized",
+        "renderer": "sanitized"
+      }
+    },
+    {
       "name": "kv-prose-not-mangled",
       "input": "the secret of the universe remains unknown; tokenizer loaded vocab 51206",
       "persisted": "the secret of the universe remains unknown; tokenizer loaded vocab 51206",

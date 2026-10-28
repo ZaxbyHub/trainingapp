@@ -460,8 +460,10 @@ loopback); connects to the validated address with the lookup pinned; and follows
   `settings.json`. `POST /settings/external/test` tests a draft connection without saving.
   A `settings.json` that still carries `external.*` keys (older build, hand edit, backup
   restore) is rewritten without them at startup — the external model does not apply from
-  that file and no plaintext key is kept on disk; if the rewrite itself fails, the backend
-  refuses to start rather than keep the key.
+  that file and no plaintext key is kept on disk from a file the app can parse. A file that
+  cannot be parsed at all is left untouched (treated as absent; the external model stays
+  off), and if the rewrite itself fails, the backend refuses to start with a visible error
+  dialog naming the file rather than keep the key.
 - **No local model files needed:** with the external model on, the desktop app does not need
   the local GGUF model files (no missing-model overlay, no local warm-up), and
   `GET /status/models` reports engine `external`.
@@ -724,7 +726,7 @@ corpus-pinned classifier (`contracts/diagnostics-redaction-vectors.json`):
 | --- | --- | --- |
 | bearer scheme | `bearer <token>` | `[redacted]` |
 | JWT | `eyJ...` (2-3 base64url segments) | `[redacted]` |
-| kv secrets | `password`, `passwd`, `token`, `secret`, `api-key`/`api_key`/`apikey`, `authorization`, `cookie`, `session-id`/`session_id`/`sessionid` in `key=value`, `key: value` and JSON shapes | `[redacted]` |
+| kv secrets | `password`, `passwd`, `token`, `secret`, `credential`, `api-key`/`api_key`/`apikey`, `authorization`, `cookie`, `session-id`/`session_id`/`sessionid`, in `key=value`, `key: value` and JSON shapes — optionally under dotted namespace segments (`"external.apiKey"`, `"db.password"`), including the SecretStore entry names (`external-api-key`) | `[redacted]` |
 | provider keys | `sk-...` | `[redacted]` |
 | long hex | runs of 16+ hex characters | `[redacted-hex]` |
 | user-home paths | Windows and unix home prefixes including the username | `<user-dir>` prefix |

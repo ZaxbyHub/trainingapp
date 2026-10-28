@@ -275,11 +275,26 @@ describe('e1 packaged glue hardening (PR #172 review)', () => {
       path.join(profileDir, 'settings.json'),
       JSON.stringify({ rag_n_results: 5, 'external.enabled': true, 'external.apiKey': 'sk-engine-SENTINEL-5150' }),
     );
+    // The refusal dialog is PACKAGED-GATED (round-2 PRR-004: a synchronous
+    // modal would hang the dev/Playwright runs); arm the flag and stage a
+    // COMPLETE manifest like the PRR-030 sibling leg so the integrity gate
+    // passes and the flow reaches the backend start (where the scrub fails).
+    const stage = makeTempDir('131-hard-complete-');
+    buildGateStage(stage);
+    setResourcesPath(stage);
+    app.isPackaged = true;
     bootstrap();
     await waitFor(() => (dialog.showErrorBox as ReturnType<typeof vi.fn>).mock.calls.length > 0, 'dialog shown');
     const call = (dialog.showErrorBox as ReturnType<typeof vi.fn>).mock.calls[0] as unknown as [string, string];
     expect(call[0]).toBe('TrainingApp could not start');
     expect(call[1]).toContain('could not be scrubbed');
+    // The dialog names the SCRUBBED FILE, not the store (round-2 review):
+    // settings.json lives beside store.sqlite in the profile dir.
+    expect(call[1]).toContain(path.join(profileDir, 'settings.json'));
     expect(app.quit).toHaveBeenCalled();
+    // The refusal must actually refuse: the backend channel is never
+    // registered, so a mutant that deletes the return after app.quit()
+    // (bootstrap falling through with an undefined handle) fails here.
+    expect(registeredChannels()).not.toContain('desktop:get-backend');
   });
 });
