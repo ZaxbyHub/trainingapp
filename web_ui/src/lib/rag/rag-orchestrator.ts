@@ -64,6 +64,11 @@ export const HISTORY_BUDGET_TOKENS = 2048;
  * Retention rule (user-first):
  *   1. Walk newest→oldest keeping turns that fit the budget; the NEWEST turn
  *      is always kept (tail-truncated to the budget if it alone exceeds).
+ *      The walk STOPS at the first older turn that does not fit: keeping an
+ *      older turn past a skipped newer one would splice a non-contiguous
+ *      window with consecutive same-role turns — the exact shape
+ *      history-snapshot.ts documents as rejected by third-party jinja chat
+ *      templates.
  *   2. If the kept window has no USER turn, the newest USER turn is forcibly
  *      included (tail-truncated to half the budget) and the window is rebuilt
  *      around the newest exchange — an assistant-only window would degrade
@@ -72,10 +77,10 @@ export const HISTORY_BUDGET_TOKENS = 2048;
  *   3. Drop leading assistant turns while length > 1 (user-first re-anchor,
  *      mirroring buildHistorySnapshot's PRR-001 concern).
  *   4. A final exact fit pass trims the newest turn's tail until the joined
- *      text (including the '\n' separators used by the reservation sum)
- *      fits the budget.
- * Returns chronological order. Within-budget histories pass through with
- * content unchanged.
+ *      text (including one separator per turn — one MORE than the
+ *      reservation's join, so the pass is conservative) fits the budget.
+ * Returns chronological order. A history that fits the budget passes
+ * through with content and window unchanged.
  */
 export function capHistoryToBudget(
   history: RAGHistoryTurn[],
@@ -106,6 +111,11 @@ export function capHistoryToBudget(
     if (used + cost <= budgetTokens) {
       newestFirst.push({ role: turn.role, content: turn.content });
       used += cost;
+    } else {
+      // Contiguity: stop at the first older turn that does not fit. Keeping
+      // older turns past a skipped newer one would splice a non-contiguous
+      // window (consecutive same-role turns, orphaned answers).
+      break;
     }
   }
   let windowed: RAGHistoryTurn[] = newestFirst.reverse();

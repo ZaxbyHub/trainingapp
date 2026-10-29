@@ -176,7 +176,9 @@ pinned at 0.1.9 exactly on both the Node and Python sides (ADR-0005).
   files, one writer queue, links recomputed in the chunks' transaction.
   [desktop/main/backend/ingest/text-chunker.ts](desktop/main/backend/ingest/text-chunker.ts)
   ports the browser semantic chunker (256-word / 100-overlap defaults, CJK
-  fallback) so both surfaces chunk identically.
+  fallback). The browser chunker additionally bounds chunks to the embedding
+  model's 512-token window (web_ui text-chunker only), so long dense
+  documents chunk differently on the two surfaces.
   [desktop/main/backend/ingest/config.ts](desktop/main/backend/ingest/config.ts)
   defaults: `maxConcurrentFiles 2`, `chunkWordCount 256`,
   `chunkOverlapWords 100`; caps 60 MiB per file, 512 MiB decompressed zip,

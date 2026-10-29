@@ -28,17 +28,18 @@ const SPLIT_SLACK = 8;
 
 /**
  * Common English words treated as embedding-vocabulary hits: they cost the
- * len/4 class bound. Anything else (technical tokens, identifiers, codes,
- * non-English romanizations — text a WordPiece vocab usually misses) costs
- * 1 token per letter for its short-letter class: a TRUE per-character upper
- * bound (WordPiece emits at most one piece per character). Measured
- * calibration: short non-vocabulary words tokenize at ~len/2 to ~len/3
- * real pieces (400x'acg' = 514 real tokens; 400x'qzx' = 770) and the
- * per-letter bound is the only guarantee that never under-counts the
- * class; the trade is over-splitting uncommon-word prose, which is the
- * safe failure mode. The list covers general function words plus this
- * domain's frequent content words; a miss only makes the estimate MORE
- * conservative.
+ * ceil(len/4) class bound (vocabulary hits cost ~1 real token, well under
+ * the bound). Anything else — technical tokens, identifiers, codes,
+ * non-English romanizations, text a WordPiece vocab usually misses — costs
+ * 1 token per letter at ANY length: a TRUE per-character upper bound
+ * (WordPiece emits at most one piece per character, so the estimate can
+ * never under-count the class). Measured calibration of the failure this
+ * bound prevents: rare-letter long words tokenize at up to 1.0 pieces per
+ * character while the previous ceil(len/2) average under-counted them up
+ * to 2x, letting chunks exceed the embedder window. The trade is
+ * over-splitting uncommon-word prose, which is the safe failure mode. The
+ * list covers general function words plus this domain's frequent content
+ * words; a miss only makes the estimate MORE conservative.
  */
 const COMMON_ENGLISH_WORDS: ReadonlySet<string> = new Set([
   // function words
@@ -68,18 +69,17 @@ const COMMON_ENGLISH_WORDS: ReadonlySet<string> = new Set([
 
 /**
  * Conservative per-word token cost for one whitespace-delimited word.
- * WordPiece splits each character class independently: a long
- * non-vocabulary letter word costs ~len/2 pieces (measured: a 16-char
- * technical word = 8 real pieces); short COMMON words cost ~len/4 (they
- * are vocabulary hits, ~1 real token); short uncommon words cost ~len/3
- * (measured: 400x'acgt' = 512 real tokens incl specials); digit /
- * non-ASCII / punctuation runs cost up to 1 token per char. The word cost
- * is the SUM of the per-class bounds (a max() would let one class's
- * over-count absorb another class's real tokens — measured +3 drift on
- * numeric-table pieces). Over-counting is the safe direction: marginal
- * over-splitting, never silent truncation. The bounds are calibrated
- * against the shipped embedder's WordPiece vocabulary and validated by the
- * acceptance spec's offline tokenizer oracle battery.
+ * WordPiece splits each character class independently, and every class
+ * bound here is a TRUE per-character upper bound: letters cost
+ * ceil(len/4) when the word is in COMMON_ENGLISH_WORDS (vocabulary hits,
+ * ~1 real token) and 1.0 per letter otherwise; digit, non-ASCII and
+ * punctuation runs cost up to 1 token per char (punctuation measured at
+ * exactly 1.0). The word cost is the SUM of the per-class bounds (a max()
+ * would let one class's over-count absorb another class's real tokens —
+ * measured +3 drift on numeric-table pieces). Over-counting is the safe
+ * direction: marginal over-splitting, never silent truncation. Calibrated
+ * against the shipped embedder's WordPiece vocabulary and validated by
+ * the acceptance spec's offline tokenizer oracle battery.
  */
 function wordTokenCost(word: string): number {
   let letters = 0;
@@ -93,12 +93,9 @@ function wordTokenCost(word: string): number {
     else if (code < 128) punct++;
     else other++;
   }
-  const letterBound =
-    letters > 8
-      ? Math.ceil(letters / 2)
-      : COMMON_ENGLISH_WORDS.has(word.toLowerCase().replace(/[^a-z]/g, ''))
-        ? Math.ceil(letters / 4)
-        : letters; // true per-character upper bound for non-vocabulary words
+  const letterBound = COMMON_ENGLISH_WORDS.has(word.toLowerCase().replace(/[^a-z]/g, ''))
+    ? Math.ceil(letters / 4)
+    : letters; // true per-character upper bound for non-vocabulary words
   return Math.ceil(letterBound + digits + other + punct);
 }
 
@@ -117,11 +114,16 @@ export function estimateChunkTokens(text: string): number {
   return total;
 }
 
-/** Per-character cost used when a single word alone exceeds the budget. */
-function charTokenCost(code: number): number {
-  const isAsciiLetterOrDigit =
-    (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || (code >= 48 && code <= 57);
-  return isAsciiLetterOrDigit || code < 128 ? 0.5 : 1;
+/**
+ * Per-character cost used when a single word alone exceeds the budget:
+ * uniform 1.0 — the same per-character upper bound wordTokenCost charges
+ * every class, so char-sliced pieces never re-estimate above the budget
+ * (a 0.5/char letter/digit assumption here under-priced the 1.0/char
+ * digit and punctuation classes and let char-sliced pieces ship ~2x over
+ * the window).
+ */
+function charTokenCost(): number {
+  return 1;
 }
 
 /**
@@ -135,11 +137,8 @@ function charSlice(word: string, contentBudget: number): string[] {
   while (start < word.length) {
     let cost = 0;
     let end = start;
-    while (
-      end < word.length &&
-      (cost === 0 || cost + charTokenCost(word.codePointAt(end)!) <= contentBudget)
-    ) {
-      cost += charTokenCost(word.codePointAt(end)!);
+    while (end < word.length && (cost === 0 || cost + charTokenCost() <= contentBudget)) {
+      cost += charTokenCost();
       end++;
     }
     pieces.push(word.slice(start, end));
@@ -186,22 +185,24 @@ export function splitTextToTokenBudget(
   const pieces: string[] = [];
   let pieceStartWord = 0;
   let pieceEndWord = 0;
+  let freshStartWord = 0; // first word of the piece that is NOT carried overlap tail
   let pieceCost = 0;
   const pushPiece = (incomingCost: number = 0): void => {
     if (pieceEndWord <= pieceStartWord) return;
     pieces.push(text.slice(tokens[pieceStartWord]!.start, tokens[pieceEndWord - 1]!.end).trim());
-    // Carry an overlap tail that itself fits the content budget TOGETHER
-    // with the incoming trigger token (a tail over budget — with or without
-    // the next word — would birth an over-budget piece no fresh word would
-    // re-split). F7 discipline: the tail is strictly smaller than the piece
-    // (at least one fresh word per emitted piece), so consumption always
-    // progresses; overlapWords = 0 carries no tail at all.
-    let tailStart = overlapWords > 0 ? pieceEndWord - 1 : pieceEndWord;
+    // Carry an overlap tail that (a) fits the content budget TOGETHER with
+    // the incoming trigger token, and (b) takes at most HALF of the piece's
+    // fresh (non-carried) words, so every emitted piece makes geometric
+    // progress — a fixed word-count tail starved the fresh budget when
+    // per-word costs approached the budget (35x text duplication measured
+    // on dense fixtures). overlapWords = 0 carries no tail at all.
+    const freshCount = pieceEndWord - freshStartWord;
+    const maxTailWords = Math.min(overlapWords, Math.floor(freshCount / 2));
+    let tailStart = maxTailWords > 0 ? pieceEndWord - 1 : pieceEndWord;
     let tailCost = tailStart < pieceEndWord ? tokens[tailStart]!.cost : 0;
     while (
-      overlapWords > 0 &&
-      tailStart - 1 > pieceStartWord &&
-      pieceEndWord - 1 - (tailStart - 1) < overlapWords &&
+      tailStart - 1 >= freshStartWord &&
+      pieceEndWord - 1 - (tailStart - 1) < maxTailWords &&
       tailCost + tokens[tailStart - 1]!.cost <= contentBudget - incomingCost
     ) {
       tailStart--;
@@ -216,15 +217,21 @@ export function splitTextToTokenBudget(
       tailCost = 0;
     }
     pieceStartWord = tailStart;
+    freshStartWord = Math.max(freshStartWord, tailStart);
     pieceCost = tailCost;
   };
   for (let ti = 0; ti < tokens.length; ti++) {
     const token = tokens[ti]!;
     if (token.cost > contentBudget) {
       pushPiece();
-      pieces.push(...charSlice(text.slice(token.start, token.end), contentBudget));
+      // Batch the char-slice pieces (a single spread of a >125k-element
+      // array throws RangeError in V8).
+      for (const piece of charSlice(text.slice(token.start, token.end), contentBudget)) {
+        pieces.push(piece);
+      }
       pieceStartWord = ti + 1;
       pieceEndWord = pieceStartWord;
+      freshStartWord = pieceStartWord;
       pieceCost = 0;
       continue;
     }
@@ -274,10 +281,10 @@ export class TextChunker {
    * @param chunkSize - Target number of words per chunk (default: 256)
    * @param chunkOverlap - Number of words to overlap between chunks (default: 100)
    * @param maxChunkTokens - Embedder window per chunk, in tokens (default: 512).
-   *   Two tokens are reserved for the encoder's [CLS]/[SEP] specials, so the
-   *   content budget is maxChunkTokens - 2; values below 3 are rejected.
+   *   Two tokens are reserved for the encoder's [CLS]/[SEP] specials and
+   *   eight more for split slack, so values below 11 are rejected.
    * @throws Error if chunkSize <= 0, chunkOverlap < 0, or chunkOverlap >= chunkSize
-   * @throws Error if maxChunkTokens is not a finite number >= 3
+   * @throws Error if maxChunkTokens is not a finite number >= 11
    */
   constructor(chunkSize: number = 256, chunkOverlap: number = 100, maxChunkTokens: number = 512) {
     if (chunkSize <= 0) {
@@ -291,9 +298,14 @@ export class TextChunker {
         `chunk_overlap (${chunkOverlap}) must be less than chunk_size (${chunkSize})`
       );
     }
-    if (!Number.isFinite(maxChunkTokens) || maxChunkTokens < 3) {
+    if (
+      !Number.isFinite(maxChunkTokens) ||
+      maxChunkTokens < ENCODER_SPECIAL_TOKENS + SPLIT_SLACK + 1
+    ) {
       throw new Error(
-        `max_chunk_tokens must be a finite number >= 3 (two tokens are reserved for the encoder specials), got ${maxChunkTokens}`
+        `max_chunk_tokens must be a finite number >= ${
+          ENCODER_SPECIAL_TOKENS + SPLIT_SLACK + 1
+        } (encoder specials + split slack are reserved, or the content budget goes non-positive), got ${maxChunkTokens}`
       );
     }
     this.chunkSize = chunkSize;

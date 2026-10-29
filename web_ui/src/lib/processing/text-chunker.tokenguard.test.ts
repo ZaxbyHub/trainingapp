@@ -40,6 +40,10 @@
  *   base emits a 402-word chunk = 885 real wp                      (RED at base)
  *   exact boundary (64 x 'deoxyribonucleic', round-3 fixture): content
  *   estimate exactly 512, real encoding 514 incl. specials — must SPLIT (RED at base)
+ *   rare-letter long words (400 x 'zxqjvwxkqjzb', round-5 fixture): each
+ *   12-letter word = 12 real pieces (1.0/char ceiling; old ceil(len/2)
+ *   charged 6 — under-counted 2.00x); the 400-word run = 5199 chars /
+ *   4802 real wp / 4800 est at the shipped 1.0/letter — must SPLIT (RED at base)
  *   normal-prose fixture: 37 chunks, chunk-texts sha256
  *   ad75c9cc5c99e456086b05e5090f8cb8206bbf7fe61c41c70ed4d5a21f9be713
  *
@@ -57,6 +61,17 @@
  * (check-c2.sh) junctions the models dir from the main checkout, so the
  * frozen check always runs all 7. A PRESENT-but-corrupt tokenizer.json
  * still fails loudly (JSON.parse throws inside loadTokenizerModel).
+ *
+ * AMENDMENT ROUND 5 (swarm review; sanctioned CHECK_WRONG round 5): two
+ * additions. (1) The battery gains the `rare-letter long words` fixture —
+ * rare-letter words sit AT the WordPiece 1.0-piece/char ceiling, the class
+ * the shipped estimator now charges 1.0/letter for (the old ceil(len/2)
+ * letter class under-counted 'zxqjvwxkqjzb' 2.00x: real 12 pieces vs old
+ * est 6). (2) The constructor floor moved to 11 = encoder specials 2 +
+ * split slack 8 + 1 (below it the splitter's content budget
+ * maxChunkTokens - 10 goes non-positive), so the ctor-validation leg now
+ * rejects EVERY integer 3..10 alongside 0/-5/1/2/NaN/Infinity; 512 stays
+ * valid.
  *
  * All test names embed the 'token budget guard' token — the check driver
  * filters on it (vitest -t 'token budget guard').
@@ -382,6 +397,28 @@ function makeBatteryFixtures(): Record<string, Fixture> {
     const m2 = mkCodon('G'); codonMarkers.push(m2); codonParts.push(`${m2} anchor.`);
   }
 
+  // Swarm-review round-5 fixture class: RARE-LETTER LONG words. 'zxqjvwxkqjzb'
+  // (12 mixed rare letters) tokenizes AT the WordPiece ceiling — measured with
+  // this file's oracle: z ##x ##q ##j ##v ##w ##x ##k ##q ##j ##z ##b = 12
+  // REAL pieces/word (1.0/char) — and is nowhere near the estimator's
+  // COMMON_ENGLISH_WORDS semantics, so the shipped estimator charges it
+  // 1.0/letter = 12 est/word and the 400-word run (~4800 est) MUST split.
+  // Under-count evidence for the record: the OLD ceil(len/2) letter class
+  // charged 6/word — real 12 pieces vs old-est 6, ratio 12/6 = 2.00 >= 1.5
+  // (under-counted 2x), the exact failure class this fixture pins. The full
+  // run measures 5199 chars / 4802 real wp incl. specials; every emitted
+  // piece must fit 512 REAL tokens (the battery's per-chunk oracle loop).
+  // NOTE: the brief's example word 'xqjqzxjqvwkb' was measured FIRST and
+  // REJECTED — '##wk' is a vocab token, so it encodes to only 11 pieces
+  // (< 12); 'zxqjvwxkqjzb' meets the >= 12 (1.0/char) requirement exactly.
+  const mkRare = makeMarkerFactory();
+  const rareParts: string[] = []; const rareMarkers: string[] = [];
+  {
+    const m1 = mkRare('R'); rareMarkers.push(m1); rareParts.push(`${m1} anchor.`);
+    rareParts.push(Array.from({ length: 400 }, () => 'zxqjvwxkqjzb').join(' '));
+    const m2 = mkRare('R'); rareMarkers.push(m2); rareParts.push(`${m2} anchor.`);
+  }
+
   return {
     'dense long-sentence': dense,
     'prose with numbers/currency': { text: moneyParts.join(' '), markers: moneyMarkers },
@@ -394,6 +431,7 @@ function makeBatteryFixtures(): Record<string, Fixture> {
     'short non-vocabulary words': { text: shortParts.join('\n\n'), markers: shortMarkers },
     'short non-vocab + digits mix': { text: mixParts.join('\n\n'), markers: mixMarkers },
     'codon-class short words': { text: codonParts.join('\n\n'), markers: codonMarkers },
+    'rare-letter long words': { text: rareParts.join('\n\n'), markers: rareMarkers },
   };
 }
 
@@ -545,13 +583,19 @@ describe('TextChunker token budget guard (#35-B3 / AC2)', () => {
     expect(hash).toBe(NORMAL_FIXTURE_CHUNK_TEXTS_SHA256);
   });
 
-  it('token budget guard: constructor rejects invalid maxChunkTokens (0, negative, NaN, Infinity)', () => {
+  it('token budget guard: constructor rejects invalid maxChunkTokens (0, negative, sub-floor 1-10, NaN, Infinity)', () => {
     // Mirrors the existing chunkSize/chunkOverlap constructor validation
     // style: invalid bounds throw at construction time. NaN and Infinity
-    // must throw too (both would silently disable the guard). Plan
-    // Revision 3: maxChunkTokens must be >= 3 (content budget =
-    // maxChunkTokens - 2 must be positive), so 1 and 2 are rejected as well.
-    for (const bad of [0, -5, 1, 2, Number.NaN, Number.POSITIVE_INFINITY]) {
+    // must throw too (both would silently disable the guard). AMENDMENT
+    // ROUND 5: the shipped floor is 11 = encoder specials 2 + split slack
+    // 8 + 1 — below it the splitter's content budget
+    // (maxChunkTokens - ENCODER_SPECIAL_TOKENS - SPLIT_SLACK) goes
+    // non-positive — so EVERY integer 3..10 is rejected as well (1 and 2
+    // were already rejected; 512 stays valid).
+    const badValues: number[] = [0, -5, 1, 2];
+    for (let v = 3; v <= 10; v++) badValues.push(v);
+    badValues.push(Number.NaN, Number.POSITIVE_INFINITY);
+    for (const bad of badValues) {
       expect(
         () => new TextChunker(256, 100, bad),
         `maxChunkTokens=${bad} must throw`

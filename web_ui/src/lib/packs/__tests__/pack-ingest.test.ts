@@ -84,7 +84,11 @@ afterAll(() => {
 });
 
 describe('browser pack ingestion (R4)', () => {
-  it('every slide-doc chunk in the keyword index carries the owning packId', () => {
+  it('every marker-bearing slide chunk in the keyword index carries the owning packId', () => {
+    // Slides are split to the embedder token budget (#35-B3): continuation
+    // pieces of an oversized slide carry chunkIndex > 0 and no marker line,
+    // so this census asserts the per-slide identity on marker-bearing pieces
+    // (the fixture slides are short and emit exactly one marker piece each).
     const slideChunks = keywordIndex.findChunks((meta) => /^docs\/slide-\d+-.+\.json$/.test(meta.source ?? ''), 1000);
     expect(slideChunks.length).toBe(fs.readdirSync(SLIDES_DIR).filter((n) => n.endsWith('.json')).length);
     for (const chunk of slideChunks) {

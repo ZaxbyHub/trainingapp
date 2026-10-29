@@ -11,6 +11,10 @@
  *
  * Redesigned retention rule under test (per the plan critic's amendment):
  *   1. newest turns fit the budget (tail-truncating a kept turn if needed);
+ *      the walk STOPS at the first older turn that does not fit — the kept
+ *      window is CONTIGUOUS, never spliced around a skipped middle turn
+ *      (AMENDMENT ROUND 5: an over-budget middle turn TRUNCATES the window,
+ *      it must never be silently skipped while older turns are kept);
  *   2. IF the kept window has no user turn, the newest USER turn is forcibly
  *      included (tail-truncated);
  *   3. leading assistant turns are dropped while length > 1;
@@ -238,6 +242,49 @@ describe('capHistoryToBudget (#153-3 / AC3)', () => {
 
     // (iii)+(iv) user-first, alternating, chronological.
     assertConversationShape(windowed, ['marker-u0', 'marker-a0', 'marker-u1', 'marker-a1']);
+  });
+
+  it('history budget cap: the newest-fit walk keeps a CONTIGUOUS window (an over-budget middle turn truncates the window, never splices)', () => {
+    // Swarm-review round 5: the PRE-FIX newest-fit walk SKIPPED the
+    // over-budget middle turn and kept walking older, splicing a
+    // non-contiguous window. Verified against the pre-fix code shape (the
+    // committed walk had no break at the first non-fitting older turn):
+    // on this exact input the pre-fix walk kept a1 (fits), skipped u1
+    // (~10000 est > 512), then kept a0 and u0 (each ~50 est fits) and
+    // returned [u0, a0, a1] — CONSECUTIVE ASSISTANT turns (a0/a1 adjacent,
+    // the newest question u1 silently dropped while OLDER turns u0/a0
+    // survived) — the malformed shape third-party jinja chat templates
+    // reject. The shipped walk BREAKS at the first over-budget older turn:
+    // window [a1] alone -> no user turn -> the forced-user rule pulls u1's
+    // HEAD back in (tail-truncated to half the budget) -> EXACTLY
+    // [u1(head-truncated), a1]. RED pre-fix (strict alternation fails on
+    // a0/a1; u1 absent) / GREEN post-fix.
+    const history: RAGHistoryTurn[] = [
+      { role: 'user', content: `marker-u0 ${'p'.repeat(190)}` },      // ~200 chars (~50 est)
+      { role: 'assistant', content: `marker-a0 ${'p'.repeat(190)}` }, // ~200 chars (~50 est)
+      { role: 'user', content: `marker-u1 ${'z'.repeat(39990)}` },    // 40000 chars (~10000 est) — over any tested budget
+      { role: 'assistant', content: `marker-a1 ${'p'.repeat(190)}` }, // ~200 chars (~50 est)
+    ];
+
+    const out = capHistoryToBudget(history, 512);
+    const windowed = turnsOf(out);
+
+    // EXACTLY the newest exchange: the over-budget u1 (head-truncated) + a1.
+    expect(windowed).toHaveLength(2);
+    expect(windowed[0]!.role).toBe('user');
+    expect(windowed[0]!.content.startsWith('marker-u1')).toBe(true); // head survives the truncation
+    expect(windowed[0]!.content.length).toBeLessThan(history[2]!.content.length); // truncated, not the whole 40k turn
+    expect(windowed[1]!.role).toBe('assistant');
+    expect(windowed[1]!.content).toContain('marker-a1');
+
+    // The turns the pre-fix walk spliced in AROUND the skipped u1 are absent.
+    const joined = joinedOf(windowed);
+    expect(joined).not.toContain('marker-u0');
+    expect(joined).not.toContain('marker-a0');
+
+    // Roles strictly alternate (user-first, chronological) and the budget fit holds.
+    assertConversationShape(windowed, ['marker-u0', 'marker-a0', 'marker-u1', 'marker-a1']);
+    expect(est(joined)).toBeLessThanOrEqual(512);
   });
 
   it('history budget cap: the window never begins with an orphan assistant turn (user-first retention)', () => {
