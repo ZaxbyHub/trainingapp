@@ -193,7 +193,7 @@ ChatMessageList re-renders with updated content
 RAGOrchestrator.query() → AsyncGenerator<RAGEvent>
     │
     ├─ 'retrieving' → embedding + search
-    ├─ 'retrieved' → RRF fusion
+    ├─ 'retrieved' → RRF fusion → near-duplicate suppression
     ├─ 'reranking' → optional reranking
     ├─ 'generating' → LLM streaming begins
     │

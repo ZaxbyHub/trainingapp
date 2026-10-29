@@ -68,6 +68,9 @@ vi.mock('../search/keyword-index', () => ({
 
 vi.mock('../search/rrf-fusion', () => ({
   rrfFuse: vi.fn(),
+  // #35-B2 companion: the orchestrator now calls dedupeNearDuplicates
+  // after fusion; these suites mock the module, so pass results through.
+  dedupeNearDuplicates: vi.fn((results: unknown[]) => results),
 }));
 
 vi.mock('../search/reranker', () => ({
@@ -1548,8 +1551,11 @@ describe('RAGOrchestrator', () => {
     });
 
     test('RC1 budget: history is charged to reservedTokens (fewer chunks fit when history is present)', async () => {
-      // Two large chunks that would both fit without history. With a long history
-      // consuming budget, the second chunk should be dropped to fit.
+      // Two large chunks that would both fit without history. With a long
+      // history consuming budget, the second chunk should be dropped to fit.
+      // #153-3: the orchestrator caps threaded history to a token budget
+      // first, so the overflow is driven with an explicit historyBudgetTokens
+      // that keeps the (capped) history large enough to crowd the prompt.
       const question = 'follow up';
       const longHistory = [
         { role: 'user' as const, content: 'X'.repeat(20000) },
@@ -1571,21 +1577,30 @@ describe('RAGOrchestrator', () => {
 
       mockWebLLMService.generateComplete = vi.fn().mockResolvedValue('answer');
 
-      const orchestrator = new RAGOrchestrator();
-      const events: any[] = [];
-      for await (const ev of orchestrator.query(question, {
-        history: longHistory,
-        streamTokens: false,
-        rerank: false,
-        maxTokens: 1024,
-      })) {
-        events.push(ev);
-      }
+      const runQuery = async (opts: Record<string, unknown>) => {
+        const orchestrator = new RAGOrchestrator();
+        const events: any[] = [];
+        for await (const ev of orchestrator.query(question, {
+          streamTokens: false,
+          rerank: false,
+          maxTokens: 1024,
+          ...opts,
+        })) {
+          events.push(ev);
+        }
+        return events.find((e) => e.type === 'complete');
+      };
 
-      const complete = events.find((e) => e.type === 'complete');
-      // With ~40000 chars of history reserved, the context budget shrinks so at
-      // least one of the two 5000-char chunks is dropped (contextTrimmed >= 1).
-      // This proves the history term is in reservedTokens.
+      // Control: without history both 5000-char chunks fit the
+      // post-reservation budget, so nothing is trimmed.
+      const control = await runQuery({ history: undefined });
+      expect(control.data.contextTrimmed).toBeUndefined();
+
+      // With an 8000-token history budget the (capped) history is still
+      // charged to reservedTokens, shrinking the context budget so at least
+      // one of the two chunks is dropped (contextTrimmed >= 1). This proves
+      // the capped history term is in reservedTokens (charge == render).
+      const complete = await runQuery({ history: longHistory, historyBudgetTokens: 8000 });
       expect(complete.data.contextTrimmed).toBeGreaterThanOrEqual(1);
     });
 

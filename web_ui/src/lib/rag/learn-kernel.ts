@@ -1,10 +1,17 @@
 // Learn-panel result assembly, browser surface (issue #82 / D6).
 //
 // Mirrors learn_panel.py and desktop/main/backend/learn.ts (the D4 precedent
-// of mirrored kernels with mirrored golden tests) — keep the three in
-// lockstep: union of direct training-slide hits and linked slides of the
-// cited chunks, deduped by slide_id keeping the highest score (direct
-// preferred on ties), ranked descending, capped at MAX_LEARN_RESULTS.
+// of mirrored kernels with mirrored golden tests): union of direct
+// training-slide hits and linked slides of the cited chunks, deduped by
+// slide_id, ranked descending, capped at MAX_LEARN_RESULTS. Selection rule:
+// a marker-bearing chunk (title/section parsed from the chunk's own
+// `[training-slide]` header) is identity-authoritative and wins its
+// slide_id over a higher-scoring marker-less continuation piece
+// (PRR-004, PR #258 review); ties otherwise prefer direct over linked.
+// NOTE: learn_panel.py still offers score-always-wins (the marker
+// preference is not ported there) — a documented sibling divergence until
+// a follow-up ports it; desktop learn.ts keys identity per-slide meta and
+// is immune.
 //
 // browser-training-parity (AC6): pack-sourced chunks carry `packId` (the
 // browser pack ingestion stamps it, mirror of desktop docs.pack_id), which
@@ -84,17 +91,28 @@ export function buildLearnResults(chunks: SearchResult[], options: BuildLearnOpt
   const maxResults = options.maxResults ?? MAX_LEARN_RESULTS;
 
   const best = new Map<string, LearnResult>();
-  const offer = (row: LearnResult): void => {
+  const bestHasMarker = new Map<string, boolean>();
+  // Marker-bearing chunks are identity-authoritative for their slide_id:
+  // their title/section come from the slide's own `[training-slide]` header,
+  // while marker-less continuation pieces (the token guard can split a long
+  // slide into several chunks, pack-ingest) would fall back to
+  // title=slide_id / section=''. A marker row therefore wins over a
+  // higher-scoring marker-less row regardless of score.
+  const offer = (row: LearnResult, hasMarker: boolean): void => {
     const current = best.get(row.slide_id);
+    const currentMarker = bestHasMarker.get(row.slide_id) ?? false;
     const prefer =
       current === undefined ||
-      row.score > current.score ||
-      (row.score === current.score && row.reason === 'direct' && current.reason !== 'direct');
+      (hasMarker && !currentMarker) ||
+      (hasMarker === currentMarker &&
+        (row.score > current.score ||
+          (row.score === current.score && row.reason === 'direct' && current.reason !== 'direct')));
     if (prefer) {
       if (current !== undefined && row.snippet === undefined && current.snippet !== undefined) {
         row.snippet = current.snippet;
       }
       best.set(row.slide_id, row);
+      bestHasMarker.set(row.slide_id, hasMarker);
     }
   };
 
@@ -103,28 +121,35 @@ export function buildLearnResults(chunks: SearchResult[], options: BuildLearnOpt
     if (slideId === null) continue;
     const { section, title } = parseMarker(chunk.text);
     const snippet = snippetAfterMarker(chunk.text);
-    offer({
-      slide_id: slideId,
-      title: title ?? slideId,
-      section: section ?? '',
-      score: chunk.score,
-      reason: 'direct',
-      ...(snippet !== undefined ? { snippet } : {}),
-      // Mirror of desktop learn.ts `...(doc.pack_id !== null ? { pack_id } : {})`.
-      ...(chunk.packId !== undefined ? { pack_id: chunk.packId } : {}),
-    });
+    const hasMarker = section !== null || title !== null;
+    offer(
+      {
+        slide_id: slideId,
+        title: title ?? slideId,
+        section: section ?? '',
+        score: chunk.score,
+        reason: 'direct',
+        ...(snippet !== undefined ? { snippet } : {}),
+        // Mirror of desktop learn.ts `...(doc.pack_id !== null ? { pack_id } : {})`.
+        ...(chunk.packId !== undefined ? { pack_id: chunk.packId } : {}),
+      },
+      hasMarker
+    );
   }
 
   for (const link of options.links ?? []) {
-    offer({
-      slide_id: link.slide_id,
-      title: link.title ?? link.slide_id,
-      section: link.section ?? '',
-      score: link.score,
-      reason: 'linked',
-      ...(link.snippet !== undefined ? { snippet: link.snippet } : {}),
-      ...(link.pack_id !== undefined ? { pack_id: link.pack_id } : {}),
-    });
+    offer(
+      {
+        slide_id: link.slide_id,
+        title: link.title ?? link.slide_id,
+        section: link.section ?? '',
+        score: link.score,
+        reason: 'linked',
+        ...(link.snippet !== undefined ? { snippet: link.snippet } : {}),
+        ...(link.pack_id !== undefined ? { pack_id: link.pack_id } : {}),
+      },
+      false
+    );
   }
 
   return [...best.values()].sort((a, b) => b.score - a.score).slice(0, maxResults);

@@ -19,7 +19,7 @@ import { DEFAULT_N_CTX } from '../llm/wllama-service';
 vi.mock('../search/vector-index', () => ({ getVectorIndex: vi.fn() }));
 vi.mock('../search/keyword-index', () => ({ getKeywordIndex: vi.fn() }));
 vi.mock('../search/reranker', () => ({ getRerankerService: vi.fn() }));
-vi.mock('../search/rrf-fusion', () => ({ rrfFuse: vi.fn() }));
+vi.mock('../search/rrf-fusion', () => ({ rrfFuse: vi.fn(), dedupeNearDuplicates: vi.fn((results: unknown[]) => results) }));
 vi.mock('../embeddings/embedding-service', () => ({ getEmbeddingService: vi.fn() }));
 vi.mock('../llm/llm-factory', () => ({ getLLMService: vi.fn() }));
 vi.mock('../llm/web-llm-service', () => ({ WebLLMService: { getInstance: vi.fn() } }));

@@ -92,4 +92,32 @@ body` }),
     );
     expect(learn).toHaveLength(1);
   });
+  test('marker-bearing chunk wins its slide_id over a higher-scoring marker-less continuation piece', () => {
+    // #35-B3 feedback (PRR-004): the token guard splits an oversized slide
+    // into pieces; a marker-less continuation piece that outscores the
+    // marker piece must not take over the Learn row's title/section.
+    const markerChunk = chunk({
+      source: 'slide-001-5rN4PvXJM5d.json',
+      score: 0.3,
+      text: `${MARKER}
+Quarterly Rollout overview body`,
+    });
+    const continuation = chunk({
+      source: 'slide-001-5rN4PvXJM5d.json',
+      score: 0.85,
+      text: 'and this is a continuation transcript fragment with no marker',
+    });
+    const learn = buildLearnResults([markerChunk, continuation]);
+    expect(learn).toHaveLength(1);
+    expect(learn[0]).toMatchObject({
+      slide_id: '5rN4PvXJM5d',
+      title: 'Welcome',
+      section: 'Course Introduction',
+      score: 0.3,
+    });
+    // Marker-less-only input still degrades to title=slide_id.
+    const degraded = buildLearnResults([continuation]);
+    expect(degraded).toHaveLength(1);
+    expect(degraded[0]).toMatchObject({ slide_id: '5rN4PvXJM5d', title: '5rN4PvXJM5d', section: '' });
+  });
 });

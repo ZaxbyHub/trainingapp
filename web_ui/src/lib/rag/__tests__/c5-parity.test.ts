@@ -42,7 +42,7 @@ vi.mock('../../embeddings/embedding-service', () => ({
 }));
 vi.mock('../../search/vector-index', () => ({ getVectorIndex: vi.fn() }));
 vi.mock('../../search/keyword-index', () => ({ getKeywordIndex: vi.fn() }));
-vi.mock('../../search/rrf-fusion', () => ({ rrfFuse: vi.fn() }));
+vi.mock('../../search/rrf-fusion', () => ({ rrfFuse: vi.fn(), dedupeNearDuplicates: vi.fn((results: unknown[]) => results) }));
 vi.mock('../../search/reranker', () => ({ getRerankerService: vi.fn() }));
 vi.mock('../../llm/web-llm-service', () => ({
   WebLLMService: { getInstance: vi.fn() },

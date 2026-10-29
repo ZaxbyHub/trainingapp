@@ -25,7 +25,7 @@ import type { EmbeddingVector } from '../../types/embedding';
 import { getEmbeddingService, type EmbeddingService } from '../embeddings/embedding-service';
 import { getVectorIndex, type VectorIndex } from '../search/vector-index';
 import { getKeywordIndex, type KeywordIndex } from '../search/keyword-index';
-import { rrfFuse } from '../search/rrf-fusion';
+import { rrfFuse, dedupeNearDuplicates } from '../search/rrf-fusion';
 import { getRerankerService, type RerankerService } from '../search/reranker';
 import { getLLMService } from '../llm/llm-factory';
 import { buildLearnResults, type LinkedSlide } from './learn-kernel';
@@ -45,6 +45,124 @@ import { ensureEmbeddingServiceReady, ensureReadinessGateChecked } from '../../h
 export interface RAGHistoryTurn {
   role: 'user' | 'assistant';
   content: string;
+}
+
+/**
+ * #153-3: default token budget for the threaded history window. ~25% of
+ * DEFAULT_N_CTX (8192), leaving the rest of the prompt for system, question,
+ * pinned context, and retrieved evidence.
+ */
+export const HISTORY_BUDGET_TOKENS = 2048;
+
+/**
+ * #153-3: cap the threaded conversation history to a token budget
+ * (chars/4 estimator, matching computeReservedTokens). The browser path
+ * threads up to MAX_HISTORY_TURNS turns with NO per-turn char cap, so long
+ * turns could previously drive the reserved-token sum to the whole context
+ * window and force abstention despite retrieved evidence.
+ *
+ * Retention rule (user-first):
+ *   1. Walk newest→oldest keeping turns that fit the budget; the NEWEST turn
+ *      is always kept (tail-truncated to the budget if it alone exceeds).
+ *      The walk STOPS at the first older turn that does not fit: keeping an
+ *      older turn past a skipped newer one would splice a non-contiguous
+ *      window with consecutive same-role turns — the exact shape
+ *      history-snapshot.ts documents as rejected by third-party jinja chat
+ *      templates.
+ *   2. If the kept window has no USER turn, the newest USER turn is forcibly
+ *      included (tail-truncated to half the budget) and the window is rebuilt
+ *      around the newest exchange — an assistant-only window would degrade
+ *      retrieval contextualization to the assistant-fallback and lose the
+ *      question's topic.
+ *   3. Drop leading assistant turns while length > 1 (user-first re-anchor,
+ *      mirroring buildHistorySnapshot's PRR-001 concern).
+ *   4. A final exact fit pass trims the newest turn's tail until the joined
+ *      text (including one separator per turn — one MORE than the
+ *      reservation's join, so the pass is conservative) fits the budget.
+ * Returns chronological order. A history that fits the budget passes
+ * through with content and window unchanged.
+ */
+export function capHistoryToBudget(
+  history: RAGHistoryTurn[],
+  budgetTokens: number = HISTORY_BUDGET_TOKENS
+): RAGHistoryTurn[] {
+  if (!Array.isArray(history) || history.length === 0) return [];
+  const estimate = (content: string): number => Math.ceil((content?.length ?? 0) / CHARS_PER_TOKEN);
+  const joinedLength = (window: RAGHistoryTurn[]): number =>
+    window.reduce((sum, turn) => sum + turn.content.length + 1, 0);
+
+  // 1. Newest-fit walk; the newest turn is tail-truncated to the budget.
+  // (Local named `windowed`, not `window` — the persisted-keys guardrail
+  // census flags `window[...]` computed accesses as unresolvable globals.)
+  const newestFirst: RAGHistoryTurn[] = [];
+  let used = 0;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const turn = history[i]!;
+    if (newestFirst.length === 0) {
+      const content =
+        estimate(turn.content) > budgetTokens
+          ? turn.content.slice(0, budgetTokens * CHARS_PER_TOKEN)
+          : turn.content;
+      newestFirst.push({ role: turn.role, content });
+      used = estimate(content);
+      continue;
+    }
+    const cost = estimate(turn.content);
+    if (used + cost <= budgetTokens) {
+      newestFirst.push({ role: turn.role, content: turn.content });
+      used += cost;
+    } else {
+      // Contiguity: stop at the first older turn that does not fit. Keeping
+      // older turns past a skipped newer one would splice a non-contiguous
+      // window (consecutive same-role turns, orphaned answers).
+      break;
+    }
+  }
+  let windowed: RAGHistoryTurn[] = newestFirst.reverse();
+
+  // 2. Force the newest USER turn when the window carries none.
+  if (!windowed.some((turn) => turn.role === 'user')) {
+    let newestUser: RAGHistoryTurn | undefined;
+    for (let i = history.length - 1; i >= 0; i--) {
+      if (history[i]!.role === 'user') {
+        newestUser = history[i];
+        break;
+      }
+    }
+    if (newestUser) {
+      const reserve = Math.min(estimate(newestUser.content), Math.floor(budgetTokens / 2));
+      const userTurn: RAGHistoryTurn = {
+        role: 'user',
+        content: newestUser.content.slice(0, reserve * CHARS_PER_TOKEN),
+      };
+      // Rebuild around the newest exchange: pair the forced user turn with
+      // the NEWEST kept turn (the latest answer), not the oldest — dropping
+      // the newest answer would discard the most recent context.
+      const answer = windowed[windowed.length - 1]!;
+      const answerReserve = Math.max(1, budgetTokens - reserve);
+      windowed = [
+        userTurn,
+        { role: answer.role, content: answer.content.slice(0, answerReserve * CHARS_PER_TOKEN) },
+      ];
+    }
+  }
+
+  // 3. User-first: no leading assistant turn when an alternative exists.
+  while (windowed.length > 1 && windowed[0]!.role === 'assistant') {
+    windowed.shift();
+  }
+
+  // 4. Exact fit: trim the newest turn's tail until the joined text fits.
+  while (windowed.length > 0 && Math.ceil(joinedLength(windowed) / CHARS_PER_TOKEN) > budgetTokens) {
+    const last = windowed[windowed.length - 1]!;
+    const excess = joinedLength(windowed) - budgetTokens * CHARS_PER_TOKEN;
+    if (last.content.length > excess) {
+      last.content = last.content.slice(0, last.content.length - excess);
+    } else {
+      windowed.pop();
+    }
+  }
+  return windowed;
 }
 
 export interface RAGQueryOptions {
@@ -77,11 +195,16 @@ export interface RAGQueryOptions {
   presencePenalty?: number;
   /**
    * Issue #40 RC1: prior conversation turns threaded into the LLM prompt and
-   * used to contextualize the retrieval query (RC3). Caller caps at the last N
-   * turns; the orchestrator charges history to the token budget so it never
-   * starves context. Each turn is plain text.
+   * used to contextualize the retrieval query (RC3). Capped to a token budget
+   * by {@link capHistoryToBudget} before use (#153-3), and charged to the
+   * token budget so it never starves context. Each turn is plain text.
    */
   history?: RAGHistoryTurn[];
+  /**
+   * #153-3: token budget for the threaded history window
+   * (see {@link capHistoryToBudget}). Default {@link HISTORY_BUDGET_TOKENS}.
+   */
+  historyBudgetTokens?: number;
   /**
    * D7 (issue #83): text of the training slide the user is currently viewing
    * in the embedded player (title/section + on-screen text, resolved by the
@@ -267,7 +390,10 @@ export class RAGOrchestrator {
     const presencePenalty = options.presencePenalty;
     // Issue #40 RC1: prior conversation turns. Threaded into the LLM prompt
     // (buildMessages) and used to contextualize the retrieval query (RC3).
-    const history = options.history ?? [];
+    // #153-3: capped to a token budget FIRST so long browser-path histories
+    // cannot starve the context budget (the capped window is what is charged,
+    // rendered, and contextualized — charge == render, issue #83 invariant).
+    const history = capHistoryToBudget(options.history ?? [], options.historyBudgetTokens);
     const signal = options.signal;
 
     // Ensure lazy services are initialized before the pipeline runs (FR-002)
@@ -410,7 +536,12 @@ export class RAGOrchestrator {
 
     try {
       if (vectorResults.length > 0 || keywordResults.length > 0) {
-        fusedResults = rrfFuse([vectorResults, keywordResults], 60);
+        // #35-B2: RRF dedups only exact identity keys; overlapping adjacent
+        // chunks carry different keys and would otherwise occupy a second
+        // topK slot and consume context budget twice. Collapse near-duplicate
+        // candidates HERE — the single choke point before the `retrieved`
+        // event, rerank, and the top-K slice fallbacks.
+        fusedResults = dedupeNearDuplicates(rrfFuse([vectorResults, keywordResults], 60));
       } else {
         fusedResults = [];
       }

@@ -53,6 +53,9 @@ vi.mock('../search/keyword-index', () => ({
 
 vi.mock('../search/rrf-fusion', () => ({
   rrfFuse: vi.fn(),
+  // #35-B2 companion: the orchestrator now calls dedupeNearDuplicates
+  // after fusion; these suites mock the module, so pass results through.
+  dedupeNearDuplicates: vi.fn((results: unknown[]) => results),
 }));
 
 vi.mock('../search/reranker', () => ({

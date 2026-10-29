@@ -21,7 +21,7 @@ import { describe, test, expect, vi } from 'vitest';
 vi.mock('../embeddings/embedding-service', () => ({ getEmbeddingService: vi.fn() }));
 vi.mock('../search/vector-index', () => ({ getVectorIndex: vi.fn() }));
 vi.mock('../search/keyword-index', () => ({ getKeywordIndex: vi.fn() }));
-vi.mock('../search/rrf-fusion', () => ({ rrfFuse: vi.fn() }));
+vi.mock('../search/rrf-fusion', () => ({ rrfFuse: vi.fn(), dedupeNearDuplicates: vi.fn((results: unknown[]) => results) }));
 vi.mock('../search/reranker', () => ({ getRerankerService: vi.fn() }));
 vi.mock('../llm/llm-factory', () => ({ getLLMService: vi.fn() }));
 vi.mock('../../hooks/useServiceInitialization', () => ({
