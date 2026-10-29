@@ -1,10 +1,17 @@
 // Learn-panel result assembly, browser surface (issue #82 / D6).
 //
 // Mirrors learn_panel.py and desktop/main/backend/learn.ts (the D4 precedent
-// of mirrored kernels with mirrored golden tests) — keep the three in
-// lockstep: union of direct training-slide hits and linked slides of the
-// cited chunks, deduped by slide_id keeping the highest score (direct
-// preferred on ties), ranked descending, capped at MAX_LEARN_RESULTS.
+// of mirrored kernels with mirrored golden tests): union of direct
+// training-slide hits and linked slides of the cited chunks, deduped by
+// slide_id, ranked descending, capped at MAX_LEARN_RESULTS. Selection rule:
+// a marker-bearing chunk (title/section parsed from the chunk's own
+// `[training-slide]` header) is identity-authoritative and wins its
+// slide_id over a higher-scoring marker-less continuation piece
+// (PRR-004, PR #258 review); ties otherwise prefer direct over linked.
+// NOTE: learn_panel.py still offers score-always-wins (the marker
+// preference is not ported there) — a documented sibling divergence until
+// a follow-up ports it; desktop learn.ts keys identity per-slide meta and
+// is immune.
 //
 // browser-training-parity (AC6): pack-sourced chunks carry `packId` (the
 // browser pack ingestion stamps it, mirror of desktop docs.pack_id), which
