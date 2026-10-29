@@ -10,6 +10,7 @@ import { SourceCitation } from './SourceCitation';
 import { LearnPanel } from './LearnPanel';
 import { GroundingBadge } from './GroundingBadge';
 import { formatRelativeTime } from '../utils/relativeTime';
+import { markdownToPlainText } from '../lib/markdown/plain-text';
 import { Banner, Button, Icon } from '../ui';
 import '../pages/chat.css';
 
@@ -30,19 +31,28 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
   // keeps one-off renders (tests, direct usage) correct.
   const relativeLabel = formatRelativeTime(message.timestamp, now);
   const [copied, setCopied] = useState(false);
+  const [copiedSource, setCopiedSource] = useState(false);
   const copyFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copySourceFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     return () => {
       if (copyFeedbackTimerRef.current !== null) {
         clearTimeout(copyFeedbackTimerRef.current);
       }
+      if (copySourceFeedbackTimerRef.current !== null) {
+        clearTimeout(copySourceFeedbackTimerRef.current);
+      }
     };
   }, []);
 
+  // #35 C4: the default Copy writes a PLAIN-TEXT rendition of the message —
+  // users paste into editors that want the prose, not `**bold**` markers.
+  // The raw markdown source stays reachable through the distinct Copy-source
+  // action below (assistant messages only; see handleCopySource).
   const handleCopy = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(message.content);
+      await navigator.clipboard.writeText(markdownToPlainText(message.content));
       setCopied(true);
       if (copyFeedbackTimerRef.current !== null) {
         clearTimeout(copyFeedbackTimerRef.current);
@@ -50,6 +60,25 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
       copyFeedbackTimerRef.current = setTimeout(() => {
         setCopied(false);
         copyFeedbackTimerRef.current = null;
+      }, 1500);
+    } catch {
+      console.warn('[ChatMessageBubble] Clipboard write failed');
+    }
+  }, [message.content]);
+
+  // #35 C4: distinct affordance for the raw markdown source (byte-identical
+  // `message.content`) — rendered on assistant messages only, since user
+  // message content is already plain text.
+  const handleCopySource = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(message.content);
+      setCopiedSource(true);
+      if (copySourceFeedbackTimerRef.current !== null) {
+        clearTimeout(copySourceFeedbackTimerRef.current);
+      }
+      copySourceFeedbackTimerRef.current = setTimeout(() => {
+        setCopiedSource(false);
+        copySourceFeedbackTimerRef.current = null;
       }, 1500);
     } catch {
       console.warn('[ChatMessageBubble] Clipboard write failed');
@@ -69,6 +98,22 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
       {copied ? 'Copied!' : 'Copy'}
     </Button>
   );
+
+  // #35 C4: the raw-source action only makes sense when the content carries
+  // markdown shapes (assistant replies); an empty message has nothing to copy.
+  const copySourceButton =
+    message.role === 'assistant' && message.content !== '' ? (
+      <Button
+        variant="ghost"
+        size="sm"
+        className="chat-msg__action"
+        onClick={handleCopySource}
+        aria-label={copiedSource ? 'Copied source to clipboard' : 'Copy source'}
+      >
+        <Icon name={copiedSource ? 'check' : 'copy'} size={16} />
+        {copiedSource ? 'Copied!' : 'Copy source'}
+      </Button>
+    ) : null;
 
   if (message.role === 'user') {
     return (
@@ -160,6 +205,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
           <div className="chat-msg__meta">
             <span className="chat-msg__time">{relativeLabel}</span>
             {copyButton}
+            {copySourceButton}
             {onRegenerate && (
               <Button
                 variant="ghost"

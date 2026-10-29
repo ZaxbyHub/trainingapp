@@ -894,10 +894,11 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       isStreaming: true,
     };
 
-    // S5: keep the FULL history in state (windowing is render-only, handled in
-    // ChatMessageList). Previously this pruned to MAX_MESSAGES at send time,
-    // which then got persisted wholesale — deleting old messages from
-    // IndexedDB. Persistence now always sees the full array.
+    // S5: keep the FULL history in state. Windowing is render-only, handled
+    // in ChatMessageList, which paints at most the last MAX_RENDERED_MESSAGES
+    // messages behind a count indicator. An earlier send-time pruning was
+    // removed because pruned lists got persisted wholesale — deleting old
+    // messages from IndexedDB. Persistence now always sees the full array.
     const appended = [...messagesRef.current, userMessage, assistantMessage];
     messagesRef.current = appended;
     setMessages(appended);

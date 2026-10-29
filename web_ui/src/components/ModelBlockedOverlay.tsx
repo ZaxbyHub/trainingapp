@@ -67,7 +67,7 @@ export function ModelBlockedOverlay({
   const hasRealFailure = failures.length > 0;
   const headline = hasRealFailure
     ? (browserEngine === 'wllama'
-        ? 'This build is missing the packaged model. See the Packaging guide or contact your administrator.'
+        ? 'This build is missing the packaged model. Contact your administrator, or use Settings to connect an external model (local server or cloud).'
         : 'The browser model is not available. Use Settings to download it, or switch engines.')
     : 'Preparing the model…';
 
