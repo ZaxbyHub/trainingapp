@@ -73,6 +73,29 @@
  * rejects EVERY integer 3..10 alongside 0/-5/1/2/NaN/Infinity; 512 stays
  * valid.
  *
+ * AMENDMENT ROUND 6 (delta-reviewer round, sanctioned CHECK_WRONG round 6):
+ * two more battery fixture classes plus a duplication bound, pinning the
+ * shipped estimator's interior-non-letter rule and the uniform 1.0/char
+ * char-slice cost. (1) `NUL/mojibake-interleaved prose`: common words
+ * corrupted by per-letter NUL splices; measured with this file's oracle the
+ * materialized corrupted words cost exactly 1.0 real piece/char (record 11,
+ * training 15, storage 13, review 11) while the OLD letters-only list lookup
+ * charged ceil(len/4)=2/word (under-count 5.5-7.5x on the letter bound; the
+ * whole pre-fix word cost still under-counted: 7 vs 11, 9 vs 15, 8 vs 13,
+ * 7 vs 11) — the interior-non-letter rule now charges est == real, and the
+ * fixture splits cleanly at head (18 chunks, max 424 real). (2)
+ * `punctuation/base64 runs`: a 600-char punctuation run inside a
+ * space-bearing sentence ('!' = 1.0 real piece/char, 600 real for the run
+ * alone; char-sliced at head into 502+98-char pieces, 504 real incl.
+ * specials) and two ~300-char standard-alphabet base64 blobs inline in
+ * sentences (215 and 200 real pieces, 0.72 and 0.68/char — the delta
+ * reviewer measured this class at 615 real > 512 under the pre-fix
+ * 0.5/char charTokenCost). (3) Duplication bound: the dense long-sentence
+ * entry now also asserts chunk count <= 120 — the pre-feedback head emitted
+ * 804 chunks from this fixture via tail starvation, the shipped
+ * proportional-tail emits 43, and base emits 5; 120 kills the starvation
+ * mutant while leaving calibration headroom.
+ *
  * All test names embed the 'token budget guard' token — the check driver
  * filters on it (vitest -t 'token budget guard').
  */
@@ -237,6 +260,13 @@ interface Fixture {
   text: string;
   /** Unique markers embedded in the text; each must survive chunking, in order. */
   markers: string[];
+  /**
+   * Round-6 duplication bound: when set, the battery also asserts the emitted
+   * chunk COUNT stays <= this value. The dense long-sentence fixture sets 120:
+   * a tail-starved splitter (the pre-feedback head) duplicated this fixture
+   * into 804 chunks; the shipped proportional-tail emits 43; base emits 5.
+   */
+  maxChunks?: number;
 }
 
 /** Marker factory: one namespace per fixture family, globally unique words. */
@@ -419,8 +449,71 @@ function makeBatteryFixtures(): Record<string, Fixture> {
     const m2 = mkRare('R'); rareMarkers.push(m2); rareParts.push(`${m2} anchor.`);
   }
 
+  // Delta-reviewer round-6 fixture class: NUL/MOJIBAKE-INTERLEAVED PROSE.
+  // Corrupted ingest that splices NUL bytes INSIDE common words: authored as
+  // per-letter NUL forms (`re${String.fromCharCode(0)}cord` style, between
+  // EVERY letter) of four COMMON_ENGLISH_WORDS — 'record', 'training',
+  // 'storage', 'review'. The chunker's own sentence pipeline materializes
+  // NUL as interior '.' (splitSentences restores \x00 to '.'), and that
+  // materialized dotted form is what reaches the estimator and the embedder
+  // (verified: emitted chunks contain no NUL and do contain 'r.e.c.o.r.d').
+  // Measured with this file's oracle: the corrupted words' REAL WordPiece
+  // count is exactly 1.0/char (record 11, training 15, storage 13, review 11
+  // pieces — every letter and every interior separator is its own piece),
+  // and they were UNDER-counted by the old letters-only list lookup: that
+  // lookup strips to the list word and charges ceil(len/4) = 2/word
+  // (under-count 5.5-7.5x on the letter bound; the whole pre-fix word cost
+  // still under-counted: 7 vs 11, 9 vs 15, 8 vs 13, 7 vs 11). The shipped
+  // estimator's interior-non-letter rule charges the per-character bound —
+  // est == real per corrupted word — so this must split cleanly: measured at
+  // head 18 chunks, max 424 real tokens, both markers surviving.
+  const NULCH = String.fromCharCode(0);
+  const interleaveNul = (w: string): string => w.split('').join(NULCH);
+  const mkMoji = makeMarkerFactory();
+  const mojiParts: string[] = []; const mojiMarkers: string[] = [];
+  {
+    const cRec = interleaveNul('record');
+    const cTra = interleaveNul('training');
+    const cSto = interleaveNul('storage');
+    const cRev = interleaveNul('review');
+    const m1 = mkMoji('M'); mojiMarkers.push(m1); mojiParts.push(`${m1} anchor.`);
+    for (let i = 0; i < 50; i++) {
+      mojiParts.push(`Entry ${i} files the ${cRec} for ${cTra} under ${cSto} before ${cRev}.`);
+    }
+    const m2 = mkMoji('M'); mojiMarkers.push(m2); mojiParts.push(`${m2} anchor.`);
+  }
+
+  // Delta-reviewer round-6 fixture class: PUNCTUATION/BASE64 RUNS.
+  // (a) A 600-char punctuation run inside a space-bearing sentence: '!' is
+  // measured 1.0 real piece/char (600 real tokens for the run alone; the run
+  // is a single est-600 word over the content budget, so it must be
+  // char-sliced — at head the splitter emits 502- and 98-char pieces at 504
+  // and 100 real incl. specials). (b) Two ~300-char standard-alphabet base64
+  // blobs inline in sentences (fixed deterministic literals; measured 215 and
+  // 200 real pieces = 0.72 and 0.68/char — the delta reviewer measured this
+  // base64-in-prose class at 615 real > 512 under the pre-fix 0.5/char
+  // charTokenCost; at head every piece measures <= 512 real, base64-bearing
+  // pieces 214-238). Measured at head: 14 chunks, max 504 real.
+  const mkRuns = makeMarkerFactory();
+  const runsParts: string[] = []; const runsMarkers: string[] = [];
+  {
+    const m1 = mkRuns('U'); runsMarkers.push(m1); runsParts.push(`${m1} anchor.`);
+    runsParts.push(`The audit trail contains ${'!'.repeat(600)} and continues after the marker run.`);
+    // ~300-char standard-alphabet base64 payloads (A-Za-z0-9+/=, deterministic
+    // literals so the fixture is byte-stable).
+    const blob1 =
+      'FCnqDFjMwV4se0GMiP4ZRDh7E50U6wcVSJvLnhN0JcGPKd2Lnn/wSP5Tw9Nan/cvkXNa8pGsrE5lLbh1y1twGf3MhAA9X135eUerjUtXw4XISLG20xWN+qbDIzavUvaZjikccDxAtqnxy06R4xz+oMWtLRjL6mEJZHs76oZx93/lyMpUh7jJ4RFZkTiw/VEzmfhz3s1nI24bGyJvHqGk8XtFdEK0zEPcaldpKC+iXTwdPXeA+zJeaOOnNq4/kFlsf4GzTuDk+0cTte1K9Hy/2h8XLdEYXaHQYFfugMG5==';
+    const blob2 =
+      'Yynd7ebDiFU3xoNkxuxhWcFErOigRKO4rUrQXHWcx1+yIY6ApMX4eqezZ6GZ2LDQgbR9M17p4mY9wONICmCI+rk+4KOCTFjzA0tekuEaVCTrKfa6UnhMiz/KJN8a+DXblcxybOXdVCTYd7kmBfMabYgPgLS4EmDhNfCPSjSB483KaGKAOTH/YMiyaUeSkBF82U2+b3WA4Y8No7VxMAPEDuI3ffN5zeQ+vdXZ607OaNNk1w1GQkzstBhCygDe+j4jzI7lPk7efCXri5cQOdu2dfnQe8srqUjJJWaS==';
+    for (let i = 0; i < 4; i++) {
+      runsParts.push(`The shard manifest decodes payload ${blob1} for the first training facility today.`);
+      runsParts.push(`A second audit export carries payload ${blob2} across the quarterly governance batch.`);
+    }
+    const m2 = mkRuns('U'); runsMarkers.push(m2); runsParts.push(`${m2} anchor.`);
+  }
+
   return {
-    'dense long-sentence': dense,
+    'dense long-sentence': { ...dense, maxChunks: 120 },
     'prose with numbers/currency': { text: moneyParts.join(' '), markers: moneyMarkers },
     'technical term soup': { text: techParts.join(' '), markers: techMarkers },
     'all-caps': { text: capsParts.join(' '), markers: capsMarkers },
@@ -432,6 +525,8 @@ function makeBatteryFixtures(): Record<string, Fixture> {
     'short non-vocab + digits mix': { text: mixParts.join('\n\n'), markers: mixMarkers },
     'codon-class short words': { text: codonParts.join('\n\n'), markers: codonMarkers },
     'rare-letter long words': { text: rareParts.join('\n\n'), markers: rareMarkers },
+    'NUL/mojibake-interleaved prose': { text: mojiParts.join('\n\n'), markers: mojiMarkers },
+    'punctuation/base64 runs': { text: runsParts.join('\n\n'), markers: runsMarkers },
   };
 }
 
@@ -513,6 +608,17 @@ describe('TextChunker token budget guard (#35-B3 / AC2)', () => {
       const chunks = chunker.chunkText(fixture.text, `${name}.txt`);
 
       expect(chunks.length, `${name}: forward progress (non-empty output)`).toBeGreaterThanOrEqual(1);
+      // Round-6 duplication bound (set on the dense entry): a tail-starved
+      // splitter duplicated that fixture into 804 chunks at the pre-feedback
+      // head; the shipped proportional-tail emits 43. 120 kills the mutant
+      // with calibration headroom (base emits 5 — also under the bound, but
+      // the entry is already RED at base via the oracle assertion above it).
+      if (fixture.maxChunks !== undefined) {
+        expect(
+          chunks.length,
+          `${name}: duplication bound — chunk count must stay <= ${fixture.maxChunks} (tail starvation)`
+        ).toBeLessThanOrEqual(fixture.maxChunks);
+      }
       for (const chunk of chunks) {
         expect(chunk.text.length, `${name}: non-empty chunk text`).toBeGreaterThan(0);
         const actual = wordpieceCount(chunk.text);

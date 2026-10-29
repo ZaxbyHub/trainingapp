@@ -93,9 +93,17 @@ function wordTokenCost(word: string): number {
     else if (code < 128) punct++;
     else other++;
   }
-  const letterBound = COMMON_ENGLISH_WORDS.has(word.toLowerCase().replace(/[^a-z]/g, ''))
-    ? Math.ceil(letters / 4)
-    : letters; // true per-character upper bound for non-vocabulary words
+  // The list rate applies ONLY to a word whose LETTER RUN is unbroken: a
+  // punct/digit-interleaved form (NUL/mojibake-corrupted ingest produces
+  // '.r.e.c.o.r.d'-shaped words) strips to a list hit under a letters-only
+  // lookup while its real WordPiece cost is 1/char — so interior
+  // non-letters fall back to the per-character bound. Punctuation attached
+  // at the word's edges ("begins.") is normal prose and does not disqualify.
+  const letterCore = word.toLowerCase().replace(/^[^a-z]+|[^a-z]+$/g, '');
+  const letterBound =
+    letters === letterCore.length && COMMON_ENGLISH_WORDS.has(letterCore)
+      ? Math.ceil(letters / 4)
+      : letters; // true per-character upper bound for non-vocabulary words
   return Math.ceil(letterBound + digits + other + punct);
 }
 
