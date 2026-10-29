@@ -15,33 +15,119 @@
  *     marker;
  *   - blocks are separated by a single blank line.
  *
- * Line-based by design: the renderer pipeline (react-markdown) owns the rich
- * rendering; this util only needs the copy payload, so it must be
- * deterministic, dependency-free, and identical for identical input.
+ * Implementation (PR #259 review round): the transform parses the source with
+ * the SAME remark pipeline the renderer uses (unified + remark-parse +
+ * remark-gfm — the identical parser behind react-markdown), then walks the
+ * resulting mdast. Walking the shared parse tree means the copy payload is
+ * faithful to what the renderer shows by construction: CommonMark flanking
+ * rules decide what is emphasis (intraword underscores and space-delimited
+ * asterisks survive verbatim), all GFM shapes the renderer supports (ordered
+ * lists, blockquotes, strikethrough, task lists, autolinks, tilde fences,
+ * pipe-less tables) are modeled, and cost is a single linear parse — no
+ * regex backtracking over untrusted model output.
  */
 
-/** Strip inline markdown shapes (emphasis/strong/inline code/links/images).
- *  Order matters: images and links first (their inner text may itself carry
- *  emphasis), then strong, then emphasis, then inline code. */
-function stripInline(md: string): string {
-  let out = md;
-  // Images: ![alt](url) → alt (the alt text is the content a reader keeps).
-  out = out.replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1');
-  // Links: [text](url) → text.
-  out = out.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
-  // Strong: **text** / __text__ → text.
-  out = out.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/__([^_]+)__/g, '$1');
-  // Emphasis: *text* / _text_ → text (single-character delimiters).
-  out = out.replace(/\*([^*]+)\*/g, '$1').replace(/_([^_]+)_/g, '$1');
-  // Inline code: `code` → code (after emphasis so backtected underscores
-  // that survived the emphasis pass still unwrap their backticks).
-  out = out.replace(/`([^`]+)`/g, '$1');
+import { unified } from 'unified';
+import remarkParse from 'remark-parse';
+import remarkGfm from 'remark-gfm';
+import type { Content, List, PhrasingContent, Table } from 'mdast';
+
+const processor = unified().use(remarkParse).use(remarkGfm);
+
+/** Inline/phrasing content → text per the pinned contract: emphasis, strong,
+ *  strikethrough and links contribute their inner text; inline code its
+ *  literal value; images their alt text; hard breaks a newline. */
+function phrasingText(nodes: PhrasingContent[] | undefined): string {
+  if (!nodes || nodes.length === 0) return '';
+  let out = '';
+  for (const node of nodes) {
+    switch (node.type) {
+      case 'text':
+      case 'inlineCode':
+        out += node.value;
+        break;
+      case 'break':
+        out += '\n';
+        break;
+      case 'emphasis':
+      case 'strong':
+      case 'delete':
+      case 'link':
+        out += phrasingText(node.children);
+        break;
+      case 'image':
+        out += node.alt ?? '';
+        break;
+      default: {
+        // Other phrasing nodes (footnote references, html, etc.): contribute
+        // any literal value they carry, mirroring what the renderer escapes
+        // and shows as text.
+        const value = (node as { value?: unknown }).value;
+        if (typeof value === 'string') {
+          out += value;
+        } else if ('children' in node) {
+          out += phrasingText((node as { children: PhrasingContent[] }).children);
+        }
+      }
+    }
+  }
   return out;
 }
 
-/** True when a table row is a separator row (`| --- | :---: |` shapes). */
-function isTableSeparatorRow(cells: string[]): boolean {
-  return cells.length > 0 && cells.every((c) => /^:?-{3,}:?$/.test(c));
+/** A list's items flattened to lines; nested lists recurse into the same
+ *  block, one line per leaf paragraph. */
+function listLines(list: List): string[] {
+  const lines: string[] = [];
+  for (const item of list.children) {
+    for (const child of item.children) {
+      if (child.type === 'list') {
+        lines.push(...listLines(child));
+      } else {
+        const text = blockText(child as Content);
+        if (text !== null && text !== '') {
+          lines.push(...text.split('\n'));
+        }
+      }
+    }
+  }
+  return lines;
+}
+
+/** One block-level node → its text block (multiple lines allowed), or null
+ *  when the node contributes nothing to the payload. */
+function blockText(node: Content): string | null {
+  switch (node.type) {
+    case 'heading':
+    case 'paragraph':
+      return phrasingText(node.children);
+    case 'code':
+      // Code contributes its lines verbatim (no fences, no language tag).
+      return node.value.replace(/\n+$/, '');
+    case 'table': {
+      const table: Table = node;
+      return table.children
+        .map((row) => row.children.map((cell) => phrasingText(cell.children)).join(' '))
+        .join('\n');
+    }
+    case 'list': {
+      const lines = listLines(node as List);
+      return lines.length > 0 ? lines.join('\n') : null;
+    }
+    case 'blockquote':
+      // The quoted blocks render as a visually distinct group; contribute
+      // them as their own block(s).
+      return node.children
+        .map((child) => blockText(child))
+        .filter((text: string | null): text is string => text !== null)
+        .join('\n\n');
+    case 'html':
+      // The renderer escapes raw HTML and shows it as text; contribute it.
+      return node.value.replace(/\n+$/, '');
+    default:
+      // Definitions, YAML front matter, footnotes' definitions, thematic
+      // breaks: nothing user-visible to copy.
+      return null;
+  }
 }
 
 /**
@@ -49,81 +135,9 @@ function isTableSeparatorRow(cells: string[]): boolean {
  * contract above. Identical input always yields identical output.
  */
 export function markdownToPlainText(md: string): string {
-  const lines = md.split('\n');
-  const blocks: string[] = [];
-  let current: string[] = [];
-  let inFence = false;
-  // Table rows are consecutive lines of ONE block (no blank lines between
-  // rows), so a row only starts a new block when it does not immediately
-  // follow another row.
-  let lastWasTableRow = false;
-
-  const flush = () => {
-    if (current.length > 0) {
-      blocks.push(current.join('\n'));
-      current = [];
-    }
-  };
-
-  for (const line of lines) {
-    // Fenced code: toggle on a fence delimiter; inside, lines are verbatim.
-    if (/^\s*```/.test(line)) {
-      if (inFence) {
-        inFence = false;
-        flush();
-      } else {
-        flush();
-        inFence = true;
-      }
-      lastWasTableRow = false;
-      continue;
-    }
-    if (inFence) {
-      current.push(line);
-      continue;
-    }
-    // Headings: drop the marker, keep the text.
-    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
-    if (heading) {
-      flush();
-      current.push(stripInline(heading[2]));
-      lastWasTableRow = false;
-      continue;
-    }
-    // Table rows: cells joined by a single space; separator rows dropped.
-    if (/^\s*\|.*\|\s*$/.test(line)) {
-      const cells = line
-        .trim()
-        .replace(/^\|/, '')
-        .replace(/\|$/, '')
-        .split('|')
-        .map((c) => stripInline(c.trim()));
-      if (isTableSeparatorRow(cells)) {
-        continue; // separator row contributes nothing
-      }
-      // A new table starts a fresh block; consecutive rows join the same one.
-      if (!lastWasTableRow) {
-        flush();
-      }
-      current.push(cells.join(' '));
-      lastWasTableRow = true;
-      continue;
-    }
-    lastWasTableRow = false;
-    // Unordered list items: drop the `- ` marker.
-    const listItem = /^\s*-\s+(.*)$/.exec(line);
-    if (listItem) {
-      current.push(stripInline(listItem[1]));
-      continue;
-    }
-    // Blank line: block boundary.
-    if (line.trim() === '') {
-      flush();
-      continue;
-    }
-    current.push(stripInline(line));
-  }
-  flush();
-
+  const root = processor.parse(md) as import('mdast').Root;
+  const blocks = root.children
+    .map((child) => blockText(child))
+    .filter((text): text is string => text !== null && text !== '');
   return blocks.join('\n\n');
 }

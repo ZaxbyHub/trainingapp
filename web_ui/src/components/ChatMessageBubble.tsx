@@ -14,6 +14,15 @@ import { markdownToPlainText } from '../lib/markdown/plain-text';
 import { Banner, Button, Icon } from '../ui';
 import '../pages/chat.css';
 
+/** True when the content carries at least one markdown shape the plain-text
+ *  transform would render differently from the raw source (review PRR-005).
+ *  Deliberately generous: any structural marker or emphasis character. */
+const HAS_MARKDOWN_SHAPE = /(?:^|\n)\s*(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|>\s|`{3,})|[*_`~[\]|]/;
+
+function hasMarkdownShape(content: string): boolean {
+  return HAS_MARKDOWN_SHAPE.test(content);
+}
+
 interface ChatMessageBubbleProps {
   message: ChatMessage;
   /** When set, renders a Regenerate action (last assistant message only). */
@@ -56,9 +65,12 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
   // messages only; see handleCopySource).
   const handleCopy = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(
-        message.role === 'assistant' ? markdownToPlainText(message.content) : message.content,
-      );
+      const payload =
+        message.role === 'assistant' ? markdownToPlainText(message.content) : message.content;
+      // PRE-1 (review round): content that renders to nothing (whitespace-only
+      // or markdown-only markup) must not clobber the clipboard with ''.
+      if (payload === '') return;
+      await navigator.clipboard.writeText(payload);
       setCopied(true);
       if (copyFeedbackTimerRef.current !== null) {
         clearTimeout(copyFeedbackTimerRef.current);
@@ -70,7 +82,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
     } catch {
       console.warn('[ChatMessageBubble] Clipboard write failed');
     }
-  }, [message.content]);
+  }, [message.content, message.role]);
 
   // #35 C4: distinct affordance for the raw markdown source (byte-identical
   // `message.content`) — rendered on assistant messages only, since user
@@ -106,9 +118,11 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
   );
 
   // #35 C4: the raw-source action only makes sense when the content carries
-  // markdown shapes (assistant replies); an empty message has nothing to copy.
+  // markdown shapes (review round PRR-005: a plain-prose answer renders
+  // identically under both actions, so the second button would be an
+  // unexplained duplicate); an empty message has nothing to copy.
   const copySourceButton =
-    message.role === 'assistant' && message.content !== '' ? (
+    message.role === 'assistant' && message.content !== '' && hasMarkdownShape(message.content) ? (
       <Button
         variant="ghost"
         size="sm"

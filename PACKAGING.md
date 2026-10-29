@@ -183,8 +183,7 @@ root.
 
 The runtime gate behind this is `src/lib/models/model-manifest.ts`
 (`checkPackagedModels()`), which probes each required file via the hardened
-`src/lib/models/probe.ts` helper and drives the "ready vs missing — see
-PACKAGING.md" UI state. The probe treats a HEAD response as "present" only when
+`src/lib/models/probe.ts` helper and drives the "ready vs missing" UI state. The probe treats a HEAD response as "present" only when
 it is OK **and not** `Content-Type: text/html` — because Vite dev/preview (and
 SPA static hosts) serve `index.html` with HTTP 200 for any unmatched path, which
 would otherwise make a build with zero model files falsely report "ready".

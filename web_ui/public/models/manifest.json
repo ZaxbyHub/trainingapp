@@ -1,6 +1,6 @@
 {
   "version": "2",
-  "description": "Single source of truth for the packaged model/runtime assets required for fully-offline operation. Paths are RELATIVE to public/models/ (i.e. to the served /models dir). At runtime, src/lib/models/model-manifest.ts imports this file and prefixes each path with the deploy-aware absolute MODELS_BASE. Weight binaries are assembled at packaging time (see PACKAGING.md); validate-build.mjs reads this same file to gate the produced dist/.",
+  "description": "Single source of truth for the packaged model/runtime assets required for fully-offline operation. Paths are RELATIVE to public/models/ (i.e. to the served /models dir). At runtime, src/lib/models/model-manifest.ts imports this file and prefixes each path with the deploy-aware absolute MODELS_BASE. Weight binaries are assembled at packaging time; validate-build.mjs reads this same file to gate the produced dist/.",
   "models": [
     {
       "id": "snowflake-arctic-embed-m-v1.5",

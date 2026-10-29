@@ -123,7 +123,7 @@ handleSend(text, images?)
    ```typescript
    setMessages((prev) => {
      const appended = [...prev, userMessage, assistantMessage];
-     // MAX_MESSAGES=200 pruning with hidden-messages-indicator
+     // Full history kept; render windowing is handled by ChatMessageList
      return appended;
    });
    ```
@@ -136,13 +136,16 @@ handleSend(text, images?)
 | Assistant (streaming) | `id, role='assistant', content='', timestamp, isStreaming=true` | Empty content, streaming flag |
 | Assistant (complete) | `id, role='assistant', content, timestamp, sources?, isStreaming=false` | Final content + sources |
 | Assistant (error) | `id, role='assistant', content, timestamp, isStreaming=false` | Content with `[Error: ...]` appended |
-| Hidden indicator | `id='hidden-messages-indicator', role='system'` | Pruning notice when >200 messages |
+| Hidden indicator | non-persisted `<div role="status">` in ChatMessageList | Render-window notice when >200 messages paint |
 
-### 2.3 Message Pruning (MAX_MESSAGES=200)
+### 2.3 Message Render Windowing (MAX_RENDERED_MESSAGES=200)
 
-When `messages.length > MAX_MESSAGES`:
-- Earliest messages are dropped
-- A `hidden-messages-indicator` system message is prepended showing the count
+The full history always stays in state and IndexedDB. When more than
+`MAX_RENDERED_MESSAGES` (200) messages exist:
+- Only the LAST 200 messages are painted (render-only windowing)
+- A non-persisted `<div role="status">` window note ("N earlier messages
+  hidden (showing the last 200)") is painted above the window; the count
+  indicator is never stored as a message
 
 ### 2.4 Regenerate Flow (handleRegenerate)
 

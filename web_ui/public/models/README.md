@@ -45,12 +45,11 @@ cd web_ui
 npm run prepare-models      # copies embeddings + ORT wasm from the repo
 ```
 
-See [`../../../PACKAGING.md`](../../../PACKAGING.md) for the full procedure,
-including GGUF conversion/splitting for the LLM (Phase 2) and the build-time
-validation that fails if a required file is missing.
+The build-time validation (validate-build.mjs) fails if a required file is
+missing; contact your administrator for the packaging procedure.
 
 ## Runtime readiness
 
 `src/lib/models/model-manifest.ts` declares the required files and
 `checkPackagedModels()` verifies their presence so the UI can show a clear
-"models packaged & ready" vs "models missing — see packaging guide" state.
+"models packaged & ready" vs "models missing" state.
