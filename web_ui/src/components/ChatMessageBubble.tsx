@@ -46,13 +46,19 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
     };
   }, []);
 
-  // #35 C4: the default Copy writes a PLAIN-TEXT rendition of the message —
-  // users paste into editors that want the prose, not `**bold**` markers.
-  // The raw markdown source stays reachable through the distinct Copy-source
-  // action below (assistant messages only; see handleCopySource).
+  // #35 C4: the default Copy writes a PLAIN-TEXT rendition of ASSISTANT
+  // messages — users paste into editors that want the prose, not `**bold**`
+  // markers. User/system messages are copied BYTE-IDENTICAL (the transform is
+  // assistant-only): user input may legitimately contain markdown-shaped
+  // characters (backticked code terms, snake_case, *emphasis*) that are
+  // displayed verbatim and must copy verbatim. The raw markdown source stays
+  // reachable through the distinct Copy-source action below (assistant
+  // messages only; see handleCopySource).
   const handleCopy = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(markdownToPlainText(message.content));
+      await navigator.clipboard.writeText(
+        message.role === 'assistant' ? markdownToPlainText(message.content) : message.content,
+      );
       setCopied(true);
       if (copyFeedbackTimerRef.current !== null) {
         clearTimeout(copyFeedbackTimerRef.current);

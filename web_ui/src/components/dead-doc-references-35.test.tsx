@@ -13,8 +13,11 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /** User-visible sources that previously referenced PACKAGING.md / packaging
- *  guide — pinned clean. Frozen-check c4b covers model-readiness.ts. */
+ *  guide — pinned clean, including the AC4 pair (belt over the frozen c4/c4b
+ *  checks, which pin the rendered overlay and the readiness source). */
 const GUARDED_SOURCES = [
+  'src/components/ModelBlockedOverlay.tsx',
+  'src/lib/llm/model-readiness.ts',
   'src/pages/SettingsPage.tsx',
   'src/lib/inference/InferenceModeContext.tsx',
   'src/lib/llm/wllama-service.ts',

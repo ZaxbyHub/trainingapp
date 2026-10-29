@@ -203,6 +203,29 @@ describe('#35 C4 copy affordances (frozen acceptance)', () => {
     expect(mockClipboard.writeText).toHaveBeenCalledWith('Plain user text - copy me exactly.');
     cleanup();
 
+    // Leg 1b — a USER message carrying markdown-shaped characters copies
+    // BYTE-IDENTICAL: the plain-text transform is assistant-only (user input
+    // may contain backticked code terms / snake_case / *emphasis* that are
+    // displayed verbatim and must copy verbatim). No copy-source escape hatch
+    // is rendered on user messages, so default Copy is the only path.
+    mockClipboard.writeText.mockClear();
+    const userMd: ChatMessage = {
+      id: 'u-md-shaped',
+      role: 'user',
+      content: 'Use `git rebase` and snake_case_name with *emphasis*, 42 * 3 * 1.',
+      timestamp: Date.now(),
+    };
+    render(<ChatMessageBubble message={userMd} />);
+    fireEvent.click(screen.getByRole('button', { name: /copy message/i }));
+    await waitFor(() => {
+      expect(mockClipboard.writeText).toHaveBeenCalledTimes(1);
+    });
+    expect(
+      mockClipboard.writeText,
+      'user-message Copy must write message.content byte-identical (transform is assistant-only)',
+    ).toHaveBeenCalledWith('Use `git rebase` and snake_case_name with *emphasis*, 42 * 3 * 1.');
+    cleanup();
+
     // Leg 2 — CodeBlock copy writes the extracted code text, no fences.
     mockClipboard.writeText.mockClear();
     render(<MarkdownRenderer content={CODE_BLOCK_FIXTURE} />);
