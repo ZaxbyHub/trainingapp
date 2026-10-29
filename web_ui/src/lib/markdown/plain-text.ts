@@ -23,8 +23,8 @@
  * rules decide what is emphasis (intraword underscores and space-delimited
  * asterisks survive verbatim), all GFM shapes the renderer supports (ordered
  * lists, blockquotes, strikethrough, task lists, autolinks, tilde fences,
- * pipe-less tables) are modeled, and cost is a single linear parse — no
- * regex backtracking over untrusted model output.
+ * pipe-less tables, footnote definitions) are modeled, and cost is a single
+ * linear parse — no regex backtracking over untrusted model output.
  */
 
 import { unified } from 'unified';
@@ -123,9 +123,16 @@ function blockText(node: Content): string | null {
     case 'html':
       // The renderer escapes raw HTML and shows it as text; contribute it.
       return node.value.replace(/\n+$/, '');
+    case 'footnoteDefinition':
+      // remark-gfm renders footnote definitions (a footnotes section), so
+      // their text is user-visible content (review delta F6); contribute it.
+      return node.children
+        .map((child) => blockText(child))
+        .filter((text: string | null): text is string => text !== null)
+        .join('\n\n');
     default:
-      // Definitions, YAML front matter, footnotes' definitions, thematic
-      // breaks: nothing user-visible to copy.
+      // YAML front matter, definitions, thematic breaks: nothing rendered
+      // for the user to copy.
       return null;
   }
 }

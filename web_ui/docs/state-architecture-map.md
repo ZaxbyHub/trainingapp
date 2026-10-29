@@ -438,7 +438,7 @@ App.tsx displays a dismissible error banner consuming `persistenceError`:
 | `runGeneration` closure | Captures mode/engine at creation; adding persistence closure dependencies could break in-flight streams | Ensure persistence doesn't add reactive deps to `runGeneration` |
 | `tokenStreamManagerRef` | Mutable ref updated outside React state; Dexie save timing must not race with stream updates | Use functional setMessages, save after completion |
 | `lastTurnRef` | Contains raw bytes (AttachedImage); ChatMessage.images uses ChatImage[] with base64 dataUrl (no raw bytes) | Dexie stores ChatImage[] (base64 dataUrl) directly; lastTurnRef is separate volatile reference |
-| `MAX_MESSAGES` pruning | Pruning logic in setMessages callback; Dexie saves full array before pruning | Save after pruning completes |
+| Render-window drift | ChatMessageList paints only the last MAX_RENDERED_MESSAGES; Dexie always stores the full array | Keep persistence storage-agnostic of the render window |
 
 ### 6.2 Potential Break Points
 
@@ -452,7 +452,7 @@ App.tsx displays a dismissible error banner consuming `persistenceError`:
 
 ### 6.3 Performance Considerations
 
-- **Large conversations**: With MAX_MESSAGES=200, each message could be several KB. Total state size could reach 5-10MB. Dexie handles this well.
+- **Large conversations**: The FULL history persists to IndexedDB regardless of the 200-message render window (messages can be several KB each; total state size could reach 5-10MB). Dexie handles this well.
 - **Streaming updates**: RAF-batched rendering; Dexie saves should be debounced (e.g., 1s after last change) to avoid excessive writes.
 - **Image data**: `ChatImage.dataUrl` is already base64—no conversion needed for Dexie. Raw `AttachedImage.data` (ArrayBuffer) only exists in `lastTurnRef` and is not persisted.
 
