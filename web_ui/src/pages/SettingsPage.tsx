@@ -274,7 +274,7 @@ function UpdatesSection(): React.ReactElement {
           <code className="settings-code" data-testid="updates-app-sha256">
             {status.appUpdate.sha256}
           </code>{' '}
-          (verify the downloaded file against it before running, per docs/updates.md).
+          (verify the downloaded file against it before running).
         </p>
       )}
       {status !== null && status.optIn && status.refused.length > 0 && (
@@ -304,7 +304,7 @@ function UpdatesSection(): React.ReactElement {
       )}
       <p className="settings-text">
         Update feeds are Ed25519-signed; anything failing signature verification is refused with no
-        unsigned fallback. See the Updates runbook (docs/updates.md) for the feed format.
+        unsigned fallback.
       </p>
     </>
   );

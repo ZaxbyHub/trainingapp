@@ -8,8 +8,8 @@ file from the repository root in dev (`<repo>/docs/licenses.md`) and from
 is wired into the installer by #84 (packaging), so packaged builds before that change
 show the wizard's "unavailable" fallback.
 
-Model-selection decisions live in the ADRs: [ADR-0001](adr/0001-embedding-reranker.md)
-(embedding + reranker) and [ADR-0002](adr/0002-llm-profiles.md) (LLM Quality/Fast
+Model-selection decisions live in the ADRs: ADR-0001
+(embedding + reranker) and ADR-0002 (LLM Quality/Fast
 profiles, amended 2026-10-11 by #156 to the LFM lineup). This file records license
 type, required notices, and restrictions per bundled model family. **Maintenance
 rule:** a revision of any upstream license (the LFM Open License, or — historically,
@@ -107,7 +107,7 @@ covers the models and bundled content only.
 ## Knowledge packs and documents
 
 Knowledge-pack content carries its own provenance: packs assert source documents and
-redistribution posture at build time (`packtool/README.md`: no redistribution right is
+redistribution posture at build time (the packtool README: no redistribution right is
 asserted for embedded artifacts beyond what the pack's own metadata grants). Any pack
 shipped with an installer must record its content licenses in the pack manifest before
 #84 finalizes bundling.
