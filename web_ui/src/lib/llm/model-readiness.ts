@@ -321,8 +321,7 @@ export class ModelReadinessGate {
         failures.push(
           `This build is missing the packaged browser model ("${modelId}"). ` +
           'The wllama engine serves weights same-origin and cannot download them. ' +
-          'Contact your administrator, or rebuild with the weights staged ' +
-          '(see PACKAGING.md).'
+          'Contact your administrator, or connect an external model in Settings.'
         );
       }
     }

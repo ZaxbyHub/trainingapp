@@ -57,7 +57,7 @@ export function IsolationBanner(): JSX.Element | null {
       }
     >
       This deployment is misconfigured — responses will be several times slower.
-      Cross-Origin Isolation is off. See the packaging guide.
+      Cross-Origin Isolation is off. Contact your administrator.
     </Banner>
   );
 }

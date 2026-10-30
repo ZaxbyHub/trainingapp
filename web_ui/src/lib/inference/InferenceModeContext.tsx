@@ -315,7 +315,7 @@ export function InferenceModeProvider({ children }: { children: React.ReactNode 
           // manufacture a spurious auth-required error.
           const hasToken = isElectron() ? true : !!getToken();
           const modeError = authEnabled && !hasToken
-            ? 'Server requires authentication. Contact your administrator — see PACKAGING.md for setup.'
+            ? 'Server requires authentication. Contact your administrator for setup.'
             : null;
           setState((prev) => ({ ...prev, isServerConnected: true, modeError }));
         }

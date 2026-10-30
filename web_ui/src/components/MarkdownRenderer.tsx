@@ -18,7 +18,7 @@
  */
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Button } from '../ui';
 import { cx } from '../ui/cx';
@@ -225,143 +225,16 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = React.memo(({ c
 
   return (
     <div className="chat-md">
+      {/* #35 A6: MD_COMPONENTS is a module-level constant so element types
+          keep stable identities across renders. The previous inline literal
+          created new component functions per render, so React treated every
+          markdown element as a NEW component type on each throttled streaming
+          flush and remounted the whole subtree (DOM rebuilt per flush,
+          CodeBlock copy-feedback state reset mid-stream). */}
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         urlTransform={allowlistUrlTransform}
-        components={{
-          // react-markdown v9: no `inline` prop. Distinguish inline vs block
-          // code by the presence of a `language-*` className (block fences
-          // carry it; inline code does not). (Critic M1)
-          code({ className, children, ...rest }) {
-            const match = /language-(\w+)/.exec(className || '');
-            const text = String(children).replace(/\n$/, '');
-            if (match) {
-              return <CodeBlock language={match[1]} code={text} />;
-            }
-            // Inline code (no language class) — but react-markdown v9 renders
-            // indented/fenced code WITHOUT a language as a <code> inside <pre>
-            // too. Detect block vs inline via the `node` position: a block code
-            // has a `position` spanning a line. We fall back to inline styling
-            // when there's no language and no newline (typical inline case).
-            const isBlock = text.includes('\n');
-            if (isBlock) {
-              return <CodeBlock language="" code={text} />;
-            }
-            return (
-              <code
-                className="chat-md__code"
-                {...rest}
-              >
-                {children}
-              </code>
-            );
-          },
-          a({ href, children, ...rest }) {
-            // href is already sanitized by urlTransform (allowlist). Links
-            // that were rejected have href === '' → render as plain text.
-            if (!href) {
-              return <InLinkContext.Provider value={false}>{children}</InLinkContext.Provider>;
-            }
-            return (
-              <InLinkContext.Provider value={true}>
-                <a
-                  href={href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="chat-md__link"
-                  {...rest}
-                >
-                  {children}
-                </a>
-              </InLinkContext.Provider>
-            );
-          },
-          img: ImageGuard,
-          table({ children, ...rest }) {
-            return (
-              <div className="chat-md__tablewrap">
-                <table
-                  className="chat-md__table"
-                  {...rest}
-                >
-                  {children}
-                </table>
-              </div>
-            );
-          },
-          th({ children, ...rest }) {
-            return (
-              <th
-                className="chat-md__th"
-                {...rest}
-              >
-                {children}
-              </th>
-            );
-          },
-          td({ children, ...rest }) {
-            return (
-              <td
-                className="chat-md__td"
-                {...rest}
-              >
-                {children}
-              </td>
-            );
-          },
-          blockquote({ children, ...rest }) {
-            return (
-              <blockquote
-                className="chat-md__quote"
-                {...rest}
-              >
-                {children}
-              </blockquote>
-            );
-          },
-          hr({ ...rest }) {
-            return (
-              <hr
-                className="chat-md__hr"
-                {...rest}
-              />
-            );
-          },
-          ul({ children, ...rest }) {
-            return (
-              <ul {...rest} className={cx('chat-md__list', rest.className)}>
-                {children}
-              </ul>
-            );
-          },
-          ol({ children, ...rest }) {
-            return (
-              <ol {...rest} className={cx('chat-md__list', rest.className)}>
-                {children}
-              </ol>
-            );
-          },
-          li({ children, ...rest }) {
-            return (
-              <li {...rest} className={cx('chat-md__li', rest.className)}>
-                {children}
-              </li>
-            );
-          },
-          p({ children, ...rest }) {
-            return (
-              <p className="chat-md__p" {...rest}>
-                {children}
-              </p>
-            );
-          },
-          h1: (props) => <Heading level={1} {...props} />,
-          h2: (props) => <Heading level={2} {...props} />,
-          h3: (props) => <Heading level={3} {...props} />,
-          h4: (props) => <Heading level={4} {...props} />,
-          h5: (props) => <Heading level={5} {...props} />,
-          h6: (props) => <Heading level={6} {...props} />,
-        }}
+        components={MD_COMPONENTS}
       >
         {renderedContent}
       </ReactMarkdown>
@@ -373,6 +246,150 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = React.memo(({ c
 const Heading: React.FC<{ level: 1 | 2 | 3 | 4 | 5 | 6; children?: React.ReactNode }> = ({ level, children }) => {
   const Tag = (`h${level}` as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6');
   return <Tag className={`chat-md__h chat-md__h${level}`}>{children}</Tag>;
+};
+
+/**
+ * #35 A6: module-level component map for ReactMarkdown. Every referenced
+ * symbol (CodeBlock, ImageGuard, Heading, InLinkContext, cx,
+ * allowlistUrlTransform) is module-scope, so this object is creation-invariant:
+ * React sees stable element-type identities across renders and stops
+ * remounting the rendered markdown subtree on each throttled streaming flush.
+ * Declared after `Heading` so the const references resolve at module
+ * evaluation.
+ */
+const MD_COMPONENTS: Components = {
+  // react-markdown v9: no `inline` prop. Distinguish inline vs block
+  // code by the presence of a `language-*` className (block fences
+  // carry it; inline code does not). (Critic M1)
+  code({ className, children, ...rest }) {
+    const match = /language-(\w+)/.exec(className || '');
+    const text = String(children).replace(/\n$/, '');
+    if (match) {
+      return <CodeBlock language={match[1]} code={text} />;
+    }
+    // Inline code (no language class) — but react-markdown v9 renders
+    // indented/fenced code WITHOUT a language as a <code> inside <pre>
+    // too. Detect block vs inline via the `node` position: a block code
+    // has a `position` spanning a line. We fall back to inline styling
+    // when there's no language and no newline (typical inline case).
+    const isBlock = text.includes('\n');
+    if (isBlock) {
+      return <CodeBlock language="" code={text} />;
+    }
+    return (
+      <code
+        className="chat-md__code"
+        {...rest}
+      >
+        {children}
+      </code>
+    );
+  },
+  a({ href, children, ...rest }) {
+    // href is already sanitized by urlTransform (allowlist). Links
+    // that were rejected have href === '' → render as plain text.
+    if (!href) {
+      return <InLinkContext.Provider value={false}>{children}</InLinkContext.Provider>;
+    }
+    return (
+      <InLinkContext.Provider value={true}>
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="chat-md__link"
+          {...rest}
+        >
+          {children}
+        </a>
+      </InLinkContext.Provider>
+    );
+  },
+  img: ImageGuard,
+  table({ children, ...rest }) {
+    return (
+      <div className="chat-md__tablewrap">
+        <table
+          className="chat-md__table"
+          {...rest}
+        >
+          {children}
+        </table>
+      </div>
+    );
+  },
+  th({ children, ...rest }) {
+    return (
+      <th
+        className="chat-md__th"
+        {...rest}
+      >
+        {children}
+      </th>
+    );
+  },
+  td({ children, ...rest }) {
+    return (
+      <td
+        className="chat-md__td"
+        {...rest}
+      >
+        {children}
+      </td>
+    );
+  },
+  blockquote({ children, ...rest }) {
+    return (
+      <blockquote
+        className="chat-md__quote"
+        {...rest}
+      >
+        {children}
+      </blockquote>
+    );
+  },
+  hr({ ...rest }) {
+    return (
+      <hr
+        className="chat-md__hr"
+        {...rest}
+      />
+    );
+  },
+  ul({ children, ...rest }) {
+    return (
+      <ul {...rest} className={cx('chat-md__list', rest.className)}>
+        {children}
+      </ul>
+    );
+  },
+  ol({ children, ...rest }) {
+    return (
+      <ol {...rest} className={cx('chat-md__list', rest.className)}>
+        {children}
+      </ol>
+    );
+  },
+  li({ children, ...rest }) {
+    return (
+      <li {...rest} className={cx('chat-md__li', rest.className)}>
+        {children}
+      </li>
+    );
+  },
+  p({ children, ...rest }) {
+    return (
+      <p className="chat-md__p" {...rest}>
+        {children}
+      </p>
+    );
+  },
+  h1: (props) => <Heading level={1} {...props} />,
+  h2: (props) => <Heading level={2} {...props} />,
+  h3: (props) => <Heading level={3} {...props} />,
+  h4: (props) => <Heading level={4} {...props} />,
+  h5: (props) => <Heading level={5} {...props} />,
+  h6: (props) => <Heading level={6} {...props} />,
 };
 
 MarkdownRenderer.displayName = 'MarkdownRenderer';

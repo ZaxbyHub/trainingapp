@@ -1520,7 +1520,7 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
                   package ships no browser-LLM weights by design. */}
               {browserEngine === 'wllama' && !modelCached && !desktopApp && (
                 <p className="settings-text settings-tone--warning">
-                  The packaged model is missing from this build. The wllama engine cannot download it. Contact your administrator or rebuild with the weights staged (see PACKAGING.md).
+                  The packaged model is missing from this build. The wllama engine cannot download it. Contact your administrator, or set up a local server or cloud model under Model & connection below.
                 </p>
               )}
             </div>
@@ -1706,7 +1706,7 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
                 {!packagesReady.allReady && packagesReady.missing.length > 0 && (
                   <p className="settings-text">
                     {packagesReady.missing.length} required model file(s) not found in this build.
-                    See the packaging guide (PACKAGING.md) to bundle models for offline use.
+                    Contact your administrator to obtain the missing model files.
                   </p>
                 )}
               </div>

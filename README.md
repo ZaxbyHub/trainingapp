@@ -73,7 +73,7 @@ The browser app is a complete, offline RAG client. See `PACKAGING.md` for the bu
 - **Suggested Prompts**: Click any prompt card to immediately send that question to the chat
 - **Assistant Message Styling**: Full-width prose layout (no bubble background/radius) for improved readability
 - **User Message Styling**: 75% width bubbles aligned right, maintaining visual distinction
-- **Action Row Copy Button**: Copy button relocated below message content in a dedicated action row
+- **Action Row Copy Buttons**: Copy buttons relocated below message content in a dedicated action row; assistant messages offer a plain-text Copy (markdown syntax rendered away) plus a Copy source action for the raw markdown when the content carries markdown shapes
 - **Composer Redesign**: Raised card input with 20px radius, enhanced focus feedback (border color + shadow), elevation shadow, and 12px radius buttons
 
 ### Core Capabilities
@@ -139,7 +139,7 @@ The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, 
 - **Source Citation Pills**: Expandable/collapsible source pills with filename truncation, full path reveal on click, and one-click copy-to-clipboard
 - **Inference Mode Toggle**: Status indicator (green/yellow/red) for browser-local vs API mode with server connectivity check against `/auth/status` endpoint
 - **Streaming Cursor Animation**: Blinking cursor (`@keyframes blink`) appended to assistant messages during streaming for visual feedback
-- **Copy Message**: Hover-to-reveal copy button on user and assistant bubbles with 1.5s "Copied!" feedback
+- **Copy Message**: Hover-to-reveal copy buttons on user and assistant bubbles with 1.5s "Copied!" feedback; assistant Copy pastes a plain-text rendition of the answer, and user messages copy exactly what was typed
 - **Streaming Indicator**: Bouncing dots animation (setInterval-based, 3 dots cycling at 200ms) shown below messages during generation
 - **Operation Cancellation**: Cancel button stops `TokenStreamManager`, clears pending mock timers, and marks streaming messages complete
 

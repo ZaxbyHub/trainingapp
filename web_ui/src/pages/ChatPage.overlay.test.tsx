@@ -186,7 +186,7 @@ describe('ChatPage — model-blocked overlay (F-AC7)', () => {
 
     // Engine-aware, non-generic headline for wllama.
     expect(
-      screen.getByText('This build is missing the packaged model. See the Packaging guide or contact your administrator.')
+      screen.getByText('This build is missing the packaged model. Contact your administrator, or use Settings to connect an external model (local server or cloud).')
     ).toBeInTheDocument();
     // Must NOT fall back to the generic "preparing" message when there's a real failure.
     expect(screen.queryByText('Preparing the model…')).not.toBeInTheDocument();

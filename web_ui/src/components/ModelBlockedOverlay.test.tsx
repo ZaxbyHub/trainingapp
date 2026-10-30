@@ -222,7 +222,7 @@ describe('ModelBlockedOverlay (issue #25 F14)', () => {
       // Same node (a region inserted together with its text is not reliably announced).
       expect(screen.getByTestId('model-gate-alert')).toBe(assertive);
       expect(assertive).toHaveTextContent(
-        'Model not ready. This build is missing the packaged model. See the Packaging guide or contact your administrator. Model not downloaded'
+        'Model not ready. This build is missing the packaged model. Contact your administrator, or use Settings to connect an external model (local server or cloud). Model not downloaded'
       );
       expect(polite).toBeEmptyDOMElement();
     });

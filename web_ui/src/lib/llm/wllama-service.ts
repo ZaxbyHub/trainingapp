@@ -219,7 +219,7 @@ export class WllamaService implements LLMService {
       if (!ggufOk) {
         throw new Error(
           `Browser LLM not packaged — missing: ${LLM_GGUF_URL}. ` +
-            'Run `npm run prepare-models` with the model present, or use the desktop app or an external model server (Settings → Model & connection). See PACKAGING.md.'
+            'Contact your administrator, or use the desktop app or an external model server (Settings → Model & connection).'
         );
       }
 

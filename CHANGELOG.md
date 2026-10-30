@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+- **Issue #35 residuals: plain-text chat copy, honest gate copy, streaming
+  remount fix, message-window pin (issues #35 A6/C4/C5/C10)**: the chat Copy
+  button now writes a plain-text rendition of assistant answers, produced by
+  walking the same markdown parse tree the renderer builds (CommonMark/GFM
+  faithful: headings, emphasis, inline code, links, tables, fences and list
+  markers are rendered away; the source's ordinary text — identifiers like
+  `snake_case_name`, arithmetic like `2 * 3 * 1`, inline-code contents — is
+  preserved verbatim). A distinct "Copy source" action (shown when the answer
+  carries markdown shapes) keeps the raw markdown reachable, and user messages
+  always copy byte-identical. User-visible gate copy across the app — the
+  model-not-ready overlay, its readiness rows, Settings warnings, the
+  isolation banner, and the shipped models README/manifest — now references
+  only affordances that exist in the installed app (administrator, Settings,
+  a local server or cloud model) instead of packaging documents the installer
+  does not ship. Streaming no longer rebuilds the rendered markdown subtree
+  on every throttled update (the renderer's component map is stable, so
+  code-block copy feedback stops resetting mid-stream), and the 200-message
+  render window plus its count indicator carry their first running test while
+  a stale test asserting removed send-time pruning is deleted.
 - **web_ui RAG quality: near-duplicate candidate suppression, embedder token guard, history budget cap (issues #153 #35 B2/B3)**: fused retrieval candidates that are adjacent overlap-generated near-duplicates now collapse before rerank/top-K selection (ordered seam-run + exact-duplicate arms), so one piece of evidence no longer occupies two result slots and double-spends the context budget. Document chunking and the pack slide path are bounded by the embedding model's real 512-token window (word-shape-aware estimator whose per-class bounds are true per-character upper bounds for non-vocabulary words; in-budget prose is byte-identical), ending silent tail truncation of over-budget chunks at index time. Conversation history threaded into browser RAG queries is capped to a token budget (default 2048, newest-user-turn-first), so a long chat can no longer zero out the retrieved-context budget and force abstentions despite live evidence. #153 items 1/2/4 are declined on the issue (model swapped to LFM2-1.2B-RAG by #156; sampling defaults remain A/B-gated).
 - **Issue #256 follow-ups: settings.json `external.*` scrub, namespaced-key redaction,
   pixel-baseline regeneration**: a `settings.json` carrying `external.*` keys (older

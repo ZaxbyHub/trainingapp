@@ -12,7 +12,7 @@
  *   At runtime we therefore cannot assume the weights are present — the operator
  *   may have built the archive without running the prepare step. `checkPackagedModels()`
  *   verifies presence so the UI can show a clear "models packaged & ready" vs
- *   "models missing — see packaging guide" state instead of a cryptic load failure.
+ *   "models missing" state instead of a cryptic load failure.
  */
 
 import { probeAsset } from './probe';

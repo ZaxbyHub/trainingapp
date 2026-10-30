@@ -123,7 +123,7 @@ handleSend(text, images?)
    ```typescript
    setMessages((prev) => {
      const appended = [...prev, userMessage, assistantMessage];
-     // MAX_MESSAGES=200 pruning with hidden-messages-indicator
+     // Full history kept; render windowing is handled by ChatMessageList
      return appended;
    });
    ```
@@ -136,13 +136,16 @@ handleSend(text, images?)
 | Assistant (streaming) | `id, role='assistant', content='', timestamp, isStreaming=true` | Empty content, streaming flag |
 | Assistant (complete) | `id, role='assistant', content, timestamp, sources?, isStreaming=false` | Final content + sources |
 | Assistant (error) | `id, role='assistant', content, timestamp, isStreaming=false` | Content with `[Error: ...]` appended |
-| Hidden indicator | `id='hidden-messages-indicator', role='system'` | Pruning notice when >200 messages |
+| Hidden indicator | non-persisted `<div role="status">` in ChatMessageList | Render-window notice when >200 messages paint |
 
-### 2.3 Message Pruning (MAX_MESSAGES=200)
+### 2.3 Message Render Windowing (MAX_RENDERED_MESSAGES=200)
 
-When `messages.length > MAX_MESSAGES`:
-- Earliest messages are dropped
-- A `hidden-messages-indicator` system message is prepended showing the count
+The full history always stays in state and IndexedDB. When more than
+`MAX_RENDERED_MESSAGES` (200) messages exist:
+- Only the LAST 200 messages are painted (render-only windowing)
+- A non-persisted `<div role="status">` window note ("N earlier messages
+  hidden (showing the last 200)") is painted above the window; the count
+  indicator is never stored as a message
 
 ### 2.4 Regenerate Flow (handleRegenerate)
 
@@ -435,7 +438,7 @@ App.tsx displays a dismissible error banner consuming `persistenceError`:
 | `runGeneration` closure | Captures mode/engine at creation; adding persistence closure dependencies could break in-flight streams | Ensure persistence doesn't add reactive deps to `runGeneration` |
 | `tokenStreamManagerRef` | Mutable ref updated outside React state; Dexie save timing must not race with stream updates | Use functional setMessages, save after completion |
 | `lastTurnRef` | Contains raw bytes (AttachedImage); ChatMessage.images uses ChatImage[] with base64 dataUrl (no raw bytes) | Dexie stores ChatImage[] (base64 dataUrl) directly; lastTurnRef is separate volatile reference |
-| `MAX_MESSAGES` pruning | Pruning logic in setMessages callback; Dexie saves full array before pruning | Save after pruning completes |
+| Render-window drift | ChatMessageList paints only the last MAX_RENDERED_MESSAGES; Dexie always stores the full array | Keep persistence storage-agnostic of the render window |
 
 ### 6.2 Potential Break Points
 
@@ -449,7 +452,7 @@ App.tsx displays a dismissible error banner consuming `persistenceError`:
 
 ### 6.3 Performance Considerations
 
-- **Large conversations**: With MAX_MESSAGES=200, each message could be several KB. Total state size could reach 5-10MB. Dexie handles this well.
+- **Large conversations**: The FULL history persists to IndexedDB regardless of the 200-message render window (messages can be several KB each; total state size could reach 5-10MB). Dexie handles this well.
 - **Streaming updates**: RAF-batched rendering; Dexie saves should be debounced (e.g., 1s after last change) to avoid excessive writes.
 - **Image data**: `ChatImage.dataUrl` is already base64—no conversion needed for Dexie. Raw `AttachedImage.data` (ArrayBuffer) only exists in `lastTurnRef` and is not persisted.
 
