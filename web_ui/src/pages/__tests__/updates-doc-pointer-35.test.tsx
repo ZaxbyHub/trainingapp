@@ -8,14 +8,16 @@
  * only), so a rendered pointer is dead for installed users. Same defect
  * class as #35 C10; PR #259's sweep reworded the PACKAGING-family sites but
  * left two live instances in SettingsPage (base: lines 277 and 307), which
- * its family-blind ratchet (dead-doc-references-35.test.tsx) cannot see.
+ * its family-blind ratchet (dead-doc-references-35.test.tsx) could not see.
  *
  * Method: reads the SettingsPage SOURCE via readFileSync — the component is
  * NOT imported (importing pages pulls native ESM deps like edgevec and fails
- * at collection). Comment-aware: the same block+line comment state machine
- * as the class scanner (web_ui/src/components/dead-doc-scanner.test.ts) —
- * only code/text segments count as user-visible; developer comments may
- * legitimately cite repo-tree docs.
+ * at collection). Comment-aware via the same block+line comment classifier
+ * as the class scanner (web_ui/src/components/dead-doc-scanner.test.ts):
+ * comment interiors are blanked, while string and template literals — user-
+ * visible copy — stay scannable, and their //, /* and escapes cannot start
+ * comments. Only non-comment text counts as user-visible; developer
+ * comments may legitimately cite repo-tree docs.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -25,54 +27,98 @@ import { fileURLToPath } from 'node:url';
 /** The unshipped repo document this check pins out of user-visible copy. */
 const UPDATES_DOC_RE = /\bdocs\/updates\.md\b/g;
 
-/** Block+line comment state machine (canonical implementation and self-tests
- *  live in dead-doc-scanner.test.ts). For each line, returns the [start, end)
- *  spans classified as CODE — everything outside // line comments and
- *  block comments; block state carries across lines. */
-function visibleLineSpans(text: string): Array<Array<[number, number]>> {
+/** Index of the closing quote for a string starting at `open`, honoring
+ *  backslash escapes; -1 when the line ends first (unterminated). */
+function findStringEnd(line: string, open: number, quote: string): number {
+  for (let i = open + 1; i < line.length; i++) {
+    const c = line[i];
+    if (c === '\\') {
+      i++;
+      continue;
+    }
+    if (c === quote) return i;
+  }
+  return -1;
+}
+
+/** Per line, the line with COMMENT interiors blanked to spaces
+ *  (offset-preserving): // line comments and block comments are replaced,
+ *  while code, string literals and template literals stay scannable. A '//'
+ *  that is the tail of a '://' URL scheme is not a comment start. Mirrors
+ *  visibleText in dead-doc-scanner.test.ts (the canonical classifier; the
+ *  two copies are diff-pinned by the scanner's self-tests and kept
+ *  byte-identical by review convention). */
+function visibleLines(text: string): string[] {
   const lines = text.split('\n');
-  const spansPerLine: Array<Array<[number, number]>> = [];
+  const out: string[] = [];
   let inBlock = false;
+  let inTemplate = false;
   for (const line of lines) {
-    const spans: Array<[number, number]> = [];
-    let open = 0;
-    let codeOpen = true;
+    const chars = line.split('');
+    const blank = (from: number, to: number) => {
+      for (let k = from; k < to; k++) chars[k] = ' ';
+    };
     let i = 0;
     if (inBlock) {
-      const close = line.indexOf('*/');
+      const close = line.indexOf('*/', i);
       if (close === -1) {
-        spansPerLine.push([]);
+        out.push(' '.repeat(line.length));
         continue;
       }
+      blank(i, close + 2);
       inBlock = false;
       i = close + 2;
-      open = i;
+    }
+    if (inTemplate) {
+      const close = findStringEnd(line, i, '`');
+      if (close === -1) {
+        out.push(line);
+        continue;
+      }
+      inTemplate = false;
+      i = close + 1;
     }
     while (i < line.length) {
-      const lineC = line.indexOf('//', i);
-      const blockC = line.indexOf('/*', i);
-      if (lineC === -1 && blockC === -1) break;
-      if (blockC !== -1 && (lineC === -1 || blockC < lineC)) {
-        if (blockC > open) spans.push([open, blockC]);
-        const close = line.indexOf('*/', blockC + 2);
-        if (close === -1) {
-          inBlock = true;
-          codeOpen = false;
-          i = line.length;
-        } else {
-          i = close + 2;
-          open = i;
-        }
-      } else {
-        if (lineC > open) spans.push([open, lineC]);
-        codeOpen = false;
-        i = line.length;
+      const ch = line[i];
+      if (ch === "'" || ch === '"') {
+        const close = findStringEnd(line, i, ch);
+        if (close === -1) break;
+        i = close + 1;
+        continue;
       }
+      if (ch === '`') {
+        const close = findStringEnd(line, i, '`');
+        if (close === -1) {
+          inTemplate = true;
+          break;
+        }
+        i = close + 1;
+        continue;
+      }
+      if (ch === '/' && line[i + 1] === '*') {
+        const close = line.indexOf('*/', i + 2);
+        if (close === -1) {
+          blank(i, line.length);
+          inBlock = true;
+          break;
+        }
+        blank(i, close + 2);
+        i = close + 2;
+        continue;
+      }
+      if (ch === '/' && line[i + 1] === '/') {
+        if (i > 0 && line[i - 1] === ':') {
+          i += 2;
+          continue;
+        }
+        blank(i, line.length);
+        break;
+      }
+      i++;
     }
-    if (codeOpen && open < line.length) spans.push([open, line.length]);
-    spansPerLine.push(spans);
+    out.push(chars.join(''));
   }
-  return spansPerLine;
+  return out;
 }
 
 describe('updates doc pointer (#260 AC1)', () => {
@@ -84,20 +130,16 @@ describe('updates doc pointer (#260 AC1)', () => {
     );
     const src = readFileSync(settingsPath, 'utf8');
     const lines = src.split('\n');
-    const spansPerLine = visibleLineSpans(src);
+    const visible = visibleLines(src);
 
     const offenders: string[] = [];
-    spansPerLine.forEach((spans, idx) => {
-      const lineText = lines[idx] ?? '';
-      for (const [start, end] of spans) {
-        const segment = lineText.slice(start, end);
-        UPDATES_DOC_RE.lastIndex = 0;
-        const match = segment.match(UPDATES_DOC_RE);
-        if (match) {
-          offenders.push(
-            `web_ui/src/pages/SettingsPage.tsx:${idx + 1} ${match[0]} :: ${lineText.trim()}`,
-          );
-        }
+    visible.forEach((lineText, idx) => {
+      UPDATES_DOC_RE.lastIndex = 0;
+      const match = lineText.match(UPDATES_DOC_RE);
+      if (match) {
+        offenders.push(
+          `web_ui/src/pages/SettingsPage.tsx:${idx + 1} ${match[0]} :: ${lines[idx]?.trim() ?? ''}`,
+        );
       }
     });
 
