@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- **Issue #260 follow-up: dead-doc class closure (Settings Updates copy reword, family-union scanner)**: the Settings Updates section no longer points users at `docs/updates.md`, a developer-facing runbook the installer does not ship — the sha256 sentence now stands alone and the Ed25519 sentence drops its runbook pointer (the same defect class as #35 C10, whose PR #259 sweep reworded the PACKAGING-family sites but left these two). The class guardrail is no longer family-blind: `dead-doc-references-35.test.tsx` (a PACKAGING-family-only ratchet that passed green while live class instances sat inside one of its own pinned files) is replaced by `dead-doc-scanner.test.ts`, which walks `web_ui/src`, `desktop/src`, and `web_ui/public` with a family-union detector (PACKAGING family ∪ path-shaped repo-doc tokens), a block+line comment state machine, test-tree exclusions, and a shipped-docs allowlist (`docs/licenses.md`), pinning the legacy eight guarded sources against an independent path list. A correction comment on PR #259 supersedes the merged body's "0 repo-doc references in UI copy" sweep claim.
 - **Issue #35 residuals: plain-text chat copy, honest gate copy, streaming
   remount fix, message-window pin (issues #35 A6/C4/C5/C10)**: the chat Copy
   button now writes a plain-text rendition of assistant answers, produced by
