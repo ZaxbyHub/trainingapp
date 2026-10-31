@@ -30,7 +30,8 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { EventEmitter } from 'node:events';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn, type ChildProcess } from 'node:child_process';
 import {
   SCENARIOS,
@@ -39,6 +40,7 @@ import {
   runPrep,
   rewriteLocation,
   createStripProxy,
+  stripHopByHopHeaders,
   validateRamTarget,
   RAM_RESERVE_FLOOR_MB,
   runRamFillerStateMachine,
@@ -46,12 +48,21 @@ import {
   readAdapterState,
   recoverFromJournal,
   recoveryWatchdog,
+  watchdogExitFor,
+  watchdogJournalIo,
   spawnRecoveryChild,
   writeJournal,
   readJournal,
+  appendJournalRow,
+  mergeJournalRows,
   writeCaptureRow,
   CAPTURE_ROW_KEYS,
   CaptureError,
+  runCommand,
+  probeElevation,
+  holdLegWithAutoClean,
+  EXIT_FORCED,
+  RUNCOMMAND_SIGNALLED_CODE,
 } from '../../../bench/run_offline_matrix.mjs';
 
 const MiB = 2 ** 20;
@@ -93,6 +104,15 @@ function waitForExit(child: ChildProcess, budgetMs: number): Promise<boolean> {
 function f(url: string, init: RequestInit = {}): Promise<Response> {
   return fetch(url, { ...init, signal: AbortSignal.timeout(10_000) });
 }
+
+/** Normalize an absolute %SystemRoot% tool path (PRR-017) to its bare name
+ * so command-sequence assertions stay readable. */
+const brief = (cmd: string): string =>
+  cmd.replace(/^.*[\\/]netsh(\.exe)? /i, 'netsh ').replace(/^.*[\\/]net(\.exe)? /i, 'net ');
+
+/** Bare binary name of a (possibly absolute Windows) tool path. */
+const binOf = (file: string): string =>
+  path.basename(String(file)).replace(/\.exe$/i, '').toLowerCase();
 
 const REAL_STRIP_TARGETS = [
   'Cross-Origin-Opener-Policy',
@@ -168,6 +188,9 @@ async function startUpstream(): Promise<UpstreamHandle> {
     close: async () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       server.closeAllConnections?.();
+      // F1-04: the module-level emitted-headers record is per-server state —
+      // clear it on close so a reused port cannot inherit stale proof data.
+      upstreamEmittedHeaders.delete(port);
     },
   };
 }
@@ -183,6 +206,10 @@ describe('upstream fixture emits every strip target', () => {
       const emitted = upstreamEmittedHeaders.get(upstream.port) ?? new Set<string>();
       for (const name of REAL_STRIP_TARGETS) {
         expect(emitted.has(name), `fixture did not emit '${name}'`).toBe(true);
+        // TC-11: the guard additionally reads the ACTUAL response headers —
+        // the writeHead interception alone could record a header the socket
+        // never carried.
+        expect(res.headers.get(name), `response did not carry '${name}'`).not.toBeNull();
       }
     } finally {
       await upstream.close();
@@ -212,17 +239,23 @@ interface NetshRunnerOpts {
   failDisable?: boolean;
   failEnable?: boolean;
   keepEnabledAfterDisable?: boolean;
+  /** Runs when the disable command arrives — the seam for simulating a
+   * concurrent journal writer inside the disable→verifyFail window. */
+  onDisable?: () => void;
 }
 
-/** Stateful fake netsh/net runner recording every command into opts.ops. */
+/** Stateful fake netsh/net runner recording every command into opts.ops.
+ * Commands arrive as absolute %SystemRoot% paths on Windows (PRR-017), so
+ * matching is on the bare binary name. */
 function netshRunner(opts: NetshRunnerOpts) {
   let state: 'Enabled' | 'Disabled' = opts.initial;
   return async (file: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> => {
     opts.ops.push(`${file} ${args.join(' ')}`);
-    if (file === 'net') {
+    const bin = binOf(file);
+    if (bin === 'net') {
       return { code: opts.netSessionCode ?? 1, stdout: '', stderr: 'Access is denied.' };
     }
-    if (file === 'netsh' && args[1] === 'show') {
+    if (bin === 'netsh' && args[1] === 'show') {
       const admin = state === 'Enabled' ? 'Enabled' : 'Disabled';
       return {
         code: 0,
@@ -230,12 +263,13 @@ function netshRunner(opts: NetshRunnerOpts) {
         stderr: '',
       };
     }
-    if (file === 'netsh' && args[1] === 'set' && args[4] === 'disable') {
+    if (bin === 'netsh' && args[1] === 'set' && args[4] === 'disable') {
+      opts.onDisable?.();
       if (opts.failDisable) return { code: 1, stdout: '', stderr: 'disable failed' };
       if (!opts.keepEnabledAfterDisable) state = 'Disabled';
       return { code: 0, stdout: '', stderr: '' };
     }
-    if (file === 'netsh' && args[1] === 'set' && args[4] === 'enable') {
+    if (bin === 'netsh' && args[1] === 'set' && args[4] === 'enable') {
       if (opts.failEnable) return { code: 1, stdout: '', stderr: 'enable failed' };
       state = 'Enabled';
       return { code: 0, stdout: '', stderr: '' };
@@ -567,7 +601,7 @@ describe('offline-matrix harness (issue #86 prep)', () => {
     const journalWrites: unknown[][] = [];
     const run = async (file: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> => {
       ops.push(`${file} ${args.join(' ')}`);
-      if (file === 'net') return { code: 1, stdout: '', stderr: 'Access is denied.' };
+      if (binOf(file) === 'net') return { code: 1, stdout: '', stderr: 'Access is denied.' };
       return { code: 0, stdout: 'Enabled        Dedicated     Test Adapter', stderr: '' };
     };
     const common = {
@@ -584,12 +618,15 @@ describe('offline-matrix harness (issue #86 prep)', () => {
     await expect(performNetworkToggle({ ...common, confirm: false })).rejects.toThrow(/--confirm-network-toggle/);
     expect(ops).toHaveLength(0); // the confirm gate fires before even the elevation probe
     await expect(performNetworkToggle({ ...common, confirm: true })).rejects.toThrow(/elevation/);
-    expect(ops).toEqual(['net session']); // probe only, never netsh
+    expect(ops.map(brief)).toEqual(['net session']); // probe only, never netsh
+    // PRR-017: the probe runs the absolute %SystemRoot% path on Windows
+    expect(ops[0]!.toLowerCase()).toContain('system32');
+    expect(ops[0]!.toLowerCase()).toContain('net.exe');
     expect(journalWrites).toHaveLength(0);
     expect(fs.existsSync(journalFile)).toBe(false);
     // explicit elevated:false injection refuses with no commands at all
     await expect(performNetworkToggle({ ...common, confirm: true, elevated: false })).rejects.toThrow(/elevation/);
-    expect(ops).toEqual(['net session']);
+    expect(ops.map(brief)).toEqual(['net session']);
     // missing adapter names the flag (never a guessed adapter)
     await expect(
       performNetworkToggle({ ...common, adapter: '', confirm: true, elevated: true }),
@@ -626,7 +663,10 @@ describe('offline-matrix harness (issue #86 prep)', () => {
     expect(disableIdx).toBeGreaterThan(-1);
     expect(showIdx).toBeLessThan(journalIdx); // prior state is read first
     expect(journalIdx).toBeLessThan(disableIdx); // JOURNAL-BEFORE-ACT
-    expect(ops[disableIdx]).toBe('netsh interface set interface Test Adapter disable');
+    expect(brief(ops[disableIdx]!)).toBe('netsh interface set interface Test Adapter disable');
+    // PRR-017: netsh runs via its absolute %SystemRoot%\System32 path
+    expect(ops[disableIdx]!.toLowerCase()).toContain('system32');
+    expect(ops[disableIdx]!.toLowerCase()).toContain('netsh.exe');
     const rows = readJournal(journalFile);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
@@ -902,11 +942,17 @@ describe('offline-matrix harness (issue #86 prep)', () => {
       print: (m: string) => prints4.push(m),
       pollMs: 60_000,
     });
-    expect(verdict4).toBe('idle'); // capped: nothing left to attempt
+    expect(verdict4).toBe('restore-failed'); // capped: PRR-022 — a failure verdict, never a quiet idle
+    expect(watchdogExitFor(verdict4)).toBe(5); // and it maps to the nonzero recovery-failure exit
     expect(attempts).toBe(3);
     expect(writes4).toBeGreaterThanOrEqual(3); // one rewrite per failed attempt
     expect(state4[0]).toMatchObject({ status: 'restore-failed', restore_attempts: 3 });
     expect(prints4.some((m) => m.includes('netsh interface set interface "Test Adapter" enable'))).toBe(true);
+    // PRR-022 verdict→exit mapping: only idle/restored exit 0
+    expect(watchdogExitFor('idle')).toBe(0);
+    expect(watchdogExitFor('restored')).toBe(0);
+    expect(watchdogExitFor('max-loops')).toBe(5);
+    expect(watchdogExitFor('restore-failed')).toBe(5);
   });
 
   // -------------------------------------------------------- spawn contract
@@ -931,7 +977,7 @@ describe('offline-matrix harness (issue #86 prep)', () => {
     expect(call.args[0]).toBe('harness.mjs');
     expect(call.args[1]).toBe('--recover-watchdog');
     expect(call.args).toContain('--recover-lease-min');
-    expect(call.options).toEqual({ detached: true, stdio: 'ignore' });
+    expect(call.options).toEqual({ detached: true, stdio: 'ignore', windowsHide: true });
     expect(JSON.stringify(call.options)).not.toContain('ipc');
     expect(children[0]!.unref).toHaveBeenCalledTimes(1);
     // source pin: the shipped spawn options are the pinned literals
@@ -1029,12 +1075,622 @@ describe('offline-matrix harness (issue #86 prep)', () => {
     const ps1 = fs.readFileSync(path.join(REPO_ROOT, 'bench', 'run_offline_matrix.ps1'), 'utf8');
     expect(ps1).toContain('Get-Command node'); // node lookup on PATH
     expect(ps1).toMatch(/node was not found on PATH/); // named no-node message
-    expect(ps1).toMatch(/exit 2/); // fail-closed without node
+    // PRR-024: the exit-2 pin is ANCHORED to real statement lines, so it can
+    // never be satisfied by the header comment mentioning "exit 2".
+    expect(ps1).toMatch(/^\s*exit 2$/m); // fail-closed without node / without an exit code
+    expect(ps1).not.toMatch(/^\s*#\s*.*exit 2$/m);
     expect(ps1).toContain('$PSScriptRoot'); // harness resolved next to the launcher
     expect(ps1).toContain('run_offline_matrix.mjs');
     expect(ps1).toContain('@args'); // verbatim argument forwarding
-    expect(ps1).toContain('$LASTEXITCODE'); // node's exit code forwarded (0/2/3/4)
+    expect(ps1).toContain('$LASTEXITCODE'); // node's exit code forwarded (0/2/3/4/5)
+    expect(ps1).toContain('-CommandType Application'); // PRR-016: resolve the node APPLICATION, not an alias/function
+    expect(ps1).not.toContain("$ErrorActionPreference = 'Stop'"); // PRR-016: EAP stays at the PS default
+    expect(ps1).toMatch(/null -ne \$LASTEXITCODE/); // PRR-016: a null exit code exits 2, never 0
     // import-safety source pin: the entry guard pattern of the sibling drivers
     expect(mjsText).toMatch(/if \(isMain\(import\.meta\.url\)\)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PR #262 feedback round: hardening pins (journal robustness, merge-on-write,
+// the guarded read-back, signal mapping, proxy hardening, capture integrity,
+// and the injectable teardown->capture->exit seam).
+// ---------------------------------------------------------------------------
+describe('offline-matrix harness review-round hardening (PR #262)', () => {
+  function fakeChild(): any {
+    const child: any = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = vi.fn();
+    child.exitCode = null;
+    child.signalCode = null;
+    child.killed = false;
+    return child;
+  }
+
+  /** A raw http.request round trip (request-target / hop-by-hop legs undici hides). */
+  function rawReq(opts: http.RequestOptions): Promise<{ status?: number; headers: http.IncomingHttpHeaders; body: string }> {
+    return new Promise((resolve, reject) => {
+      const req = http.request(opts, (res) => {
+        let body = '';
+        res.on('data', (d: Buffer) => {
+          body += d;
+        });
+        res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  /** An upstream that streams a chunk every intervalMs forever (trickle). */
+  function startTrickleUpstream(intervalMs = 100): Promise<{ port: number; close: () => Promise<void> }> {
+    const server = http.createServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+      res.write('chunk0\n');
+      let i = 1;
+      const iv = setInterval(() => {
+        res.write(`chunk${i++}\n`);
+      }, intervalMs);
+      res.on('close', () => clearInterval(iv));
+    });
+    return new Promise((resolve) => {
+      server.listen(0, '127.0.0.1', () => {
+        const port = (server.address() as { port: number }).port;
+        resolve({
+          port,
+          close: async () => {
+            server.closeAllConnections?.();
+            await new Promise<void>((r) => server.close(() => r()));
+          },
+        });
+      });
+    });
+  }
+
+  /** Spawn a driver child that imports the REAL harness module and drives the
+   * real hold/teardown path in a fresh process (SIGINT via process.emit —
+   * listener-level, so the leg is portable to Windows runners). */
+  function holdDriver(holdBody: string, extra: string): ChildProcess {
+    const harnessUrl = pathToFileURL(path.join(REPO_ROOT, 'bench', 'run_offline_matrix.mjs')).href;
+    const script = [
+      `const m = await import(${JSON.stringify(harnessUrl)});`,
+      holdBody.replaceAll('__HOLD__', 'm.holdLegWithAutoClean').replaceAll('__SCENARIOS__', 'm.SCENARIOS'),
+      extra,
+    ].join('\n');
+    return spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: ['ignore', 'pipe', 'pipe'] });
+  }
+
+  // ------------------------------------------------ journal fail-closed (PRR-001)
+  it('journal: ENOENT reads as [], corrupt/unreadable journals fail closed with a named UsageError', () => {
+    const dir = tmpDir('offline-matrix-journal-');
+    expect(readJournal(path.join(dir, 'absent.json'))).toEqual([]);
+    const corrupt = path.join(dir, 'corrupt.json');
+    fs.writeFileSync(corrupt, '{not json', 'utf8');
+    let err: any = null;
+    try {
+      readJournal(corrupt);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeTruthy();
+    expect(err.name).toBe('UsageError');
+    expect(err.exitCode).toBe(2);
+    expect(String(err.message)).toMatch(/corrupt/);
+    expect(String(err.message)).toMatch(/untrusted journal/);
+    const notArray = path.join(dir, 'not-array.json');
+    fs.writeFileSync(notArray, '{"rows":1}', 'utf8');
+    expect(() => readJournal(notArray)).toThrow(/corrupt/);
+  });
+
+  it('network-gate: the toggle REFUSES when the journal is unreadable — journal-before-act cannot be trusted on a corrupt file', async () => {
+    const journalFile = path.join(tmpDir('offline-matrix-corrupt-journal-'), 'journal.json');
+    fs.writeFileSync(journalFile, 'definitely not json', 'utf8');
+    const ops: string[] = [];
+    const run = netshRunner({ initial: 'Enabled', ops });
+    let refused: any = null;
+    try {
+      await performNetworkToggle({
+        adapter: 'Test Adapter',
+        confirm: true,
+        elevated: true,
+        run,
+        journalFile,
+        isWindows: true,
+        readJournalFn: readJournal, // the REAL fail-closed reader
+        writeJournalFn: (file: string, rows: unknown[]) => writeJournal(file, rows as Array<Record<string, unknown>>),
+        spawnRecovery: false,
+      });
+    } catch (e) {
+      refused = e;
+    }
+    expect(refused?.name).toBe('UsageError');
+    expect(String(refused?.message)).toMatch(/corrupt/);
+    // gates passed, prior state was read — but NO disable and NO journal write
+    expect(ops.some((c) => brief(c).startsWith('netsh interface set interface'))).toBe(false);
+    expect(fs.readFileSync(journalFile, 'utf8')).toBe('definitely not json');
+  });
+
+  // -------------------------------------------------- merge-on-write (PRR-002)
+  it('journal merge-on-write: appendJournalRow adds by id and replaces its own id; mergeJournalRows preserves foreign rows', () => {
+    const journalFile = path.join(tmpDir('offline-matrix-merge-unit-'), 'journal.json');
+    const rowA = activeJournalRow({ id: 'jr-a' });
+    const rowB = activeJournalRow({ id: 'jr-b' });
+    appendJournalRow(journalFile, rowA);
+    appendJournalRow(journalFile, rowB);
+    expect(readJournal(journalFile).map((r: any) => r.id)).toEqual(['jr-a', 'jr-b']);
+    const rowB2 = { ...rowB, status: 'recovered' };
+    appendJournalRow(journalFile, rowB2); // same id → replaced, not duplicated
+    const rows = readJournal(journalFile);
+    expect(rows.map((r: any) => r.id)).toEqual(['jr-a', 'jr-b']);
+    expect(rows[1]).toMatchObject({ status: 'recovered' });
+    // a foreign row appended AFTER the reader captured its snapshot survives a merge write
+    const foreign = activeJournalRow({ id: 'jr-foreign' });
+    writeJournal(journalFile, [...readJournal(journalFile), foreign]);
+    mergeJournalRows(journalFile, [{ ...rowA, status: 'recovered' }]);
+    const after = readJournal(journalFile);
+    expect(after.map((r: any) => r.id)).toEqual(['jr-a', 'jr-b', 'jr-foreign']);
+    expect(after[0]).toMatchObject({ status: 'recovered' });
+  });
+
+  it('network-gate: a concurrent journal row appended mid-disable survives the verifyFail rewrite', async () => {
+    const journalFile = path.join(tmpDir('offline-matrix-merge-verifyfail-'), 'journal.json');
+    const ops: string[] = [];
+    const foreign = activeJournalRow({ id: 'jr-foreign', adapter: 'Other Adapter' });
+    const run = netshRunner({
+      initial: 'Enabled',
+      keepEnabledAfterDisable: true, // forces the verifyFail path after the disable
+      ops,
+      onDisable: () => {
+        // a concurrent writer lands a second active row inside the disable-to-rewrite window
+        writeJournal(journalFile, [...readJournal(journalFile), foreign]);
+      },
+    });
+    let err: any = null;
+    try {
+      await performNetworkToggle({
+        adapter: 'Test Adapter',
+        confirm: true,
+        elevated: true,
+        run,
+        journalFile,
+        isWindows: true,
+        readJournalFn: readJournal, // REAL journal IO: the merge must re-read
+        writeJournalFn: writeJournal,
+        spawnRecovery: false,
+      });
+    } catch (e) {
+      err = e;
+    }
+    expect(String(err?.message)).toMatch(/read-back verification failed/);
+    const rows = readJournal(journalFile);
+    expect(rows.some((r: any) => r.id === 'jr-foreign')).toBe(true); // NOT dropped
+    expect(rows.some((r: any) => r.status === 'recovered' && r.restore_reason)).toBe(true);
+  });
+
+  it('recover: a row appended by a concurrent writer while --recover runs is not dropped', async () => {
+    const journalFile = path.join(tmpDir('offline-matrix-merge-recover-'), 'journal.json');
+    writeJournal(journalFile, [activeJournalRow()]);
+    const foreign = activeJournalRow({ id: 'jr-foreign-2', adapter: 'Other Adapter' });
+    const run = async (file: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> => {
+      const bin = binOf(file);
+      if (bin === 'netsh' && args[1] === 'set' && args[4] === 'enable') {
+        // the concurrent append lands while the restore command is in flight
+        writeJournal(journalFile, [...readJournal(journalFile), foreign]);
+        return { code: 0, stdout: '', stderr: '' };
+      }
+      if (bin === 'netsh' && args[1] === 'show') {
+        return {
+          code: 0,
+          stdout: `${NETSH_HEADER}\n${NETSH_SEPARATOR}\n${netshRow('Enabled', 'Test Adapter')}\n`,
+          stderr: '',
+        };
+      }
+      return { code: 0, stdout: '', stderr: '' };
+    };
+    const res = await recoverFromJournal({ journalFile, run, isWindows: true, print: () => {} });
+    expect(res.restored).toBe(1);
+    const rows = readJournal(journalFile);
+    expect(rows.some((r: any) => r.id === 'jr-foreign-2')).toBe(true); // NOT dropped by the rewrite
+    expect(rows.some((r: any) => r.status === 'recovered')).toBe(true);
+  });
+
+  it('watchdog journal io: the LIVE writeJournalState merges into a fresh read (no dropped concurrent row)', () => {
+    const journalFile = path.join(tmpDir('offline-matrix-merge-watchdog-'), 'journal.json');
+    writeJournal(journalFile, [activeJournalRow()]);
+    const io = watchdogJournalIo(journalFile);
+    const rows = io.readJournalState();
+    // a concurrent parent append lands after the watchdog's read, before its rewrite
+    writeJournal(journalFile, [...readJournal(journalFile), activeJournalRow({ id: 'jr-foreign-3', adapter: 'Other Adapter' })]);
+    (rows[0] as Record<string, unknown>).status = 'recovered';
+    io.writeJournalState(rows);
+    const after = readJournal(journalFile);
+    expect(after.some((r: any) => r.id === 'jr-foreign-3')).toBe(true);
+    expect(after.some((r: any) => r.status === 'recovered')).toBe(true);
+  });
+
+  // --------------------------------------------- guarded read-back (PRR-008)
+  it('network-gate: a read-back that THROWS (netsh show failure) enters the restore path, not a bare escape', async () => {
+    const journalFile = path.join(tmpDir('offline-matrix-readback-throw-'), 'journal.json');
+    const ops: string[] = [];
+    let state: 'Enabled' | 'Disabled' = 'Enabled';
+    let showCalls = 0;
+    const run = async (file: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> => {
+      ops.push(`${file} ${args.join(' ')}`);
+      const bin = binOf(file);
+      if (bin === 'netsh' && args[1] === 'show') {
+        showCalls += 1;
+        if (showCalls === 2) return { code: 1, stdout: '', stderr: 'show failed mid-verify' }; // the post-disable read-back explodes
+        return {
+          code: 0,
+          stdout: `${NETSH_HEADER}\n${NETSH_SEPARATOR}\n${netshRow(state, 'Test Adapter')}\n`,
+          stderr: '',
+        };
+      }
+      if (bin === 'netsh' && args[1] === 'set' && args[4] === 'disable') {
+        state = 'Disabled';
+        return { code: 0, stdout: '', stderr: '' };
+      }
+      if (bin === 'netsh' && args[1] === 'set' && args[4] === 'enable') {
+        state = 'Enabled';
+        return { code: 0, stdout: '', stderr: '' };
+      }
+      return { code: 0, stdout: '', stderr: '' };
+    };
+    let err: any = null;
+    try {
+      await performNetworkToggle({
+        adapter: 'Test Adapter',
+        confirm: true,
+        elevated: true,
+        run,
+        journalFile,
+        isWindows: true,
+        writeJournalFn: (file: string, rows: unknown[]) => writeJournal(file, rows as Array<Record<string, unknown>>),
+        readJournalFn: () => [],
+        spawnRecovery: false,
+      });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeTruthy();
+    expect(String(err.message)).toMatch(/read-back verification could not run after disable/);
+    // the adapter was RESTORED (enable ran + verified) and the journal row records it
+    expect(ops.some((c) => brief(c) === 'netsh interface set interface Test Adapter enable')).toBe(true);
+    expect(readJournal(journalFile)[0]).toMatchObject({ status: 'recovered' });
+  });
+
+  // ---------------------------- signalled close mapping (PRR-009) + timeout-await (PRR-022)
+  it('runCommand: signalled close maps to synthetic 125 + signalCode; a timeout awaits the killed child exit; probes fail closed', async () => {
+    let child1: any = null;
+    const res = await runCommand('netsh', ['probe'], {
+      spawnFn: (() => {
+        child1 = fakeChild();
+        queueMicrotask(() => child1.emit('close', null, 'SIGTERM'));
+        return child1;
+      }) as never,
+    });
+    expect(res.code).toBe(RUNCOMMAND_SIGNALLED_CODE);
+    expect(res.code).toBe(125);
+    expect(res.signalCode).toBe('SIGTERM');
+    // a normal close keeps its real code and a null signal
+    let child2: any = null;
+    const res2 = await runCommand('netsh', ['ok'], {
+      spawnFn: (() => {
+        child2 = fakeChild();
+        queueMicrotask(() => child2.emit('close', 0, null));
+        return child2;
+      }) as never,
+    });
+    expect(res2.code).toBe(0);
+    expect(res2.signalCode).toBeNull();
+    // timeout: kill fires, and the resolution WAITS for the child's actual exit
+    let child3: any = null;
+    let closed = false;
+    const res3 = await runCommand('netsh', ['slow'], {
+      timeoutMs: 40,
+      spawnFn: (() => {
+        child3 = fakeChild();
+        child3.kill = () => {
+          setTimeout(() => {
+            closed = true;
+            child3.emit('close', null, 'SIGKILL');
+          }, 60);
+        };
+        return child3;
+      }) as never,
+    });
+    expect(res3.code).toBe(124);
+    expect(closed).toBe(true); // resolve happened AFTER the killed child exited
+    // a killed elevation probe reads NOT elevated → the gate fails closed
+    await expect(
+      probeElevation({ runCommand: async () => ({ code: 125, signalCode: 'SIGTERM', stdout: '', stderr: 'killed' }), isWindows: true }),
+    ).resolves.toMatchObject({ elevated: false });
+    const ops: string[] = [];
+    const signalledRun = async (file: string): Promise<{ code: number; stdout: string; stderr: string }> => {
+      ops.push(file);
+      if (binOf(file) === 'net') return { code: 125, signalCode: 'SIGTERM', stdout: '', stderr: 'killed' };
+      return { code: 0, stdout: '', stderr: '' };
+    };
+    await expect(
+      performNetworkToggle({
+        adapter: 'Test Adapter',
+        confirm: true,
+        run: signalledRun,
+        journalFile: path.join(tmpDir('offline-matrix-signal-'), 'journal.json'),
+        isWindows: true,
+        readJournalFn: () => [],
+        writeJournalFn: () => {},
+        spawnRecovery: false,
+      }),
+    ).rejects.toThrow(/elevation/);
+    expect(ops.some((c) => binOf(c) === 'netsh')).toBe(false);
+  });
+
+  // ------------------------------------------ proxy hardening (PRR-004/005/006)
+  it('proxy: absolute-form and scheme-relative request targets are refused 400 — origin-form still proxies', async () => {
+    const hits: string[] = [];
+    const server = http.createServer((req, res) => {
+      hits.push(req.url ?? '');
+      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('ok');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+    const proxy = await createStripProxy({ upstreamBase: `http://127.0.0.1:${port}` });
+    try {
+      const abs = await rawReq({ host: '127.0.0.1', port: proxy.port, path: 'http://127.0.0.1:9/exfil' });
+      expect(abs.status).toBe(400);
+      expect(abs.headers['x-offline-matrix-error']).toBe('origin-form-required');
+      const rel = await rawReq({ host: '127.0.0.1', port: proxy.port, path: '//127.0.0.1:9/exfil' });
+      expect(rel.status).toBe(400);
+      expect(rel.headers['x-offline-matrix-error']).toBe('origin-form-required');
+      expect(hits).toEqual([]); // nothing reached any upstream
+      const ok = await rawReq({ host: '127.0.0.1', port: proxy.port, path: '/legit' });
+      expect(ok.status).toBe(200);
+      expect(hits).toEqual(['/legit']);
+    } finally {
+      await proxy.close();
+      server.closeAllConnections?.();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('proxy: --proxy-host accepts loopback literals only; non-http(s) upstream schemes are refused', async () => {
+    await expect(createStripProxy({ upstreamBase: 'http://127.0.0.1:9', host: '0.0.0.0' })).rejects.toThrow(/loopback/);
+    await expect(createStripProxy({ upstreamBase: 'http://127.0.0.1:9', host: '10.0.0.5' })).rejects.toThrow(/loopback/);
+    await expect(createStripProxy({ upstreamBase: 'ftp://127.0.0.1:21' })).rejects.toThrow(/http/);
+    const p = await createStripProxy({ upstreamBase: 'http://127.0.0.1:9', host: 'localhost' });
+    await p.close();
+  });
+
+  it('proxy: proxyBase derives from the BOUND address, not the client Host header (no self-open-redirect)', async () => {
+    const upstream = await startUpstream();
+    const proxy = await createStripProxy({ upstreamBase: `http://127.0.0.1:${upstream.port}` });
+    try {
+      const res = await rawReq({ host: '127.0.0.1', port: proxy.port, path: '/redirect-abs', headers: { Host: 'evil.example:1234' } });
+      expect(res.status).toBe(307);
+      expect(res.headers.location).toBe(`${proxy.base}/emit?n=1`); // re-anchored onto the BOUND origin
+      expect(String(res.headers.location)).not.toContain('evil.example');
+    } finally {
+      await proxy.close();
+      await upstream.close();
+    }
+  });
+
+  it('proxy: hop-by-hop headers are stripped in both directions (fixed list + Connection-listed names)', async () => {
+    // unit: the fixed list and the Connection-listed dynamic arm both go
+    const kept = stripHopByHopHeaders({
+      connection: 'x-listed',
+      'x-listed': 'v',
+      'transfer-encoding': 'chunked',
+      'keep-alive': 'timeout=5',
+      'proxy-connection': 'keep-alive',
+      'x-keep': 'yes',
+    });
+    expect(kept).toEqual({ 'x-keep': 'yes' });
+    // request-direction integration: a Connection-listed request header never reaches the upstream
+    const seen: Record<string, unknown> = {};
+    const server = http.createServer((req, res) => {
+      Object.assign(seen, req.headers);
+      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('ok');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+    const proxy = await createStripProxy({ upstreamBase: `http://127.0.0.1:${port}` });
+    try {
+      await rawReq({
+        host: '127.0.0.1',
+        port: proxy.port,
+        path: '/hop',
+        headers: { Connection: 'x-req-hop', 'x-req-hop': 'secret' },
+      });
+      expect(seen['x-req-hop']).toBeUndefined(); // stripped before the upstream saw it
+    } finally {
+      await proxy.close();
+      server.closeAllConnections?.();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('proxy: a non-http(s) upstream Location is answered with a named 502, never forwarded', async () => {
+    const server = http.createServer((req, res) => {
+      res.writeHead(302, { location: 'ftp://evil.example/payload' });
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+    const proxy = await createStripProxy({ upstreamBase: `http://127.0.0.1:${port}` });
+    try {
+      const r = await f(`${proxy.base}/redir`, { redirect: 'manual' });
+      expect(r.status).toBe(502);
+      expect(r.headers.get('x-offline-matrix-error')).toBe('unsupported-location-scheme');
+      await r.text();
+    } finally {
+      await proxy.close();
+      server.closeAllConnections?.();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('proxy: the TOTAL upstream deadline cuts a trickling upstream at the budget (inactivity alone cannot)', async () => {
+    const upstream = await startTrickleUpstream(100); // a write every 100ms keeps the socket forever active
+    const proxy = await createStripProxy({ upstreamBase: `http://127.0.0.1:${upstream.port}`, upstreamTimeoutMs: 700 });
+    try {
+      const t0 = Date.now();
+      const r = await f(`${proxy.base}/trickle`);
+      expect(r.status).toBe(200);
+      let readFailure: unknown = null;
+      try {
+        await r.text();
+      } catch (e) {
+        readFailure = e;
+      }
+      const elapsed = Date.now() - t0;
+      expect(readFailure).toBeTruthy(); // the stream was cut at the total budget
+      expect(elapsed).toBeLessThan(4_000); // ...and not by the 10s fetch bound either
+    } finally {
+      await proxy.close();
+      await upstream.close();
+    }
+  });
+
+  it('proxy: close() completes promptly with an in-flight streaming connection (closeAllConnections BEFORE close)', async () => {
+    const upstream = await startTrickleUpstream(100);
+    const proxy = await createStripProxy({ upstreamBase: `http://127.0.0.1:${upstream.port}` });
+    const req = http.get({ host: '127.0.0.1', port: proxy.port, path: '/trickle' }, (res) => {
+      res.on('data', () => {});
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300)); // stream established and flowing
+    const t0 = Date.now();
+    await proxy.close(); // must not hang on the live connection
+    expect(Date.now() - t0).toBeLessThan(2_500);
+    req.destroy();
+    await upstream.close();
+  });
+
+  // ---------------------------------------- capture integrity (PRR-019/SEC-16)
+  it('capture: atomic exclusive-create with a -1 collision suffix, no tmp leftovers, and a pipe-sanitized machine tag', () => {
+    const dir = tmpDir('offline-matrix-capture2-');
+    const now = () => new Date('2026-10-30T22:00:00.000Z');
+    const a = writeCaptureRow({ scenarioId: 'S2', machineTag: 'cell|test', dir, now });
+    const b = writeCaptureRow({ scenarioId: 'S2', machineTag: 'cell|test', dir, now });
+    expect(path.basename(a.file!)).toBe('S2-cell_test-20261030T220000Z.json');
+    expect(path.basename(b.file!)).toBe('S2-cell_test-20261030T220000Z-1.json'); // collision → suffix, never overwrite
+    expect(a.row!.machine).toBe('cell_test'); // SEC-16: no pipe can break the merged markdown row
+    const parsedA = JSON.parse(fs.readFileSync(a.file!, 'utf8')) as Record<string, unknown>;
+    const parsedB = JSON.parse(fs.readFileSync(b.file!, 'utf8')) as Record<string, unknown>;
+    expect(parsedA.scenario_id).toBe('S2');
+    expect(parsedB.scenario_id).toBe('S2'); // the first row was NOT clobbered
+    expect(fs.readdirSync(dir).filter((n) => n.includes('.tmp-'))).toEqual([]); // no tmp litter
+  });
+
+  it('capture: a raw capture IO failure on the MAIN path maps to exit 4 (consistent with the teardown path)', async () => {
+    const verdict = await runPrep(parseArgs(['--scenario', 'S4', '--prep']), {
+      writeCapture: () => {
+        throw new Error("EACCES: permission denied, open 'x.json'");
+      },
+    } as never);
+    expect(verdict).toBe(4);
+  });
+
+  // -------------------------------------- injectable hold seam (PRR-011)
+  it('prep: S7 routes the proxy leg through the injected hold seam; teardown closes the real proxy', async () => {
+    const upstream = await startUpstream();
+    const captured: Array<Record<string, unknown>> = [];
+    const injectedWriteCapture = (o: Record<string, unknown>) => {
+      captured.push(o);
+      return { file: path.join(os.tmpdir(), 'offline-matrix-S7-fake.json'), row: {} };
+    };
+    let holdDeps: { writeCapture?: unknown } | null = null;
+    let legsSeen = '';
+    const verdict = await runPrep(
+      parseArgs(['--scenario', 'S7', '--prep', '--proxy-upstream', `http://127.0.0.1:${upstream.port}`]),
+      {
+        hold: async (_sc: unknown, legs: string, teardown: () => Promise<string>, deps: { writeCapture?: unknown }) => {
+          legsSeen = legs;
+          holdDeps = deps;
+          const measured = await teardown(); // runs the REAL proxy.close()
+          expect(String(measured)).toContain('closed cleanly');
+        },
+        writeCapture: injectedWriteCapture,
+      } as never,
+    );
+    expect(verdict).toBe(0);
+    expect(legsSeen).toBe('header-strip-proxy:up');
+    expect(holdDeps?.writeCapture).toBe(injectedWriteCapture); // the seam carries the injected capture fn
+    expect(captured).toHaveLength(1);
+    expect(captured[0]).toMatchObject({ scenarioId: 'S7', automatedLegs: 'header-strip-proxy:up' });
+    await upstream.close();
+  });
+
+  it('prep: zero-leg scenario (S4) writes the capture row and exits 0', async () => {
+    const captured: Array<Record<string, unknown>> = [];
+    const verdict = await runPrep(parseArgs(['--scenario', 'S4', '--prep']), {
+      writeCapture: (o: Record<string, unknown>) => {
+        captured.push(o);
+        return { file: path.join(os.tmpdir(), 'offline-matrix-S4-fake.json'), row: {} };
+      },
+    } as never);
+    expect(verdict).toBe(0);
+    expect(captured).toHaveLength(1);
+    expect(captured[0]).toMatchObject({ scenarioId: 'S4', automatedLegs: 'none', measured: '' });
+    expect(String(captured[0].notes)).toMatch(/pid \d+/);
+  });
+
+  // ----- the REAL SIGINT teardown->capture->exit path, in a spawned process (PRR-011/021/022)
+  it('teardown: SIGINT tears the held leg down, writes the capture row through the seam, and the final stdout line survives the exit', async () => {
+    const child = holdDriver(
+      `
+      __HOLD__(
+        __SCENARIOS__.find((s) => s.id === 'S4'),
+        'none',
+        async (signal) => { await new Promise((r) => setTimeout(r, 150)); return 'torn-down by ' + signal; },
+        { writeCapture: (o) => ({ file: 'bench/offline-matrix-results/S4-driver-fake.json', row: {} }) },
+      );
+      `,
+      "setTimeout(() => process.emit('SIGINT'), 120);",
+    );
+    let stdout = '';
+    let stderr = '';
+    child.stdout!.on('data', (d: Buffer) => {
+      stdout += d;
+    });
+    child.stderr!.on('data', (d: Buffer) => {
+      stderr += d;
+    });
+    const exited = await waitForExit(child, 15_000);
+    expect(exited, `driver did not exit (stderr: ${stderr})`).toBe(true);
+    expect(child.exitCode).toBe(0);
+    expect(stdout).toContain('environment leg active');
+    // the capture row pointer AND the completion line survive process.exit (stdout flushed)
+    expect(stdout).toContain('capture row: ');
+    expect(stdout).toContain('S4-driver-fake.json');
+    expect(stdout).toContain('S4 auto-clean complete (received SIGINT)');
+    expect(stderr).toBe('');
+  });
+
+  it('teardown: a SECOND Ctrl+C while the teardown hangs force-exits 130 (the escape hatch)', async () => {
+    const child = holdDriver(
+      `
+      __HOLD__(
+        __SCENARIOS__.find((s) => s.id === 'S2'),
+        'ram-filler:attained',
+        () => new Promise(() => {}), // a hung teardown
+        { writeCapture: () => ({ file: 'x.json', row: {} }) },
+      );
+      `,
+      "setTimeout(() => process.emit('SIGINT'), 100); setTimeout(() => process.emit('SIGINT'), 450);",
+    );
+    let stderr = '';
+    child.stderr!.on('data', (d: Buffer) => {
+      stderr += d;
+    });
+    const exited = await waitForExit(child, 15_000);
+    expect(exited, `driver did not exit (stderr: ${stderr})`).toBe(true);
+    expect(child.exitCode).toBe(EXIT_FORCED);
+    expect(child.exitCode).toBe(130);
+    expect(stderr).toMatch(/second interrupt forces exit/);
   });
 });

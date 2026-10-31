@@ -19,8 +19,12 @@ Two leg classes are kept explicitly apart:
   harness arranges the environment and never claims the measured proof.
 
 The harness scenario registry is exactly this table's ids (`--list` prints
-them; the frozen consistency check compares the two sets). Rows in
-`bench/RESULTS.md` stay `PENDING` until the operator's measured rows land.
+them). That equality is pinned by the trace-local frozen C4 acceptance
+check — which lives under `.agents/issue-traces/` and is git-excluded, NOT a
+committed check — plus the in-repo vitest registry test, which pins the
+id/title/lifecycle mapping as hardcoded literals; no committed check parses
+this document. Rows in `bench/RESULTS.md` stay `PENDING` until the
+operator's measured rows land.
 
 ## Hardware/software tuple
 
@@ -40,13 +44,13 @@ re-record the tuple and re-run, never hand-patch.
 | wllama | PENDING — @wllama/wllama pin the browser surface runs |
 | node-llama-cpp | PENDING — version the shipped desktop backend runs |
 | sha256 | PENDING — sha256 of every bundled model file staged for the run |
-| adapter (egress leg) | PENDING — the `Get-NetAdapter` interface name the egress observation of scenario 1 measured |
+| adapter (egress leg) | PENDING — the `Get-NetAdapter` interface name the harness disabled for scenario 1 (recorded separately from the egress numbers, which sum over all Up adapters) |
 
 ## Scenario matrix
 
 | Scenario | Id | Tuple / status | Pass/fail criteria | Repro steps |
 |---|---|---|---|---|
-| Cold install, full network disconnect | S1 | {{TUPLE}} — BLOCKED: reference laptop | Wizard completes; `/ask` answers with citations; zero egress observed (adapter-wide sent-byte delta <= 1 MiB over the fixed window, per "Egress observation (S1)") | "Scenario S1" below: fresh install, adapter disabled via the harness before launch, fixed 10-minute egress window with control leg |
+| Cold install, full network disconnect | S1 | {{TUPLE}} — BLOCKED: reference laptop | Wizard completes; `/ask` answers with citations; zero egress observed (sent-byte delta SUMMED over all Up adapters <= 1 MiB over the fixed window, per "Egress observation (S1)") | "Scenario S1" below: fresh install, adapter disabled via the harness before launch, fixed 10-minute egress window with control leg |
 | 16 GB, ~9 GB free | S2 | {{TUPLE}} — BLOCKED: reference laptop | Quality loads if the A3 RAM gate clears, else Fast auto-selects; no misdirecting message shown | "Scenario S2" below: harness RAM filler holds system free near the 9000 MiB floor, then launch and load per the operator steps |
 | 16 GB, <6 GB free | S3 | {{TUPLE}} — BLOCKED: reference laptop | Fast auto-selects; no OOM and no crash; tok/s recorded | "Scenario S3" below: harness RAM filler drives system free below 6 GiB (target 5600 MiB), then launch, load, and measure |
 | Cold-start timing | S4 | {{TUPLE}} — BLOCKED: reference laptop | p50 and p95 of launch-to-first-token over 5 runs recorded (real disk re-read cost measured, not estimated) | "Scenario S4" below: five cold starts timed per the operator steps; no automated environment leg |
@@ -93,9 +97,9 @@ node bench/run_offline_matrix.mjs --recover
 ```
 
 Pass/fail: wizard completes; `/ask` answers with citations; the egress
-procedure's adapter-wide delta is within the 1 MiB tolerance (or the verdict
-is recorded as inconclusive-for-app-egress with the number, never silently
-passed).
+procedure's summed-over-all-Up-adapters delta is within the 1 MiB tolerance
+(or the verdict is recorded as inconclusive-for-app-egress with the number,
+never silently passed).
 
 ## Scenario S2 — 16 GB, ~9 GB free
 
@@ -118,7 +122,7 @@ when the harness is interrupted.
 Operator steps: start the prep, wait for the attainment line, launch the app
 while the filler holds, load the Quality profile, observe the profile choice
 and any message, then end the window (Ctrl+C tears the filler down and writes
-the capture row).
+the capture row; a second Ctrl+C force-exits 130 if the teardown hangs).
 
 Pass/fail: Quality loads if the A3 gate clears, else Fast auto-selects; the
 message shown must not misdirect (the A3 diagnostic contract).
@@ -186,16 +190,27 @@ Automated environment legs:
 node bench/run_offline_matrix.mjs --scenario S7 --prep --proxy-upstream http://127.0.0.1:<app port>
 ```
 
-The proxy binds `127.0.0.1` (OS-assigned port, printed as
-`proxy:<host>:<port>`), strips Cross-Origin-Opener-Policy /
+The proxy binds a loopback literal only — `127.0.0.1` by default; the
+optional `--proxy-host` accepts exactly `127.0.0.1`, `localhost`, or `::1`
+and refuses anything else (it is a loopback reverse proxy for this scenario,
+never a general listener). OS-assigned port, printed as
+`proxy:<host>:<port>`. It strips Cross-Origin-Opener-Policy /
 Cross-Origin-Embedder-Policy / Cross-Origin-Resource-Policy on every response
 class (200/3xx/4xx/5xx, HEAD included), re-anchors redirect Locations onto
-the proxy origin (absolute and scheme-relative upstream references alike),
-and names upstream failures (502 refused / 504 timeout).
+the proxy origin derived from the server's BOUND address (never the client
+Host header; absolute and scheme-relative upstream references alike), strips
+hop-by-hop headers in both directions, refuses absolute-form and
+scheme-relative request targets with a named 400 (origin-form only — it can
+never be used as an open relay), accepts only `http:`/`https:` upstreams,
+answers a non-http(s) upstream Location with a named 502, and enforces a
+TOTAL upstream budget from request start in addition to the socket
+inactivity timer (a trickling upstream is cut at the budget). Upstream
+failures are named (502 refused / 504 timeout).
 
 Operator steps: start the app origin, start the prep, point the browser at
 the printed proxy base URL for the whole window, load the browser LLM path,
-record tok/s and the degraded-mode UI state, then Ctrl+C.
+record tok/s and the degraded-mode UI state, then Ctrl+C (a second Ctrl+C
+force-exits 130 if the auto-clean teardown ever hangs).
 
 Pass/fail: the app falls back to single-thread WASM without crashing; tok/s
 recorded; the UI shows degraded mode.
@@ -222,8 +237,11 @@ node bench/run_offline_matrix.mjs --scenario S9 --prep --ram-free-target-mb 5600
 ```
 
 Operator steps: start the prep, wait for attainment, ingest the 200-page
-test PDF through the app's Documents flow while the filler holds, record the
-ingest wall clock, then Ctrl+C to release.
+test PDF (generated by `node bench/ingest_bench_driver.mjs --pages 200`,
+the same deterministic synthetic-PDF generator the B6 ingest bench uses)
+through the app's Documents flow while the filler holds, record the ingest
+wall clock, then Ctrl+C to release (a second Ctrl+C force-exits 130 if the
+release teardown ever hangs).
 
 Pass/fail: no OOM; ingest time recorded and compared to the <60 s target
 (the B6 budget) in the row notes.
@@ -255,47 +273,67 @@ Pass/fail: app launches to working chat state; the wizard does not re-trigger.
 
 LITERAL bounded procedure, honestly scoped: `Get-NetAdapterStatistics` counts
 ADAPTER-WIDE traffic (every process on the machine, plus control-plane
-noise), not per-process egress. The verdict below therefore leans on a
-tolerance and a control leg, and never claims per-process attribution.
+noise), not per-process egress. The measured quantity is therefore the SUM of
+the SentBytes deltas across ALL `Up` adapters over the window: the scenario's
+target adapter is DISABLED, so it cannot carry traffic — any app egress MUST
+appear on some other `Up` adapter, and summing over all of them is the only
+way a disabled-adapter scenario can observe egress at all. (Measuring any
+single `Up` adapter could pick an unrelated virtual switch and miss the
+traffic; measuring the disabled adapter measures nothing.) The toggled
+adapter's name is recorded in the tuple separately (the "adapter (egress
+leg)" field) — it identifies which adapter the harness disabled, not which
+adapter the numbers came from. The verdict below leans on a tolerance and a
+control leg, and never claims per-process attribution.
 
 ```powershell
-$a = Get-NetAdapter | Where-Object Status -eq 'Up' | Select-Object -First 1   # record $a.Name into the tuple
-$t0 = Get-Date; $s0 = ($a | Get-NetAdapterStatistics).SentBytes
+$ups = @(Get-NetAdapter | Where-Object Status -eq 'Up')   # ALL Up adapters — the disabled target cannot carry traffic
+if ($null -eq $ups -or $ups.Count -eq 0) { throw 'egress capture NOT-RUN: no Up adapter found to measure' }
+if ($ups.Name -contains '<the adapter disabled by the harness>') { throw 'egress capture NOT-RUN: the toggled adapter still reports Up — the scenario setup did not hold' }
+$t0 = Get-Date; $s0 = ($ups | Get-NetAdapterStatistics | Measure-Object -Property SentBytes -Sum).Sum
+if ($null -eq $s0) { throw 'egress capture NOT-RUN: SentBytes sum was null (statistics unavailable)' }
 # --- run the scenario window here: fixed 10-minute interval, timestamps recorded ---
-$s1 = (Get-NetAdapterStatistics -Name $a.Name).SentBytes; $t1 = Get-Date
-$delta = $s1 - $s0; $window = $t1 - $t0   # adapter-wide sent bytes over the window
+$s1 = ($ups | Get-NetAdapterStatistics | Measure-Object -Property SentBytes -Sum).Sum; $t1 = Get-Date
+if ($null -eq $s1) { throw 'egress capture NOT-RUN: closing SentBytes sum was null' }
+$delta = $s1 - $s0; $window = $t1 - $t0   # SUM of adapter-wide sent bytes across ALL Up adapters over the window
 ```
 
-1. Select the adapter (first `Up` adapter) and record `$a.Name` into the
-   tuple — the egress number is meaningless without it.
-2. Capture `$t0`/`$s0` immediately before the window opens.
-3. Run the scenario window for a fixed 10-minute interval; record both
+1. The `$null`/empty guards are part of the procedure, not decoration: an
+   empty `Up` set or a `$null` SentBytes sum ABORTS the capture with the
+   named reason and the verdict is NOT-RUN — a zero delta from an empty
+   measurement is never read as a PASS.
+2. Record the disabled (toggled) adapter's name into the tuple's
+   "adapter (egress leg)" field — the guard above uses it; the egress NUMBER
+   itself is the sum over all `Up` adapters, which never includes it.
+3. Capture `$t0`/`$s0` immediately before the window opens.
+4. Run the scenario window for a fixed 10-minute interval; record both
    timestamps in the row notes.
-4. Capture `$s1`/`$t1` immediately after the window closes and compute the
-   delta.
-5. PASS iff `delta <= 1 MiB` (1,048,576 bytes) over the window. The tolerance
-   covers adapter-wide control-plane noise — ARP/IPv6 neighbor discovery/
-   DHCP renewals are bounded and rare on a quiet LAN; the 1 MiB constant is a
-   recorded judgment, not a measured baseline.
-6. `delta > tolerance` -> the verdict is INCONCLUSIVE-for-app-egress with the
-   adapter-wide number recorded. A later `Get-NetTCPConnection` snapshot can
-   show CURRENT connections only — it is never cited as retroactive
-   attribution for the closed window.
-7. Errors (the adapter vanishes mid-window, the cmdlet is unavailable) abort
-   the capture with the named reason and the verdict is NOT-RUN — never a
-   pass.
+5. Capture `$s1`/`$t1` immediately after the window closes and compute the
+   summed delta.
+6. PASS iff `delta <= 1 MiB` (1,048,576 bytes) over the window. The tolerance
+   covers adapter-wide control-plane noise across every `Up` adapter — ARP/
+   IPv6 neighbor discovery/DHCP renewals are bounded and rare on a quiet
+   LAN; the 1 MiB constant is a recorded judgment, not a measured baseline.
+7. `delta > tolerance` -> the verdict is INCONCLUSIVE-for-app-egress with the
+   summed number recorded. A later `Get-NetTCPConnection` snapshot can show
+   CURRENT connections only — it is never cited as retroactive attribution
+   for the closed window.
+8. Errors (an adapter vanishes mid-window, the cmdlet is unavailable, a
+   `$null` sum) abort the capture with the named reason and the verdict is
+   NOT-RUN — never a pass.
 
-Control leg: run the same procedure once with the app closed (same adapter,
-same 10-minute shape) and record that baseline delta next to the scenario
-delta, so the tolerance can be read against the machine's own quiet-LAN
-noise.
+Control leg: run the same procedure once with the app closed (same `Up`
+adapter set, same 10-minute shape) and record that baseline summed delta
+next to the scenario delta, so the tolerance can be read against the
+machine's own quiet-LAN noise.
 
 ## Results capture
 
 Every prep/run writes one JSON row under `bench/offline-matrix-results/`
 named `<S-id>-<machine>-<YYYYMMDDTHHMMSSZ>.json` (colon-free filename; the
-real ISO timestamp is inside the JSON). Row schema (surface
-`offline-matrix`, registered in `bench/append_results.py`):
+real ISO timestamp is inside the JSON; a same-second filename collision gets
+a `-1`, `-2`, ... suffix — never a silent overwrite; the write itself is
+atomic, tmp-file-then-publish). Row schema (surface `offline-matrix`,
+registered in `bench/append_results.py`):
 
 ```json
 {
@@ -308,23 +346,31 @@ real ISO timestamp is inside the JSON). Row schema (surface
   "automated_legs": "ram-filler:attained",
   "blocked_marker": "BLOCKED: reference laptop",
   "measured": "ram-filler attained; chunks 24; free-after-release 14890 MiB (target 5600 MiB, tolerance 512 MiB)",
-  "notes": "node v24.16.0; win32/x64; ended by SIGINT"
+  "notes": "node v24.16.0; win32/x64; pid 4242; ended by SIGINT"
 }
 ```
 
 - `outcome` is `PENDING` in harness rows: the scenario's pass/fail verdict is
   the operator's measured proof, never the harness's. The operator's final
-  row (outcome `pass`/`fail` with the measured numbers in `measured`) fills
-  the PENDING placeholder in `bench/RESULTS.md`.
+  row (outcome `pass`/`fail` with the measured numbers in `measured`, citing
+  the capture JSON path it derives from) fills the PENDING placeholder in
+  `bench/RESULTS.md`.
 - Machine-tag discipline: `BENCH_MACHINE_TAG` must name a machine registered
   under `## Machine registry` in `bench/RESULTS.md` (`reference-i5` for the
   laptop run); the harness refuses to write a capture row without it, and
   `bench/append_results.py` refuses unregistered tags at merge time.
-- Merge path (fail-closed, duplicate-refusing on machine + scenario_id):
-
-```
-python bench/append_results.py --row-file bench/offline-matrix-results/<file>.json
-```
+- Merge path (fail-closed, two-step):
+  `python bench/append_results.py --row-file bench/offline-matrix-results/<file>.json`
+  merges a harness capture row into its seeded PENDING placeholder IN PLACE —
+  PENDING placeholder rows are idempotently replaceable, so a re-run capture
+  of the same scenario can be re-merged without refusal. The duplicate
+  refusal (identity = machine + scenario_id) applies to VERDICT rows: once
+  the operator's measured pass/fail row has filled the slot, a second merge
+  of the same identity is refused ("row already recorded") — re-measuring
+  means a new row, never an overwrite.
+- Capture JSON files are committable evidence: the results directory is NOT
+  gitignored, so a verdict row's cited capture path can be committed with it
+  (only the recovery journal stays ignored, as live operator state).
 
 ## Network toggle safety and honest limits
 
@@ -335,6 +381,29 @@ verification, a DETACHED recovery watchdog child (re-reads the journal,
 restores at lease expiry — default 45 minutes from the journal timestamp),
 the idempotent `--recover`, and the printed manual command
 `netsh interface set interface "<adapter name>" enable`.
+
+Journal robustness (review round): a MISSING journal reads as empty, but an
+UNREADABLE or CORRUPT one is a named refusal everywhere it is read — the
+toggle refuses to act (journal-before-act cannot be trusted on top of a file
+whose contents cannot be), `--recover` and the watchdog exit 2 with the
+named corruption message instead of printing "nothing to recover" while an
+adapter sits disabled. Every journal write is MERGE-ON-WRITE: the writer
+re-reads the file immediately before publishing and merges by row id, so a
+row appended by a concurrent writer (for example the parent while the
+watchdog is mid-restore) is never dropped. The lease is bounded to
+[1, 10080] minutes (one week), and a journal row with a malformed
+timestamp/lease is treated by the watchdog as never-due with a named warning
+(--recover or the manual command remain the remedy).
+
+Exit codes: the harness exits 5 from `--recover` when any row ends the run
+in restore-failed state (recovery FAILURE — distinct from 3, the selftest
+failure code), and the detached watchdog's max-loops / restore-failed
+verdicts map to 5 as well; 130 is the forced exit when a second Ctrl+C
+arrives while an auto-clean teardown is still running. On Windows the
+harness resolves netsh/net through their absolute
+`%SystemRoot%\System32\...` paths (bare-name PATH resolution in an elevated
+shell is what that avoids); the printed manual command keeps the bare name
+for the operator.
 
 Size `--recover-lease-min` to the whole scenario window: scenario 1's fixed
 10-minute egress observation plus install time can exceed the 45-minute

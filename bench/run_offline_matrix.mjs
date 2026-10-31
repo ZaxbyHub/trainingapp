@@ -8,7 +8,12 @@
  *     upstream response class (200/3xx/4xx/5xx, HEAD included) and re-anchors
  *     redirect Locations onto the proxy origin (absolute http(s):// and
  *     scheme-relative //upstream forms alike), so follow-on traffic stays
- *     through the proxy;
+ *     through the proxy. Hardened (PR review round): loopback-only bind,
+ *     origin-form request targets only (absolute-form/scheme-relative are
+ *     refused 400 — never an open relay), http/https upstreams only, hop-by-hop
+ *     headers stripped in both directions, non-http(s) upstream Locations
+ *     answered with a named 502, and a TOTAL upstream budget in addition to
+ *     the socket-inactivity timer;
  *   * RAM-pressure filler (scenarios 2/3/9) — supervised chunk workers that
  *     hold memory until the desired system-free floor is reached, behind a
  *     reserve floor that refuses near-zero targets before any allocation;
@@ -37,7 +42,10 @@
  * `offline-matrix`; the machine tag must be registered under "## Machine
  * registry" there — BENCH_MACHINE_TAG carries it).
  *
- * Exit codes: 0 success, 2 usage/refusal, 3 selftest failure, 4 capture failure.
+ * Exit codes: 0 success, 2 usage/refusal, 3 selftest failure, 4 capture
+ * failure, 5 recovery failure (--recover left a row in restore-failed state;
+ * also the watchdog's max-loops/restore-failed verdicts), 130 forced exit
+ * (second Ctrl+C while the auto-clean teardown is still running).
  * Node stdlib only; import-safe (the isMain entry guard).
  */
 import http from 'node:http';
@@ -55,6 +63,10 @@ export const EXIT_OK = 0;
 export const EXIT_USAGE = 2;
 export const EXIT_SELFTEST = 3;
 export const EXIT_CAPTURE = 4;
+/** --recover/watchdog recovery failure: a row ended restore-failed (PRR-007). */
+export const EXIT_RECOVER = 5;
+/** Forced exit: second Ctrl+C while the auto-clean teardown is running (PRR-021). */
+export const EXIT_FORCED = 130;
 
 /** Refusal with a named reason and the usage exit code (fail-closed gates). */
 export class UsageError extends Error {
@@ -84,9 +96,11 @@ function errOut(msg) {
 
 // ---------------------------------------------------------------------------
 // Scenario registry — the ids, verbatim titles, automated legs, lifecycle and
-// blocked state MUST match bench/offline-validation-matrix.md exactly (the
-// frozen C4 doc/harness set-equality check and the vitest mapping test both
-// pin this).
+// blocked state MUST match bench/offline-validation-matrix.md exactly. That
+// equality is pinned by (a) the trace-local frozen C4 acceptance check, which
+// lives under .agents/issue-traces/ and is git-excluded (NOT a committed
+// check), and (b) the in-repo vitest registry test, which pins the mapping as
+// literals — no committed check parses the doc (PRR-014 rewording).
 // ---------------------------------------------------------------------------
 
 export const BLOCKED_MARKER = 'BLOCKED: reference laptop';
@@ -224,6 +238,68 @@ export function stripIsolationHeaders(headers) {
   return kept;
 }
 
+// Hop-by-hop headers (RFC 9110 + the de-facto proxy-connection/te additions):
+// they belong to a single transport hop and must never be forwarded by a
+// proxy in either direction (PRR-004/SEC-05).
+export const HOP_BY_HOP_HEADERS = [
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'proxy-connection',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+];
+
+/**
+ * Strip the fixed hop-by-hop set AND every field name the message's own
+ * Connection header lists (case-insensitive) — the RFC's dynamic arm.
+ */
+export function stripHopByHopHeaders(headers) {
+  const listed = new Set();
+  const conn = headers.connection;
+  if (typeof conn === 'string') {
+    for (const name of conn.split(',')) {
+      const trimmed = name.trim().toLowerCase();
+      if (trimmed) listed.add(trimmed);
+    }
+  }
+  const kept = {};
+  for (const [name, value] of Object.entries(headers)) {
+    const lower = name.toLowerCase();
+    if (HOP_BY_HOP_HEADERS.includes(lower) || listed.has(lower)) continue;
+    kept[name] = value;
+  }
+  return kept;
+}
+
+/** --proxy-host is a loopback-only knob (PRR-005): the strip proxy is a
+ * loopback reverse proxy and never binds a non-loopback host. */
+export const LOOPBACK_PROXY_HOSTS = ['127.0.0.1', 'localhost', '::1'];
+
+export function validateProxyHost(host) {
+  if (!LOOPBACK_PROXY_HOSTS.includes(host)) {
+    throw new UsageError(
+      `--proxy-host must be a loopback literal (one of ${LOOPBACK_PROXY_HOSTS.join(', ')}); got '${host}' — the strip proxy is a loopback-only reverse proxy for scenario 7 and never binds a non-loopback host`,
+    );
+  }
+  return host;
+}
+
+/** True when a Location value is safe to forward: an http(s) absolute URL, or
+ * a value that cannot be parsed as absolute (it resolves against the current,
+ * proxy, origin). Non-http(s) absolute URLs are refused (SEC-04). */
+export function locationSchemeAllowed(location) {
+  try {
+    const parsed = new URL(location);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return true;
+  }
+}
+
 /**
  * Re-anchor a redirect Location onto the proxy origin. EVERY Location is
  * resolved against the upstream base; a resolved reference pointing at the
@@ -260,7 +336,11 @@ export function rewriteLocation(location, upstreamBase, proxyBase) {
 /**
  * Loopback reverse proxy that strips the cross-origin isolation headers from
  * every response class and rewrites Locations. Binds host:port (port 0 =
- * OS-assigned); streaming is preserved (upstream body pipes through).
+ * OS-assigned; host must be a loopback literal); streaming is preserved
+ * (upstream body pipes through). Hardened (PR review round): origin-form
+ * request targets only, http/https upstreams only, hop-by-hop headers
+ * stripped in both directions, non-http(s) Locations answered with a named
+ * 502, and a TOTAL upstream budget on top of the socket-inactivity timer.
  * Upstream failures are named: 502 upstream-refused / upstream-error:<code>,
  * 504 upstream-timeout (the upstream budget is injectable for tests).
  */
@@ -269,14 +349,44 @@ export async function createStripProxy(options = {}) {
   if (!upstreamBase) {
     throw new UsageError('createStripProxy requires upstreamBase (the origin whose isolation headers get stripped)');
   }
-  const host = options.host ?? '127.0.0.1';
-  const upstreamTimeoutMs = options.upstreamTimeoutMs ?? 30_000;
   const upstream = new URL(upstreamBase);
+  if (upstream.protocol !== 'http:' && upstream.protocol !== 'https:') {
+    throw new UsageError(
+      `createStripProxy requires an http:// or https:// upstreamBase (got '${upstream.protocol}' in '${upstreamBase}'; the proxy only speaks http/https)`,
+    );
+  }
+  const host = validateProxyHost(options.host ?? '127.0.0.1');
+  const upstreamTimeoutMs = options.upstreamTimeoutMs ?? 30_000;
   const transport = upstream.protocol === 'https:' ? https : http;
   const server = http.createServer((req, res) => {
-    const proxyBase = `http://${req.headers.host ?? `${host}:${server.address()?.port ?? ''}`}`;
-    const target = new URL(req.url || '/', upstreamBase);
-    const headers = { ...req.headers, host: upstream.host };
+    // PRR-004: origin-form only. An absolute-form (`http://host/path`) or
+    // scheme-relative (`//host/path`) request target would let any local
+    // process relay to an arbitrary host through this proxy — refused 400.
+    const rawTarget = req.url || '/';
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/i.test(rawTarget) || rawTarget.startsWith('//')) {
+      res.writeHead(400, {
+        'content-type': 'text/plain; charset=utf-8',
+        'x-offline-matrix-error': 'origin-form-required',
+      });
+      res.end(
+        `offline-matrix proxy: 400 origin-form-required (refusing request target '${rawTarget}': absolute-form and scheme-relative targets would turn this loopback strip proxy into an open relay; only origin-form paths are forwarded to the configured upstream)`,
+      );
+      return;
+    }
+    let target;
+    try {
+      target = new URL(rawTarget, upstreamBase);
+    } catch {
+      res.writeHead(400, {
+        'content-type': 'text/plain; charset=utf-8',
+        'x-offline-matrix-error': 'bad-request-target',
+      });
+      res.end(`offline-matrix proxy: 400 bad-request-target (cannot resolve '${rawTarget}' against the upstream base)`);
+      return;
+    }
+    // Hop-by-hop headers are stripped on the way out (PRR-004/F1-7/SEC-05);
+    // Host is re-anchored onto the configured upstream.
+    const headers = stripHopByHopHeaders({ ...req.headers, host: upstream.host });
     const preq = transport.request(
       {
         hostname: target.hostname,
@@ -286,24 +396,56 @@ export async function createStripProxy(options = {}) {
         headers,
       },
       (pres) => {
-        const stripped = stripIsolationHeaders(pres.headers);
+        const stripped = stripHopByHopHeaders(stripIsolationHeaders(pres.headers));
         if (stripped.location !== undefined) {
-          stripped.location = rewriteLocation(stripped.location, upstreamBase, proxyBase);
+          const rewritten = rewriteLocation(stripped.location, upstreamBase, proxyBase);
+          // SEC-04: a Location that resolves onto a non-http(s) scheme
+          // (ftp:, data:, ...) is refused with a named 502, never forwarded.
+          if (!locationSchemeAllowed(rewritten)) {
+            pres.destroy();
+            if (!res.headersSent) {
+              res.writeHead(502, {
+                'content-type': 'text/plain; charset=utf-8',
+                'x-offline-matrix-error': 'unsupported-location-scheme',
+              });
+              res.end(
+                `offline-matrix proxy: 502 unsupported-location-scheme (upstream Location '${stripped.location}' resolves outside http(s); refusing to forward)`,
+              );
+            } else {
+              res.destroy();
+            }
+            return;
+          }
+          stripped.location = rewritten;
         }
         res.writeHead(pres.statusCode ?? 502, stripped);
         pres.pipe(res);
+        // The TOTAL budget (below) is satisfied once the upstream body ends.
+        pres.on('end', () => clearTimeout(totalTimer));
       },
     );
-    preq.setTimeout(upstreamTimeoutMs, () => {
+    const respondTimeout = (kind) => {
       if (!res.headersSent) {
-        res.writeHead(504, { 'content-type': 'text/plain; charset=utf-8', 'x-offline-matrix-error': 'upstream-timeout' });
-        res.end(`offline-matrix proxy: 504 upstream-timeout (upstream budget ${upstreamTimeoutMs}ms exhausted)`);
+        res.writeHead(504, {
+          'content-type': 'text/plain; charset=utf-8',
+          'x-offline-matrix-error': 'upstream-timeout',
+        });
+        res.end(`offline-matrix proxy: 504 upstream-timeout (${kind} budget ${upstreamTimeoutMs}ms exhausted)`);
       } else {
         res.destroy();
       }
       preq.destroy();
-    });
+    };
+    // Socket-INACTIVITY timer: fires only when the upstream socket goes quiet.
+    preq.setTimeout(upstreamTimeoutMs, () => respondTimeout('inactivity'));
+    // PRR-020: TOTAL deadline from request START — a trickling upstream that
+    // keeps the socket active (and so the inactivity timer reset) still
+    // cannot exceed the advertised budget.
+    const totalTimer = setTimeout(() => respondTimeout('total'), upstreamTimeoutMs);
+    totalTimer.unref?.();
+    res.on('close', () => clearTimeout(totalTimer));
     preq.on('error', (err) => {
+      clearTimeout(totalTimer);
       const code = err && err.code ? err.code : 'unknown';
       const named = code === 'ECONNREFUSED' || code === 'ECONNRESET' ? 'upstream-refused' : `upstream-error:${code}`;
       if (!res.headersSent) {
@@ -322,16 +464,26 @@ export async function createStripProxy(options = {}) {
       resolve();
     });
   });
-  const port = server.address().port;
+  const addr = server.address();
+  const port = addr && typeof addr === 'object' ? addr.port : 0;
+  // PRR-006: the proxy origin used for Location re-anchoring derives from the
+  // server's BOUND address — never from the client's Host header, so a
+  // requester-chosen Host cannot re-anchor redirects onto its own origin.
+  const boundHost = addr && typeof addr === 'object' && addr.address ? addr.address : host;
+  const hostForUrl = boundHost.includes(':') ? `[${boundHost}]` : boundHost;
+  const proxyBase = `http://${hostForUrl}:${port}`;
   return {
     server,
-    host,
+    host: boundHost,
     port,
-    base: `http://${host}:${port}`,
+    base: proxyBase,
     async close() {
-      await new Promise((resolve) => server.close(() => resolve()));
+      // PRR-021: destroy the live connections BEFORE awaiting server.close —
+      // a keep-alive or mid-stream connection would otherwise hang close()
+      // indefinitely and the documented Ctrl+C auto-clean with it.
       server.closeAllConnections?.();
       server.closeIdleConnections?.();
+      await new Promise((resolve) => server.close(() => resolve()));
     },
   };
 }
@@ -489,10 +641,25 @@ export async function runRamFillerStateMachine(opts) {
 export async function acquireWorkerChunk(chunkBytes, opts = {}) {
   const spawnFn = opts.spawnFn ?? spawn;
   const settleMs = opts.settleMs ?? 400;
+  let spawnError = null;
   const child = spawnFn(process.execPath, [SCRIPT_PATH, '--ram-worker', String(chunkBytes), String(process.pid)], {
     stdio: 'ignore',
+    windowsHide: true,
+  });
+  // PRR-022: a spawn failure (ENOENT/EMFILE/...) surfaces as a named
+  // alloc-fail refusal from fillToTarget's acquireChunk — never as an
+  // uncaught 'error' event crash.
+  child.on('error', (err) => {
+    spawnError = err;
   });
   await new Promise((resolve) => setTimeout(resolve, settleMs));
+  if (spawnError !== null) {
+    throw new UsageError(
+      `ram-worker chunk allocation failed (spawn ${process.execPath}: ${spawnError instanceof Error ? spawnError.message : String(spawnError)})`,
+    );
+  }
+  // A late error on an otherwise healthy handle must not crash the supervisor.
+  child.on('error', () => {});
   return {
     child,
     async release() {
@@ -546,19 +713,47 @@ function ramWorkerEntry(rawArgs) {
 
 export const JOURNAL_FILENAME = '.offline-matrix-journal.json';
 export const RECOVER_LEASE_MIN_DEFAULT = 45;
+/** The watchdog lease is bounded to one week so a malformed value can never
+ * pin an adapter disabled forever (PRR-001 follow-up). */
+export const RECOVER_LEASE_MIN_MAX = 10_080;
 const COMMAND_TIMEOUT_MS = 30_000;
 
 export function journalPathFor(repoRoot = REPO_ROOT) {
   return path.join(repoRoot, 'bench', JOURNAL_FILENAME);
 }
 
+/**
+ * Fail-closed journal read (PRR-001): a MISSING journal is the empty journal
+ * ([]), but an UNREADABLE or CORRUPT one (bad JSON, non-array, permission
+ * error) is a named UsageError — every consumer (toggle, --recover, watchdog)
+ * refuses to proceed on a journal whose contents cannot be trusted, so a
+ * corrupt file can never masquerade as "nothing to recover" while an adapter
+ * sits disabled.
+ */
 export function readJournal(journalFile) {
+  let raw;
   try {
-    const parsed = JSON.parse(fs.readFileSync(journalFile, 'utf8'));
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
+    raw = fs.readFileSync(journalFile, 'utf8');
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return [];
+    throw new UsageError(
+      `recovery journal ${journalFile} is unreadable (${err && err.code ? err.code : err instanceof Error ? err.message : String(err)}) — refusing to proceed on an untrusted journal; restore the adapter manually if needed, then delete or repair the file`,
+    );
   }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new UsageError(
+      `recovery journal ${journalFile} is corrupt (${err instanceof Error ? err.message : String(err)}) — refusing to proceed on an untrusted journal; restore the adapter manually if needed, then delete or repair the file`,
+    );
+  }
+  if (!Array.isArray(parsed)) {
+    throw new UsageError(
+      `recovery journal ${journalFile} is corrupt (top-level value is ${typeof parsed}, not an array) — refusing to proceed on an untrusted journal; restore the adapter manually if needed, then delete or repair the file`,
+    );
+  }
+  return parsed;
 }
 
 export function writeJournal(journalFile, rows) {
@@ -567,24 +762,56 @@ export function writeJournal(journalFile, rows) {
   fs.renameSync(tmp, journalFile);
 }
 
-/** Bounded command runner: real exit code, killed at the timeout. */
+/**
+ * MERGE-ON-WRITE (PRR-002): re-read the journal immediately before every
+ * write and merge by row id, so a writer can never drop a row another writer
+ * appended since this process last read. `appendJournalRow` adds/replaces one
+ * row by id; `mergeJournalRows` rewrites a set of mutated rows into a fresh
+ * read (rows not present in the fresh read are kept, never silently deleted).
+ */
+export function appendJournalRow(journalFile, row, readJournalFn = readJournal, writeJournalFn = writeJournal) {
+  const merged = readJournalFn(journalFile).filter((r) => (r && r.id) !== row.id);
+  merged.push(row);
+  writeJournalFn(journalFile, merged);
+}
+
+export function mergeJournalRows(journalFile, mutatedRows, readJournalFn = readJournal, writeJournalFn = writeJournal) {
+  const fresh = readJournalFn(journalFile);
+  const byId = new Map(mutatedRows.map((r) => [r && r.id, r]));
+  const present = new Set(fresh.map((r) => r && r.id));
+  const merged = fresh.map((r) => (byId.has(r && r.id) ? byId.get(r && r.id) : r));
+  for (const r of mutatedRows) {
+    if (!present.has(r && r.id)) merged.push(r);
+  }
+  writeJournalFn(journalFile, merged);
+}
+
+/** Bounded command runner: real exit code, killed at the timeout. A signalled
+ * close (exit code null — the process was killed) maps to the synthetic
+ * nonzero 125 and carries signalCode, so a killed elevation probe can never
+ * read as success (PRR-009). The timeout path kills the child and then
+ * AWAITS its exit (bounded by killGraceMs) before resolving (PRR-022). */
+export const RUNCOMMAND_SIGNALLED_CODE = 125;
+
 export function runCommand(file, args, opts = {}) {
   const timeoutMs = opts.timeoutMs ?? COMMAND_TIMEOUT_MS;
+  const killGraceMs = opts.killGraceMs ?? 2_000;
+  const spawnFn = opts.spawnFn ?? spawn;
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn(file, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+      child = spawnFn(file, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     } catch (err) {
-      resolve({ code: 1, stdout: '', stderr: String(err && err.message ? err.message : err) });
+      resolve({ code: 1, signalCode: null, stdout: '', stderr: String(err && err.message ? err.message : err) });
       return;
     }
     let stdout = '';
     let stderr = '';
     let settled = false;
-    child.stdout.on('data', (d) => {
+    child.stdout?.on('data', (d) => {
       stdout += d;
     });
-    child.stderr.on('data', (d) => {
+    child.stderr?.on('data', (d) => {
       stderr += d;
     });
     const timer = setTimeout(() => {
@@ -595,32 +822,53 @@ export function runCommand(file, args, opts = {}) {
       } catch {
         /* already gone */
       }
-      resolve({
-        code: 124,
-        stdout,
-        stderr: `${stderr}command timeout after ${timeoutMs}ms: ${file} ${args.join(' ')}`,
-      });
+      // Await the killed child's actual exit before resolving, so a killed
+      // netsh cannot linger (or fire side effects) past its own timeout.
+      const finish = () => {
+        clearTimeout(grace);
+        resolve({
+          code: 124,
+          signalCode: null,
+          stdout,
+          stderr: `${stderr}command timeout after ${timeoutMs}ms: ${file} ${args.join(' ')}`,
+        });
+      };
+      const grace = setTimeout(finish, killGraceMs);
+      child.once('close', finish);
+      child.once('error', finish);
     }, timeoutMs);
     child.on('error', (err) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ code: 1, stdout, stderr: String(err && err.message ? err.message : err) });
+      resolve({ code: 1, signalCode: null, stdout, stderr: String(err && err.message ? err.message : err) });
     });
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ code: code ?? 0, stdout, stderr });
+      resolve({ code: code ?? RUNCOMMAND_SIGNALLED_CODE, signalCode: signal ?? null, stdout, stderr });
     });
   });
+}
+
+/**
+ * PRR-017: resolve Windows system tools by their absolute %SystemRoot% paths,
+ * so an elevated shell with a mangled PATH cannot shadow netsh/net (and the
+ * manual command printed for the operator keeps the bare name). On other
+ * platforms the bare name is returned (documented fallback).
+ */
+export function windowsSystemExe(name, isWindows = process.platform === 'win32', env = process.env) {
+  if (!isWindows) return name;
+  const sysRoot = env.SystemRoot ?? env.windir ?? 'C:\\Windows';
+  return path.join(sysRoot, 'System32', `${name}.exe`);
 }
 
 /** Elevation probe: Windows `net session`, elsewhere `sudo -n true`. */
 export async function probeElevation(opts = {}) {
   const run = opts.runCommand ?? runCommand;
   const isWindows = opts.isWindows ?? process.platform === 'win32';
-  const file = isWindows ? 'net' : 'sudo';
+  const file = isWindows ? windowsSystemExe('net', isWindows) : 'sudo';
   const args = isWindows ? ['session'] : ['-n', 'true'];
   const probeCmd = isWindows ? 'net session' : 'sudo -n true';
   const res = await run(file, args, { timeoutMs: 15_000 });
@@ -641,7 +889,9 @@ export async function readAdapterState(adapter, run, isWindows = process.platfor
   if (!isWindows) {
     throw new UsageError('the network toggle is Windows-only (netsh); on other platforms disable the adapter with the OS tool and record it in the tuple');
   }
-  const res = await run('netsh', ['interface', 'show', 'interface'], { timeoutMs: COMMAND_TIMEOUT_MS });
+  const res = await run(windowsSystemExe('netsh', isWindows), ['interface', 'show', 'interface'], {
+    timeoutMs: COMMAND_TIMEOUT_MS,
+  });
   if (res.code !== 0) {
     throw new UsageError(`'netsh interface show interface' failed (exit ${res.code}): ${String(res.stderr).trim()}`);
   }
@@ -672,7 +922,7 @@ export function manualCommandFor(adapter) {
 
 /** Best-effort enable + read-back verification of one adapter. */
 async function restoreAdapter(adapter, run, isWindows) {
-  const res = await run('netsh', ['interface', 'set', 'interface', adapter, 'enable'], {
+  const res = await run(windowsSystemExe('netsh', isWindows), ['interface', 'set', 'interface', adapter, 'enable'], {
     timeoutMs: COMMAND_TIMEOUT_MS,
   });
   if (res.code !== 0) {
@@ -735,6 +985,14 @@ export async function performNetworkToggle(opts) {
       );
     }
   }
+  if (!Number.isInteger(leaseMinutes) || leaseMinutes < 1 || leaseMinutes > RECOVER_LEASE_MIN_MAX) {
+    throw new UsageError(
+      `--recover-lease-min must be an integer in [1, ${RECOVER_LEASE_MIN_MAX}] (one week); got ${leaseMinutes} — the watchdog lease is bounded so a malformed value can never pin an adapter disabled forever`,
+    );
+  }
+  // PRR-001: a journal that cannot be read trustedly is a refusal — the
+  // journal-before-act guarantee is meaningless on top of an unreadable file
+  // (readJournalFn throws its named UsageError up through here).
   const priorState = await readAdapterState(adapter, run, isWindows);
   if (priorState === 'Disabled') {
     print(`network: adapter '${adapter}' is already Disabled — no action taken, no recovery row journaled`);
@@ -750,15 +1008,14 @@ export async function performNetworkToggle(opts) {
     lease_minutes: leaseMinutes,
     status: 'active',
   };
-  const rows = [...readJournalFn(journalFile), row];
-  writeJournalFn(journalFile, rows); // JOURNAL-BEFORE-ACT: recoverable even if we crash on the next line
+  appendJournalRow(journalFile, row, readJournalFn, writeJournalFn); // JOURNAL-BEFORE-ACT (merge-on-write): recoverable even if we crash on the next line
   const disableArgs = ['interface', 'set', 'interface', adapter, mode === 'disable' ? 'disable' : 'enable'];
-  const disable = await run('netsh', disableArgs, { timeoutMs: COMMAND_TIMEOUT_MS });
+  const disable = await run(windowsSystemExe('netsh', isWindows), disableArgs, { timeoutMs: COMMAND_TIMEOUT_MS });
   const verifyFail = async (why) => {
     const attempt = await restoreAdapter(adapter, run, isWindows);
     row.status = attempt.restored ? 'recovered' : 'restore-failed';
     row.restore_reason = why;
-    writeJournalFn(journalFile, rows);
+    mergeJournalRows(journalFile, [row], readJournalFn, writeJournalFn);
     if (attempt.restored) {
       throw new UsageError(
         `${why}; adapter '${adapter}' was re-enabled and verified — the scenario window did NOT start`,
@@ -771,7 +1028,22 @@ export async function performNetworkToggle(opts) {
   if (disable.code !== 0) {
     await verifyFail(`netsh ${mode} exited ${disable.code}: ${String(disable.stderr).trim()}`);
   }
-  const after = await readAdapterState(adapter, run, isWindows);
+  // PRR-008: the post-disable read-back is guarded — a netsh show FAILURE now
+  // enters the same verifyFail path (restore attempt + journal restore-failed
+  // + manual command) instead of escaping as a bare adapter-lookup error with
+  // the adapter left disabled and nothing surfacing it.
+  let after = null;
+  let readBackError = null;
+  try {
+    after = await readAdapterState(adapter, run, isWindows);
+  } catch (err) {
+    readBackError = err;
+  }
+  if (readBackError !== null) {
+    await verifyFail(
+      `read-back verification could not run after disable: ${readBackError instanceof Error ? readBackError.message : String(readBackError)}`,
+    );
+  }
   if (mode === 'disable' && after !== 'Disabled') {
     await verifyFail(`read-back verification failed after disable: 'netsh interface show interface' still reports ${after} for '${adapter}'`);
   }
@@ -807,7 +1079,7 @@ export async function recoverFromJournal(opts) {
     print = (msg) => out(msg),
   } = opts;
   const rows = readJournalFn(journalFile);
-  let changed = false;
+  const mutated = [];
   let restored = 0;
   let failed = 0;
   for (const row of rows) {
@@ -816,7 +1088,7 @@ export async function recoverFromJournal(opts) {
     const attempt = await restoreAdapter(row.adapter, run, isWindows);
     row.status = attempt.restored ? 'recovered' : 'restore-failed';
     row.recovered_at = now().toISOString();
-    changed = true;
+    mutated.push(row);
     if (attempt.restored) {
       restored += 1;
       print(`recover: adapter '${row.adapter}' re-enabled and verified by read-back`);
@@ -827,7 +1099,7 @@ export async function recoverFromJournal(opts) {
       );
     }
   }
-  if (changed) writeJournalFn(journalFile, rows);
+  if (mutated.length > 0) mergeJournalRows(journalFile, mutated, readJournalFn, writeJournalFn);
   else print('recover: no active journal rows (nothing to recover)');
   return { restored, failed, rows: rows.length };
 }
@@ -837,7 +1109,13 @@ export async function recoverFromJournal(opts) {
  * restore). Exits idle when the journal is gone/has no owned rows; at lease
  * expiry (journal-timestamp based) it restores + verifies and rewrites the
  * row recovered/restore-failed (failed rows retry up to RESTORE_ATTEMPT_MAX
- * attempts, then the manual command is the printed remedy).
+ * attempts, then the manual command is the printed remedy). Verdicts:
+ * 'idle' | 'restored' | 'max-loops' | 'restore-failed' (rows exhausted the
+ * attempt cap without restoring — a failure, mapped to a nonzero exit by
+ * watchdogExitFor; PRR-022). A malformed row timestamp/lease is treated as
+ * NEVER due with a named warning (fail-safe direction: the watchdog acts
+ * only on journal data it can trust; --recover or the manual command remain
+ * the remedy), and the effective lease is clamped to RECOVER_LEASE_MIN_MAX.
  */
 export const RESTORE_ATTEMPT_MAX = 3;
 
@@ -852,6 +1130,7 @@ export async function recoveryWatchdog(opts) {
     print = (msg) => out(msg),
     maxLoops = 10_000,
   } = opts;
+  let sawCappedRestoreFailure = false;
   for (let loop = 0; loop < maxLoops; loop += 1) {
     const rows = readJournalState();
     if (!Array.isArray(rows) || rows.length === 0) {
@@ -863,13 +1142,27 @@ export async function recoveryWatchdog(opts) {
       (r) => r.status === 'active' || (r.status === 'restore-failed' && (r.restore_attempts ?? 0) < RESTORE_ATTEMPT_MAX),
     );
     if (open.length === 0) {
+      if (sawCappedRestoreFailure) {
+        print('recover-watchdog: restore attempts exhausted without success; idle — the manual netsh command is the remedy');
+        return 'restore-failed';
+      }
       print('recover-watchdog: no open rows; idle');
       return 'idle';
     }
     let wrote = false;
     let restoredThisPass = 0;
     for (const row of open) {
-      const dueAt = Date.parse(row.timestamp) + row.lease_minutes * 60_000;
+      const ts = Date.parse(row.timestamp);
+      const lease = Number(row.lease_minutes);
+      if (!Number.isFinite(ts) || !Number.isInteger(lease) || lease < 1) {
+        print(
+          `recover-watchdog: row ${String(row.id ?? '<no id>')} carries a malformed timestamp/lease ` +
+            `(timestamp ${JSON.stringify(row.timestamp)}, lease_minutes ${JSON.stringify(row.lease_minutes)}) — ` +
+            'treated as never due; restore it with --recover or the manual netsh command',
+        );
+        continue;
+      }
+      const dueAt = ts + Math.min(lease, RECOVER_LEASE_MIN_MAX) * 60_000;
       if (now() < dueAt) continue;
       const attempt = await attemptRestore(row);
       row.restore_attempts = (row.restore_attempts ?? 0) + 1;
@@ -879,6 +1172,7 @@ export async function recoveryWatchdog(opts) {
         restoredThisPass += 1;
         print(`recover-watchdog: lease expired; adapter '${row.adapter}' restored and verified`);
       } else {
+        if (row.restore_attempts >= RESTORE_ATTEMPT_MAX) sawCappedRestoreFailure = true;
         print(
           `recover-watchdog: restore FAILED for adapter '${row.adapter}' (attempt ${row.restore_attempts}/${RESTORE_ATTEMPT_MAX}: ${attempt.reason ?? 'unspecified'})` +
             (row.restore_attempts >= RESTORE_ATTEMPT_MAX
@@ -899,6 +1193,13 @@ export async function recoveryWatchdog(opts) {
   return 'max-loops';
 }
 
+/** Watchdog verdict → exit code: only idle/restored exit 0; max-loops and
+ * restore-failed are failures (PRR-022 verdict mapping). */
+export function watchdogExitFor(verdict) {
+  if (verdict === 'idle' || verdict === 'restored') return EXIT_OK;
+  return EXIT_RECOVER;
+}
+
 /**
  * Spawn the out-of-process recovery watchdog: detached, no IPC channel
  * (stdio 'ignore'), unref'd — the child outlives the parent and the parent
@@ -913,6 +1214,7 @@ export function spawnRecoveryChild(opts = {}) {
   const child = spawnFn(nodeBin, [scriptPath, '--recover-watchdog', ...args], {
     detached: true,
     stdio: 'ignore',
+    windowsHide: true, // PRR-022: no console-window flash from the detached watchdog
   });
   child.unref();
   return child;
@@ -946,7 +1248,10 @@ export function buildCaptureRow(fields) {
   const scenario = fields.scenario ?? scenarioById(fields.scenarioId);
   const row = {
     surface: CAPTURE_SURFACE,
-    machine: fields.machine,
+    // SEC-16: a '|' in the machine tag would break out of the merged markdown
+    // row cell — pipes are sanitized in the row body (the filename uses the
+    // stricter filesystem sanitizer below).
+    machine: String(fields.machine).replace(/\|/g, '_'),
     scenario_id: scenario.id,
     scenario: scenario.title,
     outcome: fields.outcome ?? 'PENDING',
@@ -971,6 +1276,10 @@ export function buildCaptureRow(fields) {
  * machine-tag discipline: BENCH_MACHINE_TAG must be set and must name a
  * machine registered under "## Machine registry" in bench/RESULTS.md
  * (append_results.py refuses unregistered tags at merge time).
+ * PRR-019: the write is ATOMIC (tmp file + link, which fails when the target
+ * name already exists) — a same-second filename collision gets a `-1`, `-2`,
+ * ... suffix instead of silently overwriting, and raw IO failures are mapped
+ * onto CaptureError (the documented exit-4 class).
  */
 export function writeCaptureRow(opts) {
   const {
@@ -992,12 +1301,49 @@ export function writeCaptureRow(opts) {
   }
   const scenario = scenarioById(scenarioId);
   const row = buildCaptureRow({ scenario, machine: machineTag, measured, notes, automatedLegs, outcome });
-  mkdirSync(dir, { recursive: true });
-  const safeMachine = machineTag.replace(/[^A-Za-z0-9._-]/g, '_');
-  const name = `${scenario.id}-${safeMachine}-${captureTimestamp(now())}.json`;
-  const file = path.join(dir, name);
-  writeFileSync(file, `${JSON.stringify(row, null, 2)}\n`, 'utf8');
-  return { file, row };
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch (err) {
+    throw new CaptureError(
+      `capture row write failed (mkdir ${dir}): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  const safeMachine = String(machineTag).replace(/[^A-Za-z0-9._-]/g, '_');
+  const payload = `${JSON.stringify(row, null, 2)}\n`;
+  const base = `${scenario.id}-${safeMachine}-${captureTimestamp(now())}`;
+  let lastErr = null;
+  for (let suffix = 0; suffix < 64; suffix += 1) {
+    const name = suffix === 0 ? `${base}.json` : `${base}-${suffix}.json`;
+    const file = path.join(dir, name);
+    const tmp = path.join(dir, `.${name}.tmp-${process.pid}`);
+    try {
+      writeFileSync(tmp, payload, 'utf8');
+      try {
+        // link() atomically publishes the tmp file under its final name and
+        // FAILS with EEXIST when that name is already taken (rename would
+        // silently overwrite a same-second collision).
+        fs.linkSync(tmp, file);
+      } finally {
+        try {
+          fs.unlinkSync(tmp);
+        } catch {
+          /* best-effort cleanup of our own tmp file */
+        }
+      }
+      return { file, row };
+    } catch (err) {
+      lastErr = err;
+      // EEXIST = name collision → retry with the next -N suffix. Windows may
+      // surface the taken-name case as EPERM; treated as a collision too.
+      if (err && (err.code === 'EEXIST' || err.code === 'EPERM')) continue;
+      throw new CaptureError(
+        `capture row write failed (${file}): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  throw new CaptureError(
+    `capture row write failed: no free filename for ${base}.json after 64 collision retries (${lastErr instanceof Error ? lastErr.message : String(lastErr)})`,
+  );
 }
 
 function prepNotes(extra = '') {
@@ -1024,10 +1370,55 @@ function printScenarioList() {
 // --scenario <id> --prep
 // ---------------------------------------------------------------------------
 
-function holdLegWithAutoClean(sc, automatedLegs, teardownWork) {
+/**
+ * PRR-022: process.exit can truncate the final `capture row:` stdout line
+ * when stdout is a pipe. Flush before exiting: the write callback fires once
+ * the data reaches the OS; a bounded grace (2 s) guarantees a stuck pipe
+ * still exits.
+ */
+function flushAndExit(code) {
+  let exited = false;
+  const exitNow = () => {
+    if (exited) return;
+    exited = true;
+    process.exit(code);
+  };
+  const grace = setTimeout(exitNow, 2_000);
+  try {
+    process.stdout.on('error', exitNow);
+    process.stdout.write('', () => {
+      clearTimeout(grace);
+      exitNow();
+    });
+  } catch {
+    exitNow();
+  }
+}
+
+/**
+ * Hold the scenario window open with the auto-clean teardown wired to
+ * SIGINT/SIGTERM. Fully injectable (PRR-011): `deps.writeCapture` replaces
+ * the capture seam and `deps.exit` the exit seam, so the production
+ * teardown → capture → exit path is testable end to end. The FIRST interrupt
+ * runs the clean teardown (leg teardown → capture row → exit with the
+ * capture verdict); a SECOND interrupt while that teardown is still running
+ * force-exits 130 instead of hanging forever on a stuck teardown (PRR-021
+ * escape hatch — the clean teardown and its capture row are abandoned).
+ * Returns a never-resolving promise (the hold IS the scenario window); the
+ * promise carries a dispose() that removes the signal listeners (tests).
+ */
+export function holdLegWithAutoClean(sc, automatedLegs, teardownWork, deps = {}) {
+  const writeCaptureFn = deps.writeCapture ?? writeCaptureRow;
+  const exitFn = deps.exit ?? ((code) => flushAndExit(code));
   let tearingDown = false;
-  const beginTeardown = (signal) => {
-    if (tearingDown) return;
+  const onSignal = (signal) => {
+    if (tearingDown) {
+      errOut(
+        `${signal}: teardown already in progress — second interrupt forces exit (${EXIT_FORCED}; the clean teardown and its capture row are abandoned; run --recover if a network leg is involved)`,
+      );
+      exitFn(EXIT_FORCED);
+      return;
+    }
     tearingDown = true;
     (async () => {
       let code = EXIT_OK;
@@ -1039,7 +1430,7 @@ function holdLegWithAutoClean(sc, automatedLegs, teardownWork) {
         code = EXIT_CAPTURE;
       }
       try {
-        const { file } = writeCaptureRow({
+        const { file } = writeCaptureFn({
           scenarioId: sc.id,
           automatedLegs,
           measured,
@@ -1056,18 +1447,25 @@ function holdLegWithAutoClean(sc, automatedLegs, teardownWork) {
         }
       }
       out(`${sc.id} auto-clean complete (received ${signal}); merge the capture row per "Results capture" in the matrix doc`);
-      process.exit(code);
+      exitFn(code);
     })().catch((err) => {
       errOut(String(err));
-      process.exit(EXIT_CAPTURE);
+      exitFn(EXIT_CAPTURE);
     });
   };
-  process.on('SIGINT', () => beginTeardown('SIGINT'));
-  process.on('SIGTERM', () => beginTeardown('SIGTERM'));
+  const sigintListener = () => onSignal('SIGINT');
+  const sigtermListener = () => onSignal('SIGTERM');
+  process.on('SIGINT', sigintListener);
+  process.on('SIGTERM', sigtermListener);
   out(
-    `${sc.id}: environment leg active — run the operator steps now; press Ctrl+C to end the scenario window, tear the leg down (auto-clean), and write the capture row`,
+    `${sc.id}: environment leg active — run the operator steps now; press Ctrl+C to end the scenario window, tear the leg down (auto-clean), and write the capture row (a second Ctrl+C force-exits if the teardown hangs)`,
   );
-  return new Promise(() => {});
+  const hold = new Promise(() => {});
+  hold.dispose = () => {
+    process.removeListener('SIGINT', sigintListener);
+    process.removeListener('SIGTERM', sigtermListener);
+  };
+  return hold;
 }
 
 export async function runPrep(args, deps = {}) {
@@ -1152,15 +1550,20 @@ export async function runPrep(args, deps = {}) {
           return EXIT_SELFTEST;
         }
         legStates.push(`ram-filler:${fill.outcome}`);
-        await holdFn(sc, legStates.join(';'), async () => {
-          const rel = await releaseChunks(fill.handles, () => os.freemem());
-          out(
-            `ram: released ${rel.released} chunk(s); system free re-read at ${Math.round(rel.freeAfterReleaseBytes / 2 ** 20)} MiB`,
-          );
-          return `ram-filler ${fill.outcome}; chunks ${fill.chunks}; free-after-release ${Math.round(
-            rel.freeAfterReleaseBytes / 2 ** 20,
-          )} MiB (target ${args.ramFreeTargetMb} MiB, tolerance ${RAM_DEFAULTS.toleranceMb} MiB)`;
-        });
+        await holdFn(
+          sc,
+          legStates.join(';'),
+          async () => {
+            const rel = await releaseChunks(fill.handles, () => os.freemem());
+            out(
+              `ram: released ${rel.released} chunk(s); system free re-read at ${Math.round(rel.freeAfterReleaseBytes / 2 ** 20)} MiB`,
+            );
+            return `ram-filler ${fill.outcome}; chunks ${fill.chunks}; free-after-release ${Math.round(
+              rel.freeAfterReleaseBytes / 2 ** 20,
+            )} MiB (target ${args.ramFreeTargetMb} MiB, tolerance ${RAM_DEFAULTS.toleranceMb} MiB)`;
+          },
+          { writeCapture: writeCaptureFn }, // PRR-011: the teardown→capture seam is injectable
+        );
       } else if (leg === 'header-strip-proxy') {
         if (!args.proxyUpstream) {
           throw new UsageError(
@@ -1176,10 +1579,15 @@ export async function runPrep(args, deps = {}) {
         out(`proxy:${proxy.host}:${proxy.port} -> ${args.proxyUpstream} (COOP/COEP/CORP stripped on every response class; Locations re-anchored onto the proxy origin)`);
         out(`proxy: point the browser at ${proxy.base} for the scenario window`);
         legStates.push('header-strip-proxy:up');
-        await holdLegWithAutoClean(sc, legStates.join(';'), async () => {
-          await proxy.close();
-          return `header-strip proxy ${proxy.base} -> ${args.proxyUpstream} served the window and closed cleanly`;
-        });
+        await holdFn(
+          sc,
+          legStates.join(';'),
+          async () => {
+            await proxy.close();
+            return `header-strip proxy ${proxy.base} -> ${args.proxyUpstream} served the window and closed cleanly`;
+          },
+          { writeCapture: writeCaptureFn }, // PRR-011: the proxy leg goes through the SAME injected hold seam
+        );
       }
     }
   } catch (err) {
@@ -1205,7 +1613,11 @@ export async function runPrep(args, deps = {}) {
       errOut(err.message);
       return err.exitCode;
     }
-    throw err;
+    // PRR-019: the main path maps raw capture IO failures onto the SAME
+    // documented exit-4 class as the teardown path (writeCaptureRow wraps its
+    // own IO errors; this covers injected seams and any rethrow shape).
+    errOut(`capture failed: ${err instanceof Error ? err.message : String(err)}`);
+    return EXIT_CAPTURE;
   }
   return EXIT_OK;
 }
@@ -1214,17 +1626,30 @@ export async function runPrep(args, deps = {}) {
 // --recover-watchdog (the detached child's entry)
 // ---------------------------------------------------------------------------
 
-async function runRecoverWatchdogLive(args) {
+/**
+ * The live watchdog's journal IO: reads fail-closed (a corrupt journal
+ * escapes as a named UsageError instead of idling) and writes MERGE-ON-WRITE
+ * — the watchdog's mutated rows are merged into a FRESH read, so a row the
+ * parent appended while the watchdog was mid-restore is never dropped.
+ */
+export function watchdogJournalIo(journalFile) {
+  return {
+    readJournalState: () => (fs.existsSync(journalFile) ? readJournal(journalFile) : []),
+    writeJournalState: (rows) => mergeJournalRows(journalFile, rows),
+  };
+}
+
+export async function runRecoverWatchdogLive(args) {
   const journalFile = journalPathFor(REPO_ROOT);
   const verdict = await recoveryWatchdog({
-    readJournalState: () => (fs.existsSync(journalFile) ? readJournal(journalFile) : []),
-    writeJournalState: (rows) => writeJournal(journalFile, rows),
+    ...watchdogJournalIo(journalFile),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     now: () => Date.now(),
     attemptRestore: (row) => restoreAdapter(row.adapter, runCommand, process.platform === 'win32'),
     pollMs: 30_000,
   });
   out(`recover-watchdog: exit ${verdict}`);
+  return watchdogExitFor(verdict);
 }
 
 // ---------------------------------------------------------------------------
@@ -1449,7 +1874,9 @@ async function selftestNetworkRefusal() {
   const journalFile = path.join(os.tmpdir(), `offline-matrix-selftest-journal-${process.pid}.json`);
   const run = async (file, args) => {
     commands.push(`${file} ${args.join(' ')}`);
-    if (file === 'net') return { code: 1, stdout: '', stderr: 'Access is denied.' }; // non-elevated probe shape
+    // netsh/net arrive as absolute %SystemRoot% paths on Windows (PRR-017).
+    const base = path.basename(String(file)).replace(/\.exe$/i, '').toLowerCase();
+    if (base === 'net') return { code: 1, stdout: '', stderr: 'Access is denied.' }; // non-elevated probe shape
     return {
       code: 0,
       stdout: 'Admin State    Type          Interface Name       Operational State',
@@ -1497,7 +1924,7 @@ async function selftestNetworkRefusal() {
   if (!(refusal2 instanceof UsageError) || !refusal2.message.includes('elevation')) {
     throw new Error(`no-elevation refusal shape wrong: ${refusal2 && refusal2.message}`);
   }
-  const mutating = commands.filter((c) => c.startsWith('netsh'));
+  const mutating = commands.filter((c) => /[\\/]netsh(\.exe)? interface set /i.test(c));
   if (mutating.length !== 0) throw new Error(`refusal path ran adapter commands: ${mutating.join(' | ')}`);
   if (journalWrites.length !== 0) throw new Error(`refusal path wrote the journal ${journalWrites.length} time(s)`);
   if (fs.existsSync(journalFile)) throw new Error(`refusal path created ${journalFile}`);
@@ -1559,16 +1986,23 @@ export async function main(argv = process.argv.slice(2)) {
   if (args.selftest) return runSelftest();
   if (args.recover) {
     try {
-      await recoverFromJournal({ journalFile: journalPathFor(REPO_ROOT), run: runCommand });
-      return EXIT_OK;
+      // PRR-007: a row whose restore FAILED is a recovery failure — exit 5,
+      // never a silent success (the printed line names the manual command).
+      const res = await recoverFromJournal({ journalFile: journalPathFor(REPO_ROOT), run: runCommand });
+      return res.failed > 0 ? EXIT_RECOVER : EXIT_OK;
     } catch (err) {
       errOut(err instanceof Error ? err.message : String(err));
       return err instanceof UsageError ? err.exitCode : EXIT_USAGE;
     }
   }
   if (args.recoverWatchdog) {
-    await runRecoverWatchdogLive(args);
-    return EXIT_OK;
+    try {
+      return await runRecoverWatchdogLive(args);
+    } catch (err) {
+      // A corrupt/unreadable journal fails closed here too (PRR-001).
+      errOut(err instanceof Error ? err.message : String(err));
+      return err instanceof UsageError ? err.exitCode : EXIT_USAGE;
+    }
   }
   if (args.scenario !== undefined) return runPrep(args);
   errOut('nothing to do: pass --list, --selftest, --recover, or --scenario <id> --prep');
@@ -1594,11 +2028,11 @@ if (isMain(import.meta.url)) {
   } else {
     main(process.argv.slice(2)).then(
       (code) => {
-        if (code !== undefined) process.exit(code);
+        if (code !== undefined) flushAndExit(code); // PRR-022: flush stdout before exiting
       },
       (err) => {
         errOut(`FAILED: ${err instanceof Error ? err.message : String(err)}`);
-        process.exit(1);
+        flushAndExit(1);
       },
     );
   }

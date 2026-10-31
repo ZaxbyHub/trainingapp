@@ -25,13 +25,20 @@ real module, throwaway RESULTS.md skeletons only.
 """
 
 import importlib
+import json
+import shutil
+import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 append_results = importlib.import_module("bench.append_results")
+
+NODE_BIN = shutil.which("node")
 
 SURFACE = "offline-matrix"
 HEADING = append_results.SECTION_HEADINGS[SURFACE]
@@ -221,7 +228,9 @@ def test_real_results_offline_matrix_section_matches_schema():
     separator = [c.strip() for c in lines[header_idx + 1].strip().strip("|").split("|")]
     assert header == HEADER, f"header {header} != schema {HEADER}"
     assert len(separator) == len(header)
-    assert all(set(cell) <= {"-"} for cell in separator)
+    # TC-09: every separator cell must be a NON-EMPTY all-dash run — an empty
+    # cell would silently pass the subset check while breaking the GFM table.
+    assert all(cell != "" and set(cell) <= {"-"} for cell in separator)
     body = [ln for ln in lines[header_idx + 2 :] if ln.startswith("| reference-i5 ")]
     assert len(body) == 10, f"expected 10 reference-i5 PENDING rows, found {len(body)}"
     for row in body:
@@ -233,3 +242,64 @@ def test_real_results_offline_matrix_section_matches_schema():
         assert cells[6] == "BLOCKED: reference laptop"
     ids = sorted(c.strip().strip("|").split("|")[1].strip() for c in body)
     assert ids == ["S1", "S10", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9"]
+
+
+# ----------------------------------------------------------- PRR-023: the
+# cross-language contract. The node harness and bench/append_results.py each
+# pin their own copy of the capture-row schema; without a live bridge a
+# coordinated rename on one side stays green until the operator merge seam
+# fails at run time. These probes import the REAL harness in a REAL node
+# process and hold the two sides together.
+
+
+def _node_json(script: str):
+    assert NODE_BIN is not None, "node not on PATH"
+    proc = subprocess.run(
+        [NODE_BIN, "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        cwd=REPO_ROOT,
+    )
+    assert proc.returncode == 0, f"node probe failed: {proc.stderr}"
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.skipif(NODE_BIN is None, reason="node not on PATH")
+def test_cross_language_capture_keys_map_onto_header_cells():
+    harness_uri = (REPO_ROOT / "bench" / "run_offline_matrix.mjs").resolve().as_uri()
+    keys = _node_json(
+        f"import({harness_uri!r})"
+        ".then(m=>process.stdout.write(JSON.stringify(m.CAPTURE_ROW_KEYS)))"
+    )
+    assert isinstance(keys, list) and keys, keys
+    # the row schema maps 1:1 onto the registered table cells: 'surface' is
+    # the routing key (consumed by append_row, never a table cell), and the
+    # remaining keys match HEADER_CELLS in EXACT order and spelling.
+    assert keys[0] == "surface"
+    assert keys[1:] == HEADER
+
+
+@pytest.mark.skipif(NODE_BIN is None, reason="node not on PATH")
+def test_harness_built_row_flows_through_append_row_end_to_end(tmp_path):
+    harness_uri = (REPO_ROOT / "bench" / "run_offline_matrix.mjs").resolve().as_uri()
+    row = _node_json(
+        f"import({harness_uri!r})"
+        ".then(m=>process.stdout.write(JSON.stringify(m.buildCaptureRow({"
+        "scenarioId:'S3', machine:'celltest', measured:'', "
+        "automatedLegs:'ram-filler:attained', notes:'cross-language probe'}))))"
+    )
+    # the node-built row carries the full harness key order verbatim
+    assert list(row.keys()) == list(append_results.REQUIRED_KEYS[SURFACE])
+    # ...and merges through the REAL append_row into the seeded PENDING slot
+    results = make_results(tmp_path)
+    seeded = (
+        "| celltest | S3 | 16 GB, <6 GB free | PENDING | {{TUPLE}} "
+        "| ram-filler | BLOCKED: reference laptop | PENDING | seeded |\n"
+    )
+    results.write_text(results.read_text(encoding="utf-8") + seeded, encoding="utf-8")
+    append_results.append_row(row, results)
+    rows = body_rows(results)
+    assert len(rows) == 1, f"expected in-place fill, got {len(rows)} rows"
+    assert "cross-language probe" in rows[0]
+    assert rows[0].split("|")[6].strip() == "ram-filler:attained"

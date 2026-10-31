@@ -16,10 +16,18 @@ latency, and embed/rerank cost for the candidate models, per machine.
    floors (issue #103) — a weighted `eval/runner.py` run recorded under
    `eval/samples/` (see eval/README.md; the `desktop-retrieval-eval` floor
    rows name their source run in `provenance`), OR — for the E3/#86 offline
-   validation matrix — JSON rows produced by `bench/run_offline_matrix.mjs`
-   (one per scenario prep/run under `bench/offline-matrix-results/`) merged
-   through the same `bench/append_results.py`. No number is hand-patched; a
-   value without a corresponding run is PENDING.
+   validation matrix — the two-step capture channel of
+   `bench/run_offline_matrix.mjs`: the harness produces PENDING environment
+   rows (one JSON capture per scenario prep/run under
+   `bench/offline-matrix-results/`, committable evidence), and the operator
+   hand-authors the final verdict row (outcome `pass`/`fail`, the measured
+   numbers in `measured`) citing the capture JSON path it derives from,
+   merged through the same `bench/append_results.py` (the PENDING
+   placeholder fills in place; the harness itself never records a verdict).
+   "No number is hand-patched" is scoped to verdict rows: every measured cell
+   in a verdict row must cite its evidence run — the capture JSON path or one
+   of the channels above; environment PENDING rows carry no numbers to patch,
+   and a value without a corresponding run is PENDING.
 2. Rows are **machine-tagged**. A row's `machine` cell names the hardware the
    measurement came from. Dev-station numbers must never be read as
    reference-laptop numbers (or vice versa); evidence is invalidated when the
@@ -295,7 +303,8 @@ bench/RESULTS.md: devstation)` on every run, CI included). N bound per issue
 ## Reproducing on the reference laptop
 
 Before the measured runs below, the offline/low-RAM scenario matrix owned by
-E3/#86 is defined and executed with `bench/offline-validation-matrix.md` (the
+E3/#86 is defined — execution pending the laptop run — with
+`bench/offline-validation-matrix.md` (the
 ten-scenario table with pass/fail criteria and exact repro steps, the
 hardware/software tuple template every row references, the egress observation
 procedure, and the per-scenario operator steps) and its harness

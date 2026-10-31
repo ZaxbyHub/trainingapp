@@ -21,6 +21,7 @@ on:
       - 'web_ui/scripts/**'
       - '.github/workflows/**'
       - 'desktop/src/__tests__/harness-*.test.ts'
+      - 'desktop/src/__tests__/run-offline-matrix-harness.test.ts'
       - 'desktop/src/__tests__/acceptance-precision-contract.test.ts'
       - 'desktop/src/__tests__/packaged-smoke-contract.test.ts'
       - 'desktop/package.json'
@@ -32,6 +33,7 @@ on:
       - 'web_ui/scripts/**'
       - '.github/workflows/**'
       - 'desktop/src/__tests__/harness-*.test.ts'
+      - 'desktop/src/__tests__/run-offline-matrix-harness.test.ts'
       - 'desktop/src/__tests__/acceptance-precision-contract.test.ts'
       - 'desktop/src/__tests__/packaged-smoke-contract.test.ts'
       - 'desktop/package.json'
@@ -67,5 +69,8 @@ jobs:
 
       - name: Harness contract guards (kill wrapper, parse, runner seams, pin precision)
         # Filename filters, not a fixed file list (final-critic): any future
-        # harness-*.test.ts triggers AND runs here.
-        run: npm --prefix desktop test -- src/__tests__/harness- src/__tests__/acceptance-precision-contract.test.ts
+        # harness-*.test.ts triggers AND runs here. The offline-matrix spec
+        # (PR #262 review PRR-012) is named explicitly: its filename does not
+        # match the harness- prefix, but it guards a bench/** subject, so it
+        # runs in THIS workflow whenever the bench harness or the spec changes.
+        run: npm --prefix desktop test -- src/__tests__/harness- src/__tests__/run-offline-matrix-harness.test.ts src/__tests__/acceptance-precision-contract.test.ts
