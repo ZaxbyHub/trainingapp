@@ -11,7 +11,8 @@ Two leg classes are kept explicitly apart:
 - **Environment legs** are automated by the harness
   (`bench/run_offline_matrix.mjs`, thin Windows launcher
   `bench/run_offline_matrix.ps1`): header-strip proxy, RAM-pressure filler,
-  network-disconnect toggle, egress observation procedure.
+  network-disconnect toggle. The egress observation for S1 is NOT automated:
+  it is the operator-run PowerShell procedure in its own section below.
 - **Proof legs** are the measured assertions only the reference laptop can
   produce. Every scenario row below carries `BLOCKED: reference laptop`
   because its Required proof needs the tuple's hardware conditions; the
@@ -341,6 +342,7 @@ default lease, and the watchdog restores the adapter silently at expiry —
 pick a lease longer than the full operator window (disable through restore)
 so the adapter is still disabled when the scenario's pass/fail evidence is
 being taken.
+Watchdog restore outcomes are silent by design (detached stdio); observe them via the journal rows and a `--recover` pass, which reprints any restore-failure remedy.
 
 RAM-leg limits: `--ram-reserve-mb` (default 2048 MiB) sets the reserve floor
 the filler never allocates past, and values below 512 MiB are refused

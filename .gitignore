@@ -75,3 +75,7 @@ web_ui/playwright-report/
 # the generic `build/` pattern above is for compiled output dirs.
 !packtool/build/
 eval/bakeoff/assets/
+
+# offline-matrix harness runtime artifacts (run evidence; commit intentionally or clean up)
+bench/.offline-matrix-journal.json
+bench/offline-matrix-results/
