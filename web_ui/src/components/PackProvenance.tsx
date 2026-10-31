@@ -3,8 +3,8 @@
  * provenance indicator. Per-pill provenance (SourceCitation's
  * `— <packId> v<version>` suffix, C7) names the pack behind each citation
  * pill; this component aggregates the message's own persisted citations into
- * one answer-level line naming every contributing pack version and its
- * version, so a reader can tell which corpus version(s) grounded an answer
+ * one answer-level line naming every contributing knowledge-pack version, so
+ * a reader can tell which corpus version(s) grounded an answer
  * without leaving the chat. It derives purely from the persisted citations
  * (stamped by the citationsToRefs choke point on the desktop wire and
  * forwarded from the fused retrieval results on the browser path, PRR-001
