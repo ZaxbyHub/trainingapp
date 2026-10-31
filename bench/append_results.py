@@ -45,6 +45,7 @@ SECTION_HEADINGS = {
     "onnx-rerank": "## ONNX embed/rerank cost",
     "desktop-ingest": "## Desktop ingest (B6)",
     "desktop-retrieval": "## Desktop retrieval (B7)",
+    "offline-matrix": "## Offline validation matrix (E3/#86)",
 }
 
 # surface -> header cells of the table that accepts the surface's rows. The
@@ -104,6 +105,20 @@ HEADER_CELLS = {
         "p95_ms",
         "max_ms",
         "outcome",
+    ],
+    # Issue #86 (E3): one row per machine x scenario of the offline/low-RAM
+    # validation matrix; rows arrive as JSON captures from
+    # bench/run_offline_matrix.mjs and land in the table seeded in RESULTS.md.
+    "offline-matrix": [
+        "machine",
+        "scenario_id",
+        "scenario",
+        "outcome",
+        "tuple_ref",
+        "automated_legs",
+        "blocked_marker",
+        "measured",
+        "notes",
     ],
 }
 
@@ -171,6 +186,21 @@ REQUIRED_KEYS = {
         "p95_ms",
         "outcome",
     ),
+    # Issue #86 (E3): a PASS row carries the scenario verdict AND the
+    # environment telemetry (automated_legs/blocked_marker/tuple_ref), so a
+    # hand-written row without the capture fields fails closed.
+    "offline-matrix": (
+        "surface",
+        "machine",
+        "scenario_id",
+        "scenario",
+        "outcome",
+        "tuple_ref",
+        "automated_legs",
+        "blocked_marker",
+        "measured",
+        "notes",
+    ),
 }
 
 # Provenance keys every row (pass or fail) must carry.
@@ -198,6 +228,10 @@ IDENTITY_CELLS = {
         3,
         4,
     ),  # machine, embedder, reranker, topk, multiplier
+    # Issue #86 (E3): machine + scenario_id is the measurement identity — one
+    # recorded row per scenario per machine; re-measuring the same scenario
+    # append-or-fails instead of splitting cells on free-text columns.
+    "offline-matrix": (0, 1),  # machine, scenario_id
 }
 
 # Issue #223 AC5 (recorded maintainer decision, comment 6280336819): the
@@ -307,6 +341,18 @@ def row_cells(row: dict) -> list:
             fmt(row.get("first_token_ms")),
             row.get("outcome", ""),
             fmt(row.get("max_tokens")),
+        ]
+    elif row.get("surface") == "offline-matrix":
+        cells = [
+            row.get("machine", ""),
+            row.get("scenario_id", ""),
+            row.get("scenario", ""),
+            row.get("outcome", ""),
+            row.get("tuple_ref", ""),
+            row.get("automated_legs", ""),
+            row.get("blocked_marker", ""),
+            row.get("measured", ""),
+            row.get("notes", ""),
         ]
     else:  # native
         cells = [
@@ -430,7 +476,9 @@ def append_row(row: dict, results_path: Path = RESULTS) -> None:
         existing = split_row(lines[ridx])
         # Outcome probe is LENGTH-GUARDED: a truncated/malformed row must
         # never IndexError here (review round: ordering regression).
-        pending = len(existing) > outcome_idx and existing[outcome_idx].strip() == "PENDING"
+        pending = (
+            len(existing) > outcome_idx and existing[outcome_idx].strip() == "PENDING"
+        )
         if len(existing) != len(cells) and not pending:
             continue
         if pending and len(existing) != len(cells):

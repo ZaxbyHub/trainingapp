@@ -75,3 +75,12 @@ web_ui/playwright-report/
 # the generic `build/` pattern above is for compiled output dirs.
 !packtool/build/
 eval/bakeoff/assets/
+
+# offline-matrix harness runtime state: the recovery journal is live operator
+# state and stays ignored; the capture JSONs under bench/offline-matrix-results/
+# are COMMITTABLE evidence (PR review round: a verdict row cites its capture
+# path, so the directory is tracked, not ignored). Only the atomic-write tmp
+# files are transient.
+bench/.offline-matrix-journal.json
+bench/.offline-matrix-journal.json.tmp-*
+bench/offline-matrix-results/.*.tmp-*
