@@ -82,7 +82,8 @@ recovery watchdog restores it.
 
 Operator steps:
 
-1. Record the tuple (including the adapter name the egress leg will measure).
+1. Record the tuple (including the adapter name the harness will disable,
+   recorded in the tuple's "adapter (egress leg)" field).
 2. Run the prep command above; confirm the "disabled and verified by
    read-back" line, then keep the shell for the restore step.
 3. Install fresh; launch the app with the adapter still disabled.

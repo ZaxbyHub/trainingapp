@@ -359,29 +359,43 @@ export async function createStripProxy(options = {}) {
   const upstreamTimeoutMs = options.upstreamTimeoutMs ?? 30_000;
   const transport = upstream.protocol === 'https:' ? https : http;
   const server = http.createServer((req, res) => {
-    // PRR-004: origin-form only. An absolute-form (`http://host/path`) or
+    // PRR-004 (+ final-critic): origin-form only, enforced by ORIGIN
+    // EQUALITY after resolution. An absolute-form (`http://host/path`) or
     // scheme-relative (`//host/path`) request target would let any local
     // process relay to an arbitrary host through this proxy — refused 400.
-    const rawTarget = req.url || '/';
-    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/i.test(rawTarget) || rawTarget.startsWith('//')) {
+    // The authoritative check compares the resolved target's origin with the
+    // configured upstream's: WHATWG parsing treats `\` as `/` in special
+    // schemes, so raw-prefix checks alone miss the `/\host/...` class of
+    // scheme-relative forms; origin equality closes the whole class.
+    const refuseOriginForm = (rawTarget) => {
       res.writeHead(400, {
         'content-type': 'text/plain; charset=utf-8',
         'x-offline-matrix-error': 'origin-form-required',
       });
       res.end(
-        `offline-matrix proxy: 400 origin-form-required (refusing request target '${rawTarget}': absolute-form and scheme-relative targets would turn this loopback strip proxy into an open relay; only origin-form paths are forwarded to the configured upstream)`,
+        `offline-matrix proxy: 400 origin-form-required (refusing request target '${rawTarget}': absolute-form and scheme-relative targets — including backslash variants like '/\\host/...' — would turn this loopback strip proxy into an open relay; only origin-form paths are forwarded to the configured upstream)`,
       );
+    };
+    const rawTarget = req.url || '/';
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/i.test(rawTarget) || rawTarget.startsWith('//')) {
+      refuseOriginForm(rawTarget);
       return;
     }
     let target;
     try {
-      target = new URL(rawTarget, upstreamBase);
+      target = new URL(rawTarget.replace(/\\/g, '/'), upstreamBase);
     } catch {
       res.writeHead(400, {
         'content-type': 'text/plain; charset=utf-8',
         'x-offline-matrix-error': 'bad-request-target',
       });
       res.end(`offline-matrix proxy: 400 bad-request-target (cannot resolve '${rawTarget}' against the upstream base)`);
+      return;
+    }
+    if (target.origin !== upstream.origin) {
+      // Belt and braces behind the raw checks: anything that resolves to a
+      // DIFFERENT origin than the configured upstream is not origin-form.
+      refuseOriginForm(rawTarget);
       return;
     }
     // Hop-by-hop headers are stripped on the way out (PRR-004/F1-7/SEC-05);
@@ -1011,6 +1025,18 @@ export async function performNetworkToggle(opts) {
   appendJournalRow(journalFile, row, readJournalFn, writeJournalFn); // JOURNAL-BEFORE-ACT (merge-on-write): recoverable even if we crash on the next line
   const disableArgs = ['interface', 'set', 'interface', adapter, mode === 'disable' ? 'disable' : 'enable'];
   const disable = await run(windowsSystemExe('netsh', isWindows), disableArgs, { timeoutMs: COMMAND_TIMEOUT_MS });
+  // Watchdog arming is shared by the success path AND the restore-failed
+  // branch of verifyFail (final-critic round): a restore-failed row must
+  // still get lease-expiry retries from the detached watchdog, exactly like
+  // an active row — the row's recovery must not depend on the operator
+  // having seen the error before closing the shell.
+  const armRecoveryWatchdog = () => {
+    if (spawnRecovery === undefined) {
+      spawnRecoveryChild({ args: ['--recover-lease-min', String(leaseMinutes)] });
+    } else if (spawnRecovery !== false) {
+      spawnRecovery({ leaseMinutes });
+    }
+  };
   const verifyFail = async (why) => {
     const attempt = await restoreAdapter(adapter, run, isWindows);
     row.status = attempt.restored ? 'recovered' : 'restore-failed';
@@ -1021,6 +1047,7 @@ export async function performNetworkToggle(opts) {
         `${why}; adapter '${adapter}' was re-enabled and verified — the scenario window did NOT start`,
       );
     }
+    armRecoveryWatchdog();
     throw new UsageError(
       `${why}; RESTORE FAILED (${attempt.reason}) — run manually: ${manualCommandFor(adapter)}`,
     );
@@ -1047,11 +1074,7 @@ export async function performNetworkToggle(opts) {
   if (mode === 'disable' && after !== 'Disabled') {
     await verifyFail(`read-back verification failed after disable: 'netsh interface show interface' still reports ${after} for '${adapter}'`);
   }
-  if (spawnRecovery === undefined) {
-    spawnRecoveryChild({ args: ['--recover-lease-min', String(leaseMinutes)] });
-  } else if (spawnRecovery !== false) {
-    spawnRecovery({ leaseMinutes });
-  }
+  armRecoveryWatchdog();
   print(
     `network: adapter '${adapter}' ${mode === 'disable' ? 'disabled' : 'enabled'} and verified by read-back; ` +
       `persistent lifecycle — the adapter stays ${mode === 'disable' ? 'disabled' : 'enabled'} across the operator window`,

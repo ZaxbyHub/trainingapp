@@ -1360,6 +1360,36 @@ describe('offline-matrix harness review-round hardening (PR #262)', () => {
     expect(readJournal(journalFile)[0]).toMatchObject({ status: 'recovered' });
   });
 
+  it('network-gate: the restore-failed verifyFail branch ARMS the recovery watchdog (lease-expiry retries survive the failed restore)', async () => {
+    const journalFile = path.join(tmpDir('offline-matrix-restorefail-arm-'), 'journal.json');
+    const ops: string[] = [];
+    const run = netshRunner({ initial: 'Enabled', keepEnabledAfterDisable: true, failEnable: true, ops });
+    const recoveries: Array<{ leaseMinutes?: number }> = [];
+    let err: any = null;
+    try {
+      await performNetworkToggle({
+        adapter: 'Test Adapter',
+        confirm: true,
+        elevated: true,
+        run,
+        journalFile,
+        isWindows: true,
+        writeJournalFn: (file: string, rows: unknown[]) => writeJournal(file, rows as Array<Record<string, unknown>>),
+        readJournalFn: () => [],
+        spawnRecovery: (o: { leaseMinutes?: number }) => {
+          recoveries.push(o);
+        },
+        leaseMinutes: 30,
+      });
+    } catch (e) {
+      err = e;
+    }
+    expect(String(err?.message)).toContain('netsh interface set interface "Test Adapter" enable');
+    expect(readJournal(journalFile)[0]).toMatchObject({ status: 'restore-failed' });
+    expect(recoveries).toHaveLength(1); // armed DESPITE the failed restore
+    expect(recoveries[0]).toMatchObject({ leaseMinutes: 30 });
+  });
+
   // ---------------------------- signalled close mapping (PRR-009) + timeout-await (PRR-022)
   it('runCommand: signalled close maps to synthetic 125 + signalCode; a timeout awaits the killed child exit; probes fail closed', async () => {
     let child1: any = null;
@@ -1449,6 +1479,42 @@ describe('offline-matrix harness review-round hardening (PR #262)', () => {
       const ok = await rawReq({ host: '127.0.0.1', port: proxy.port, path: '/legit' });
       expect(ok.status).toBe(200);
       expect(hits).toEqual(['/legit']);
+    } finally {
+      await proxy.close();
+      server.closeAllConnections?.();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('proxy: backslash scheme-relative forms (final-critic bypass class) are refused 400 by origin equality', async () => {
+    // WHATWG URL treats '\' as '/' in special schemes, so each of these
+    // resolves CROSS-ORIGIN against the upstream base — the raw-prefix
+    // checks alone miss them; the post-resolution origin-equality guard
+    // must refuse the whole class (live-proven bypass: '/\host:port/path').
+    const hits: string[] = [];
+    const server = http.createServer((req, res) => {
+      hits.push(req.url ?? '');
+      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('ok');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+    const proxy = await createStripProxy({ upstreamBase: `http://127.0.0.1:${port}` });
+    try {
+      const slashBackslash = await rawReq({ host: '127.0.0.1', port: proxy.port, path: '/\\127.0.0.1:9/exfil' });
+      expect(slashBackslash.status).toBe(400);
+      expect(slashBackslash.headers['x-offline-matrix-error']).toBe('origin-form-required');
+      const slashBackslashSlash = await rawReq({ host: '127.0.0.1', port: proxy.port, path: '/\\/\\127.0.0.1:9/exfil' });
+      expect(slashBackslashSlash.status).toBe(400);
+      expect(slashBackslashSlash.headers['x-offline-matrix-error']).toBe('origin-form-required');
+      const caseMixed = await rawReq({ host: '127.0.0.1', port: proxy.port, path: 'HtTp://127.0.0.1:9/exfil' });
+      expect(caseMixed.status).toBe(400);
+      expect(caseMixed.headers['x-offline-matrix-error']).toBe('origin-form-required');
+      expect(hits).toEqual([]); // nothing reached any upstream
+      // the origin-form positive still proxies
+      const ok = await rawReq({ host: '127.0.0.1', port: proxy.port, path: '/legit-too' });
+      expect(ok.status).toBe(200);
+      expect(hits).toEqual(['/legit-too']);
     } finally {
       await proxy.close();
       server.closeAllConnections?.();
