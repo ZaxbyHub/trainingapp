@@ -89,6 +89,12 @@
 .chat-msg .chat-msg__action:hover { color: var(--text-primary); }
 .chat-msg__note { padding: var(--space-3) var(--space-4); background: var(--bg-sunken); border: 1px solid var(--border-subtle); border-radius: var(--r-card); color: var(--text-secondary); font-size: var(--type-body-size); line-height: var(--type-body-line); }
 .chat-msg__degraded { margin: 0; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-tertiary); }
+/* #34 item 3: the aggregate pack-provenance chip. Caption/muted treatment to
+   match its sibling provenance surfaces, and overflow-wrap so a schema-legal
+   long pack id/version can never push .chat-log into horizontal overflow
+   (chat-reflow-browser asserts scrollWidth - clientWidth === 0; PRR-007 fix,
+   PR #263 review round). */
+.chat-pack-provenance { margin: 0; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-tertiary); overflow-wrap: anywhere; }
 .chat-msg__error-detail { overflow-wrap: anywhere; }
 .chat-msg__grounding { align-self: flex-start; }
 

@@ -2,6 +2,29 @@ import { describe, it, expect } from 'vitest';
 import { rrfFuse } from './rrf-fusion';
 import type { SearchResult } from '../../types/search';
 
+describe('rrfFuse pack provenance forwarding (PRR-001 fix, PR #263 review round)', () => {
+  it('fused results forward packId and packVersion from either input list', () => {
+    const keywordHits: SearchResult[] = [
+      { docId: 'pack:p1:doc.md', chunkIndex: 0, score: 0.9, packId: 'p1', packVersion: '1.0.1' },
+    ];
+    const vectorHits: SearchResult[] = [
+      { docId: 'pack:p1:doc.md', chunkIndex: 0, score: 0.7, packId: 'p1', packVersion: '1.0.1' },
+      { docId: 'pack:p2:doc.md', chunkIndex: 3, score: 0.6, packId: 'p2', packVersion: '2.0.0' },
+    ];
+    const fused = rrfFuse([keywordHits, vectorHits]);
+    const p1 = fused.find((r) => r.docId === 'pack:p1:doc.md');
+    const p2 = fused.find((r) => r.docId === 'pack:p2:doc.md');
+    expect(p1?.packId).toBe('p1');
+    expect(p1?.packVersion).toBe('1.0.1');
+    expect(p2?.packId).toBe('p2');
+    expect(p2?.packVersion).toBe('2.0.0');
+    // Non-pack results carry no provenance fields (additive shape preserved).
+    const bare = rrfFuse([[{ docId: 'doc-x', chunkIndex: 0, score: 1 }]]);
+    expect('packId' in bare[0]!).toBe(false);
+    expect('packVersion' in bare[0]!).toBe(false);
+  });
+});
+
 describe('rrfFuse', () => {
   describe('test_rrf_fuse_basic', () => {
     it('two lists with overlapping docs, verify scores accumulate', () => {

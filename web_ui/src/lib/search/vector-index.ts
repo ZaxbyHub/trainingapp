@@ -62,7 +62,7 @@ export class VectorIndex {
   private config: VectorIndexConfig;
   private ready: boolean = false;
   private initPromise: Promise<void> | null = null;
-  private idMapping: Map<number, { docId: string; chunkIndex: number; text?: string; source?: string; page?: number; packId?: string }> = new Map();
+  private idMapping: Map<number, { docId: string; chunkIndex: number; text?: string; source?: string; page?: number; packId?: string; packVersion?: string }> = new Map();
   private disposed: boolean = false;
 
   /**
@@ -165,7 +165,7 @@ export class VectorIndex {
     vector: EmbeddingVector,
     docId: string,
     chunkIndex: number,
-    meta?: { text?: string; source?: string; page?: number; packId?: string }
+    meta?: { text?: string; source?: string; page?: number; packId?: string; packVersion?: string }
   ): Promise<void> {
     if (!this.isReady()) {
       throw new Error('VectorIndex not initialized. Call initialize() first.');
@@ -195,6 +195,7 @@ export class VectorIndex {
         source: meta?.source,
         page: meta?.page,
         ...(meta?.packId !== undefined ? { packId: meta.packId } : {}),
+        ...(meta?.packVersion !== undefined ? { packVersion: meta.packVersion } : {}),
       });
     } catch (error) {
       throw new Error(
@@ -262,6 +263,7 @@ export class VectorIndex {
           source: entry.source,  // F7: filename for citations
           page: entry.page,      // F7: page number for citations
           ...(entry.packId !== undefined ? { packId: entry.packId } : {}),
+          ...(entry.packVersion !== undefined ? { packVersion: entry.packVersion } : {}),
         });
       }
       console.info(`[VectorIndex] Batch indexed ${result.inserted} vectors`);
@@ -318,6 +320,7 @@ export class VectorIndex {
           source: metadata.source, // F7: filename
           page: metadata.page,     // F7: page number
           ...(metadata.packId !== undefined ? { packId: metadata.packId } : {}),
+          ...(metadata.packVersion !== undefined ? { packVersion: metadata.packVersion } : {}),
         });
       }
       return mapped;
@@ -420,6 +423,7 @@ export class VectorIndex {
           source: meta.source,
           page: meta.page,
           ...(meta.packId !== undefined ? { packId: meta.packId } : {}),
+          ...(meta.packVersion !== undefined ? { packVersion: meta.packVersion } : {}),
         }));
 
         store.put({ key: 'idMapping', data: mappingArray });
@@ -481,6 +485,7 @@ export class VectorIndex {
                 source: item.source,
                 page: item.page,
                 ...(item.packId !== undefined ? { packId: item.packId } : {}),
+                ...(item.packVersion !== undefined ? { packVersion: item.packVersion } : {}),
               });
             }
           } else {

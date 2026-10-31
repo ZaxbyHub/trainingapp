@@ -73,4 +73,6 @@ export interface DocumentChunk {
   charOffset?: number;
   /** Owning installed pack (browser-training-parity AC6); absent for user documents. */
   packId?: string;
+  /** Owning pack version (PRR-001 fix, PR #263 review); absent for user documents and pre-existing indexes. */
+  packVersion?: string;
 }

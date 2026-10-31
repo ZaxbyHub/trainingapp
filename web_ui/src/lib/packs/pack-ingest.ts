@@ -90,12 +90,12 @@ export function buildPackChunks(manifest: PackManifest, docs: ReadonlyMap<string
       // title=slide_id; the resolver falls back to raw chunk text).
       const pieces = splitTextToTokenBudget(text);
       pieces.forEach((piece, pieceIndex) => {
-        chunks.push({ text: piece, source: entry.path, chunkIndex: pieceIndex, docId, packId: manifest.id });
+        chunks.push({ text: piece, source: entry.path, chunkIndex: pieceIndex, docId, packId: manifest.id, packVersion: manifest.version });
       });
       continue;
     }
     for (const piece of chunker.chunkText(text, entry.path)) {
-      chunks.push({ ...piece, docId, source: entry.path, packId: manifest.id });
+      chunks.push({ ...piece, docId, source: entry.path, packId: manifest.id, packVersion: manifest.version });
     }
   }
   return chunks;
@@ -112,7 +112,7 @@ export interface PackIndexTargets {
   vector: {
     initialize(): Promise<void>;
     isReady(): boolean;
-    addBatch(entries: Array<{ docId: string; chunkIndex: number; vector: Float32Array | number[]; text?: string; source?: string; packId?: string }>): Promise<void>;
+    addBatch(entries: Array<{ docId: string; chunkIndex: number; vector: Float32Array | number[]; text?: string; source?: string; packId?: string; packVersion?: string }>): Promise<void>;
     removeByDocId(docId: string): Promise<void>;
     save(): Promise<void>;
   };
@@ -161,6 +161,7 @@ export async function embedPackChunks(chunks: DocumentChunk[], targets: PackInde
       text: chunk.text,
       source: chunk.source,
       ...(chunk.packId !== undefined ? { packId: chunk.packId } : {}),
+      ...(chunk.packVersion !== undefined ? { packVersion: chunk.packVersion } : {}),
     })),
   );
   await targets.vector.save();
