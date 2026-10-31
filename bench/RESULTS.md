@@ -15,7 +15,10 @@ latency, and embed/rerank cost for the candidate models, per machine.
    cold-start section below quotes those lines, OR — for retrieval-quality
    floors (issue #103) — a weighted `eval/runner.py` run recorded under
    `eval/samples/` (see eval/README.md; the `desktop-retrieval-eval` floor
-   rows name their source run in `provenance`). No number is hand-patched; a
+   rows name their source run in `provenance`), OR — for the E3/#86 offline
+   validation matrix — JSON rows produced by `bench/run_offline_matrix.mjs`
+   (one per scenario prep/run under `bench/offline-matrix-results/`) merged
+   through the same `bench/append_results.py`. No number is hand-patched; a
    value without a corresponding run is PENDING.
 2. Rows are **machine-tagged**. A row's `machine` cell names the hardware the
    measurement came from. Dev-station numbers must never be read as
@@ -291,6 +294,18 @@ bench/RESULTS.md: devstation)` on every run, CI included). N bound per issue
 
 ## Reproducing on the reference laptop
 
+Before the measured runs below, the offline/low-RAM scenario matrix owned by
+E3/#86 is defined and executed with `bench/offline-validation-matrix.md` (the
+ten-scenario table with pass/fail criteria and exact repro steps, the
+hardware/software tuple template every row references, the egress observation
+procedure, and the per-scenario operator steps) and its harness
+`bench/run_offline_matrix.mjs` (thin Windows launcher:
+`bench/run_offline_matrix.ps1`) automating the environment legs —
+header-strip proxy, RAM-pressure filler, and the fail-closed
+network-disconnect toggle. Its rows land in the
+`## Offline validation matrix (E3/#86)` section below through the same
+`bench/append_results.py` merge; they stay PENDING until the laptop run.
+
 ```
 # 1. stage assets (embed weights, ONNX models, the candidate GGUFs)
 python bench/fetch_models.py --embed-weights --onnx
@@ -345,6 +360,31 @@ python -m pytest tests/test_rag_performance.py tests/test_low_end_hardware.py -v
 #    POSIX/Git Bash: BENCH_FLOORS_MACHINE=devstation python -m pytest tests/test_bench_floor_enforcement.py -q
 #    cmd.exe:        set BENCH_FLOORS_MACHINE=devstation && python -m pytest tests/test_bench_floor_enforcement.py -q
 ```
+
+## Offline validation matrix (E3/#86)
+
+The ten-scenario offline/low-RAM proving matrix of issue #86 (workstream E,
+slot E3). Definition, per-scenario operator steps, and the tuple template:
+`bench/offline-validation-matrix.md`; environment legs (strip proxy, RAM
+filler, network toggle): `bench/run_offline_matrix.mjs` (launcher
+`bench/run_offline_matrix.ps1`). Rows arrive as JSON captures from the
+harness merged through `bench/append_results.py` (surface `offline-matrix`;
+identity = machine + scenario_id). Every scenario's Required proof needs the
+reference laptop — all ten rows are seeded PENDING with the matrix's blocked
+marker and are filled only by the operator's measured run there.
+
+| machine | scenario_id | scenario | outcome | tuple_ref | automated_legs | blocked_marker | measured | notes |
+|---|---|---|---|---|---|---|---|---|
+| reference-i5 | S1 | Cold install, full network disconnect | PENDING | {{TUPLE}} | network-toggle | BLOCKED: reference laptop | PENDING | E3/#86 matrix row; filled by the laptop run |
+| reference-i5 | S2 | 16 GB, ~9 GB free | PENDING | {{TUPLE}} | ram-filler | BLOCKED: reference laptop | PENDING | E3/#86 matrix row; filled by the laptop run |
+| reference-i5 | S3 | 16 GB, <6 GB free | PENDING | {{TUPLE}} | ram-filler | BLOCKED: reference laptop | PENDING | E3/#86 matrix row; filled by the laptop run |
+| reference-i5 | S4 | Cold-start timing | PENDING | {{TUPLE}} | none | BLOCKED: reference laptop | PENDING | E3/#86 matrix row; filled by the laptop run |
+| reference-i5 | S5 | Thread utilization | PENDING | {{TUPLE}} | none | BLOCKED: reference laptop | PENDING | E3/#86 matrix row; filled by the laptop run |
+| reference-i5 | S6 | Reranker on clean install | PENDING | {{TUPLE}} | none | BLOCKED: reference laptop | PENDING | E3/#86 matrix row; filled by the laptop run |
+| reference-i5 | S7 | Cross-origin isolation stripped | PENDING | {{TUPLE}} | header-strip-proxy | BLOCKED: reference laptop | PENDING | E3/#86 matrix row; filled by the laptop run |
+| reference-i5 | S8 | GPU acceleration default | PENDING | {{TUPLE}} | none | BLOCKED: reference laptop | PENDING | E3/#86 matrix row; filled by the laptop run |
+| reference-i5 | S9 | Ingestion under low RAM | PENDING | {{TUPLE}} | ram-filler | BLOCKED: reference laptop | PENDING | E3/#86 matrix row; filled by the laptop run |
+| reference-i5 | S10 | Full offline restart persistence | PENDING | {{TUPLE}} | network-toggle | BLOCKED: reference laptop | PENDING | E3/#86 matrix row; filled by the laptop run |
 
 ## bench-floors (machine-tagged thresholds consumed by tests)
 
