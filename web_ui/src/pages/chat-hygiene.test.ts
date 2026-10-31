@@ -21,6 +21,7 @@ const CHAT_FILES = [
   'components/ChatInput.tsx',
   'components/ChatMessageList.tsx',
   'components/ChatMessageBubble.tsx',
+  'components/PackProvenance.tsx',
   'components/SourceCitation.tsx',
   'components/LearnPanel.tsx',
   'components/GroundingBadge.tsx',
