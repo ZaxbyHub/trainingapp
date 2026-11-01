@@ -161,8 +161,11 @@ describe('issue #34 item 3 — aggregate pack provenance indicator', () => {
     ).toBeTruthy();
 
     // Name-from-content: with NO aria-label (PRR-002 fix), the visible text
-    // IS the accessible name — getByText proves the text node resolves.
+    // IS the accessible name — getByText proves the text node resolves, and
+    // the aria-label ABSENCE is pinned so a re-introduced attribute (naming-
+    // prohibited on a role-less div, PRR-002's defect class) fails here.
     expect(screen.getByText(expected)).toBeTruthy();
+    expect(el.getAttribute('aria-label')).toBeNull();
   });
 
   it('AC2 — pack id without version renders without a fabricated version', () => {
@@ -292,6 +295,18 @@ describe('issue #34 item 3 — aggregate pack provenance indicator', () => {
     );
     expect(screen.getByTestId('pack-provenance')).toBeTruthy();
     grounded.unmount();
+  });
+
+  it('UNIT — no aria-label is rendered on the aggregate element', () => {
+    // PRR-002 contract, enforced (fix-critic round 1): aria-label on a
+    // role-less div is a naming-prohibited attribute (ARIA 1.2 generic role)
+    // and duplicates the visible text in the AX tree. The component must
+    // carry NO aria-label — the visible text IS the accessible name.
+    const citations: CitationRef[] = [
+      { docId: 'pack:opmed-cdp-mlc:doc.md', chunkIndex: 0, packId: 'opmed-cdp-mlc', packVersion: '1.0.1', source: 'doc.md' },
+    ];
+    render(<ChatMessageBubble message={assistantMessage(citations)} />);
+    expect(screen.getByTestId('pack-provenance').getAttribute('aria-label')).toBeNull();
   });
 
   it('UNIT — packProvenance helper contract (direct unit)', () => {
