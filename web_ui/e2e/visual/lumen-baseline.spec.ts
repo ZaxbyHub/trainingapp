@@ -64,7 +64,10 @@
  * emulated colorScheme); animations are disabled by the config and reduced
  * motion is requested; fonts are awaited; all cross-origin traffic is
  * aborted; hardware/quota-derived VALUES in Settings are masked (the Hardware
- * Capability section is masked per value cell, not as a whole). The model gate's
+ * Capability section is masked per value cell, not as a whole), as are the
+ * Profile data section's two profile-id VALUE spans (pinned values, but the
+ * mono face's hinting drifts between Chromium builds — see profileValueMasks).
+ * The model gate's
  * readiness TEXT is hardware-derived too and is not masked (it is the content under
  * test), so the hardware it reads is pinned instead (PR #151 review PRR-151-036):
  * stubHardware() reports navigator.deviceMemory = 8 (Chromium's cap: enough memory
@@ -379,6 +382,24 @@ function hardwareValueMasks(page: Page): Locator[] {
 }
 
 /**
+ * Machine-pinned VALUE spans of the Profile data section only (issue #34 item 6p):
+ * the active profile id after "Active profile:" and each registered-profile list
+ * name. The values are deterministic (boot pins doc-qa-profile-id = 'baseline'),
+ * but the monospace face's sub-pixel hinting drifts between Chromium builds: CI
+ * round 2's web-ui-visual-baseline job failed on exactly the 16 settings /
+ * settings-external PNGs at ~56 px each, localized inside these two spans (the
+ * values themselves were correct). Per the Hardware Capability pattern above, only
+ * the VALUE cells are masked — the section card, heading, labels, copy and buttons
+ * stay in the baseline so a restyle of that section still shows a diff.
+ */
+function profileValueMasks(page: Page): Locator[] {
+  return [
+    page.getByTestId('active-profile-value'),
+    page.getByTestId('profile-registry-name'),
+  ];
+}
+
+/**
  * The re-index notice banner's rounded bottom-left corner rasterizes in one of two
  * ways at dark @ 1024 (an anti-aliasing wobble at x 89-92, y 158-160). The committed
  * baseline is the MINORITY rasterization: with zero tolerance it fails about 9 runs in 10,
@@ -399,6 +420,7 @@ function dynamicMasks(page: Page): Locator[] {
     // The whole memory meter (label, percentage and fill are machine-derived).
     page.getByRole('progressbar', { name: /Memory Used/i }),
     ...hardwareValueMasks(page),
+    ...profileValueMasks(page),
     page.locator('time'),
   ];
 }

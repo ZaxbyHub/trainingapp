@@ -152,7 +152,11 @@ export function SettingsProfileSection(): React.ReactElement {
   return (
     <SettingsSubsection title="Profile data" headingId="profile-data-heading" data-testid="profile-data-section">
       <p className="settings-text" data-testid="profile-current">
-        Active profile: <code className="settings-code">{current}</code>. Each profile keeps its own documents, indexes
+        Active profile:{' '}
+        <code className="settings-code" data-testid="active-profile-value">
+          {current}
+        </code>
+        . Each profile keeps its own documents, indexes
         and conversations on this workstation.
       </p>
 
@@ -166,7 +170,9 @@ export function SettingsProfileSection(): React.ReactElement {
               <ul className="settings-list">
                 {registry.profiles.map((prefix) => (
                   <li key={prefix} data-testid={`profile-row-${prefix}`}>
-                    <code className="settings-code">{prefix}</code>
+                    <code className="settings-code" data-testid="profile-registry-name">
+                      {prefix}
+                    </code>
                     {prefix === current ? (
                       <span className="settings-text"> (active)</span>
                     ) : (

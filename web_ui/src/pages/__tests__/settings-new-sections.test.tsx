@@ -169,6 +169,9 @@ describe('the three new Settings surfaces inside the REAL SettingsPage', () => {
   it('the profile surface lists registered profiles and Switch works (confirm + reload)', async () => {
     render(<SettingsPage />);
     expect(await screen.findByTestId('profile-data-section')).toBeTruthy();
+    expect(screen.getByTestId('active-profile-value').textContent).toBe(CURRENT);
+    // One masked value cell per registered profile (visual-baseline profileValueMasks).
+    expect(screen.getAllByTestId('profile-registry-name').map((el) => el.textContent)).toEqual([CURRENT, OTHER]);
     expect(screen.getByTestId('profile-row-otherp1')).toBeTruthy();
     expect(screen.getByTestId('profile-row-settest')).toBeTruthy(); // (active)
     const switchButton = screen.getByTestId('profile-switch-otherp1');
