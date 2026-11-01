@@ -10,6 +10,15 @@
  * e2e drivers run the chromium project). Run under web_ui/playwright.config.ts.
  */
 import { expect, test, type Page } from '@playwright/test';
+// Chromium-only: the isolation property is engine-independent, but this spec
+// navigates via page.reload after each switch, and Playwright-Firefox hangs
+// on same-URL reloads under the app's COOP/COEP headers (documented harness
+// limitation of the Lumen Firefox bring-up). The isolation behavior itself
+// is pinned engine-neutrally by src/lib/storage/profile-switch.test.ts and
+// src/__tests__/profile-integration.test.tsx.
+test.skip(({ browserName }) => browserName !== 'chromium', 'chromium-only (reload under COI hangs on Playwright-Firefox)');
+
+
 
 test.describe.configure({ timeout: 120_000 });
 
