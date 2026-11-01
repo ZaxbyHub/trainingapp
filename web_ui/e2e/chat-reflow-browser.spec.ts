@@ -53,9 +53,9 @@ async function seedCitedConversation(page: Page, longNames = false, onlyFirst = 
   expect(prefix, 'profile id is minted at boot').toBeTruthy();
   await page.evaluate(async ({ now, longNames, onlyFirst, name }) => {
     const db = await new Promise<IDBDatabase>((res, rej) => {
-      // Same schema the app's Dexie declares (version 2: conversations +
-      // meta); the upgrade is a no-op when the app already created the db.
-      const r = indexedDB.open(name, 2);
+      // Open WITHOUT a pinned version: Dexie 4 declares the app's v2 schema
+      // at native IndexedDB version 20 and a lower pinned open VersionErrors.
+      const r = indexedDB.open(name);
       r.onupgradeneeded = () => {
         if (!r.result.objectStoreNames.contains('conversations')) {
           r.result.createObjectStore('conversations', { keyPath: 'id' });

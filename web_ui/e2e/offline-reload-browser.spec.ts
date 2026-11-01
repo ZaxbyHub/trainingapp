@@ -20,6 +20,12 @@ import { expect, test } from '@playwright/test';
 
 test.describe.configure({ timeout: 120_000 });
 
+// Chromium-only: the property under test is the app-shell service worker
+// and context.setOffline (a Chromium-only Playwright protocol surface;
+// Firefox crashes with setForceOffline target-registry undefined). The
+// frozen C2 driver runs --project=chromium for the same reason.
+test.skip(({ browserName }) => browserName !== 'chromium', 'chromium-only (app-shell SW + setOffline)');
+
 test('the app shell boots offline after one online load (app-shell SW)', async ({ page, context }) => {
   // 1) Load the app online and wait for a stable app-shell marker: the boot
   //    overlay lifts once the lightweight indexes initialize, then either the

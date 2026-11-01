@@ -28,9 +28,11 @@ async function seedConversation(page: Page, title: string): Promise<void> {
   await page.evaluate(
     async ({ name, title }) => {
       const db = await new Promise<IDBDatabase>((res, rej) => {
-        // Same schema the app's Dexie declares (version 2); the upgrade is a
-        // no-op when the app already created the database.
-        const r = indexedDB.open(name, 2);
+        // Open WITHOUT a pinned version: Dexie 4 declares the app's v2 schema
+        // at native IndexedDB version 20, and a lower pinned open VersionErrors
+        // (the same trap the lumen-baseline seed hit). Opening version-less
+        // uses whatever the app created.
+        const r = indexedDB.open(name);
         r.onupgradeneeded = () => {
           if (!r.result.objectStoreNames.contains('conversations')) {
             r.result.createObjectStore('conversations', { keyPath: 'id' });
@@ -98,7 +100,7 @@ test('profiles isolate conversation history across real switches', async ({ page
   await switchButton.click(); // arm
   await page.getByTestId(`profile-switch-${profileA}`).click(); // confirm → reload
   await waitReady(page);
-  await expect(page.evaluate(() => localStorage.getItem('doc-qa-profile-id'))).toBe(profileA);
+  expect(await page.evaluate(() => localStorage.getItem('doc-qa-profile-id'))).toBe(profileA);
 
   // 5) Profile A's history is back.
   await expect(page.getByRole('button', { name: CONV_TITLE, exact: false })).toBeVisible({ timeout: 30_000 });
