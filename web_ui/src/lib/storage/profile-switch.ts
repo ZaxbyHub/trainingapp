@@ -110,6 +110,13 @@ export async function adoptLegacyConversationsForCurrentProfile(): Promise<Legac
       message: `An adoption is already in flight${result.inFlightTarget !== undefined ? ` (profile ${result.inFlightTarget})` : ''}. Try again once it completes.`,
     };
   }
+  if (result.reason === 'superseded') {
+    return {
+      status: 'refused',
+      message:
+        'A conversation clear happened while the shared history was being adopted, so the adoption was stopped and nothing was resurrected. Adopt again if you still want the history.',
+    };
+  }
   return {
     status: 'refused',
     message: 'This profile already has conversations, so the shared history was not adopted into it.',

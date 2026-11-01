@@ -250,7 +250,7 @@ describe('profile (F1 stable namespace)', () => {
     });
   });
 
-  describe('deleteNamespace (PRR-107)', () => {
+  describe('deleteNamespace (PRR-107 + reviewer round 2 F1)', () => {
     /** An IDBRequest-like stub whose onsuccess fires on assignment. */
     function makeFiringRequest(): { onsuccess: (() => void) | null } {
       const req: { onsuccess: (() => void) | null } = { onsuccess: null };
@@ -264,7 +264,7 @@ describe('profile (F1 stable namespace)', () => {
       return req;
     }
 
-    it('deletes the conversations database with the rest of the namespace', async () => {
+    function stubDeleteDatabase(): string[] {
       const deleted: string[] = [];
       Object.defineProperty(globalThis, 'indexedDB', {
         value: {
@@ -276,7 +276,28 @@ describe('profile (F1 stable namespace)', () => {
         writable: true,
         configurable: true,
       });
-      await deleteNamespace('orphan01');
+      return deleted;
+    }
+
+    it('the CLEAR-CACHE-shaped call (no options) KEEPS the conversations database', async () => {
+      // Exactly how SettingsPage's Clear Cache handler invokes it:
+      // deleteNamespace(getProfilePrefix()). The Clear Cache copy promises
+      // "Your chat history is kept" — the conversations db must survive
+      // (reviewer round 2 F1 regression: it did not when PRR-107 added the
+      // name unconditionally).
+      const deleted = stubDeleteDatabase();
+      await deleteNamespace(getProfilePrefix());
+      expect(deleted).toEqual([
+        `${getProfilePrefix()}-doc-qa-documents`,
+        `${getProfilePrefix()}-doc-qa-indexes`,
+        `${getProfilePrefix()}-doc-qa-keywords`,
+      ]);
+      expect(deleted).not.toContain(`${getProfilePrefix()}-doc-qa-conversations`);
+    });
+
+    it('the orphan-Delete path (includeConversations) removes all FOUR databases', async () => {
+      const deleted = stubDeleteDatabase();
+      await deleteNamespace('orphan01', { includeConversations: true });
       expect(deleted).toEqual([
         'orphan01-doc-qa-documents',
         'orphan01-doc-qa-indexes',

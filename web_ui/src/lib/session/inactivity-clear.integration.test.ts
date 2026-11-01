@@ -226,7 +226,7 @@ describe('inactivity fire -> persisted clear through REAL locks (review F1)', ()
     await vi.advanceTimersByTimeAsync(15 * MIN);
     expect(conversationsOf(DB_NAME)).toHaveLength(0);
     expect(await readConversationEpoch()).toBe(1);
-    expect(readClearRecord()).toEqual({ pending: null, completed: { epochGoal: 1, profile: PREFIX } });
+    expect(readClearRecord()).toEqual({ pending: null, completed: { [PREFIX]: 1 } });
     expect(onClear).toHaveBeenCalledTimes(1);
     expect(onCleared).toHaveBeenCalledTimes(1);
 
@@ -271,14 +271,14 @@ describe('inactivity fire -> persisted clear through REAL locks (review F1)', ()
     await vi.advanceTimersByTimeAsync(30_000);
     expect(conversationsOf(DB_NAME)).toHaveLength(0);
     expect(await readConversationEpoch()).toBe(1);
-    expect(readClearRecord()).toEqual({ pending: null, completed: { epochGoal: 1, profile: PREFIX } });
+    expect(readClearRecord()).toEqual({ pending: null, completed: { [PREFIX]: 1 } });
     expect(onCleared).toHaveBeenCalledTimes(1);
     const recordWrites = setItemSpy.mock.calls
       .filter(([key]) => key === CONVERSATIONS_CLEARED_KEY)
       .map(([, value]) => JSON.parse(value as string) as { pending: unknown; completed: unknown });
     expect(recordWrites.length).toBeGreaterThanOrEqual(2);
     expect(recordWrites[0]?.pending).toEqual({ epochGoal: 1, profile: PREFIX });
-    expect(recordWrites.at(-1)).toEqual({ pending: null, completed: { epochGoal: 1, profile: PREFIX } });
+    expect(recordWrites.at(-1)).toEqual({ pending: null, completed: { [PREFIX]: 1 } });
     setItemSpy.mockRestore();
   });
 
@@ -322,7 +322,7 @@ describe('inactivity fire -> persisted clear through REAL locks (review F1)', ()
     expect(conversationsOf(DB_NAME)).toHaveLength(0);
     expect(await readConversationEpoch()).toBe(1);
     expect(onCleared).toHaveBeenCalledTimes(1);
-    expect(readClearRecord()).toEqual({ pending: null, completed: { epochGoal: 1, profile: PREFIX } });
+    expect(readClearRecord()).toEqual({ pending: null, completed: { [PREFIX]: 1 } });
     const clearsAfterFirstFire = onClear.mock.calls.length;
 
     // SECOND fire with NO activity in between: the watch released its shared
@@ -343,6 +343,6 @@ describe('inactivity fire -> persisted clear through REAL locks (review F1)', ()
     // The replay branch, proven: the bus clear (which invokes onClear) never
     // ran on the second fire.
     expect(onClear.mock.calls.length).toBe(clearsAfterFirstFire);
-    expect(readClearRecord()).toEqual({ pending: null, completed: { epochGoal: 2, profile: PREFIX } });
+    expect(readClearRecord()).toEqual({ pending: null, completed: { [PREFIX]: 2 } });
   });
 });

@@ -380,20 +380,31 @@ export async function listStalePrefixes(): Promise<string[]> {
 }
 
 /**
- * Delete all IndexedDB databases for a given profile prefix.
- * Intended for the Settings "Clear Cache" UI (PR-5). Best-effort.
+ * Delete a profile prefix's IndexedDB databases. Best-effort. TWO contracts
+ * share this function (reviewer round 2, F1 — they must not be conflated):
  *
- * NOTE (PRR-008): this deletes the documents, vector-mapping, keyword and
- * conversations DBs, but it CANNOT delete the native EdgeVec HNSW blob for
- * the prefix — that blob
+ *  - Clear Cache (SettingsPage) calls it for the CURRENT profile and PROMISES
+ *    THE USER THE CHAT HISTORY IS KEPT — the default therefore deletes only
+ *    the documents, vector-mapping and keyword DBs, never
+ *    `{prefix}-doc-qa-conversations`.
+ *  - The Settings → Profile data orphan-Delete row calls it with
+ *    `includeConversations: true` for an UNREGISTERED namespace the user is
+ *    destroying outright — there the conversations db goes with the rest
+ *    (PRR-107: an orphan Delete previously left the chat history behind).
+ *
+ * NOTE (PRR-008): this cannot delete the native EdgeVec HNSW blob for the
+ * prefix — that blob
  * is stored as a VALUE keyed by `${prefix}-doc-qa-index` inside the shared
  * `edgevec-db` database (see vite.config.ts IndexedDbBackend stub), not in a
  * per-profile database. Clearing it requires deleting the key from
  * `edgevec-db`'s data store (or deleting `edgevec-db` entirely, which would
  * affect ALL profiles). PR-5's Clear Cache UI must handle the EdgeVec blob
- * separately; deleting only these three DBs leaves the vector blob orphaned.
+ * separately; deleting only these DBs leaves the vector blob orphaned.
  */
-export async function deleteNamespace(prefix: string): Promise<void> {
+export async function deleteNamespace(
+  prefix: string,
+  options: { includeConversations?: boolean } = {},
+): Promise<void> {
   // Match the system-wide prefix constraint (see getProfilePrefix / DB_NAME
   // shape regex) so this only acts on real profile namespaces.
   if (!/^[a-z0-9]{3,8}$/.test(prefix)) {
@@ -402,14 +413,11 @@ export async function deleteNamespace(prefix: string): Promise<void> {
   if (typeof indexedDB === 'undefined') {
     return;
   }
-  // PRR-107: the conversations db is deleted with the rest of the namespace
-  // (documents, indexes, keywords) — an orphan Delete previously left the
-  // chat history behind.
   const names = [
     `${prefix}-doc-qa-documents`,
     `${prefix}-doc-qa-indexes`,
     `${prefix}-doc-qa-keywords`,
-    `${prefix}-doc-qa-conversations`,
+    ...(options.includeConversations === true ? [`${prefix}-doc-qa-conversations`] : []),
   ];
   await Promise.all(
     names.map(

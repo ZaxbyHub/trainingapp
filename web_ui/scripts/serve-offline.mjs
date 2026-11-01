@@ -138,7 +138,12 @@ const server = createServer((req, res) => {
     // Normalize and prevent directory traversal. PRR-112 (PR #264 review,
     // mirroring start.ps1's PRR-003 pattern): compare against the base WITH a
     // trailing separator, case-insensitively — a bare startsWith(DIST_DIR)
-    // also admits a SIBLING directory like "dist-evil".
+    // also admits a SIBLING directory like "dist-evil". The case-insensitive
+    // compare matches the case-insensitive DEFAULT filesystems this offline
+    // package actually targets (Windows, macOS); on a case-SENSITIVE Linux
+    // host a case-variant sibling (Dist-Evil/) could still slip through the
+    // containment check — accepted trade-off, kept in lockstep with the
+    // PowerShell twin rather than diverging per-OS (reviewer round 2 F-c).
     const filePath = normalize(join(DIST_DIR, pathname));
     const distRoot = DIST_DIR.endsWith(sep) ? DIST_DIR : DIST_DIR + sep;
     if (!filePath.toLowerCase().startsWith(distRoot.toLowerCase())) {

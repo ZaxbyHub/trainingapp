@@ -81,10 +81,11 @@ describe('clearAllConversationsInDb stale-tab routing (PRR-103)', () => {
     // …and the STALE profile's history survives: the singleton's bound
     // database is never the destructive target by virtue of isCurrent alone.
     expect(conversationsOf(STALE_DB)).toHaveLength(1);
-    // The pending record resolved to completed against the PASSED profile.
+    // The pending record resolved to completed against the PASSED profile
+    // (per-profile map, reviewer round 2 F2).
     expect(readClearRecord()).toEqual({
       pending: null,
-      completed: { epochGoal: 1, profile: LIVE_PROFILE },
+      completed: { [LIVE_PROFILE]: 1 },
     });
   });
 
@@ -105,7 +106,7 @@ describe('clearAllConversationsInDb stale-tab routing (PRR-103)', () => {
     expect(conversationsOf(LIVE_DB)).toHaveLength(0);
     // …and left the stale profile's history (the singleton's db) untouched.
     expect(conversationsOf(STALE_DB)).toHaveLength(1);
-    expect(readClearRecord().completed).toEqual({ epochGoal: 1, profile: LIVE_PROFILE });
+    expect(readClearRecord().completed).toEqual({ [LIVE_PROFILE]: 1 });
   });
 
   it('a clear invoked for the singleton-bound profile still works (name match reuses the singleton)', async () => {

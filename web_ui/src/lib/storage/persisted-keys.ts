@@ -100,7 +100,9 @@ export const REINDEX_FLAG_KEY = 'rag-reindex-required';
 export const REGISTERED_PROFILES_KEY = 'docqa_registered_profiles';
 /**
  * Conversation-clear protocol record (issue #34 item 6p, R5-6/R6-4): JSON
- * {pending: {epochGoal, profile} | null, completed: {epochGoal} | null}. The
+ * {pending: {epochGoal, profile} | null, completed: {[profile]: epochGoal} | null
+ * (per-profile completed goals, reviewer round 2 F2; legacy single-goal shapes
+ * migrate on read). The
  * pending goal is replayed at boot (arbitrated) so a crash between the
  * pending stamp and the epoch transaction still clears. Internal.
  */

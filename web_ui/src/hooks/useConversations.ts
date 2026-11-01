@@ -298,9 +298,10 @@ export function useConversations() {
    *
    * @param id - Conversation ID to rename
    * @param newTitle - New title string
-   * @returns true when the rename landed; false when the write failed OR the
-   *   epoch gate aborted it (PRR-105: the boolean is honored — no success
-   *   reporting, current state untouched, error surfaced)
+   * @returns true when the rename landed; false when the write FAILED (error
+   *   banner surfaced) or when the epoch gate aborted it as a deliberate
+   *   silent no-op (reviewer round 2 F-a, restoring the documented
+   *   conversations.ts contract: a stale write is discarded, not errored)
    */
   const renameConversation = useCallback(async (id: string, newTitle: string): Promise<boolean> => {
     try {
@@ -308,9 +309,8 @@ export function useConversations() {
         stateEpoch: await stateEpochRef.current,
       });
       if (!applied) {
-        // PRR-105: a genuine epoch mismatch aborted the write (a cross-tab
-        // clear moved the db on). Do NOT report success.
-        setPersistenceError('Failed to rename conversation');
+        // Stale-state rename after a cross-tab clear: a deliberate silent
+        // no-op (the gate aborted it) — no banner, no success reporting.
         return false;
       }
       await refreshConversations();
@@ -500,18 +500,21 @@ export function useConversations() {
    * clears currentConversationId and currentMessages.
    *
    * @param id - Conversation ID to delete
-   * @returns true when deleted, false when the delete failed OR the epoch gate
-   *   aborted it (PRR-105: the boolean is honored — no state clearing, no
-   *   success reporting, error surfaced)
+   * @returns true when deleted, false when the delete FAILED (error banner
+   *   surfaced) or when the epoch gate aborted it as a deliberate silent
+   *   no-op (reviewer round 2 F-a, restoring the documented
+   *   conversations.ts contract: the caller discards its stale state
+   *   instead of surfacing an error — current state is kept and no banner
+   *   fires, because nothing actually went wrong)
    */
   const removeConversation = useCallback(async (id: string): Promise<boolean> => {
     try {
       const applied = await deleteConversation(id, { stateEpoch: await stateEpochRef.current });
       if (!applied) {
-        // PRR-105: a genuine epoch mismatch aborted the delete (a cross-tab
-        // clear moved the db on) — treat as a failed delete: keep the current
-        // state, surface the error, report failure.
-        setPersistenceError('Failed to delete conversation');
+        // Stale-state delete after a cross-tab clear: a deliberate silent
+        // no-op (the gate aborted it). The current state is NOT cleared —
+        // clearing would pretend the delete landed — but no error either:
+        // this is the documented benign case, not a failure.
         return false;
       }
       if (currentConversationId === id) {

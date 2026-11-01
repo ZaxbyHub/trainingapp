@@ -17,12 +17,13 @@ import type { Conversation } from './conversations';
  */
 /**
  * `meta` rows: the clear `epoch` (number) and the legacy-adoption claim
- * ({target, phase}) — see db/conv-protocol.ts. key 'epoch' → number;
- * key 'legacy-adopt-claim' → LegacyAdoptClaim-shaped object.
+ * ({target, phase, epoch?}) — see db/conv-protocol.ts. key 'epoch' → number;
+ * key 'legacy-adopt-claim' → LegacyAdoptClaim-shaped object (the optional
+ * `epoch` is the copy's epoch binding, reviewer round 2 F3).
  */
 export type ConversationMetaRow = {
   key: string;
-  value: number | { target: string; phase: 'copying' | 'done' };
+  value: number | { target: string; phase: 'copying' | 'done'; epoch?: number };
 };
 
 export class DocQADatabase extends Dexie {

@@ -426,14 +426,15 @@ describe('useConversations', () => {
       expect(result.current.persistenceError).toBe('Failed to delete conversation');
     });
 
-    it('PRR-105: an epoch-gate-aborted delete resolves false, keeps the current state and surfaces the error', async () => {
+    it('reviewer round 2 F-a: an epoch-gate-aborted delete is a SILENT no-op (false, no banner, state kept)', async () => {
       const conv = createMockConversation({ id: 'conv-1' });
       mockListConversations
         .mockResolvedValueOnce([conv])
         .mockResolvedValueOnce([conv]);
       mockGetConversation.mockResolvedValueOnce(conv);
       mockCountConversations.mockResolvedValueOnce(1);
-      // The gate aborted the write (a cross-tab clear moved the db epoch).
+      // The gate aborted the write (a cross-tab clear moved the db epoch) —
+      // the documented benign case, not a failure.
       mockDeleteConversation.mockResolvedValueOnce(false);
 
       const { result } = renderHook(() => useConversations());
@@ -445,16 +446,16 @@ describe('useConversations', () => {
       await act(async () => {
         ok = await result.current.removeConversation('conv-1');
       });
-      // Honored boolean: no success, an error banner, and the CURRENT state
-      // is NOT cleared (the delete never landed — clearing would pretend it
-      // did).
+      // Honored boolean with the split: false + NO error banner (a genuine
+      // failure still banners — see the throwing tests) + the current state
+      // is NOT cleared (clearing would pretend the delete landed).
       expect(ok).toBe(false);
-      expect(result.current.persistenceError).toBe('Failed to delete conversation');
+      expect(result.current.persistenceError).toBeNull();
       expect(result.current.currentConversationId).toBe('conv-1');
       expect(result.current.conversations.length).toBe(1);
     });
 
-    it('PRR-105: an epoch-gate-aborted rename resolves false and surfaces the error (no success reporting)', async () => {
+    it('reviewer round 2 F-a: an epoch-gate-aborted rename is a SILENT no-op (false, no banner)', async () => {
       const conv = createMockConversation({ id: 'conv-1', title: 'Old' });
       mockListConversations.mockResolvedValue([conv]);
       mockCountConversations.mockResolvedValue(1);
@@ -470,8 +471,8 @@ describe('useConversations', () => {
         ok = await result.current.renameConversation('conv-1', 'New');
       });
       expect(ok).toBe(false);
-      expect(result.current.persistenceError).toBe('Failed to rename conversation');
-      // The list was not refreshed over the failed rename.
+      expect(result.current.persistenceError).toBeNull();
+      // The list was not refreshed over the aborted rename.
       expect(result.current.conversations[0].title).toBe('Old');
     });
 

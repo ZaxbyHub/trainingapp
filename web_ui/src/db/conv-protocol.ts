@@ -184,6 +184,17 @@ const LEGACY_CLAIM_META_KEY = 'legacy-adopt-claim';
 export interface LegacyAdoptClaim {
   target: string;
   phase: 'copying' | 'done';
+  /**
+   * Reviewer round 2 F3: the target profile db's epoch BOUND AT (RE)CLAIM
+   * TIME. Every copy page re-reads the epoch inside its own transaction and
+   * aborts when it moved — a clear that raced the adoption can never be
+   * resurrected (pages that landed pre-clear are wiped BY the clear; pages
+   * that would land post-clear are blocked by their own in-transaction
+   * check, since IndexedDB serializes rw transactions on the same stores).
+   * Absent only on claim rows written before this field existed; a resume
+   * re-binds it to the current epoch.
+   */
+  epoch?: number;
 }
 
 type DocQaDb = DocQADatabase;
@@ -249,14 +260,17 @@ function openProfileDb(profile: string): DocQaDb {
 export interface ClearRecord {
   pending: { epochGoal: number; profile: string } | null;
   /**
-   * PRR-104 (PR #264 review): the completed marker records WHICH profile's
-   * clear finished. The record is origin-wide storage, so a profile-less
-   * completed value suppressed EVERY profile's crashed pending replay —
-   * profile A's completed record silenced profile B's pending clear. The
-   * profile is optional only when READING (records written before this fix);
-   * a missing profile never suppresses a replay (strict equality).
+   * Reviewer round 2 F2 (on PRR-104): PER-PROFILE completed goals — a map of
+   * profile prefix → highest completed clear goal. The record is origin-wide
+   * storage, so any single origin-wide goal is wrong in both directions: a
+   * profile-less value suppressed EVERY profile's crashed pending replay,
+   * and a max-goal relabelled with the caller's profile let profile Q's
+   * earlier goal-5 completed suppress profile P's later goal-2 pending. Each
+   * profile's marker is independent. Legacy records ({epochGoal}, with or
+   * without a round-1 `profile` field) are migrated on read; a profile-less
+   * legacy value never suppresses anything.
    */
-  completed: { epochGoal: number; profile?: string } | null;
+  completed: { [profile: string]: number } | null;
 }
 
 const EMPTY_RECORD: ClearRecord = { pending: null, completed: null };
@@ -273,22 +287,33 @@ export function readClearRecord(): ClearRecord {
       record.pending !== null && typeof record.pending === 'object'
         ? (record.pending as { epochGoal?: unknown; profile?: unknown })
         : null;
-    const completed =
+    const completedRaw =
       record.completed !== null && typeof record.completed === 'object'
-        ? (record.completed as { epochGoal?: unknown; profile?: unknown })
+        ? (record.completed as { epochGoal?: unknown; profile?: unknown; [key: string]: unknown })
         : null;
+    let completed: { [profile: string]: number } | null = null;
+    if (completedRaw !== null) {
+      if (typeof completedRaw.epochGoal === 'number') {
+        // Legacy single-goal shapes. A round-1 record carries the profile the
+        // goal belongs to; the older profile-less value is attributable to no
+        // profile and never suppresses a replay (falling through is safe:
+        // the replay is idempotent).
+        completed =
+          typeof completedRaw.profile === 'string' ? { [completedRaw.profile]: completedRaw.epochGoal } : null;
+      } else {
+        const map: { [profile: string]: number } = {};
+        for (const [key, value] of Object.entries(completedRaw)) {
+          if (typeof value === 'number') map[key] = value;
+        }
+        completed = map;
+      }
+    }
     return {
       pending:
         pending !== null && typeof pending.epochGoal === 'number' && typeof pending.profile === 'string'
           ? { epochGoal: pending.epochGoal, profile: pending.profile }
           : null,
-      completed:
-        completed !== null && typeof completed.epochGoal === 'number'
-          ? {
-              epochGoal: completed.epochGoal,
-              ...(typeof completed.profile === 'string' ? { profile: completed.profile } : {}),
-            }
-          : null,
+      completed,
     };
   } catch {
     return EMPTY_RECORD;
@@ -306,11 +331,13 @@ function writeClearRecord(record: ClearRecord): void {
 
 function markCompleted(epochGoal: number, profile: string): void {
   const record = readClearRecord();
+  const previous = record.completed ?? {};
   writeClearRecord({
     pending: null,
     completed: {
-      epochGoal: Math.max(epochGoal, record.completed?.epochGoal ?? 0),
-      profile,
+      ...previous,
+      // Only THIS profile's goal moves; every other profile's marker stays.
+      [profile]: Math.max(epochGoal, previous[profile] ?? 0),
     },
   });
 }
@@ -387,16 +414,13 @@ export async function replayPendingConversationClear(): Promise<{ replayed: bool
   const record = readClearRecord();
   const pending = record.pending;
   if (pending === null) return { replayed: false, deferred: false };
-  // PRR-104: the completed marker suppresses the replay ONLY when it names
-  // the SAME profile AND its goal covers the pending goal. The record is
-  // origin-wide, so a cross-profile completed value (or a pre-fix marker
-  // written without a profile) must never silence this profile's replay —
-  // falling through is safe: the replay is idempotent (epoch-goal check).
-  if (
-    record.completed !== null &&
-    record.completed.profile === pending.profile &&
-    record.completed.epochGoal >= pending.epochGoal
-  ) {
+  // Reviewer round 2 F2: only the PENDING PROFILE'S OWN completed goal may
+  // suppress its replay, and only when it covers the pending goal. The
+  // record is origin-wide storage; every other profile's marker (and any
+  // legacy profile-less value) is irrelevant here — falling through is safe:
+  // the replay is idempotent (epoch-goal check).
+  const completedGoal = record.completed?.[pending.profile];
+  if (completedGoal !== undefined && completedGoal >= pending.epochGoal) {
     return { replayed: false, deferred: false };
   }
   const exclusive = await tryAcquireSessionActiveExclusive();
@@ -464,7 +488,7 @@ export type AdoptResult =
   | { outcome: 'nothing-to-adopt' }
   | {
       outcome: 'refused';
-      reason: 'profile-not-empty' | 'in-flight';
+      reason: 'profile-not-empty' | 'in-flight' | 'superseded';
       inFlightTarget?: string;
     };
 
@@ -491,19 +515,31 @@ const LEGACY_ADOPT_PAGE = 500;
 /**
  * Copy every legacy conversation into the profile db, one
  * {@link LEGACY_ADOPT_PAGE}-row page at a time (PRR-121: peak memory stays
- * bounded instead of holding the whole legacy store in one array). With
- * `guardEmpty`, the first page's transaction re-checks that the target
- * profile db is STILL empty before the first bulkPut (PRR-106: a clear that
- * landed between the claim's emptiness guard and the copy must not be
- * resurrected by the adoption — the superseded adoption aborts). Runs under
- * the origin-wide conversation write lock (PRR-106) so it serializes with
- * every other conversation mutation. Idempotent by row id (bulkPut), so a
- * crash mid-copy resumes safely. Returns the number of rows copied.
+ * bounded instead of holding the whole legacy store in one array), under the
+ * origin-wide conversation write lock (PRR-106) so the copy serializes with
+ * every other conversation mutation.
+ *
+ * Reviewer round 2 F3 (on PRR-106): the mid-copy EMPTINESS re-check is GONE —
+ * after a crash between pages the retry's own page-1 rows made the target
+ * non-empty and wedged the resume forever. The supersede guard is now the
+ * EPOCH, bound at (re)claim time: every page re-reads the target db's epoch
+ * INSIDE its own rw transaction and the adoption aborts ('superseded') when
+ * it moved. Proof: a clear is one rw transaction that bumps the epoch and
+ * empties the table; a copy page is another rw transaction on the same
+ * stores; IndexedDB serializes them — every page that landed before the
+ * clear is wiped by the clear itself, and every page that would land after
+ * it is blocked by its own in-transaction epoch check. No resurrection is
+ * possible, and a resume-after-crash never mistakes its own partial copy for
+ * a superseding write. Each page's transaction spans BOTH profile stores
+ * (conversations + meta) so the epoch read is atomic with the bulkPut — a
+ * clear transaction cannot interleave between the check and the write.
+ * Idempotent by row id (bulkPut), so re-copying pages a
+ * crashed run already wrote is safe. Returns the number of rows copied.
  */
 async function copyLegacyRowsIntoProfile(
   legacy: DocQaDb,
   profileDb: DocQaDb,
-  guardEmpty: boolean,
+  boundEpoch: number,
 ): Promise<number> {
   return withConversationWriteLock(async () => {
     let offset = 0;
@@ -515,13 +551,11 @@ async function copyLegacyRowsIntoProfile(
         .limit(LEGACY_ADOPT_PAGE)
         .toArray();
       if (page.length === 0) break;
-      await profileDb.transaction('rw', profileDb.conversations, async () => {
-        if (guardEmpty && offset === 0) {
-          // A non-empty target means the adoption was superseded (a
-          // post-claim write or a crashed earlier copy raced us): abort
-          // instead of resurrecting.
-          const live = await profileDb.conversations.count();
-          if (live > 0) throw new AdoptRefusal('profile-not-empty');
+      await profileDb.transaction('rw', [profileDb.conversations, profileDb.meta], async () => {
+        const now = await readEpochOf(profileDb);
+        if (now !== boundEpoch) {
+          // A clear moved the target db during the adoption: superseded.
+          throw new AdoptRefusal('superseded');
         }
         await profileDb.conversations.bulkPut(page);
       });
@@ -548,7 +582,12 @@ async function deleteLegacyDbAfterReadopt(target: string): Promise<void> {
       const targetName = conversationsDbNameFor(target);
       const profileDb = targetName === db.name ? db : openProfileDb(target);
       try {
-        await copyLegacyRowsIntoProfile(legacy, profileDb, false);
+        // Reviewer round 2 F3: the re-adopt copy is epoch-bound too (a clear
+        // racing the re-adopt aborts it instead of resurrecting rows); the
+        // binding is read fresh here — the target legitimately holds rows of
+        // its own at this point, so emptiness is no signal at all.
+        const boundEpoch = await readEpochOf(profileDb);
+        await copyLegacyRowsIntoProfile(legacy, profileDb, boundEpoch);
       } finally {
         if (profileDb !== db) profileDb.close();
       }
@@ -580,10 +619,11 @@ async function deleteLegacyDbAfterReadopt(target: string): Promise<void> {
  * NEVER succeeded there; the in-memory fake's scope-ignoring transactions
  * masked it, and the fake now enforces scope too).
  * Then: copy the legacy rows page-by-page into the profile db (PRR-121) under
- * the origin-wide write lock with an in-transaction emptiness re-check
- * (PRR-106), flip the claim to 'done', write the localStorage done-marker
- * (fast path only), delete the legacy db. The legacy db is deleted only
- * after the done phase.
+ * the origin-wide write lock, EPOCH-BOUND to the claim (reviewer round 2 F3:
+ * the mid-copy emptiness re-check is replaced by a per-page in-transaction
+ * epoch check — see copyLegacyRowsIntoProfile), flip the claim to 'done',
+ * write the localStorage done-marker (fast path only), delete the legacy db.
+ * The legacy db is deleted only after the done phase.
  */
 export async function adoptLegacyConversations(target: string): Promise<AdoptResult> {
   if (legacyDoneMarkerSet()) {
@@ -596,36 +636,58 @@ export async function adoptLegacyConversations(target: string): Promise<AdoptRes
   }
 
   const legacy = new DocQADatabase(LEGACY_CONVERSATIONS_DB_NAME);
-  const profileDb = target === getProfilePrefix() ? db : openProfileDb(target);
+  // Reviewer round 2 F-b (same class as PRR-103): resolve the target by
+  // NAME — never the module-bound singleton's import-time binding.
+  const profileDb = conversationsDbNameFor(target) === db.name ? db : openProfileDb(target);
   try {
-    // ONE rw transaction over BOTH legacy stores decides the claim (PRR-101).
-    await legacy.transaction('rw', [legacy.conversations, legacy.meta], async () => {
-      const claimRow = await legacy.meta.get(LEGACY_CLAIM_META_KEY);
-      const claim = claimRow?.value;
-      if (claim !== undefined && typeof claim === 'object' && claim !== null && 'target' in claim) {
-        const existing = claim as LegacyAdoptClaim;
-        if (existing.target !== target) {
-          throw new AdoptRefusal('in-flight', existing.target);
+    // ONE rw transaction over BOTH legacy stores decides the claim (PRR-101)
+    // and resolves to the epoch the copy is bound to.
+    const boundEpoch = await legacy.transaction(
+      'rw',
+      [legacy.conversations, legacy.meta],
+      async (): Promise<number> => {
+        const claimRow = await legacy.meta.get(LEGACY_CLAIM_META_KEY);
+        const claim = claimRow?.value;
+        if (claim !== undefined && typeof claim === 'object' && claim !== null && 'target' in claim) {
+          const existing = claim as LegacyAdoptClaim;
+          if (existing.target !== target) {
+            throw new AdoptRefusal('in-flight', existing.target);
+          }
+          // Same target: RESUME the protocol (the copy below is idempotent —
+          // reviewer round 2 F3: the adoption's own partial rows are not a
+          // refusal). Bind the epoch: a pre-F3 claim row has none, so re-bind
+          // it to the current epoch; rows a crashed run wrote before any clear
+          // are safe to re-copy over.
+          if (typeof existing.epoch === 'number') return existing.epoch;
+          const rebound = await readEpochOf(profileDb);
+          await legacy.meta.put({
+            key: LEGACY_CLAIM_META_KEY,
+            value: { ...existing, epoch: rebound },
+          });
+          return rebound;
         }
-        // Same target: resume the protocol (the copy below is idempotent).
-        return;
-      }
-      // Fresh claim: the emptiness guards run INSIDE this transaction, so a
-      // racing adopter cannot pass them and write a claim of its own.
-      const legacyCount = await legacy.conversations.count();
-      if (legacyCount === 0) {
-        throw new AdoptRefusal('nothing');
-      }
-      const profileCount = await profileDb.conversations.count();
-      if (profileCount > 0) {
-        throw new AdoptRefusal('profile-not-empty');
-      }
-      await legacy.meta.put({ key: LEGACY_CLAIM_META_KEY, value: { target, phase: 'copying' } });
-    });
+        // Fresh claim: the emptiness guards run INSIDE this transaction, so a
+        // racing adopter cannot pass them and write a claim of its own.
+        const legacyCount = await legacy.conversations.count();
+        if (legacyCount === 0) {
+          throw new AdoptRefusal('nothing');
+        }
+        const profileCount = await profileDb.conversations.count();
+        if (profileCount > 0) {
+          throw new AdoptRefusal('profile-not-empty');
+        }
+        const epoch = await readEpochOf(profileDb);
+        await legacy.meta.put({
+          key: LEGACY_CLAIM_META_KEY,
+          value: { target, phase: 'copying', epoch },
+        });
+        return epoch;
+      },
+    );
 
-    // Copy (PRR-106/PRR-121): under the write lock, page-by-page, with the
-    // first page's transaction re-checking the target is still empty.
-    const copied = await copyLegacyRowsIntoProfile(legacy, profileDb, true);
+    // Copy (PRR-106/PRR-121 + reviewer round 2 F3): under the write lock,
+    // page-by-page, every page gated on the claim-bound epoch.
+    const copied = await copyLegacyRowsIntoProfile(legacy, profileDb, boundEpoch);
 
     // Flip the claim to done, then marker, then delete.
     await legacy.transaction('rw', legacy.meta, async () => {
@@ -643,19 +705,29 @@ export async function adoptLegacyConversations(target: string): Promise<AdoptRes
         await legacy.delete().catch(() => {});
         return { outcome: 'nothing-to-adopt' };
       }
+      if (error.reason === 'superseded') {
+        // A clear raced the copy. Drop the claim so a later adopt can
+        // re-claim under the post-clear epoch instead of wedging on a stale
+        // binding; the legacy db survives for that retry.
+        await legacy.meta.delete(LEGACY_CLAIM_META_KEY).catch(() => {});
+        return { outcome: 'refused', reason: 'superseded' };
+      }
       return { outcome: 'refused', reason: error.reason, inFlightTarget: error.inFlightTarget };
     }
     console.warn('[conv-protocol] legacy adoption failed (retryable):', error);
     return { outcome: 'refused', reason: 'in-flight', inFlightTarget: undefined };
   } finally {
-    if (target !== getProfilePrefix()) profileDb.close();
+    if (profileDb !== db) profileDb.close();
   }
 }
 
 class AdoptRefusal extends Error {
-  reason: 'profile-not-empty' | 'in-flight' | 'nothing';
+  reason: 'profile-not-empty' | 'in-flight' | 'nothing' | 'superseded';
   inFlightTarget?: string;
-  constructor(reason: 'profile-not-empty' | 'in-flight' | 'nothing', inFlightTarget?: string) {
+  constructor(
+    reason: 'profile-not-empty' | 'in-flight' | 'nothing' | 'superseded',
+    inFlightTarget?: string,
+  ) {
     super(`legacy-adoption refusal: ${reason}`);
     this.reason = reason;
     this.inFlightTarget = inFlightTarget;

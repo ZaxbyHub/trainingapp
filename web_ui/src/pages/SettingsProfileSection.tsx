@@ -116,7 +116,10 @@ export function SettingsProfileSection(): React.ReactElement {
     setError(null);
     setNotice(null);
     if (deletingPrefix === prefix) {
-      void deleteNamespace(prefix).then(() => {
+      // Reviewer round 2 F1: the orphan Delete destroys the namespace
+      // OUTRIGHT, conversation history included — Clear Cache keeps chat
+      // history by calling deleteNamespace WITHOUT this option.
+      void deleteNamespace(prefix, { includeConversations: true }).then(() => {
         setNotice(`Deleted the orphaned data of ${prefix}.`);
         setDeletingPrefix(null);
         void refresh();

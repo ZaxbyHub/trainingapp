@@ -22,7 +22,7 @@ vi.mock('../db/index', async (importOriginal) => {
   };
 });
 
-import { DocQADatabase, LEGACY_CONVERSATIONS_DB_NAME } from '../db/index';
+import { db, DocQADatabase, LEGACY_CONVERSATIONS_DB_NAME } from '../db/index';
 import {
   adoptLegacyConversations,
   maybeAutoMigrateLegacyConversations,
@@ -219,24 +219,50 @@ describe('legacy adoption claim protocol (R6-1/R7-1)', () => {
     expect(localStorage.getItem(LEGACY_CONV_MIGRATION_DONE_KEY)).toBe('1');
   });
 
-  it('PRR-106: a superseded adoption ABORTS — a non-empty target inside the copy transaction refuses instead of resurrecting', async () => {
+  it('reviewer round 2 F3: a CLEAR racing the adoption ABORTS it (epoch-bound copy refuses \'superseded\' instead of resurrecting)', async () => {
     await seedLegacy(2);
-    // A crashed earlier adopt left the claim at 'copying' for THIS profile
-    // (the resume path skips the claim's emptiness guard), and a concurrent
-    // write landed rows in the profile db between the claim and the copy.
+    // A crashed adopt left the claim at 'copying' bound to epoch 0; a clear
+    // then landed (epoch bumped to 1, table emptied). The resume's copy must
+    // refuse on the stale binding instead of resurrecting cleared history.
     const legacy = new DocQADatabase(LEGACY_CONVERSATIONS_DB_NAME);
-    await legacy.meta.put({ key: 'legacy-adopt-claim', value: { target: PROFILE_A, phase: 'copying' } });
-    await createConversation(conv(50));
-    expect(conversationsOf(DB_A)).toHaveLength(1);
+    await legacy.meta.put({
+      key: 'legacy-adopt-claim',
+      value: { target: PROFILE_A, phase: 'copying', epoch: 0 },
+    });
+    await db.meta.put({ key: 'epoch', value: 1 });
 
     const result = await adoptLegacyConversations(PROFILE_A);
-    // The in-copy emptiness re-check aborts the adoption: the pre-existing
-    // profile row is never bulkPut over, and the legacy rows are NOT copied.
-    expect(result).toEqual({ outcome: 'refused', reason: 'profile-not-empty' });
-    expect(conversationsOf(DB_A)).toHaveLength(1);
-    expect(conversationsOf(DB_A)[0]?.id).toBe('conv-50');
-    // The legacy db survives a refused adoption (retryable).
+    expect(result).toEqual({ outcome: 'refused', reason: 'superseded' });
+    // Nothing was resurrected…
+    expect(conversationsOf(DB_A)).toHaveLength(0);
+    // …the legacy db survives for a later retry…
     expect(conversationsOf(LEGACY_CONVERSATIONS_DB_NAME)).toHaveLength(2);
+    // …and the claim row was dropped, so a retry re-claims under the
+    // post-clear epoch instead of wedging on the stale binding.
+    expect((await legacy.meta.get('legacy-adopt-claim'))?.value).toBeUndefined();
+    // That retry is NOT wedged: it re-claims (profile still empty post-clear)
+    // and completes.
+    const retry = await adoptLegacyConversations(PROFILE_A);
+    expect(retry).toEqual({ outcome: 'adopted', count: 2 });
+    expect(conversationsOf(DB_A)).toHaveLength(2);
+  });
+
+  it('reviewer round 2 F3: a crash BETWEEN copy pages resumes and completes (own partial rows are not a refusal)', async () => {
+    await seedLegacy(3);
+    // The crashed run wrote page-1's rows into the profile db and left the
+    // claim at 'copying' (pre-epoch-binding shape: the resume re-binds).
+    await createConversation(conv(0));
+    expect(conversationsOf(DB_A)).toHaveLength(1);
+    const legacy = new DocQADatabase(LEGACY_CONVERSATIONS_DB_NAME);
+    await legacy.meta.put({ key: 'legacy-adopt-claim', value: { target: PROFILE_A, phase: 'copying' } });
+
+    const result = await adoptLegacyConversations(PROFILE_A);
+    // The old mid-copy emptiness re-check wedged here forever
+    // ('profile-not-empty' on its OWN rows); the epoch-bound copy resumes.
+    expect(result).toEqual({ outcome: 'adopted', count: 3 });
+    // Idempotent by id: all three legacy rows, no duplicates.
+    expect(conversationsOf(DB_A).map((c) => c.id).sort()).toEqual(['conv-0', 'conv-1', 'conv-2']);
+    expect(conversationsOf(LEGACY_CONVERSATIONS_DB_NAME)).toHaveLength(0);
   });
 
   it('PRR-111: the done-marker fast path RE-ADOPTS rows a mixed-build/rollback tab left behind, then deletes the legacy db', async () => {

@@ -106,9 +106,9 @@ describe('clearAllConversationsInDb (full protocol)', () => {
     expect(result).toEqual({ cleared: true });
     expect(conversationsOf(DB_NAME)).toHaveLength(0);
     expect(metaOf(DB_NAME).get('epoch')?.value).toBe(1);
-    // The pending record resolved to completed (R5-6/R7-2) — naming the
-    // profile whose clear finished (PRR-104).
-    expect(readClearRecord()).toEqual({ pending: null, completed: { epochGoal: 1, profile: PREFIX } });
+    // The pending record resolved to completed (R5-6/R7-2) — a PER-PROFILE
+    // map: this profile's own goal (reviewer round 2 F2).
+    expect(readClearRecord()).toEqual({ pending: null, completed: { [PREFIX]: 1 } });
   });
 
   it('is idempotent: a second clear re-arms and stays clear', async () => {
@@ -129,29 +129,30 @@ describe('clearAllConversationsInDb (full protocol)', () => {
     const { replayed } = await replayPendingConversationClear();
     expect(replayed).toBe(true);
     expect(conversationsOf(DB_NAME)).toHaveLength(0);
-    expect(readClearRecord().completed).toEqual({ epochGoal: 1, profile: PREFIX });
+    expect(readClearRecord().completed).toEqual({ [PREFIX]: 1 });
   });
 
-  it('PRR-104: a completed marker from ANOTHER profile never suppresses this profile\'s pending replay', async () => {
-    // Profile A's clear completed long ago (epochGoal 5 — far ahead).
+  it('reviewer round 2 F2: per-profile completed goals — another profile\'s higher goal never suppresses this profile\'s pending replay', async () => {
+    // The falsified scenario: profile Q completed a goal-5 clear long ago;
+    // profile P now has a crashed pending at goal 2. Under the origin-wide
+    // max (relabelled with the caller's profile) P's replay was skipped.
     localStorage.setItem(
       CONVERSATIONS_CLEARED_KEY,
       JSON.stringify({
-        pending: { epochGoal: 1, profile: PREFIX },
-        completed: { epochGoal: 5, profile: 'otherp1' },
+        pending: { epochGoal: 2, profile: PREFIX },
+        completed: { [`${PREFIX}q`]: 5 },
       }),
     );
     await seed(3);
     const { replayed } = await replayPendingConversationClear();
-    // Cross-profile completed values must not silence the pending replay —
-    // the record is origin-wide storage, the clears are per-profile.
+    // Only P's OWN completed goal may suppress P's pending — Q's does not.
     expect(replayed).toBe(true);
     expect(conversationsOf(DB_NAME)).toHaveLength(0);
-    expect(readClearRecord().completed).toEqual({ epochGoal: 5, profile: PREFIX });
+    // P's completion recorded P's goal at P's own value; Q's marker survives.
+    expect(readClearRecord().completed).toEqual({ [`${PREFIX}q`]: 5, [PREFIX]: 2 });
   });
 
-  it('PRR-104: a pre-fix completed marker without a profile never suppresses a pending replay', async () => {
-    // A record written before the profile field existed.
+  it('reviewer round 2 F2: a legacy profile-less completed marker never suppresses a pending replay', async () => {
     localStorage.setItem(
       CONVERSATIONS_CLEARED_KEY,
       JSON.stringify({
@@ -165,12 +166,54 @@ describe('clearAllConversationsInDb (full protocol)', () => {
     expect(conversationsOf(DB_NAME)).toHaveLength(0);
   });
 
-  it('PRR-104: the SAME profile\'s covering completed marker still suppresses the replay (no double clear)', async () => {
+  it('reviewer round 2 F2: a round-1 single-goal marker migrates on read and still suppresses ITS OWN profile', async () => {
     localStorage.setItem(
       CONVERSATIONS_CLEARED_KEY,
       JSON.stringify({
         pending: { epochGoal: 1, profile: PREFIX },
         completed: { epochGoal: 1, profile: PREFIX },
+      }),
+    );
+    await seed(4);
+    const { replayed } = await replayPendingConversationClear();
+    expect(replayed).toBe(false);
+    expect(conversationsOf(DB_NAME)).toHaveLength(4);
+  });
+
+  it('reviewer round 2 F2: a profile\'s completed marker never BORROWS another profile\'s higher goal (the falsified merge)', async () => {
+    // Profile Q completed a goal-5 clear earlier; profile P now clears at
+    // goal 1. The round-1 merge kept the ORIGIN-WIDE max (5) and relabelled
+    // it with P — P's later crashed pending at goal 2 was then suppressed by
+    // a goal P never reached.
+    localStorage.setItem(
+      CONVERSATIONS_CLEARED_KEY,
+      JSON.stringify({ pending: null, completed: { [`${PREFIX}q`]: 5 } }),
+    );
+    await seed(3);
+    const result = await clearAllConversationsInDb(PREFIX); // P's own goal: 1
+    expect(result).toEqual({ cleared: true });
+    expect(readClearRecord().completed).toEqual({ [`${PREFIX}q`]: 5, [PREFIX]: 1 });
+    // P's crashed pending at goal 2 (P's epoch is 1, so this is a live goal):
+    // P's OWN completed goal (1) does not cover it → the replay runs.
+    localStorage.setItem(
+      CONVERSATIONS_CLEARED_KEY,
+      JSON.stringify({
+        pending: { epochGoal: 2, profile: PREFIX },
+        completed: { [`${PREFIX}q`]: 5, [PREFIX]: 1 },
+      }),
+    );
+    await seed(2);
+    const { replayed } = await replayPendingConversationClear();
+    expect(replayed).toBe(true);
+    expect(conversationsOf(DB_NAME)).toHaveLength(0);
+  });
+
+  it('reviewer round 2 F2: the SAME profile\'s covering completed goal still suppresses the replay (no double clear)', async () => {
+    localStorage.setItem(
+      CONVERSATIONS_CLEARED_KEY,
+      JSON.stringify({
+        pending: { epochGoal: 1, profile: PREFIX },
+        completed: { [PREFIX]: 1 },
       }),
     );
     await seed(4);
