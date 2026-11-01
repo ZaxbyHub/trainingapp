@@ -6,6 +6,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChatMessage } from '../types/chat';
 import { MarkdownRenderer } from './MarkdownRenderer';
+import { PackProvenance } from './PackProvenance';
 import { SourceCitation } from './SourceCitation';
 import { LearnPanel } from './LearnPanel';
 import { GroundingBadge } from './GroundingBadge';
@@ -243,6 +244,15 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
           {/* C5 (issue #72): per-answer provenance badge (above the
               citations it describes); accessible, never color-only. */}
           <GroundingBadge grounding={message.grounding} />
+          {/* #34 item 3: aggregate in-chat pack-version provenance, above the
+              citation pills it summarizes. Renders nothing without
+              pack-attributed citations, and is suppressed when the engine
+              labeled the answer grounding:'general' — the degraded-floor path
+              can emit pack-attributed citations beside a "General knowledge"
+              badge, and the repo treats general as no-provenance-surfaces
+              (learn is suppressed for general in three places); suppresses the
+              same collision for the chip (PRR-006, PR #263 review round). */}
+          {message.grounding !== 'general' && <PackProvenance citations={message.citations} />}
           {/* F7: prefer structured numbered citations; fall back to legacy
               sources string array for older persisted messages. */}
           {message.citations && message.citations.length > 0 ? (

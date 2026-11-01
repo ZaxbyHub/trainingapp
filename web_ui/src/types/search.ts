@@ -25,6 +25,14 @@ export interface SearchResult {
    * the desktop docs.pack_id column; learn rows carry it as pack_id.
    */
   packId?: string;
+  /**
+   * The installed pack version this chunk was ingested from (PRR-001 fix,
+   * PR #263 review round): stamped by the browser pack ingestion next to
+   * packId so chat provenance can render the same `<packId> v<version>` on
+   * the browser surface as the desktop wire does. Absent on chunks indexed
+   * before this field existed (additive tolerance, same convention as packId).
+   */
+  packVersion?: string;
 }
 
 /**

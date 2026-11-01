@@ -114,9 +114,12 @@ export function ChatPage(props: ChatPageProps) {
  * `citations` (mapped through the citationsToRefs choke point so pack
  * provenance cannot be silently dropped); browser-RAG answers carry retrieval
  * `chunks` (mapped explicitly so the retrieval-only `score` field is not
- * persisted into the message / Dexie, PRR-008). Browser-RAG chunks carry no
- * pack fields — packs are an Electron-surface concept (C9 owns the browser
- * adapter).
+ * persisted into the message / Dexie, PRR-008). Browser-RAG chunks DO carry
+ * pack provenance when they come from a knowledge pack (pack-ingest stamps
+ * packId AND packVersion on every pack-doc chunk, and the fused results
+ * forward both) — the mapping carries them through so the aggregate
+ * pack-provenance chip renders identically on both surfaces (PRR-001 fix,
+ * PR #263 review round).
  */
 function citationsFromDone(data: {
   citations?: Citation[];
@@ -131,6 +134,8 @@ function citationsFromDone(data: {
     source: c.source,
     page: c.page,
     text: c.text,
+    ...(c.packId !== undefined ? { packId: c.packId } : {}),
+    ...(c.packVersion !== undefined ? { packVersion: c.packVersion } : {}),
   }));
 }
 

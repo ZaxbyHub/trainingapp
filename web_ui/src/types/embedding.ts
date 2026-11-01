@@ -23,6 +23,8 @@ export interface EmbeddingEntry {
   page?: number;
   /** Owning installed pack (browser-training-parity AC6). */
   packId?: string;
+  /** Owning pack version (PRR-001 fix, PR #263 review). */
+  packVersion?: string;
 }
 
 /**

@@ -29,7 +29,7 @@ interface IndexEntry {
   text: string;
   source?: string;
   page?: number;
-  packId?: string;
+  packId?: string; packVersion?: string;
 }
 
 interface StoredData {
@@ -51,7 +51,7 @@ export class KeywordIndex {
   private disposed: boolean = false;
 
   // In-memory mapping from FlexSearch document ID to chunk metadata
-  private idMapping: Map<string, { docId: string; chunkIndex: number; text: string; source?: string; page?: number; packId?: string }> = new Map();
+  private idMapping: Map<string, { docId: string; chunkIndex: number; text: string; source?: string; page?: number; packId?: string; packVersion?: string }> = new Map();
   // Reverse mapping: docId -> Set of chunk indices
   private docIdToChunks: Map<string, Set<string>> = new Map();
 
@@ -142,7 +142,7 @@ export class KeywordIndex {
     docId: string,
     chunkIndex: number,
     text: string,
-    meta?: { source?: string; page?: number; packId?: string }
+    meta?: { source?: string; page?: number; packId?: string; packVersion?: string }
   ): void {
     if (!this.isReady()) {
       throw new Error('KeywordIndex not initialized. Call initialize() first.');
@@ -162,6 +162,7 @@ export class KeywordIndex {
       source: meta?.source,
       page: meta?.page,
       ...(meta?.packId !== undefined ? { packId: meta.packId } : {}),
+      ...(meta?.packVersion !== undefined ? { packVersion: meta.packVersion } : {}),
     });
 
     // Update reverse mapping
@@ -196,6 +197,7 @@ export class KeywordIndex {
         source: chunk.source,
         page: chunk.page,
         packId: chunk.packId,
+        packVersion: chunk.packVersion,
       });
     }
 
@@ -245,6 +247,7 @@ export class KeywordIndex {
           source: meta.source, // F7: filename for citations
           page: meta.page,     // F7: page number for citations
           ...(meta.packId !== undefined ? { packId: meta.packId } : {}),
+          ...(meta.packVersion !== undefined ? { packVersion: meta.packVersion } : {}),
         });
         rank++;
       }
@@ -295,7 +298,7 @@ export class KeywordIndex {
    * results are NOT ranked. Iteration is O(index size) per call.
    */
   findChunks(
-    predicate: (meta: { docId: string; chunkIndex: number; text: string; source?: string; page?: number; packId?: string }) => boolean,
+    predicate: (meta: { docId: string; chunkIndex: number; text: string; source?: string; page?: number; packId?: string; packVersion?: string }) => boolean,
     limit = 10
   ): SearchResult[] {
     const results: SearchResult[] = [];
@@ -309,6 +312,7 @@ export class KeywordIndex {
         source: meta.source,
         page: meta.page,
         ...(meta.packId !== undefined ? { packId: meta.packId } : {}),
+        ...(meta.packVersion !== undefined ? { packVersion: meta.packVersion } : {}),
       });
       if (results.length >= limit) break;
     }
@@ -334,6 +338,7 @@ export class KeywordIndex {
           source: meta.source,
           page: meta.page,
           ...(meta.packId !== undefined ? { packId: meta.packId } : {}),
+          ...(meta.packVersion !== undefined ? { packVersion: meta.packVersion } : {}),
         });
       }
 
@@ -424,6 +429,7 @@ export class KeywordIndex {
           source: entry.source,
           page: entry.page,
           ...(entry.packId !== undefined ? { packId: entry.packId } : {}),
+          ...(entry.packVersion !== undefined ? { packVersion: entry.packVersion } : {}),
         });
       }
 

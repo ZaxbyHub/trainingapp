@@ -346,6 +346,48 @@ describe('ChatPage terminal callbacks on a first turn (issue #118 guardrail)', (
     expect(ownerSave?.[0]).toBe('conv-A');
   });
 
+  it('(e) browser-RAG done payload with pack-attributed chunks reaches the aggregate provenance chip', async () => {
+    // PRR-001 fix oracle (PR #263 review round): the browser path fires done
+    // with retrieval `chunks` (not the contract's `citations`). The chunk ->
+    // CitationRef mapping must carry packId/packVersion through, or the
+    // aggregate pack-provenance chip never renders on the browser surface —
+    // exactly the CRITICAL symptom the review found (its mutant survived all
+    // other suites green).
+    const onSaveConversation = makeCreatingSave('conv-created-5');
+    render(
+      <Harness initialConversationId={undefined} onSaveConversation={onSaveConversation} />,
+    );
+    await sendFirstQuestion();
+
+    const done = getDoneCallback();
+    expect(done).toBeDefined();
+    await act(async () => {
+      done?.({
+        ...DONE_PAYLOAD,
+        citations: undefined,
+        sources: undefined,
+        learn: undefined,
+        grounding: 'grounded' as const,
+        chunks: [
+          {
+            docId: 'pack:opmed-cdp-mlc:doc.md',
+            chunkIndex: 0,
+            score: 0.9,
+            text: 'Pack-grounded passage.',
+            source: 'doc.md',
+            packId: 'opmed-cdp-mlc',
+            packVersion: '1.0.1',
+          },
+        ],
+      });
+    });
+    await flushUi();
+
+    expect(screen.getByTestId('pack-provenance')).toHaveTextContent(
+      'Grounded by knowledge pack(s): opmed-cdp-mlc v1.0.1'
+    );
+  });
+
   it('(d) done firing before ANY re-render still lands — pins the synchronous adoption-site ref write', async () => {
     // Cases (a)/(b) await real timers before firing done, so React commits the
     // setCurrentConversationId re-render and the render-phase mirror

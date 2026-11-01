@@ -93,6 +93,10 @@ describe('browser pack ingestion (R4)', () => {
     expect(slideChunks.length).toBe(fs.readdirSync(SLIDES_DIR).filter((n) => n.endsWith('.json')).length);
     for (const chunk of slideChunks) {
       expect(chunk.packId, `chunk ${chunk.source} lacks packId`).toBe(PACK_ID);
+      // PRR-001 fix (PR #263 review round): the version is stamped next to the
+      // id so chat provenance renders `<packId> v<version>` on the browser
+      // surface too.
+      expect(chunk.packVersion, `chunk ${chunk.source} lacks packVersion`).toBe('1.0.0');
       expect(chunk.text?.split('\n', 1)[0]).toMatch(/^\[training-slide\] section=.* \| title=.* \| slide_id=\S+$/);
     }
   });

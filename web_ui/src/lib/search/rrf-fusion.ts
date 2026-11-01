@@ -13,7 +13,16 @@ import type { SearchResult } from '../../types/search';
 export function rrfFuse(resultsList: SearchResult[][], k: number = 60): SearchResult[] {
   const rrfScores: Record<
     string,
-    { score: number; docId: string; chunkIndex: number; text?: string; source?: string; page?: number }
+    {
+      score: number;
+      docId: string;
+      chunkIndex: number;
+      text?: string;
+      source?: string;
+      page?: number;
+      packId?: string;
+      packVersion?: string;
+    }
   > = {};
 
   for (const results of resultsList) {
@@ -29,6 +38,8 @@ export function rrfFuse(resultsList: SearchResult[][], k: number = 60): SearchRe
           chunkIndex: doc.chunkIndex,
         };
       }
+      // Provenance fields are carried on the accumulator entry (merged below)
+      // so the fused output can forward packId/packVersion (PRR-001 fix).
       const entry = rrfScores[key];
 
       // Merge metadata order-agnostically: first NON-EMPTY value wins for each
@@ -39,6 +50,11 @@ export function rrfFuse(resultsList: SearchResult[][], k: number = 60): SearchRe
       if (entry.text === undefined && doc.text !== undefined) entry.text = doc.text;
       if (entry.source === undefined && doc.source !== undefined) entry.source = doc.source;
       if (entry.page === undefined && doc.page !== undefined) entry.page = doc.page;
+      // Pack provenance rides the same first-non-empty merge (PRR-001 fix, PR
+      // #263 review round): a pack chunk found by either retriever keeps its
+      // packId/packVersion so chat citations can carry answer-time attribution.
+      if (entry.packId === undefined && doc.packId !== undefined) entry.packId = doc.packId;
+      if (entry.packVersion === undefined && doc.packVersion !== undefined) entry.packVersion = doc.packVersion;
 
       // RRF contribution: 1 / (k + rank + 1)
       // +1 because rank is 0-indexed
@@ -56,6 +72,8 @@ export function rrfFuse(resultsList: SearchResult[][], k: number = 60): SearchRe
     text: item.text,
     source: item.source,
     page: item.page,
+    ...(item.packId !== undefined ? { packId: item.packId } : {}),
+    ...(item.packVersion !== undefined ? { packVersion: item.packVersion } : {}),
   }));
 }
 
