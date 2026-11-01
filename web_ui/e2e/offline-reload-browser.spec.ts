@@ -44,6 +44,23 @@ test('the app shell boots offline after one online load (app-shell SW)', async (
     }
   });
 
+  // Readiness for the offline leg requires the worker to CONTROL this page
+  // (activate's clients.claim() takes effect) — `ready` alone can resolve
+  // while the first-visit page is still uncontrolled, and an uncontrolled
+  // page reloads from the network, not the cached shell.
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        if (navigator.serviceWorker.controller !== null) {
+          resolve();
+          return;
+        }
+        navigator.serviceWorker.addEventListener('controllerchange', () => resolve(), {
+          once: true,
+        });
+      })
+  );
+
   // 3) Offline.
   await context.setOffline(true);
   try {

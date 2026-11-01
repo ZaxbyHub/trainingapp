@@ -24,7 +24,12 @@ import { fileURLToPath } from 'node:url';
 import { exec } from 'node:child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const DIST_DIR = join(__dirname, 'dist');
+// Same two-tier resolution as the PowerShell twin (scripts/start.ps1): the
+// distribution package lays dist/ next to this script; in the dev tree the
+// build output lives one level up (web_ui/dist).
+const DIST_DIR = existsSync(join(__dirname, 'dist'))
+  ? join(__dirname, 'dist')
+  : join(__dirname, '..', 'dist');
 const PORT = parseInt(process.argv[2] || '8080', 10);
 
 const MIME_TYPES = {

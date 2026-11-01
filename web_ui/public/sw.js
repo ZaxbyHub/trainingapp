@@ -94,6 +94,25 @@
     return path === '/player-origin.json' || path === '/training-boot.html' || path === '/training-boot.js';
   }
 
+
+  /**
+   * Strip the Vary header before caching. The dev/preview server emits
+   * `Vary: Origin`; Cache Storage keys match() against Vary, so a response
+   * stored by the worker's own no-Origin precache fetch would never match a
+   * page-initiated fetch that carries Origin — the entry becomes unfindable
+   * exactly when offline. (Workbox applies the same normalization.)
+   */
+  function stripVary(response) {
+    if (!response || !response.headers) return response;
+    try {
+      var headers = new Headers(response.headers);
+      headers.delete('vary');
+      return new Response(response.body, { status: response.status, statusText: response.statusText, headers: headers });
+    } catch (err) {
+      return response;
+    }
+  }
+
   self.addEventListener('install', function (event) {
     event.waitUntil(
       caches.open(CACHE_NAME).then(function (cache) {
@@ -106,7 +125,7 @@
             return fetch(url)
               .then(function (response) {
                 if (!response || !response.ok) throw new Error('precache fetch failed: ' + entry);
-                return cache.put(url, response);
+                return cache.put(url, stripVary(response));
               })
               .catch(function (err) {
                 console.warn('[sw] precache skipped:', entry, err && err.message);
@@ -119,18 +138,24 @@
 
   self.addEventListener('activate', function (event) {
     event.waitUntil(
-      caches.keys().then(function (names) {
-        return Promise.all(
+      (async function () {
+        // Prune ONLY this app's own stale shell caches; foreign caches
+        // (webllm, course, anything else) are never touched (R3-6).
+        const names = await caches.keys();
+        await Promise.all(
           names.map(function (name) {
-            // Delete ONLY this app's own stale shell caches; foreign caches
-            // (webllm, course, anything else) are never touched (R3-6).
             if (name.indexOf(CACHE_PREFIX) === 0 && name !== CACHE_NAME) {
               return caches.delete(name);
             }
             return undefined;
           })
         );
-      })
+        // Take control of the already-open page on the FIRST visit, so the
+        // very first load is offline-reloadable without a second visit
+        // (without claim(), a first-visit page is never controlled and the
+        // offline reload misses the cached shell).
+        await self.clients.claim();
+      })()
     );
   });
 
@@ -149,7 +174,7 @@
         if (response && response.ok && path !== '/index.html') {
           // Refresh the offline fallback with the fresh document (R5-1). The
           // clone is consumed by put; the original goes back to the page.
-          cache.put('/index.html', response.clone()).catch(function () {});
+          cache.put('/index.html', stripVary(response.clone())).catch(function () {});
         }
         return response;
       },
@@ -168,7 +193,7 @@
       if (cached) return cached;
       return fetch(request).then(function (response) {
         if (response && response.ok) {
-          cache.put(request, response.clone()).catch(function () {});
+          cache.put(request, stripVary(response.clone())).catch(function () {});
         }
         return response;
       });
@@ -180,7 +205,7 @@
     return fetch(request).then(
       function (response) {
         if (response && response.ok) {
-          cache.put(request, response.clone()).catch(function () {});
+          cache.put(request, stripVary(response.clone())).catch(function () {});
         }
         return response;
       },
