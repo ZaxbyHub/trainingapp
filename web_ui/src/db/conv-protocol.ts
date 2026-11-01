@@ -24,12 +24,14 @@
  *     matches the epoch the caller's state was loaded under — an
  *     IndexedDB-atomic stale-write gate (R4-3/R5-3).
  *
- *  3. Pending-clear record + boot replay — a clear first writes
- *     {pending: {epochGoal, profile}} to localStorage (this write IS the
- *     cross-tab storage event), then clears, then writes {completed}. A boot
- *     (or the 30 s re-arm poll) replays a still-pending record to its goal,
- *     arbitrated by the exclusive active-lock and bound to the RECORDED
- *     profile's db (R5-6/R6-4/R7-2).
+ *  3. Pending-clear record + boot replay — a clear ARBITRATES FIRST (the
+ *     exclusive session-active lock; a busy/active colleague defers with
+ *     NOTHING persisted, so other tabs never see a deferred clear), then
+ *     writes {pending: {epochGoal, profile}} to localStorage (this write IS
+ *     the cross-tab storage event), then clears, then writes {completed}. A
+ *     boot (or the 30 s re-arm poll) replays a still-pending record to its
+ *     goal, arbitrated by the same exclusive lock and bound to the RECORDED
+ *     profile's db (R5-6/R6-4/R7-2, review F4).
  *
  *  4. Legacy adoption claim — the pre-profile SHARED db `docqa_conversations`
  *     is adopted by exactly one profile, arbitrated by an IndexedDB-atomic
@@ -302,31 +304,36 @@ function markCompleted(epochGoal: number): void {
 export type ClearAllResult = { cleared: boolean } | { deferred: true };
 
 /**
- * The full clear protocol (R5-6/R6-4): write the pending record (this
- * localStorage write IS the cross-tab storage event that resets other tabs),
- * arbitrate the workstation via the EXCLUSIVE session-active lock (busy or
- * active colleagues defer the clear), then under the origin-wide write lock
- * run ONE epoch transaction: bump the epoch to the goal (only when the db is
- * still behind it — idempotent) and empty the conversations table. The
- * pending record resolves to completed either way, so a crash between the
- * pending write and the transaction replays harmlessly at boot (R7-2's
- * currentEpoch >= goal → mark completed arm).
+ * The full clear protocol (R5-6/R6-4), LOCKS-FIRST (review F4 — the same
+ * order the boot replay uses): arbitrate the workstation via the EXCLUSIVE
+ * session-active lock FIRST; a busy or active colleague defers the clear
+ * WITHOUT writing anything — a deferred clear must be invisible to other
+ * tabs, because the pending record's localStorage write IS the cross-tab
+ * storage event that resets them (an un-arbitrated write would cancel a
+ * colleague's in-flight stream and wipe their in-memory state for a clear
+ * that never ran). Only after acquisition: write the pending record, then
+ * under the origin-wide write lock run ONE epoch transaction — bump the
+ * epoch to the goal (only when the db is still behind it — idempotent) and
+ * empty the conversations table — then resolve the record to completed.
+ * Crash windows are unchanged in substance: a crash before the pending
+ * write leaves nothing persisted (nothing cleared, nothing to replay); a
+ * crash between the pending write and the transaction replays harmlessly
+ * at boot (R7-2's currentEpoch >= goal → mark completed arm).
  */
 export async function clearAllConversationsInDb(
   profile: string = getProfilePrefix(),
 ): Promise<ClearAllResult> {
   const isCurrent = profile === getProfilePrefix();
   const target = isCurrent ? db : openProfileDb(profile);
-  const epochGoal = (await readEpochOf(target)) + 1;
-  writeClearRecord({ pending: { epochGoal, profile }, completed: readClearRecord().completed });
+  // LOCKS FIRST: a deferred clear persists NOTHING (review F4).
   const exclusive = await tryAcquireSessionActiveExclusive();
   if (!exclusive.acquired) {
     if (!isCurrent) target.close();
-    // Pending stays recorded: the boot replay / re-arm poll retries it once
-    // the workstation is quiet.
     return { deferred: true };
   }
   try {
+    const epochGoal = (await readEpochOf(target)) + 1;
+    writeClearRecord({ pending: { epochGoal, profile }, completed: readClearRecord().completed });
     await withConversationWriteLock(async () => {
       await target.transaction('rw', target.conversations, target.meta, async () => {
         const current = await readEpochOf(target);

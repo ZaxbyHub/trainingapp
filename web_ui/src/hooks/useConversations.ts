@@ -529,12 +529,12 @@ export function useConversations() {
 
   /**
    * Clear EVERY conversation of the active profile (issue #34 item 6p,
-   * AC6): the full conv-protocol clear — pending record (the cross-tab
-   * storage event), workstation arbitration (busy/active colleagues defer),
-   * one epoch transaction emptying the whole table (not a 50-row page). On
-   * success the in-memory state resets with a fresh epoch. Returns
-   * {deferred: true} when the clear was deferred (the pending record stays
-   * for the boot/re-arm replay).
+   * AC6): the full conv-protocol clear — locks-first workstation
+   * arbitration (busy/active colleagues defer with NOTHING persisted), then
+   * the pending record (the cross-tab storage event), then one epoch
+   * transaction emptying the whole table (not a 50-row page). On success
+   * the in-memory state resets with a fresh epoch. Returns {deferred: true}
+   * when the clear was deferred (the re-arm poll retries it).
    */
   const clearAllConversations = useCallback(async (): Promise<{ cleared: boolean } | { deferred: true }> => {
     const result = await clearAllConversationsInDb(getProfilePrefix());

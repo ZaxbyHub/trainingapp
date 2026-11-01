@@ -33,7 +33,7 @@ import { createConversation } from '../../db/conversations';
 import { startInactivityWatch, type InactivityWatchOptions } from './inactivity';
 import { anyHandlerBusy, registerClearHandler, resetSessionClearBusForTests } from './session-clear';
 import { conversationsOf, resetFakeDexie } from '../../test/fake-dexie';
-import { PROFILE_KEY } from '../storage/persisted-keys';
+import { CONVERSATIONS_CLEARED_KEY, PROFILE_KEY } from '../storage/persisted-keys';
 import type { Conversation } from '../../db/conversations';
 
 vi.stubGlobal('indexedDB', {});
@@ -240,7 +240,7 @@ describe('inactivity fire -> persisted clear through REAL locks (review F1)', ()
     expect(await readConversationEpoch()).toBe(2);
   });
 
-  it('a colleague tab holding the session-active lock DEFERS the clear; the poll completes it once the workstation is quiet', async () => {
+  it('a colleague tab holding the session-active lock DEFERS the clear INVISIBLY; the poll completes it once the workstation is quiet (review F4)', async () => {
     for (let i = 0; i < 3; i++) await createConversation(conv(i));
     const releaseColleague = await holdSharedAsOtherTab();
 
@@ -251,22 +251,35 @@ describe('inactivity fire -> persisted clear through REAL locks (review F1)', ()
     activity();
 
     // Idle fire under the colleague's shared hold: the persisted clear's OWN
-    // exclusive arbitration refuses, so the clear is deferred — the data
-    // stays (with a durable pending record), no notice yet.
+    // exclusive arbitration (LOCKS-FIRST, review F4) refuses, so the clear
+    // defers WITHOUT writing any record — the colleague's tab receives no
+    // storage event (their stream and in-memory state stay untouched), the
+    // data stays, and no notice surfaces.
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem');
     await vi.advanceTimersByTimeAsync(15 * MIN);
     expect(conversationsOf(DB_NAME)).toHaveLength(3);
     expect(onCleared).not.toHaveBeenCalled();
-    expect(readClearRecord().pending).toEqual({ epochGoal: 1, profile: PREFIX });
-    expect(readClearRecord().completed).toBeNull();
+    expect(readClearRecord()).toEqual({ pending: null, completed: null });
+    // No cleared-at write happened at all during the deferred fire: nothing
+    // for another tab's storage-event listener to observe.
+    expect(setItemSpy.mock.calls.filter(([key]) => key === CONVERSATIONS_CLEARED_KEY)).toEqual([]);
 
     // The colleague closes their tab; the 30 s re-arm poll retries and the
-    // clear completes.
+    // ARBITRATED clear completes: the pending record (the cross-tab event)
+    // exists from this moment, resolves to completed, and the notice lands.
     releaseColleague();
     await vi.advanceTimersByTimeAsync(30_000);
     expect(conversationsOf(DB_NAME)).toHaveLength(0);
     expect(await readConversationEpoch()).toBe(1);
     expect(readClearRecord()).toEqual({ pending: null, completed: { epochGoal: 1 } });
     expect(onCleared).toHaveBeenCalledTimes(1);
+    const recordWrites = setItemSpy.mock.calls
+      .filter(([key]) => key === CONVERSATIONS_CLEARED_KEY)
+      .map(([, value]) => JSON.parse(value as string) as { pending: unknown; completed: unknown });
+    expect(recordWrites.length).toBeGreaterThanOrEqual(2);
+    expect(recordWrites[0]?.pending).toEqual({ epochGoal: 1, profile: PREFIX });
+    expect(recordWrites.at(-1)).toEqual({ pending: null, completed: { epochGoal: 1 } });
+    setItemSpy.mockRestore();
   });
 
   it('the watch holds its own shared session-active lock while armed, and releases it at the fire', async () => {
