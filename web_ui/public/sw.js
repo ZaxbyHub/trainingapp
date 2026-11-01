@@ -197,9 +197,13 @@
   function handleNavigation(request, cache, path) {
     return fetch(request).then(
       function (response) {
-        if (response && response.ok && isShellNavigationPath(path)) {
-          // Refresh the offline fallback with the fresh document (R5-1). The
-          // clone is consumed by put; the original goes back to the page.
+        // Refresh the offline fallback ONLY for app-document navigations to
+        // the scope root (R5-1) — never for a direct fetch of the literal
+        // shell path: the frozen C3 contract keeps the cached fallback copy
+        // distinct from what a direct /index.html fetch returned, so an
+        // API/JSON response (PRR-109) can never poison the shell key and a
+        // shell re-fetch cannot clobber the seeded fallback.
+        if (response && response.ok && path === SCOPE_ROOT_PATH) {
           cache.put(SHELL_INDEX_PATH, stripVary(response.clone())).catch(function () {});
         }
         return response;
