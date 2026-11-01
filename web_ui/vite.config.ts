@@ -292,9 +292,21 @@ function swPrecacheManifestPlugin(): Plugin {
       // service worker precaches nothing — an offline shell that cannot
       // boot offline.
       const manifestPath = path.join(outDir, 'sw-precache-manifest.js');
+      // Atomic write (PRR-118 final): a truncated manifest (mid-write crash)
+      // would otherwise be importable by sw.js — its importScripts try/catch
+      // then precaches nothing and the offline shell silently boots empty.
+      // Write to a temp file in the same directory and rename over the target
+      // so the manifest is never observable half-written.
+      const tmpPath = `${manifestPath}.tmp`;
       try {
-        fs.writeFileSync(manifestPath, body, 'utf8');
+        fs.writeFileSync(tmpPath, body, 'utf8');
+        fs.renameSync(tmpPath, manifestPath);
       } catch (error) {
+        try {
+          fs.rmSync(tmpPath, { force: true });
+        } catch {
+          /* best-effort temp cleanup */
+        }
         throw new Error(
           `sw-precache-manifest: failed to write ${manifestPath} (${entries.length} entries): ` +
             `${error instanceof Error ? error.message : String(error)}`,
