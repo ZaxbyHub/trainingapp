@@ -204,9 +204,8 @@ async function stubHardware(page: Page): Promise<void> {
     Object.defineProperty(Navigator.prototype, 'gpu', { configurable: true, get: () => gpu });
     const storage = navigator.storage;
     if (storage) {
-      const realEstimate = storage.estimate.bind(storage);
       storage.estimate = async () => ({
-        ...(await realEstimate()),
+        usage: 3_500_000,
         quota: 10 * 1024 * 1024 * 1024,
       });
       storage.persisted = async () => false;
@@ -225,6 +224,17 @@ async function boot(page: Page, theme: 'light' | 'dark'): Promise<void> {
       /* ignore */
     }
   }, theme);
+  // The Profile-data section renders the active profile prefix (issue #34
+  // item 6p); pin it so the Settings baselines are deterministic. The value
+  // must satisfy getProfilePrefix's ^[a-z0-9]{3,8}$ guard (profile.ts m1) —
+  // an invalid value is discarded and a random prefix minted instead.
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem('doc-qa-profile-id', 'baseline');
+    } catch {
+      /* ignore */
+    }
+  });
   await page.goto('/');
   await waitReady(page);
 }
@@ -254,7 +264,7 @@ async function seedPopulated(page: Page): Promise<void> {
       // name `docqa_conversations`.
       const openConversations = () =>
         new Promise<IDBDatabase>((res, rej) => {
-          const r = indexedDB.open(`${prefix}-doc-qa-conversations`, 2);
+          const r = indexedDB.open(`${prefix}-doc-qa-conversations`);
           r.onupgradeneeded = () => {
             if (!r.result.objectStoreNames.contains('conversations')) {
               r.result.createObjectStore('conversations', { keyPath: 'id' });
