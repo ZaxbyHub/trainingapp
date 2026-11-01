@@ -46,7 +46,7 @@ import {
   presetIsNResultsOnly,
   type DesktopPresetState,
 } from '../lib/rag/rag-presets';
-import { clearSessionSettings, clearUserSettings, DIAGNOSTICS_ENHANCED_KEY } from '../lib/storage/persisted-keys';
+import { clearSessionSettings, clearUserSettings, DIAGNOSTICS_ENHANCED_KEY, INACTIVITY_TIMEOUT_KEY } from '../lib/storage/persisted-keys';
 import { enhancedLoggingEnabled, setEnhancedLogging } from '../lib/logging';
 import { exportDiagnostics } from '../lib/logging/export';
 import {
@@ -72,17 +72,20 @@ import {
   Banner,
   Button,
   Checkbox,
+  Field,
   Icon,
   KeyValueList,
   PageHeader,
   SegmentedControl,
+  TextInput,
   type KeyValueItem,
 } from '../ui';
 import {
   getProfilePrefix,
   deleteNamespace,
-  listStalePrefixes,
 } from '../lib/storage/profile';
+import { SettingsStorageSection } from './SettingsStorageSection';
+import { SettingsProfileSection } from './SettingsProfileSection';
 
 // ============================================================================
 // First-run setup (E2, issue #85): status + manual "Re-run setup" entry.
@@ -620,6 +623,84 @@ function DiagnosticsSection(): React.ReactElement {
 }
 
 // ============================================================================
+// Inactivity auto-clear threshold (issue #34 item 6p, AC6/R3-3): a
+// WORKSTATION-LEVEL user setting — one key shared by every profile (the
+// posture is a property of the machine; conversation data stays per-profile).
+// ============================================================================
+
+/** Product-facing disclosure copy (pinned by control-level tests). */
+export const INACTIVITY_DISCLOSURE_COPY =
+  'Clears conversation history on this profile after inactivity. Default 15 minutes. 0 disables. Deletion is permanent.';
+
+export const INACTIVITY_CONTROL_DEFAULT_MIN = 15;
+export const INACTIVITY_CONTROL_MAX_MIN = 120;
+
+function readStoredThreshold(): number {
+  try {
+    const raw = localStorage.getItem(INACTIVITY_TIMEOUT_KEY);
+    if (raw === null) return INACTIVITY_CONTROL_DEFAULT_MIN;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) return INACTIVITY_CONTROL_DEFAULT_MIN;
+    return Math.min(Math.max(Math.round(parsed), 0), INACTIVITY_CONTROL_MAX_MIN);
+  } catch {
+    return INACTIVITY_CONTROL_DEFAULT_MIN;
+  }
+}
+
+function InactivityTimeoutControl(): React.ReactElement {
+  const [threshold, setThreshold] = useState<number>(() => readStoredThreshold());
+  const [saved, setSaved] = useState<number | null>(null);
+
+  const handleChange = (raw: string): void => {
+    // Accept an empty field while typing; persist only explicit numbers.
+    if (raw.trim() === '') return;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) return;
+    const clamped = Math.min(Math.max(Math.round(parsed), 0), INACTIVITY_CONTROL_MAX_MIN);
+    setThreshold(clamped);
+    try {
+      localStorage.setItem(INACTIVITY_TIMEOUT_KEY, String(clamped));
+      setSaved(clamped);
+    } catch {
+      setSaved(null);
+    }
+  };
+
+  return (
+    <div className="settings-group" data-testid="inactivity-control">
+      <p className="settings-label">Inactivity auto-clear</p>
+      <div className="settings-row">
+        <Field label="Clear after (minutes)">
+          {(field) => (
+            <TextInput
+              {...field}
+              type="number"
+              min={0}
+              max={INACTIVITY_CONTROL_MAX_MIN}
+              step={1}
+              value={threshold}
+              data-testid="inactivity-threshold-input"
+              className="settings-input--narrow"
+              onChange={(event) => handleChange(event.currentTarget.value)}
+            />
+          )}
+        </Field>
+        <span className="settings-text" data-testid="inactivity-disclosure">
+          {INACTIVITY_DISCLOSURE_COPY}
+        </span>
+      </div>
+      <p className="settings-text" role="status" data-testid="inactivity-saved-note">
+        {saved !== null
+          ? saved === 0
+            ? 'Auto-clear disabled (0 minutes).'
+            : `Auto-clear armed at ${saved} minutes of inactivity.`
+          : ''}
+      </p>
+    </div>
+  );
+}
+
+// ============================================================================
 // SettingsPage (inner component — uses contexts)
 // ============================================================================
 
@@ -1050,8 +1131,9 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
   // Previously deleted a nonexistent bare 'doc-qa-documents' DB (no profile
   // prefix) and an OPFS dir no engine uses — a near-total no-op. Now reuses
   // PR-4's profile-scoped namespace utilities to delete the real user-prefixed
-  // document/keyword/vector-mapping DBs, the EdgeVec HNSW blob, stale orphan
-  // namespaces, the settings DB, and the webllm Cache Storage entries.
+  // document/keyword/vector-mapping DBs, the EdgeVec HNSW blob, the settings
+  // DB, and the webllm Cache Storage entries. (Orphan namespaces: retired
+  // from this path — see the Profile data section, R3-5.)
   // settings-wiring-honesty (AC5): it also removes every registered
   // browser-stored user setting (lib/storage/persisted-keys) and then reloads,
   // so the in-memory contexts cannot re-persist the cleared values.
@@ -1098,13 +1180,11 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
       //    Resolves PRR-008: deleteNamespace cannot reach this shared DB.
       await attempt('vector index', () => deleteEdgeVecBlob(prefix));
 
-      // 3. Stale/orphan namespaces from prior sessions/profiles.
-      await attempt('orphaned data', async () => {
-        const stale = await listStalePrefixes();
-        if (stale.length > 0) {
-          await Promise.all(stale.map((p) => deleteNamespace(p)));
-        }
-      });
+      // (3 — the old blanket orphan-namespace deletion step — is RETIRED,
+      // issue #34 item 6p R3-5: unregistered namespaces are surfaced in
+      // Settings → Profile data with explicit per-prefix Adopt/Delete rows,
+      // and a colleague's REGISTERED profile is never touched by another
+      // profile's Clear Cache.)
 
       // 4. Legacy settings IndexedDB (non-prefixed; written by earlier builds).
       await attempt('legacy settings database', () =>
@@ -1692,6 +1772,16 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
               &amp; connection). Update checks (Updates) and WebLLM model downloads use the network only after
               you opt in or start them.
             </p>
+            {/* ==============================================================
+                Shared-workstation posture (issue #34 item 6p): the profile
+                surface (registry, switch, create, orphan Adopt/Delete,
+                corrupt-registry recovery, legacy conversation adoption).
+                ============================================================== */}
+            <SettingsProfileSection />
+            {/* Storage-pressure indicator (issue #34 item 7, AC4). */}
+            <SettingsStorageSection />
+            {/* Inactivity auto-clear threshold (issue #34 item 6p, AC6). */}
+            <InactivityTimeoutControl />
             {/* Per-kind packaged-model readiness (issue #24 F6): each kind is
                 reported individually, scoped to the selected engine. */}
             {packagesReady && (
@@ -1740,8 +1830,8 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
                     what is removed and what is kept in each app. */}
                 {clearCacheState === 'confirming'
                   ? desktopApp
-                    ? `This deletes the browser-side document and keyword/vector index databases kept in this app window, any WebLLM model files downloaded in this window, orphaned data from earlier sessions, and your saved settings here (${CLEARED_SETTINGS_COPY}), then reloads. Kept: your chat history (conversations), and the documents and settings stored by the desktop backend; to remove documents, use the Documents page. This cannot be undone.`
-                    : `This deletes the documents and keyword/vector indexes stored in this browser, installed training and knowledge packs, downloaded WebLLM model files (the default wllama engine stores none), and your saved settings (${CLEARED_SETTINGS_COPY}), plus orphaned data from earlier sessions, then reloads the page. Your chat history (conversations) is kept. This cannot be undone.`
+                    ? `This deletes the browser-side document and keyword/vector index databases kept in this app window, any WebLLM model files downloaded in this window, and your saved settings here (${CLEARED_SETTINGS_COPY}), then reloads. Kept: your chat history (conversations), and the documents and settings stored by the desktop backend; to remove documents, use the Documents page. Other profiles' data is managed under Profile data. This cannot be undone.`
+                    : `This deletes the documents and keyword/vector indexes stored in this browser, installed training and knowledge packs, downloaded WebLLM model files (the default wllama engine stores none), and your saved settings (${CLEARED_SETTINGS_COPY}), then reloads the page. Your chat history (conversations) is kept; other profiles' data is managed under Profile data. This cannot be undone.`
                   : desktopApp
                     ? "Clear this app's browser-side indexes, any WebLLM model files downloaded in this window, and saved settings. Chat history and documents in the desktop library are kept."
                     : 'Clear downloaded WebLLM model files (the default wllama engine stores none), search indexes, installed packs, and saved settings in this browser. Chat history is kept.'}

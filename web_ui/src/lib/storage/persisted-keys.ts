@@ -56,6 +56,14 @@ export const PACK_UPDATES_STATE_KEY = 'pack-updates';
  */
 export const DIAGNOSTICS_ENHANCED_KEY = 'diagnostics-enhanced-logging';
 
+/**
+ * Workstation-level inactivity auto-clear threshold in minutes (issue #34
+ * item 6p): '15' = default, '0' = disabled. Shared by every profile on the
+ * machine — the posture is a property of the workstation, conversation data
+ * stays per-profile. Clear Cache removes it (it is a user setting).
+ */
+export const INACTIVITY_TIMEOUT_KEY = 'inactivity-timeout-min';
+
 /** User settings: Clear Cache removes every one of these. */
 export const USER_SETTING_KEYS: readonly string[] = [
   INFERENCE_MODE_KEY,
@@ -69,6 +77,7 @@ export const USER_SETTING_KEYS: readonly string[] = [
   TRAINING_PROGRESS_KEY,
   PACK_UPDATES_STATE_KEY,
   DIAGNOSTICS_ENHANCED_KEY,
+  INACTIVITY_TIMEOUT_KEY,
 ];
 
 /** Session-scoped user settings (sessionStorage): Clear Cache removes these too. */
@@ -80,13 +89,43 @@ export const PROFILE_KEY = 'doc-qa-profile-id';
 export const MIGRATION_KEY = 'doc-qa-profile-migrated';
 /** One-time "re-add your documents" notice flag (vector index version change). */
 export const REINDEX_FLAG_KEY = 'rag-reindex-required';
+/**
+ * Registered profile prefixes (issue #34 item 6p, R4-5/R5-5): JSON array of
+ * profile prefixes. Profiles are registered explicitly (first boot of an
+ * upgraded install, first-run wizard completion, profile switching, or the
+ * Settings "Adopt orphan" action); a registered profile is never an orphan
+ * candidate for automatic migration or another profile's Clear Cache.
+ * Internal bookkeeping — Clear Cache keeps it.
+ */
+export const REGISTERED_PROFILES_KEY = 'docqa_registered_profiles';
+/**
+ * Conversation-clear protocol record (issue #34 item 6p, R5-6/R6-4): JSON
+ * {pending: {epochGoal, profile} | null, completed: {epochGoal} | null}. The
+ * pending goal is replayed at boot (arbitrated) so a crash between the
+ * pending stamp and the epoch transaction still clears. Internal.
+ */
+export const CONVERSATIONS_CLEARED_KEY = 'docqa_conversations_cleared_at';
+/**
+ * Legacy shared-conversations adoption done-marker (R5-2/R7-1). The legacy
+ * `docqa_conversations` db itself carries the atomic ownership claim; this
+ * marker only short-circuits the check after a successful migration.
+ * Internal.
+ */
+export const LEGACY_CONV_MIGRATION_DONE_KEY = 'docqa_conv_migration_done';
 
 /**
  * Internal bookkeeping, not user settings: Clear Cache keeps these. The
  * profile id and migration marker identify the (now emptied) storage
  * namespace, so the next session reuses it instead of minting an orphan.
  */
-export const INTERNAL_KEYS: readonly string[] = [PROFILE_KEY, MIGRATION_KEY, REINDEX_FLAG_KEY];
+export const INTERNAL_KEYS: readonly string[] = [
+  PROFILE_KEY,
+  MIGRATION_KEY,
+  REINDEX_FLAG_KEY,
+  REGISTERED_PROFILES_KEY,
+  CONVERSATIONS_CLEARED_KEY,
+  LEGACY_CONV_MIGRATION_DONE_KEY,
+];
 
 /**
  * Fired after Clear Cache removes user settings (this module stays import-free, so

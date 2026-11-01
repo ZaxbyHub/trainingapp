@@ -46,9 +46,24 @@ async function boot(page: Page, baseURL: string, model = 'probe-model', external
 
 /** One conversation whose answer carries two structured citations, then reload. */
 async function seedCitedConversation(page: Page, longNames = false, onlyFirst = false): Promise<void> {
-  await page.evaluate(async ({ now, longNames, onlyFirst }) => {
+  // Conversations are per-profile since issue #34 item 6p: seed the ACTIVE
+  // profile's Dexie database (`<prefix>-doc-qa-conversations`), not the
+  // retired shared legacy name.
+  const prefix = await page.evaluate(() => localStorage.getItem('doc-qa-profile-id'));
+  expect(prefix, 'profile id is minted at boot').toBeTruthy();
+  await page.evaluate(async ({ now, longNames, onlyFirst, name }) => {
     const db = await new Promise<IDBDatabase>((res, rej) => {
-      const r = indexedDB.open('docqa_conversations');
+      // Same schema the app's Dexie declares (version 2: conversations +
+      // meta); the upgrade is a no-op when the app already created the db.
+      const r = indexedDB.open(name, 2);
+      r.onupgradeneeded = () => {
+        if (!r.result.objectStoreNames.contains('conversations')) {
+          r.result.createObjectStore('conversations', { keyPath: 'id' });
+        }
+        if (!r.result.objectStoreNames.contains('meta')) {
+          r.result.createObjectStore('meta', { keyPath: 'key' });
+        }
+      };
       r.onsuccess = () => res(r.result);
       r.onerror = () => rej(r.error);
     });
@@ -80,7 +95,7 @@ async function seedCitedConversation(page: Page, longNames = false, onlyFirst = 
       t.onerror = () => rej(t.error);
     });
     db.close();
-  }, { now: NOW, longNames, onlyFirst });
+  }, { now: NOW, longNames, onlyFirst, name: `${prefix}-doc-qa-conversations` });
   // Not page.reload(): under the app's COOP same-origin header Playwright's Firefox never completes a
   // same-URL navigation (reload / goto of the current URL hang until the test timeout). Leaving through
   // about:blank is the same fresh load of the app with the same storage, in every engine.

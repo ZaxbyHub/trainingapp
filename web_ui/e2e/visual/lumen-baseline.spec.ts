@@ -36,8 +36,9 @@
  *   boot-screen-loading   DesktopBootGate before the shell, "Starting TrainingApp" (stubbed desktopApi whose
  *   boot-screen-error     discovery never settles / rejects: "Desktop backend unavailable" + Retry); also
  *                         outside the shell
- * Seeding writes raw IndexedDB records (conversations: Dexie store
- * `docqa_conversations`; documents: `<profile>-doc-qa-documents`) and reloads;
+ * Seeding writes raw IndexedDB records (conversations: the ACTIVE profile's
+ * Dexie store `<profile>-doc-qa-conversations`; documents: `<profile>-doc-qa-documents`)
+ * and reloads;
  * no model weights are needed. A fixed clock and UTC/en-US keep dates stable.
  *
  * NOT covered (deferred, reported): FirstRunWizard and DesktopModelBlockedOverlay
@@ -247,6 +248,24 @@ async function seedPopulated(page: Page): Promise<void> {
           t.oncomplete = () => res();
           t.onerror = () => rej(t.error);
         });
+      // Conversations are per-profile since issue #34 item 6p: the store is
+      // the ACTIVE profile's Dexie database (`<prefix>-doc-qa-conversations`,
+      // version 2 schema conversations+meta), not the retired shared legacy
+      // name `docqa_conversations`.
+      const openConversations = () =>
+        new Promise<IDBDatabase>((res, rej) => {
+          const r = indexedDB.open(`${prefix}-doc-qa-conversations`, 2);
+          r.onupgradeneeded = () => {
+            if (!r.result.objectStoreNames.contains('conversations')) {
+              r.result.createObjectStore('conversations', { keyPath: 'id' });
+            }
+            if (!r.result.objectStoreNames.contains('meta')) {
+              r.result.createObjectStore('meta', { keyPath: 'key' });
+            }
+          };
+          r.onsuccess = () => res(r.result);
+          r.onerror = () => rej(r.error);
+        });
       const docs = await open(`${prefix}-doc-qa-documents`);
       const doc = (id: string, fileName: string, status: string, extra: object = {}) => ({
         id,
@@ -267,7 +286,7 @@ async function seedPopulated(page: Page): Promise<void> {
         doc('d3', 'Broken.pdf', 'error', { errorMessage: 'Could not extract text', progress: 0, chunkCount: 0 })
       );
       docs.close();
-      const conv = await open('docqa_conversations');
+      const conv = await openConversations();
       const msg = (id: string, role: string, content: string, extra: object = {}) => ({
         id,
         role,

@@ -15,6 +15,7 @@ import { IsolationBanner } from '../components/IsolationBanner';
 import { PinnedSlideContext, pinnedSlideLabel, type PinnedSlide } from '../components/PinnedSlideContext';
 import { useInferenceMode } from '../lib/inference';
 import { InferenceModeToggle } from '../components/InferenceModeToggle';
+import { registerClearHandler } from '../lib/session/session-clear';
 import { TokenStreamManager } from '../lib/streaming';
 import { DESKTOP_FIRST_BYTE_TIMEOUT_MS, DEFAULT_FIRST_BYTE_TIMEOUT_MS } from '../lib/api/streaming';
 import { RAGOrchestrator } from '../lib/rag/rag-orchestrator';
@@ -326,6 +327,20 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     setTurnStopped(true);
     setIsLoading(false);
   }, [browserEngine]);
+
+  // Issue #34 item 6p (AC6, session-clear bus): register this page's clear
+  // handler — isBusy while a generation streams (the inactivity auto-clear
+  // DEFERS instead of killing the turn), onClear cancels the in-flight
+  // stream and resets the local message state. Re-registered when isLoading
+  // flips so isBusy always reflects the live stream state. Cleanup
+  // unregisters on unmount.
+  useEffect(() => registerClearHandler({
+    isBusy: () => isLoading || tokenStreamManagerRef.current !== null || abortControllerRef.current !== null,
+    onClear: () => {
+      cancelActiveStream();
+      setMessages([]);
+    },
+  }), [isLoading, cancelActiveStream, setMessages]);
 
   useEffect(() => {
     if (prevConversationIdRef.current !== currentConversationId && tokenStreamManagerRef.current) {

@@ -52,9 +52,10 @@ describe('useConversations', () => {
     // Default mock implementations
     mockListConversations.mockResolvedValue([]);
     mockGetConversation.mockResolvedValue(undefined);
-    mockCreateConversation.mockResolvedValue(undefined);
-    mockUpdateConversation.mockResolvedValue(undefined);
-    mockDeleteConversation.mockResolvedValue(undefined);
+    // Epoch-gated mutations (issue #34 item 6p) resolve true = "applied".
+    mockCreateConversation.mockResolvedValue(true);
+    mockUpdateConversation.mockResolvedValue(true);
+    mockDeleteConversation.mockResolvedValue(true);
     mockCountConversations.mockResolvedValue(0);
     mockSearchConversations.mockResolvedValue({ matches: [], truncated: false });
   });
@@ -309,7 +310,7 @@ describe('useConversations', () => {
 
       expect(mockUpdateConversation).toHaveBeenCalledWith('conv-1', expect.objectContaining({
         title: 'New Title',
-      }));
+      }), expect.anything());
     });
 
     it('removeConversation removes conversation from list', async () => {
@@ -337,7 +338,7 @@ describe('useConversations', () => {
         await result.current.removeConversation('conv-1');
       });
 
-      expect(mockDeleteConversation).toHaveBeenCalledWith('conv-1');
+      expect(mockDeleteConversation).toHaveBeenCalledWith('conv-1', expect.anything());
       expect(result.current.conversations.length).toBe(1);
       expect(result.current.conversations[0].id).toBe('conv-2');
     });
@@ -525,7 +526,8 @@ describe('useConversations', () => {
           messages,
           mode: 'server',
           modelUsed: 'gpt-4',
-        })
+        }),
+        expect.anything()
       );
       expect(result.current.currentConversationId).toBeTruthy();
     });
@@ -564,7 +566,8 @@ describe('useConversations', () => {
         'existing-conv',
         expect.objectContaining({
           messages: newMessages,
-        })
+        }),
+        expect.anything()
       );
       expect(mockCreateConversation).not.toHaveBeenCalled();
     });
@@ -591,7 +594,8 @@ describe('useConversations', () => {
       expect(mockCreateConversation).toHaveBeenCalledWith(
         expect.objectContaining({
           title: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA...',
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -611,7 +615,8 @@ describe('useConversations', () => {
       expect(mockCreateConversation).toHaveBeenCalledWith(
         expect.objectContaining({
           title: 'New conversation',
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -627,9 +632,19 @@ describe('useConversations', () => {
 
       const { result } = renderHook(() => useConversations());
 
-      // Call saveMessages - it should throw and be caught
-      act(() => {
-        result.current.saveMessages(undefined, messages, 'server', 'test-model');
+      // Let the mount init settle first: the boot path now runs the
+      // legacy-adoption/pending-clear protocol before its initial refresh
+      // (issue #34 item 6p), and that refresh's success path clears
+      // persistenceError — the failing save below must be the LAST word.
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      // Call saveMessages - it should throw and be caught. saveMessages now
+      // awaits the state epoch before the write (issue #34 item 6p), so the
+      // failure surfaces asynchronously.
+      await act(async () => {
+        await result.current.saveMessages(undefined, messages, 'server', 'test-model');
       });
 
       // The error should be caught and persistenceError should be set
@@ -695,7 +710,8 @@ describe('useConversations', () => {
         'existing-conv',
         expect.objectContaining({
           messages: expect.any(Array),
-        })
+        }),
+        expect.anything()
       );
       const persisted = mockUpdateConversation.mock.calls[0][1].messages;
       expect(persisted.every((m: ChatMessage) => m.isStreaming === undefined)).toBe(true);

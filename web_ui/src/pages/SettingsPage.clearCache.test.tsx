@@ -52,6 +52,21 @@ vi.mock('../lib/storage/profile', () => ({
   getProfilePrefix: () => getProfilePrefixMock(),
   deleteNamespace: (prefix: string) => deleteNamespaceMock(prefix),
   listStalePrefixes: () => listStalePrefixesMock(),
+  // Profile-registry surface (issue #34 item 6p) used by Settings -> Profile data.
+  listRegisteredProfiles: () => ({ profiles: ['testprfx'], healthy: true }),
+  isRegisteredProfile: () => false,
+  registerProfile: () => true,
+  unregisterProfile: () => true,
+  newProfilePrefix: () => 'newprof',
+  resetProfileRegistry: () => false,
+  // The conversations Dexie name derives from this (issue #34 item 6p).
+  getStorageDbNames: () => ({
+    documents: 'testprfx-doc-qa-documents',
+    vectorMapping: 'testprfx-doc-qa-indexes',
+    vector: 'testprfx-doc-qa-index',
+    keyword: 'testprfx-doc-qa-keywords',
+    conversations: 'testprfx-doc-qa-conversations',
+  }),
 }));
 
 const mockModelReadinessGateInstance = {
@@ -397,7 +412,10 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
       screen.getByText(/this deletes the documents and keyword\/vector indexes stored in this browser/i)
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/orphaned data from earlier sessions/i)
+      // R3-5 (issue #34 item 6p): orphan namespaces are no longer blanket-
+      // deleted here; the copy hands them to the explicit Profile data
+      // surface instead.
+      screen.getByText(/other profiles' data is managed under profile data/i)
     ).toBeInTheDocument();
   });
 
@@ -699,7 +717,7 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
   });
 
   // ADV-3: stale prefix cleanup path (listStalePrefixes returns non-empty)
-  test('Clear Cache deletes stale orphan namespaces (ADV-3)', async () => {
+  test('Clear Cache never deletes orphan namespaces (R3-5: explicit Adopt/Delete surface)', async () => {
     listStalePrefixesMock.mockResolvedValueOnce(['orphan1', 'orphan2']);
 
     render(<SettingsPage />);
@@ -712,10 +730,12 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     fireEvent.click(clearButton);
     fireEvent.click(clearButton);
 
-    // deleteNamespace should be called for the current profile AND both orphans.
+    // Only the CURRENT profile's namespace goes; orphan prefixes are managed
+    // exclusively through Settings -> Profile data (Adopt/Delete rows).
     await waitFor(() => {
-      expect(deleteNamespaceMock).toHaveBeenCalledWith('orphan1');
-      expect(deleteNamespaceMock).toHaveBeenCalledWith('orphan2');
+      expect(deleteNamespaceMock).toHaveBeenCalledTimes(1);
     });
+    expect(deleteNamespaceMock).not.toHaveBeenCalledWith('orphan1');
+    expect(deleteNamespaceMock).not.toHaveBeenCalledWith('orphan2');
   });
 });

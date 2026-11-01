@@ -48,11 +48,28 @@ export default defineConfig({
       use: { ...devices['Desktop Firefox'] },
     },
   ],
-  webServer: {
-    command: 'npm --prefix . run preview -- --host 127.0.0.1 --port 4174 --strictPort',
-    url: 'http://127.0.0.1:4174',
-    reuseExistingServer: false,
-    timeout: 60_000,
-  },
+  webServer: (() => {
+    // Issue #34 item 7 (check C2, plan R2): PW_WEB_SERVER selects the serving
+    // surface. Default (absent / 'preview'): vite preview of dist — the
+    // config's historical behavior, byte-identical when the env is unset.
+    // 'serve-offline': scripts/serve-offline.mjs on the same pinned port, the
+    // declared deployment server (COI headers included), so the offline-reload
+    // spec proves the shipped sw.js serves the shell offline under the real
+    // production static server too.
+    if (process.env.PW_WEB_SERVER === 'serve-offline') {
+      return {
+        command: 'node scripts/serve-offline.mjs 4174',
+        url: 'http://127.0.0.1:4174',
+        reuseExistingServer: false,
+        timeout: 60_000,
+      };
+    }
+    return {
+      command: 'npm --prefix . run preview -- --host 127.0.0.1 --port 4174 --strictPort',
+      url: 'http://127.0.0.1:4174',
+      reuseExistingServer: false,
+      timeout: 60_000,
+    };
+  })(),
   outputDir: './test-results',
 });

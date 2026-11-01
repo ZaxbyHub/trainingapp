@@ -9,6 +9,15 @@ import {
   searchConversations,
   type Conversation,
 } from '../db/conversations';
+import {
+  clearAllConversationsInDb,
+  maybeAutoMigrateLegacyConversations,
+  onConversationsCleared,
+  readConversationEpoch,
+  replayPendingConversationClear,
+} from '../db/conv-protocol';
+import { getProfilePrefix } from '../lib/storage/profile';
+import { onSessionCleared, runClearHandlers } from '../lib/session/session-clear';
 
 /** Delay between the last keystroke and the conversation search query. */
 export const CONVERSATION_SEARCH_DEBOUNCE_MS = 250;
@@ -92,6 +101,35 @@ export function useConversations() {
   }, []);
 
   const clearPersistenceError = useCallback(() => setPersistenceError(null), []);
+
+  // ==========================================================================
+  // stateEpoch binding (issue #34 item 6p, R5-3/R6-2): the db epoch the
+  // CURRENT in-memory conversation state was loaded or created under. Bound
+  // at every state creation/replacement point (mount init, selectConversation,
+  // newChat, the cross-tab reset) — never freshly read inside saveMessages.
+  // A save carries the epoch of the state that produced it; the write
+  // transaction aborts when the db moved on (a clear), so cleared history can
+  // never be resurrected by a stale save, and a post-clear new chat saves
+  // normally.
+  // ==========================================================================
+  const stateEpochRef = useRef<Promise<number>>(Promise.resolve(0));
+  const bindFreshEpoch = useCallback(() => {
+    stateEpochRef.current = readConversationEpoch();
+  }, []);
+
+  /**
+   * Verify `epochPromise` still matches the db at completion: a load that
+   * raced a clear discards its payload (the epoch moved) and re-reads the
+   * list instead — stale conversations are never applied to state.
+   */
+  const epochStillCurrent = useCallback(async (epochPromise: Promise<number>): Promise<boolean> => {
+    try {
+      const [bound, now] = await Promise.all([epochPromise, readConversationEpoch()]);
+      return bound === now;
+    } catch {
+      return true; // epoch unreadable (no IndexedDB): nothing to gate on
+    }
+  }, []);
 
   // Sidebar search (Lumen phase 3). Queries the WHOLE store (searchConversations),
   // never filters the loaded page. `searchResults` is null while no query is set.
@@ -263,7 +301,9 @@ export function useConversations() {
    */
   const renameConversation = useCallback(async (id: string, newTitle: string) => {
     try {
-      await updateConversation(id, { title: newTitle, updatedAt: Date.now() });
+      await updateConversation(id, { title: newTitle, updatedAt: Date.now() }, {
+        stateEpoch: await stateEpochRef.current,
+      });
       await refreshConversations();
       setPersistenceError(null);
     } catch (error) {
@@ -277,11 +317,26 @@ export function useConversations() {
       isInitialized.current = true;
       (async () => {
         try {
+          // Boot protocol (R4-2/R6-4): the automatic legacy-conversation
+          // adoption and the pending-clear replay run BEFORE the first
+          // conversation load. Both are self-arbitrating no-ops when nothing
+          // is pending / Web Locks are unavailable.
+          await maybeAutoMigrateLegacyConversations();
+          await replayPendingConversationClear();
+          bindFreshEpoch();
+          // Verify THIS load's own epoch binding at completion (a later
+          // rebind by a select must not mask a stale init).
+          const epochPromise = stateEpochRef.current;
           await refreshConversations();
           // Restore last conversation on load
           const list = await listConversations(0, 1);
           if (list.length > 0) {
             const last = list[0];
+            if (!(await epochStillCurrent(epochPromise))) {
+              // A clear raced the init: drop the stale restore and re-read.
+              await refreshConversations();
+              return;
+            }
             setCurrentConversationIdBoth(last.id);
             setCurrentMessages(last.messages);
           }
@@ -291,16 +346,24 @@ export function useConversations() {
         }
       })();
     }
-  }, [refreshConversations]);
+  }, [refreshConversations, bindFreshEpoch, epochStillCurrent]);
 
   /**
-   * Select a conversation by ID and load its messages.
+   * Select a conversation by ID and load its messages. The db epoch is bound
+   * BEFORE the fetch and verified at completion — a load that raced a clear
+   * is discarded and the list re-read (R5-3).
    * @param id - Conversation ID to load
    */
   const selectConversation = useCallback(async (id: string) => {
+    bindFreshEpoch();
+    const epochPromise = stateEpochRef.current;
     try {
       const conv = await getConversation(id);
       if (conv) {
+        if (!(await epochStillCurrent(epochPromise))) {
+          await refreshConversations();
+          return;
+        }
         setCurrentConversationIdBoth(conv.id);
         setCurrentMessages(conv.messages);
       }
@@ -309,15 +372,19 @@ export function useConversations() {
       console.error('[useConversations] Failed to load conversation:', error);
       setPersistenceError('Failed to load conversation');
     }
-  }, []);
+  }, [bindFreshEpoch, epochStillCurrent, refreshConversations]);
 
   /**
-   * Clear current conversation state to start a new chat.
+   * Clear current conversation state to start a new chat. The fresh state
+   * binds the CURRENT db epoch (R6-2): a brand-new pre-clear chat therefore
+   * aborts on save after an epoch bump, exactly like loaded history, while a
+   * post-clear new chat saves normally.
    */
   const newChat = useCallback(() => {
     setCurrentConversationIdBoth(undefined);
     setCurrentMessages([]);
-  }, []);
+    bindFreshEpoch();
+  }, [bindFreshEpoch]);
 
   /**
    * Save messages to Dexie, targeting a SPECIFIC conversation id.
@@ -353,6 +420,13 @@ export function useConversations() {
     const persisted = stripTransientFlags(messages);
     if (persisted.length === 0) return;
 
+    // The epoch bound to the state that produced this save (R5-3/R6-2) —
+    // captured synchronously BEFORE any await, never re-read mid-save. The
+    // write transaction re-reads the db epoch and aborts on a mismatch, so
+    // a save enqueued before a cross-tab clear is a silent no-op (no
+    // resurrection) and a post-clear save lands.
+    const epochPromise = stateEpochRef.current;
+
     const now = Date.now();
     // Preserve an existing conversation's title; only derive for new ones.
     const existing = conversationId ? await getConversation(conversationId) : undefined;
@@ -362,6 +436,7 @@ export function useConversations() {
       : 'New conversation');
 
     try {
+      const stateEpoch = await epochPromise;
       if (!conversationId || !existing) {
         // Create new conversation
         const newConv: Conversation = {
@@ -375,7 +450,13 @@ export function useConversations() {
           mode,
           modelUsed,
         };
-        await createConversation(newConv);
+        const applied = await createConversation(newConv, { stateEpoch });
+        if (!applied) {
+          // Stale-state save (a clear moved the epoch): a deliberate no-op.
+          // No onCreate, no re-point, no list refresh — the cleared surface
+          // stays cleared.
+          return;
+        }
         // Only re-point the ACTIVE conversation when the caller is still on
         // the conversation that produced this save (S1 no-re-point guard).
         // The onCreate callback lets the caller decide whether to adopt the
@@ -386,10 +467,14 @@ export function useConversations() {
         }
       } else {
         // Update existing — strip transient flags and write.
-        await updateConversation(conversationId, {
+        const applied = await updateConversation(conversationId, {
           messages: persisted,
           updatedAt: now,
-        });
+        }, { stateEpoch });
+        if (!applied) {
+          // Stale-state update after a clear: no-op, nothing resurrected.
+          return;
+        }
       }
       await refreshConversations();
       setPersistenceError(null);
@@ -408,7 +493,7 @@ export function useConversations() {
    */
   const removeConversation = useCallback(async (id: string): Promise<boolean> => {
     try {
-      await deleteConversation(id);
+      await deleteConversation(id, { stateEpoch: await stateEpochRef.current });
       if (currentConversationId === id) {
         setCurrentConversationIdBoth(undefined);
         setCurrentMessages([]);
@@ -423,6 +508,59 @@ export function useConversations() {
     }
   }, [currentConversationId, refreshConversations]);
 
+  /**
+   * Reset ALL in-memory conversation state and bind a fresh epoch (the
+   * post-reset constructor, R6-2): list, current id/messages, pagination,
+   * search, and any in-flight load generation.
+   */
+  const resetAllConversationState = useCallback(() => {
+    listGeneration.current += 1;
+    setConversations([]);
+    setCurrentConversationIdBoth(undefined);
+    setCurrentMessages([]);
+    setHasMore(false);
+    setIsLoadingMore(false);
+    searchSeq.current += 1;
+    setSearchResults(null);
+    setSearchTruncated(false);
+    setIsSearching(false);
+    bindFreshEpoch();
+  }, [bindFreshEpoch, setCurrentConversationIdBoth]);
+
+  /**
+   * Clear EVERY conversation of the active profile (issue #34 item 6p,
+   * AC6): the full conv-protocol clear — pending record (the cross-tab
+   * storage event), workstation arbitration (busy/active colleagues defer),
+   * one epoch transaction emptying the whole table (not a 50-row page). On
+   * success the in-memory state resets with a fresh epoch. Returns
+   * {deferred: true} when the clear was deferred (the pending record stays
+   * for the boot/re-arm replay).
+   */
+  const clearAllConversations = useCallback(async (): Promise<{ cleared: boolean } | { deferred: true }> => {
+    const result = await clearAllConversationsInDb(getProfilePrefix());
+    if ('cleared' in result && result.cleared) {
+      resetAllConversationState();
+    }
+    return result;
+  }, [resetAllConversationState]);
+
+  // Cross-tab reset (R4-3): another tab cleared — run THIS tab's in-tab
+  // reset (cancel streams via the session-clear bus, drop all state with a
+  // fresh epoch). The db clear itself belongs to the clearing tab.
+  useEffect(() => onConversationsCleared(() => {
+    void (async () => {
+      await runClearHandlers();
+      resetAllConversationState();
+    })();
+  }), [resetAllConversationState]);
+
+  // Local clear path: a storage event never fires in the WRITING tab, so the
+  // bus's cleared notice (dispatched by requestSessionClear after the db
+  // clear completed) drives this tab's own in-memory reset.
+  useEffect(() => onSessionCleared(() => {
+    resetAllConversationState();
+  }), [resetAllConversationState]);
+
   return {
     conversations,
     currentConversationId,
@@ -435,6 +573,7 @@ export function useConversations() {
     newChat,
     saveMessages,
     removeConversation,
+    clearAllConversations,
     refreshConversations,
     renameConversation,
     hasMore,

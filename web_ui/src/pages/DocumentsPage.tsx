@@ -10,7 +10,6 @@ import type { DocumentEntry } from '../types/document';
 import { extractDocument, SUPPORTED_EXTENSIONS } from '../lib/processing/extractor-factory';
 import { TextChunker } from '../lib/processing/text-chunker';
 import { loadDocuments, saveDocuments, deleteDocument as deleteDocumentFromStore } from '../lib/storage/document-store';
-import { migrateOrphanedNamespaces } from '../lib/storage/profile';
 import { REINDEX_FLAG_KEY } from '../lib/storage/persisted-keys';
 import { getEmbeddingService } from '../lib/embeddings/embedding-service';
 import { ensureEmbeddingServiceReady } from '../hooks/useServiceInitialization';
@@ -158,8 +157,10 @@ export function DocumentsPage() {
         return;
       }
       try {
-        await migrateOrphanedNamespaces();
-        if (cancelled) return;
+        // R4-4 (issue #34 item 6p): the automatic orphan-namespace merge is
+        // RETIRED — unregistered legacy prefixes are surfaced in Settings →
+        // Profile data with explicit Adopt/Delete rows instead of being
+        // silently folded in here.
         const docs = await loadDocuments();
         if (cancelled) return;
         // PRR-007: a browser/tab close during processing leaves documents

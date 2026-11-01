@@ -74,6 +74,21 @@ vi.mock('../../storage/profile', () => ({
   getProfilePrefix: vi.fn(() => 'testprfx'),
   deleteNamespace: vi.fn(() => Promise.resolve()),
   listStalePrefixes: vi.fn(() => Promise.resolve([])),
+  // Profile-registry surface (issue #34 item 6p) used by Settings -> Profile data.
+  listRegisteredProfiles: vi.fn(() => ({ profiles: ['testprfx'], healthy: true })),
+  isRegisteredProfile: vi.fn(() => false),
+  registerProfile: vi.fn(() => true),
+  unregisterProfile: vi.fn(() => true),
+  newProfilePrefix: vi.fn(() => 'newprof'),
+  resetProfileRegistry: vi.fn(() => false),
+  // The conversations Dexie name derives from this (issue #34 item 6p).
+  getStorageDbNames: () => ({
+    documents: 'testprfx-doc-qa-documents',
+    vectorMapping: 'testprfx-doc-qa-indexes',
+    vector: 'testprfx-doc-qa-index',
+    keyword: 'testprfx-doc-qa-keywords',
+    conversations: 'testprfx-doc-qa-conversations',
+  }),
 }));
 vi.mock('../model-download', () => ({
   ModelDownloadManager: vi.fn().mockImplementation(() => ({
