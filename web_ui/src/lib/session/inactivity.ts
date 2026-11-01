@@ -9,15 +9,20 @@
  *  - While the user is active (pointerdown/keydown/wheel/touchstart,
  *    passive) the tab HOLDS the origin-wide session-active Web Lock in
  *    SHARED mode (R6-3); a busy (streaming) tab holds it too. On the timer's
- *    idle fire the tab releases its shared lock and attempts the EXCLUSIVE
- *    acquisition — it succeeds only when NO tab on the workstation is active
+ *    idle fire the tab releases its shared lock and requests the session
+ *    clear; the persisted clear's OWN exclusive-ifAvailable arbitration on
+ *    the same lock (conv-protocol clearAllConversationsInDb) is the SINGLE
+ *    authority — it succeeds only when NO tab on the workstation is active
  *    or busy, so a foreground colleague always blocks a background tab's
- *    clear.
+ *    clear. The watch itself never holds the exclusive lock across the clear
+ *    call (review F1: Web Locks are not reentrant; nesting the two
+ *    acquisitions made every fire defer to the poll).
  *  - Idle fire with a busy handler DEFERS (AC6 streaming guard) and re-arms
- *    a 30 s poll that retries once the turn ends. An exclusive-acquisition
- *    failure (another tab active) also re-arms the poll. A pending
- *    conversation clear from a crashed tab replays on the same poll
- *    (R6-4) — a boot replay can never kill an active stream.
+ *    a 30 s poll that retries once the turn ends. A deferred persisted clear
+ *    (another tab active) also re-arms the poll, which re-runs the whole
+ *    idle path — deferred clear included. A pending conversation clear from
+ *    a crashed tab replays on the same poll (R6-4) — a boot replay can never
+ *    kill an active stream.
  *  - A successful clear surfaces the notice through `onCleared()`.
  *  - Requires Web Locks (secure context). Without them the watch is disabled
  *    entirely (degraded class, disclosed) — the alternative (a tab-local
@@ -28,12 +33,15 @@ import {
   hasWebLocks,
   holdSessionActiveShared,
   replayPendingConversationClear,
-  tryAcquireSessionActiveExclusive,
   type HeldLock,
 } from '../../db/conv-protocol';
 import { requestSessionClear } from './session-clear';
 
-/** Re-check / retry cadence after a deferred fire or a refused lock (R6-4). */
+/**
+ * Re-check / retry cadence after a deferred fire (busy turn, or a persisted
+ * clear whose exclusive arbitration found another active tab — review F1: the
+ * poll re-runs the whole idle path, including the deferred persisted clear).
+ */
 export const INACTIVITY_REARM_POLL_MS = 30_000;
 
 export const INACTIVITY_DEFAULT_MIN = 15;
@@ -127,7 +135,11 @@ export function startInactivityWatch(options: InactivityWatchOptions): Inactivit
     timer = setTimeout(onIdle, threshold * 60_000);
   };
 
-  /** Arm the 30 s retry poll (busy turn, refused exclusive, deferred replay). */
+  /**
+   * Arm the 30 s retry poll (busy turn, or a persisted clear whose exclusive
+   * arbitration found another active tab — review F1: the poll re-runs the
+   * whole idle path, including the deferred persisted clear).
+   */
   const armPoll = (): void => {
     clearTimer();
     timer = setTimeout(onIdle, INACTIVITY_REARM_POLL_MS);
@@ -153,23 +165,22 @@ export function startInactivityWatch(options: InactivityWatchOptions): Inactivit
         armThreshold();
         return;
       }
+      // NO exclusive lock is held here on purpose (review F1): Web Locks
+      // have no reentrancy — acquiring the exclusive here and then calling
+      // the clear, which acquires the SAME exclusive internally, would make
+      // every fire defer to the 30 s poll. The persisted clear's OWN
+      // exclusive-ifAvailable arbitration (conv-protocol
+      // clearAllConversationsInDb) is the single authority: when another tab
+      // holds the session-active lock (shared or exclusive) the clear
+      // returns {deferred} and the re-arm poll below retries it until the
+      // workstation is quiet.
       void (async () => {
-        const exclusive = await tryAcquireSessionActiveExclusive();
-        if (!exclusive.acquired) {
-          // Another tab is active/busy — the workstation is not idle.
+        const result = await requestSessionClear();
+        if ('cleared' in result && result.cleared) {
+          options.onCleared();
+          armThreshold();
+        } else {
           armPoll();
-          return;
-        }
-        try {
-          const result = await requestSessionClear();
-          if ('cleared' in result && result.cleared) {
-            options.onCleared();
-            armThreshold();
-          } else {
-            armPoll();
-          }
-        } finally {
-          exclusive.release();
         }
       })();
     });

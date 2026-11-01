@@ -474,7 +474,6 @@ export async function adoptLegacyConversations(target: string): Promise<AdoptRes
   const legacy = new DocQADatabase(LEGACY_CONVERSATIONS_DB_NAME);
   const profileDb = target === getProfilePrefix() ? db : openProfileDb(target);
   try {
-    let resume = false;
     // ONE rw transaction on the legacy db decides the claim.
     await legacy.transaction('rw', legacy.meta, async () => {
       const claimRow = await legacy.meta.get(LEGACY_CLAIM_META_KEY);
@@ -484,9 +483,11 @@ export async function adoptLegacyConversations(target: string): Promise<AdoptRes
         if (existing.target !== target) {
           throw new AdoptRefusal('in-flight', existing.target);
         }
-        resume = true; // same target: continue the protocol (idempotent)
+        // Same target: resume the protocol (the copy below is idempotent).
         return;
       }
+      // Fresh claim: the emptiness guards run INSIDE this transaction, so a
+      // racing adopter cannot pass them and write a claim of its own.
       const legacyCount = await legacy.conversations.count();
       if (legacyCount === 0) {
         throw new AdoptRefusal('nothing');
@@ -497,11 +498,6 @@ export async function adoptLegacyConversations(target: string): Promise<AdoptRes
       }
       await legacy.meta.put({ key: LEGACY_CLAIM_META_KEY, value: { target, phase: 'copying' } });
     });
-
-    if (!resume) {
-      // Fresh claim: re-check emptiness outside the tx is unnecessary — the
-      // guard above ran inside the claim transaction.
-    }
 
     // Copy: read all legacy rows, ONE bulkPut tx into the profile db.
     const rows = await legacy.conversations.toArray();

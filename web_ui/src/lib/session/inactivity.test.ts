@@ -97,7 +97,11 @@ function makeWatch(): WatchHarness {
     onClear: vi.fn(),
     persistedClear: vi.fn(async () => {
       harness.activeProfileAtClear.push(getProfilePrefix());
-      return { cleared: true };
+      // The persisted clear's OWN exclusive-ifAvailable arbitration is the
+      // single authority (review F1): while another tab holds the
+      // session-active lock the clear defers; once the workstation is quiet
+      // it completes.
+      return lockState.exclusiveAcquired ? { cleared: true } : ({ deferred: true } as const);
     }),
     activeProfileAtClear: [],
     stop: () => {},
@@ -248,11 +252,19 @@ describe('inactivity auto-clear (AC6)', () => {
     const h = makeWatch();
     h.threshold.value = 15;
     activity();
-    lockState.exclusiveAcquired = false; // a colleague's tab is active
+    // A colleague's tab is active: the persisted clear's own exclusive
+    // arbitration refuses, so the clear defers (review F1 — the watch itself
+    // no longer pre-acquires the lock; the deferral comes from the clear).
+    lockState.exclusiveAcquired = false;
     await vi.advanceTimersByTimeAsync(15 * MIN);
-    expect(h.persistedClear).not.toHaveBeenCalled();
-    lockState.exclusiveAcquired = true; // workstation quiet now
-    await vi.advanceTimersByTimeAsync(INACTIVITY_REARM_POLL_MS);
     expect(h.persistedClear).toHaveBeenCalledTimes(1);
+    expect(await h.persistedClear.mock.results[0]?.value).toEqual({ deferred: true });
+    expect(h.clearedNotice).not.toHaveBeenCalled();
+    // Workstation quiet now: the 30 s re-arm poll retries the deferred clear.
+    lockState.exclusiveAcquired = true;
+    await vi.advanceTimersByTimeAsync(INACTIVITY_REARM_POLL_MS);
+    expect(h.persistedClear).toHaveBeenCalledTimes(2);
+    expect(await h.persistedClear.mock.results[1]?.value).toEqual({ cleared: true });
+    expect(h.clearedNotice).toHaveBeenCalledTimes(1);
   });
 });
