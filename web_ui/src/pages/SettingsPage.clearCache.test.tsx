@@ -52,6 +52,21 @@ vi.mock('../lib/storage/profile', () => ({
   getProfilePrefix: () => getProfilePrefixMock(),
   deleteNamespace: (prefix: string) => deleteNamespaceMock(prefix),
   listStalePrefixes: () => listStalePrefixesMock(),
+  // Profile-registry surface (issue #34 item 6p) used by Settings -> Profile data.
+  listRegisteredProfiles: () => ({ profiles: ['testprfx'], healthy: true }),
+  isRegisteredProfile: () => false,
+  registerProfile: () => true,
+  unregisterProfile: () => true,
+  newProfilePrefix: () => 'newprof',
+  resetProfileRegistry: () => false,
+  // The conversations Dexie name derives from this (issue #34 item 6p).
+  getStorageDbNames: () => ({
+    documents: 'testprfx-doc-qa-documents',
+    vectorMapping: 'testprfx-doc-qa-indexes',
+    vector: 'testprfx-doc-qa-index',
+    keyword: 'testprfx-doc-qa-keywords',
+    conversations: 'testprfx-doc-qa-conversations',
+  }),
 }));
 
 const mockModelReadinessGateInstance = {
@@ -282,6 +297,11 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     await waitFor(() => {
       expect(deleteNamespaceMock).toHaveBeenCalledWith('testprfx');
     });
+    // Await the terminal state so the clear-cache promise chain settles INSIDE
+    // the test: a continuation resolving after vitest tears down the jsdom
+    // environment fails CI with an unhandled 'window is not defined' rejection
+    // (runner timing only; observed on the PR #264 first web-ui run).
+    await screen.findByText('Cache cleared');
   });
 
   test('Clear Cache deletes the EdgeVec blob key from edgevec-db (PRR-008)', async () => {
@@ -302,6 +322,11 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     await waitFor(() => {
       expect(mockObjectStore.delete).toHaveBeenCalledWith('testprfx-doc-qa-index');
     });
+    // Await the terminal state so the clear-cache promise chain settles INSIDE
+    // the test: a continuation resolving after vitest tears down the jsdom
+    // environment fails CI with an unhandled 'window is not defined' rejection
+    // (runner timing only; observed on the PR #264 first web-ui run).
+    await screen.findByText('Cache cleared');
   });
 
   test('second Clear Cache click deletes all three WebLLM Cache Storage entries', async () => {
@@ -322,6 +347,11 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     expect(caches.delete).toHaveBeenCalledWith('webllm/model');
     expect(caches.delete).toHaveBeenCalledWith('webllm/config');
     expect(caches.delete).toHaveBeenCalledWith('webllm/wasm');
+    // Await the terminal state so the clear-cache promise chain settles INSIDE
+    // the test: a continuation resolving after vitest tears down the jsdom
+    // environment fails CI with an unhandled 'window is not defined' rejection
+    // (runner timing only; observed on the PR #264 first web-ui run).
+    await screen.findByText('Cache cleared');
   });
 
   test('second Clear Cache click deletes the settings IndexedDB', async () => {
@@ -338,6 +368,11 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     await waitFor(() => {
       expect(indexedDB.deleteDatabase).toHaveBeenCalledWith('doc-qa-settings');
     });
+    // Await the terminal state so the clear-cache promise chain settles INSIDE
+    // the test: a continuation resolving after vitest tears down the jsdom
+    // environment fails CI with an unhandled 'window is not defined' rejection
+    // (runner timing only; observed on the PR #264 first web-ui run).
+    await screen.findByText('Cache cleared');
   });
 
   test('Clear Cache does NOT delete the bare (non-prefixed) doc-qa-documents name', async () => {
@@ -362,6 +397,11 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
       (c: unknown[]) => c[0]
     );
     expect(deleteCalls).not.toContain('doc-qa-documents');
+    // Await the terminal state so the clear-cache promise chain settles INSIDE
+    // the test: a continuation resolving after vitest tears down the jsdom
+    // environment fails CI with an unhandled 'window is not defined' rejection
+    // (runner timing only; observed on the PR #264 first web-ui run).
+    await screen.findByText('Cache cleared');
   });
 
   test('shows "Cache cleared" result feedback after clearing', async () => {
@@ -397,7 +437,10 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
       screen.getByText(/this deletes the documents and keyword\/vector indexes stored in this browser/i)
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/orphaned data from earlier sessions/i)
+      // R3-5 (issue #34 item 6p): orphan namespaces are no longer blanket-
+      // deleted here; the copy hands them to the explicit Profile data
+      // surface instead.
+      screen.getByText(/other profiles' data is managed under profile data/i)
     ).toBeInTheDocument();
   });
 
@@ -699,7 +742,7 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
   });
 
   // ADV-3: stale prefix cleanup path (listStalePrefixes returns non-empty)
-  test('Clear Cache deletes stale orphan namespaces (ADV-3)', async () => {
+  test('Clear Cache never deletes orphan namespaces (R3-5: explicit Adopt/Delete surface)', async () => {
     listStalePrefixesMock.mockResolvedValueOnce(['orphan1', 'orphan2']);
 
     render(<SettingsPage />);
@@ -712,10 +755,17 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     fireEvent.click(clearButton);
     fireEvent.click(clearButton);
 
-    // deleteNamespace should be called for the current profile AND both orphans.
+    // Only the CURRENT profile's namespace goes; orphan prefixes are managed
+    // exclusively through Settings -> Profile data (Adopt/Delete rows).
     await waitFor(() => {
-      expect(deleteNamespaceMock).toHaveBeenCalledWith('orphan1');
-      expect(deleteNamespaceMock).toHaveBeenCalledWith('orphan2');
+      expect(deleteNamespaceMock).toHaveBeenCalledTimes(1);
     });
+    expect(deleteNamespaceMock).not.toHaveBeenCalledWith('orphan1');
+    expect(deleteNamespaceMock).not.toHaveBeenCalledWith('orphan2');
+    // Await the terminal state so the clear-cache promise chain settles INSIDE
+    // the test: a continuation resolving after vitest tears down the jsdom
+    // environment fails CI with an unhandled 'window is not defined' rejection
+    // (runner timing only; observed on the PR #264 first web-ui run).
+    await screen.findByText('Cache cleared');
   });
 });

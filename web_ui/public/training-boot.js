@@ -15,7 +15,9 @@
  *     worker loses its port when the browser stops an idle worker); the app
  *     decides whether to run a fresh handshake.
  *  4. On { type: 'trainingapp-unregister' } from the parent, unregisters the
- *     worker (the app's last pack was removed).
+ *     COURSE worker only — registrations whose scope starts with '/training/'
+ *     (the app's own app-shell service worker at scope '/' must survive the
+ *     course teardown; issue #34 item 7, plan finding 8).
  * It never stores anything and is not trusted by the app.
  */
 (function () {
@@ -110,7 +112,18 @@
     } else if (data.type === 'trainingapp-unregister') {
       navigator.serviceWorker.getRegistrations().then(function (all) {
         all.forEach(function (reg) {
-          reg.unregister();
+          // Only the COURSE worker's own registration goes: the scope's PATH
+          // starts with '/training/'. The app shell's registration (scope
+          // '/') and any other same-origin worker survive the teardown.
+          var path = '';
+          try {
+            path = new URL(reg.scope).pathname;
+          } catch (err) {
+            path = String(reg.scope || '');
+          }
+          if (path.indexOf('/training/') === 0) {
+            reg.unregister();
+          }
         });
       });
     }

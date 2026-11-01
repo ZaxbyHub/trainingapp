@@ -1,5 +1,6 @@
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import fs from 'node:fs';
 import path from 'path';
 
 /**
@@ -217,13 +218,112 @@ function trainingPlayerOriginPlugin(): Plugin {
   };
 }
 
+/**
+ * App-shell precache manifest (issue #34 item 7 via #26, plan R2/R4-1/R5-1).
+ *
+ * Build-only plugin: on writeBundle, emit `dist/sw-precache-manifest.js` — a
+ * CLASSIC script whose body executes `self.__PRECACHE_MANIFEST = [...]` — so
+ * the app-shell service worker (public/sw.js) can consume it synchronously
+ * with importScripts. The list contains ONLY `index.html` and every hashed
+ * `assets/**` file the build emits, using exactly the emitted paths.
+ *
+ * Excluded (belt; public-dir files are not in the rollup bundle anyway, but a
+ * stale or relocated output could surface them): `models/**`, `training/**`,
+ * `training-boot.*`, `sw.js`, the manifest itself, `player-origin.json`.
+ * Runtime model/pack assets are owned by the browser pack manager's own
+ * storage (OPFS/IndexedDB) and are deliberately outside the SW cache. Files
+ * larger than 10 MB are skipped with a build warning (they would balloon the
+ * first-boot precache for no offline benefit).
+ *
+ * Output-dir aware: resolves the configured build.outDir in configResolved
+ * (relative to the project root) and prefers the rollup output dir when the
+ * bundle write names one. Harmless for `build:desktop` (that build gets a
+ * manifest file it never reads — disclosed in the plan impact analysis).
+ */
+const PRECACHE_MAX_BYTES = 10 * 1024 * 1024;
+
+function swPrecacheManifestPlugin(): Plugin {
+  let resolvedOutDir = 'dist';
+  return {
+    name: 'trainingapp-sw-precache-manifest',
+    apply: 'build',
+    configResolved(config) {
+      resolvedOutDir = path.isAbsolute(config.build.outDir)
+        ? config.build.outDir
+        : path.resolve(config.root, config.build.outDir);
+    },
+    writeBundle(options) {
+      const outDir = options.dir !== undefined && options.dir !== null
+        ? path.isAbsolute(options.dir)
+          ? options.dir
+          : path.resolve(process.cwd(), options.dir)
+        : resolvedOutDir;
+      const root = outDir;
+      const entries: string[] = [];
+      const walk = (dir: string): void => {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          const full = path.join(dir, entry.name);
+          const rel = path.relative(root, full).split(path.sep).join('/');
+          if (entry.isDirectory()) {
+            // Only assets/ subdirectories can contain manifest members.
+            if (rel === 'assets') walk(full);
+            continue;
+          }
+          if (rel !== 'index.html' && !rel.startsWith('assets/')) continue;
+          let size = 0;
+          try {
+            size = fs.statSync(full).size;
+          } catch {
+            continue;
+          }
+          if (size > PRECACHE_MAX_BYTES) {
+            this.warn(`sw-precache-manifest: skipped ${rel} (${size} bytes > ${PRECACHE_MAX_BYTES})`);
+            continue;
+          }
+          entries.push(rel);
+        }
+      };
+      walk(outDir);
+      entries.sort();
+      const body = `self.__PRECACHE_MANIFEST = ${JSON.stringify(entries)};\n`;
+      // PRR-118 (PR #264 review): a failed manifest write must FAIL THE
+      // BUILD loudly with context. A silent writeFileSync failure (locked
+      // file, full disk) would otherwise ship an offline bundle whose
+      // service worker precaches nothing — an offline shell that cannot
+      // boot offline.
+      const manifestPath = path.join(outDir, 'sw-precache-manifest.js');
+      // Atomic write (PRR-118 final): a truncated manifest (mid-write crash)
+      // would otherwise be importable by sw.js — its importScripts try/catch
+      // then precaches nothing and the offline shell silently boots empty.
+      // Write to a temp file in the same directory and rename over the target
+      // so the manifest is never observable half-written.
+      const tmpPath = `${manifestPath}.tmp`;
+      try {
+        fs.writeFileSync(tmpPath, body, 'utf8');
+        fs.renameSync(tmpPath, manifestPath);
+      } catch (error) {
+        try {
+          fs.rmSync(tmpPath, { force: true });
+        } catch {
+          /* best-effort temp cleanup */
+        }
+        throw new Error(
+          `sw-precache-manifest: failed to write ${manifestPath} (${entries.length} entries): ` +
+            `${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      this.info(`sw-precache-manifest: ${entries.length} entries`);
+    },
+  };
+}
+
 export default defineConfig(({ command }) => ({
   // Relative base so the built bundle's own asset URLs (JS/CSS) work when the
   // self-contained archive is served from any path. Model assets under /models
   // are loaded same-origin and the archive is served at the origin root (the
   // bundled FastAPI server, or a static host) — see PACKAGING.md.
   base: './',
-  plugins: [react(), edgevecSnippetPlugin(), trainingPlayerOriginPlugin()],
+  plugins: [react(), edgevecSnippetPlugin(), trainingPlayerOriginPlugin(), swPrecacheManifestPlugin()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

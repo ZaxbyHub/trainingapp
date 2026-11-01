@@ -1,4 +1,5 @@
 import { db } from './index';
+import { readConversationEpoch, withConversationWriteLock, withEpochGate } from './conv-protocol';
 import { CONVERSATION_QUERY_MAX_LENGTH } from './conversation-query';
 
 export { CONVERSATION_QUERY_MAX_LENGTH };
@@ -18,13 +19,47 @@ export interface Conversation {
 }
 
 /**
+ * Epoch-gating options for conversation mutations (issue #34 item 6p,
+ * R4-3/R5-3). `stateEpoch` is the db epoch the caller's in-memory state was
+ * loaded (or created) under: the write transaction re-reads the epoch and
+ * ABORTS (no-op) when it moved — a save enqueued before a cross-tab clear
+ * can never resurrect cleared history. When omitted, a fresh epoch is
+ * captured before the write (the pre-protocol behavior for non-hook
+ * callers, which always land).
+ */
+export interface ConversationMutationOptions {
+  stateEpoch?: number;
+}
+
+/**
+ * Run `mutate` under the origin-wide write lock with the epoch gate applied.
+ * Returns true when the mutation was applied, false ONLY when the gate
+ * aborted a stale write (the caller discards its stale state instead of
+ * surfacing an error). A GENUINE write failure propagates (PRR-105, PR #264
+ * review): the old catch-all returned false for real errors too, flattening
+ * base's user-visible save/delete/rename failure banners into silent no-ops.
+ */
+async function gatedMutation(
+  options: ConversationMutationOptions | undefined,
+  mutate: () => unknown,
+): Promise<boolean> {
+  const stateEpoch = options?.stateEpoch ?? (await readConversationEpoch());
+  return withConversationWriteLock(() => withEpochGate(stateEpoch, mutate));
+}
+
+/**
  * Create a new conversation.
  *
  * @param conversation - Full conversation object to persist
+ * @param options - Epoch gating (see ConversationMutationOptions)
+ * @returns true when written; false when the epoch gate aborted a stale write
  */
-export async function createConversation(conversation: Conversation): Promise<void> {
+export async function createConversation(
+  conversation: Conversation,
+  options?: ConversationMutationOptions,
+): Promise<boolean> {
   try {
-    await db.conversations.add(conversation);
+    return await gatedMutation(options, () => db.conversations.add(conversation));
   } catch (error) {
     console.error('[conversations] Failed to create conversation:', error);
     throw error;
@@ -51,13 +86,16 @@ export async function getConversation(id: string): Promise<Conversation | undefi
  *
  * @param id - Conversation identifier
  * @param changes - Fields to merge into the existing record
+ * @param options - Epoch gating (see ConversationMutationOptions)
+ * @returns true when written; false when the epoch gate aborted a stale write
  */
 export async function updateConversation(
   id: string,
-  changes: Partial<Conversation>
-): Promise<void> {
+  changes: Partial<Conversation>,
+  options?: ConversationMutationOptions
+): Promise<boolean> {
   try {
-    await db.conversations.update(id, changes);
+    return await gatedMutation(options, () => db.conversations.update(id, changes));
   } catch (error) {
     console.error('[conversations] Failed to update conversation:', error);
     throw error;
@@ -68,10 +106,15 @@ export async function updateConversation(
  * Delete a conversation permanently.
  *
  * @param id - Conversation identifier
+ * @param options - Epoch gating (see ConversationMutationOptions)
+ * @returns true when deleted; false when the epoch gate aborted a stale delete
  */
-export async function deleteConversation(id: string): Promise<void> {
+export async function deleteConversation(
+  id: string,
+  options?: ConversationMutationOptions
+): Promise<boolean> {
   try {
-    await db.conversations.delete(id);
+    return await gatedMutation(options, () => db.conversations.delete(id));
   } catch (error) {
     console.error('[conversations] Failed to delete conversation:', error);
     throw error;

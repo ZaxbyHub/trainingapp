@@ -41,6 +41,21 @@ vi.mock('../lib/storage/profile', () => ({
   getProfilePrefix: () => getProfilePrefixMock(),
   deleteNamespace: (prefix: string) => deleteNamespaceMock(prefix),
   listStalePrefixes: () => listStalePrefixesMock(),
+  // Profile-registry surface (issue #34 item 6p) used by Settings -> Profile data.
+  listRegisteredProfiles: () => ({ profiles: ['testprfx'], healthy: true }),
+  isRegisteredProfile: () => false,
+  registerProfile: () => true,
+  unregisterProfile: () => true,
+  newProfilePrefix: () => 'newprof',
+  resetProfileRegistry: () => false,
+  // The conversations Dexie name derives from this (issue #34 item 6p).
+  getStorageDbNames: () => ({
+    documents: 'testprfx-doc-qa-documents',
+    vectorMapping: 'testprfx-doc-qa-indexes',
+    vector: 'testprfx-doc-qa-index',
+    keyword: 'testprfx-doc-qa-keywords',
+    conversations: 'testprfx-doc-qa-conversations',
+  }),
 }));
 
 // Create a shared mock instance for ModelReadinessGate

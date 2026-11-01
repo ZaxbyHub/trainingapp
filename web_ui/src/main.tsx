@@ -7,6 +7,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { maybeRegisterServiceWorker } from './lib/offline/sw-registration';
 import { startBrowserTraining } from './lib/packs/browser-training';
 
 const rootElement = document.getElementById('root');
@@ -20,6 +21,12 @@ if (!rootElement) {
 if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('gallery')) {
   void import('./ui/gallery/mount').then((m) => m.mountGallery(rootElement));
 } else {
+  // App-shell offline resilience (issue #34 item 7, AC1): register the
+  // app-shell service worker BEFORE the first render so the offline fallback
+  // is installed as early as possible. Guard-wrapped: jsdom (every unit
+  // test), file: and app:// documents never register.
+  maybeRegisterServiceWorker();
+
   // Outermost boundary: catches errors thrown during provider construction
   // (ThemeProvider/ToastProvider/InferenceModeProvider) that the App-internal
   // boundary — which lives inside those providers — cannot catch. Without this,

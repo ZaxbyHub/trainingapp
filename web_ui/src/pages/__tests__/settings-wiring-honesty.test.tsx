@@ -83,6 +83,21 @@ vi.mock('../../lib/storage/profile', () => ({
   getProfilePrefix: vi.fn(() => 'testprfx'),
   deleteNamespace: deleteNamespaceMock,
   listStalePrefixes: vi.fn(() => Promise.resolve([])),
+  // Profile-registry surface (issue #34 item 6p) used by Settings -> Profile data.
+  listRegisteredProfiles: vi.fn(() => ({ profiles: ['testprfx'], healthy: true })),
+  isRegisteredProfile: vi.fn(() => false),
+  registerProfile: vi.fn(() => true),
+  unregisterProfile: vi.fn(() => true),
+  newProfilePrefix: vi.fn(() => 'newprof'),
+  resetProfileRegistry: vi.fn(() => false),
+  // The conversations Dexie name derives from this (issue #34 item 6p).
+  getStorageDbNames: () => ({
+    documents: 'testprfx-doc-qa-documents',
+    vectorMapping: 'testprfx-doc-qa-indexes',
+    vector: 'testprfx-doc-qa-index',
+    keyword: 'testprfx-doc-qa-keywords',
+    conversations: 'testprfx-doc-qa-conversations',
+  }),
 }));
 vi.mock('../../lib/llm/model-download', () => ({
   ModelDownloadManager: vi.fn().mockImplementation(() => ({ downloadModel: vi.fn(), cancelDownload: vi.fn() })),
@@ -480,7 +495,7 @@ describe('Clear Cache (AC5)', () => {
     expect(confirming).toMatch(/installed training and knowledge packs/i);
     // AC5: the removed settings are enumerated.
     expect(confirming).toMatch(
-      /inference mode, browser engine and response-quality choices, theme, external model connection and API key, sidebar state, last-opened course, course progress and the pack update setting/i,
+      /inference mode, browser engine and response-quality choices, theme, external model connection and API key, sidebar state, last-opened course, course progress, the pack update setting, the workstation inactivity auto-clear threshold/i,
     );
   });
 
@@ -498,7 +513,7 @@ describe('Clear Cache (AC5)', () => {
     expect(confirming).toMatch(/any WebLLM model files downloaded in this window/i);
     expect(confirming).not.toMatch(/browser-model/i);
     expect(confirming).toMatch(
-      /inference mode, browser engine and response-quality choices, theme, external model connection and API key, sidebar state, last-opened course, course progress and the pack update setting/i,
+      /inference mode, browser engine and response-quality choices, theme, external model connection and API key, sidebar state, last-opened course, course progress, the pack update setting, the workstation inactivity auto-clear threshold/i,
     );
     expect(confirming).toMatch(/kept: your chat history \(conversations\), and the documents and settings stored by the desktop backend/i);
     expect(confirming).not.toMatch(/local caches/i);

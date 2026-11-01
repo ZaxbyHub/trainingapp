@@ -15,6 +15,7 @@ import { IsolationBanner } from '../components/IsolationBanner';
 import { PinnedSlideContext, pinnedSlideLabel, type PinnedSlide } from '../components/PinnedSlideContext';
 import { useInferenceMode } from '../lib/inference';
 import { InferenceModeToggle } from '../components/InferenceModeToggle';
+import { registerClearHandler } from '../lib/session/session-clear';
 import { TokenStreamManager } from '../lib/streaming';
 import { DESKTOP_FIRST_BYTE_TIMEOUT_MS, DEFAULT_FIRST_BYTE_TIMEOUT_MS } from '../lib/api/streaming';
 import { RAGOrchestrator } from '../lib/rag/rag-orchestrator';
@@ -327,6 +328,20 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     setIsLoading(false);
   }, [browserEngine]);
 
+  // Issue #34 item 6p (AC6, session-clear bus): register this page's clear
+  // handler — isBusy while a generation streams (the inactivity auto-clear
+  // DEFERS instead of killing the turn), onClear cancels the in-flight
+  // stream and resets the local message state. Re-registered when isLoading
+  // flips so isBusy always reflects the live stream state. Cleanup
+  // unregisters on unmount.
+  useEffect(() => registerClearHandler({
+    isBusy: () => isLoading || tokenStreamManagerRef.current !== null || abortControllerRef.current !== null,
+    onClear: () => {
+      cancelActiveStream();
+      setMessages([]);
+    },
+  }), [isLoading, cancelActiveStream, setMessages]);
+
   useEffect(() => {
     if (prevConversationIdRef.current !== currentConversationId && tokenStreamManagerRef.current) {
       // A conversation switch happened while a stream is active. Finalize the
@@ -614,6 +629,17 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         setIsLoading(false);
         tokenStreamManagerRef.current = null;
         owningMessagesRef.current = null;
+        // PRR-102 (PR #264 review): release the busy signal's THIRD leg —
+        // the stream's AbortController. It was never nulled on completion, so
+        // the session-clear handler's isBusy stayed true forever after a
+        // normal turn in the default browser mode (the controller is only set
+        // on that path), which deadened AC6's auto-clear deferral exit, kept
+        // the origin-wide session-active lock held and spun the 30 s re-arm
+        // poll indefinitely. cancelActiveStream nulls both refs on CANCEL;
+        // this is the completion counterpart. Safe inside the same-manager
+        // guard: a newer stream (blocked from overlapping by handleSend)
+        // would have replaced tokenStreamManagerRef first.
+        abortControllerRef.current = null;
       }
     });
 
@@ -640,6 +666,9 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         setIsLoading(false);
         tokenStreamManagerRef.current = null;
         owningMessagesRef.current = null;
+        // PRR-102: the error path is a turn completion too — release the
+        // AbortController leg of the busy signal (see onDone above).
+        abortControllerRef.current = null;
       }
     });
 

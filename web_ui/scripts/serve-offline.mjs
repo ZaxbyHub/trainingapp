@@ -19,12 +19,17 @@
 
 import { createServer } from 'node:http';
 import { createReadStream, existsSync, statSync } from 'node:fs';
-import { dirname, extname, join, normalize } from 'node:path';
+import { dirname, extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { exec } from 'node:child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const DIST_DIR = join(__dirname, 'dist');
+// Same two-tier resolution as the PowerShell twin (scripts/start.ps1): the
+// distribution package lays dist/ next to this script; in the dev tree the
+// build output lives one level up (web_ui/dist).
+const DIST_DIR = existsSync(join(__dirname, 'dist'))
+  ? join(__dirname, 'dist')
+  : join(__dirname, '..', 'dist');
 const PORT = parseInt(process.argv[2] || '8080', 10);
 
 const MIME_TYPES = {
@@ -130,9 +135,18 @@ const server = createServer((req, res) => {
     let pathname = decodeURIComponent(url.pathname);
     if (pathname === '/') pathname = '/index.html';
 
-    // Normalize and prevent directory traversal.
+    // Normalize and prevent directory traversal. PRR-112 (PR #264 review,
+    // mirroring start.ps1's PRR-003 pattern): compare against the base WITH a
+    // trailing separator, case-insensitively — a bare startsWith(DIST_DIR)
+    // also admits a SIBLING directory like "dist-evil". The case-insensitive
+    // compare matches the case-insensitive DEFAULT filesystems this offline
+    // package actually targets (Windows, macOS); on a case-SENSITIVE Linux
+    // host a case-variant sibling (Dist-Evil/) could still slip through the
+    // containment check — accepted trade-off, kept in lockstep with the
+    // PowerShell twin rather than diverging per-OS (reviewer round 2 F-c).
     const filePath = normalize(join(DIST_DIR, pathname));
-    if (!filePath.startsWith(DIST_DIR)) {
+    const distRoot = DIST_DIR.endsWith(sep) ? DIST_DIR : DIST_DIR + sep;
+    if (!filePath.toLowerCase().startsWith(distRoot.toLowerCase())) {
       res.writeHead(403, COI_HEADERS);
       res.end('Forbidden');
       return;

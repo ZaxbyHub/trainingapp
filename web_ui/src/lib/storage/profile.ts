@@ -13,7 +13,12 @@
  * shape (see document-store.test.ts).
  */
 
-import { MIGRATION_KEY, PROFILE_KEY, REINDEX_FLAG_KEY } from './persisted-keys';
+import {
+  MIGRATION_KEY,
+  PROFILE_KEY,
+  REINDEX_FLAG_KEY,
+  REGISTERED_PROFILES_KEY,
+} from './persisted-keys';
 
 const PREFIX_LENGTH = 8;
 
@@ -26,6 +31,13 @@ export interface StorageDbNames {
   vector: string;
   /** IndexedDB name for the keyword-index store. */
   keyword: string;
+  /**
+   * IndexedDB name for the conversations store (issue #34 item 6p, R3-1):
+   * profile-namespaced like every other store, so two operators sharing a
+   * workstation never see each other's chat history. Uniform rule — no
+   * default-'' special case (getProfilePrefix always holds a random prefix).
+   */
+  conversations: string;
 }
 
 /**
@@ -86,6 +98,15 @@ export function getProfilePrefix(): string {
 }
 
 /**
+ * Mint a fresh profile prefix (issue #34 item 6p, Settings "new profile"
+ * flow): a brand-new namespace, registered by the caller and switched to via
+ * profile-switch. Same shape guarantee as getProfilePrefix.
+ */
+export function newProfilePrefix(): string {
+  return mintPrefix();
+}
+
+/**
  * Derive all storage names for the current profile. Single source of truth —
  * every store consumes this so the prefix can never desync across layers.
  */
@@ -96,11 +117,18 @@ export function getStorageDbNames(): StorageDbNames {
     vectorMapping: `${prefix}-doc-qa-indexes`,
     vector: `${prefix}-doc-qa-index`,
     keyword: `${prefix}-doc-qa-keywords`,
+    conversations: `${prefix}-doc-qa-conversations`,
   };
 }
 
-/** Pattern matching any legacy per-session namespace's databases. */
-const ORPHAN_DB_RE = /^([a-z0-9]{3,8})-doc-qa-(documents|indexes|keywords)$/;
+/**
+ * Pattern matching any legacy per-session namespace's databases. PRR-107
+ * (PR #264 review): conversations is included — the per-profile
+ * conversations db is a first-class namespace member, so a conversation-only
+ * orphan prefix is discoverable (Adopt/Delete) and an orphan Delete removes
+ * the chat history it owns.
+ */
+const ORPHAN_DB_RE = /^([a-z0-9]{3,8})-doc-qa-(documents|indexes|keywords|conversations)$/;
 
 /**
  * One-time, best-effort migration of orphaned per-session databases into the
@@ -130,6 +158,18 @@ export async function migrateOrphanedNamespaces(): Promise<void> {
     return;
   }
 
+  // R3-5/R4-4 (issue #34 item 6p): this automatic merge is RETIRED from the
+  // boot path (Settings → Profile data offers the only route to an
+  // unregistered namespace: explicit Adopt/Delete). The guard remains for
+  // any explicit caller: an UNHEALTHY registry refuses outright (colleagues'
+  // namespaces are never eligible for merging on registry corruption), and a
+  // REGISTERED profile's namespaces are never merged into another profile.
+  const registry = readRegistry();
+  if (!registry.healthy) {
+    return;
+  }
+  const registered = new Set(registry.profiles);
+
   if (typeof indexedDB === 'undefined') {
     return;
   }
@@ -151,12 +191,12 @@ export async function migrateOrphanedNamespaces(): Promise<void> {
     return;
   }
 
-  // Collect orphan prefixes (any profile prefix other than the current one).
+  // Collect orphan prefixes (any non-current, UNREGISTERED profile prefix).
   const orphanPrefixes = new Set<string>();
   for (const db of dbs) {
     const name = db.name ?? '';
     const match = name.match(ORPHAN_DB_RE);
-    if (match && match[1] !== currentPrefix) {
+    if (match && match[1] !== currentPrefix && !registered.has(match[1])) {
       orphanPrefixes.add(match[1]);
     }
   }
@@ -308,6 +348,15 @@ function mergeIntoStore<T>(dbName: string, storeName: string, keyPath: string, r
  */
 export async function listStalePrefixes(): Promise<string[]> {
   const currentPrefix = getProfilePrefix();
+  // B2/R3-5 (issue #34 item 6p): a REGISTERED colleague profile is never a
+  // stale/orphan candidate, and an UNHEALTHY registry yields no deletion
+  // candidates at all (fail closed — corruption must not make colleagues'
+  // namespaces eligible for deletion).
+  const registry = readRegistry();
+  if (!registry.healthy) {
+    return [];
+  }
+  const registered = new Set(registry.profiles);
   if (typeof indexedDB === 'undefined') {
     return [];
   }
@@ -320,7 +369,7 @@ export async function listStalePrefixes(): Promise<string[]> {
     const prefixes = new Set<string>();
     for (const db of dbs) {
       const match = (db.name ?? '').match(ORPHAN_DB_RE);
-      if (match && match[1] !== currentPrefix) {
+      if (match && match[1] !== currentPrefix && !registered.has(match[1])) {
         prefixes.add(match[1]);
       }
     }
@@ -331,19 +380,31 @@ export async function listStalePrefixes(): Promise<string[]> {
 }
 
 /**
- * Delete all IndexedDB databases for a given profile prefix.
- * Intended for the Settings "Clear Cache" UI (PR-5). Best-effort.
+ * Delete a profile prefix's IndexedDB databases. Best-effort. TWO contracts
+ * share this function (reviewer round 2, F1 — they must not be conflated):
  *
- * NOTE (PRR-008): this deletes the documents, vector-mapping, and keyword DBs,
- * but it CANNOT delete the native EdgeVec HNSW blob for the prefix — that blob
+ *  - Clear Cache (SettingsPage) calls it for the CURRENT profile and PROMISES
+ *    THE USER THE CHAT HISTORY IS KEPT — the default therefore deletes only
+ *    the documents, vector-mapping and keyword DBs, never
+ *    `{prefix}-doc-qa-conversations`.
+ *  - The Settings → Profile data orphan-Delete row calls it with
+ *    `includeConversations: true` for an UNREGISTERED namespace the user is
+ *    destroying outright — there the conversations db goes with the rest
+ *    (PRR-107: an orphan Delete previously left the chat history behind).
+ *
+ * NOTE (PRR-008): this cannot delete the native EdgeVec HNSW blob for the
+ * prefix — that blob
  * is stored as a VALUE keyed by `${prefix}-doc-qa-index` inside the shared
  * `edgevec-db` database (see vite.config.ts IndexedDbBackend stub), not in a
  * per-profile database. Clearing it requires deleting the key from
  * `edgevec-db`'s data store (or deleting `edgevec-db` entirely, which would
  * affect ALL profiles). PR-5's Clear Cache UI must handle the EdgeVec blob
- * separately; deleting only these three DBs leaves the vector blob orphaned.
+ * separately; deleting only these DBs leaves the vector blob orphaned.
  */
-export async function deleteNamespace(prefix: string): Promise<void> {
+export async function deleteNamespace(
+  prefix: string,
+  options: { includeConversations?: boolean } = {},
+): Promise<void> {
   // Match the system-wide prefix constraint (see getProfilePrefix / DB_NAME
   // shape regex) so this only acts on real profile namespaces.
   if (!/^[a-z0-9]{3,8}$/.test(prefix)) {
@@ -356,6 +417,7 @@ export async function deleteNamespace(prefix: string): Promise<void> {
     `${prefix}-doc-qa-documents`,
     `${prefix}-doc-qa-indexes`,
     `${prefix}-doc-qa-keywords`,
+    ...(options.includeConversations === true ? [`${prefix}-doc-qa-conversations`] : []),
   ];
   await Promise.all(
     names.map(
@@ -368,4 +430,150 @@ export async function deleteNamespace(prefix: string): Promise<void> {
         })
     )
   );
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * Profile registry (issue #34 item 6p, plan R4-5/R5-5/R5-9)
+ * ---------------------------------------------------------------------------
+ * A profile exists for switching purposes only when it is REGISTERED here.
+ * Registration is explicit: first boot of an upgraded install
+ * (ensureCurrentProfileRegistered), first-run wizard completion, profile
+ * switching, or the Settings "Adopt orphan" action. A registered profile is
+ * never an automatic-migration or Clear-Cache orphan candidate, so two
+ * operators sharing a workstation can never destroy each other's data.
+ *
+ * The registry is a localStorage JSON array (internal key, preserved by Clear
+ * Cache). Discovery never depends on `indexedDB.databases()`, so it works on
+ * non-enumerating browsers (Firefox). Unreadable/corrupt registry state is
+ * `healthy: false`: every destructive operation that consults the registry
+ * REFUSES (fail closed) until the operator explicitly resets it.
+ */
+
+export interface RegisteredProfiles {
+  profiles: string[];
+  /** false = the stored registry was unreadable/corrupt; destructive ops must refuse. */
+  healthy: boolean;
+}
+
+function isPrefixShape(prefix: unknown): prefix is string {
+  return typeof prefix === 'string' && /^[a-z0-9]{3,8}$/.test(prefix);
+}
+
+function readRegistry(): RegisteredProfiles {
+  let raw: string | null;
+  try {
+    // Storage unavailable (private mode): treat as healthy-but-empty. The
+    // destructive ops that consult the registry ALSO need IndexedDB, which is
+    // likewise unavailable there, so nothing becomes deletion-eligible.
+    if (typeof localStorage === 'undefined') return { profiles: [], healthy: true };
+    raw = localStorage.getItem(REGISTERED_PROFILES_KEY);
+  } catch {
+    return { profiles: [], healthy: true };
+  }
+  if (raw === null) {
+    return { profiles: [], healthy: true };
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return { profiles: [], healthy: false };
+    }
+    const profiles = parsed.filter(isPrefixShape);
+    if (profiles.length !== parsed.length) {
+      // A malformed entry means the registry was corrupted, not merely empty.
+      return { profiles: [], healthy: false };
+    }
+    return { profiles, healthy: true };
+  } catch {
+    return { profiles: [], healthy: false };
+  }
+}
+
+function writeRegistry(profiles: string[]): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(REGISTERED_PROFILES_KEY, JSON.stringify(profiles));
+    }
+  } catch {
+    /* storage write failed (quota/private mode) — registration is best-effort */
+  }
+}
+
+/** Read the profile registry. See the module block for the fail-closed contract. */
+export function listRegisteredProfiles(): RegisteredProfiles {
+  return readRegistry();
+}
+
+/** True when `prefix` is a registered profile (and the registry is healthy). */
+export function isRegisteredProfile(prefix: string): boolean {
+  const reg = readRegistry();
+  return reg.healthy && reg.profiles.includes(prefix);
+}
+
+/**
+ * Register `prefix` as a switchable profile. Idempotent. When the registry is
+ * unhealthy, registration fails (returns false) — recovery is the explicit
+ * Settings reset surface, never a silent repair.
+ */
+export function registerProfile(prefix: string): boolean {
+  if (!isPrefixShape(prefix)) return false;
+  const reg = readRegistry();
+  if (!reg.healthy) return false;
+  if (reg.profiles.includes(prefix)) return true;
+  writeRegistry([...reg.profiles, prefix].sort());
+  return true;
+}
+
+/**
+ * Unregister a profile WITHOUT deleting its data (the data becomes an
+ * explicit Adopt/Delete row in Settings). Intended for the registry-reset
+ * surface. Fails (false) when the registry is unhealthy — reset first.
+ */
+export function unregisterProfile(prefix: string): boolean {
+  const reg = readRegistry();
+  if (!reg.healthy) return false;
+  if (!reg.profiles.includes(prefix)) return true;
+  writeRegistry(reg.profiles.filter((p) => p !== prefix));
+  return true;
+}
+
+/**
+ * Boot-time bootstrap (R4-5): register the current profile when the registry
+ * is healthy and the prefix is not yet registered. Never throws; a corrupted
+ * registry is left alone (destructive ops refuse until the explicit reset).
+ */
+export function ensureCurrentProfileRegistered(): void {
+  try {
+    const reg = readRegistry();
+    if (!reg.healthy) return;
+    const current = getProfilePrefix();
+    if (!reg.profiles.includes(current)) {
+      writeRegistry([...reg.profiles, current].sort());
+    }
+  } catch {
+    /* bootstrap is best-effort */
+  }
+}
+
+/**
+ * Reset a corrupted registry (Settings recovery surface): clear the stored
+ * registry and re-register ONLY the current profile. Returns false when the
+ * registry was actually healthy (reset is not offered for a healthy registry)
+ * or when the write failed — the operator sees the error and destructive ops
+ * stay refused.
+ */
+export function resetProfileRegistry(): boolean {
+  const reg = readRegistry();
+  if (reg.healthy) return false;
+  try {
+    if (typeof localStorage === 'undefined') return false;
+    // Unhealthy means the raw value is unusable; removing it entirely is safe.
+    localStorage.removeItem(REGISTERED_PROFILES_KEY);
+  } catch {
+    return false;
+  }
+  const current = getProfilePrefix();
+  writeRegistry([current]);
+  return true;
 }

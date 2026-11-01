@@ -568,14 +568,19 @@ preset's reranking, answer length or temperature, and selecting the preset again
 ### Clear Cache
 
 Clear Cache removes, in this browser profile: the document library and its keyword/vector
-indexes, downloaded WebLLM weights, orphaned data from earlier sessions, and every saved
+indexes, downloaded WebLLM weights, and every saved
 setting registered in `web_ui/src/lib/storage/persisted-keys.ts` (inference mode, browser
 engine and response-quality choices, theme, external model connection and API key, sidebar state,
-last-opened course, course progress, pack update setting, and the enhanced-logging
+last-opened course, course progress, pack update setting, the workstation inactivity auto-clear
+threshold, and the enhanced-logging
 diagnostics choice), and the browser app's installed Knowledge Packs and
 courses. It keeps your chat history (conversations, stored separately from the
-document library) and the internal profile id, migration marker and re-index notice flag, then
-reloads the page. The desktop app removes the same browser-side data from its app window (the
+document library) and the internal bookkeeping keys (the profile id, the registered-profiles
+registry, the conversation-clear-protocol record, the legacy-adoption done marker, the migration
+marker and the re-index notice flag), then
+reloads the page. Orphaned namespaces from unregistered profiles are no longer touched by Clear
+Cache — that data is managed explicitly under Settings → Profile data (Adopt or Delete). The
+desktop app removes the same browser-side data from its app window (the
 browser-side document and index databases, downloaded browser-model files and saved settings);
 it also keeps chat history and does **not** touch documents or settings stored by the desktop
 backend — remove those documents from the Documents page.

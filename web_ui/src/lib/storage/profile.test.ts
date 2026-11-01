@@ -7,6 +7,7 @@ import {
   getStorageDbNames,
   migrateOrphanedNamespaces,
   listStalePrefixes,
+  deleteNamespace,
 } from './profile';
 
 describe('profile (F1 stable namespace)', () => {
@@ -232,6 +233,88 @@ describe('profile (F1 stable namespace)', () => {
       expect(stale).toContain('orphan01');
       expect(stale).toContain('orphan02');
       expect(stale).not.toContain(current);
+    });
+
+    it('PRR-107: a conversations-only namespace is a discoverable orphan candidate', async () => {
+      const current = getProfilePrefix();
+      const databases = vi.fn(async () => [
+        { name: `${current}-doc-qa-documents` },
+        { name: 'chattab1-doc-qa-conversations' },
+      ]);
+      Object.defineProperty(globalThis, 'indexedDB', {
+        value: { databases },
+        writable: true,
+        configurable: true,
+      });
+      expect(await listStalePrefixes()).toContain('chattab1');
+    });
+  });
+
+  describe('deleteNamespace (PRR-107 + reviewer round 2 F1)', () => {
+    /** An IDBRequest-like stub whose onsuccess fires on assignment. */
+    function makeFiringRequest(): { onsuccess: (() => void) | null } {
+      const req: { onsuccess: (() => void) | null } = { onsuccess: null };
+      Object.defineProperty(req, 'onsuccess', {
+        get: () => null,
+        set: (fn: (() => void) | null) => {
+          if (typeof fn === 'function') queueMicrotask(fn);
+        },
+        configurable: true,
+      });
+      return req;
+    }
+
+    function stubDeleteDatabase(): string[] {
+      const deleted: string[] = [];
+      Object.defineProperty(globalThis, 'indexedDB', {
+        value: {
+          deleteDatabase: vi.fn((name: string) => {
+            deleted.push(name);
+            return makeFiringRequest();
+          }),
+        },
+        writable: true,
+        configurable: true,
+      });
+      return deleted;
+    }
+
+    it('the CLEAR-CACHE-shaped call (no options) KEEPS the conversations database', async () => {
+      // Exactly how SettingsPage's Clear Cache handler invokes it:
+      // deleteNamespace(getProfilePrefix()). The Clear Cache copy promises
+      // "Your chat history is kept" — the conversations db must survive
+      // (reviewer round 2 F1 regression: it did not when PRR-107 added the
+      // name unconditionally).
+      const deleted = stubDeleteDatabase();
+      await deleteNamespace(getProfilePrefix());
+      expect(deleted).toEqual([
+        `${getProfilePrefix()}-doc-qa-documents`,
+        `${getProfilePrefix()}-doc-qa-indexes`,
+        `${getProfilePrefix()}-doc-qa-keywords`,
+      ]);
+      expect(deleted).not.toContain(`${getProfilePrefix()}-doc-qa-conversations`);
+    });
+
+    it('the orphan-Delete path (includeConversations) removes all FOUR databases', async () => {
+      const deleted = stubDeleteDatabase();
+      await deleteNamespace('orphan01', { includeConversations: true });
+      expect(deleted).toEqual([
+        'orphan01-doc-qa-documents',
+        'orphan01-doc-qa-indexes',
+        'orphan01-doc-qa-keywords',
+        'orphan01-doc-qa-conversations',
+      ]);
+    });
+
+    it('refuses an invalid prefix shape (nothing deleted)', async () => {
+      const deleteDatabase = vi.fn(() => makeFiringRequest());
+      Object.defineProperty(globalThis, 'indexedDB', {
+        value: { deleteDatabase },
+        writable: true,
+        configurable: true,
+      });
+      await deleteNamespace('BAD');
+      expect(deleteDatabase).not.toHaveBeenCalled();
     });
   });
 });

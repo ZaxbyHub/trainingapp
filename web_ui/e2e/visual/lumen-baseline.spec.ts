@@ -36,8 +36,9 @@
  *   boot-screen-loading   DesktopBootGate before the shell, "Starting TrainingApp" (stubbed desktopApi whose
  *   boot-screen-error     discovery never settles / rejects: "Desktop backend unavailable" + Retry); also
  *                         outside the shell
- * Seeding writes raw IndexedDB records (conversations: Dexie store
- * `docqa_conversations`; documents: `<profile>-doc-qa-documents`) and reloads;
+ * Seeding writes raw IndexedDB records (conversations: the ACTIVE profile's
+ * Dexie store `<profile>-doc-qa-conversations`; documents: `<profile>-doc-qa-documents`)
+ * and reloads;
  * no model weights are needed. A fixed clock and UTC/en-US keep dates stable.
  *
  * NOT covered (deferred, reported): FirstRunWizard and DesktopModelBlockedOverlay
@@ -63,7 +64,10 @@
  * emulated colorScheme); animations are disabled by the config and reduced
  * motion is requested; fonts are awaited; all cross-origin traffic is
  * aborted; hardware/quota-derived VALUES in Settings are masked (the Hardware
- * Capability section is masked per value cell, not as a whole). The model gate's
+ * Capability section is masked per value cell, not as a whole), as are the
+ * Profile data section's two profile-id VALUE spans (pinned values, but the
+ * mono face's hinting drifts between Chromium builds — see profileValueMasks).
+ * The model gate's
  * readiness TEXT is hardware-derived too and is not masked (it is the content under
  * test), so the hardware it reads is pinned instead (PR #151 review PRR-151-036):
  * stubHardware() reports navigator.deviceMemory = 8 (Chromium's cap: enough memory
@@ -203,9 +207,8 @@ async function stubHardware(page: Page): Promise<void> {
     Object.defineProperty(Navigator.prototype, 'gpu', { configurable: true, get: () => gpu });
     const storage = navigator.storage;
     if (storage) {
-      const realEstimate = storage.estimate.bind(storage);
       storage.estimate = async () => ({
-        ...(await realEstimate()),
+        usage: 3_500_000,
         quota: 10 * 1024 * 1024 * 1024,
       });
       storage.persisted = async () => false;
@@ -224,6 +227,17 @@ async function boot(page: Page, theme: 'light' | 'dark'): Promise<void> {
       /* ignore */
     }
   }, theme);
+  // The Profile-data section renders the active profile prefix (issue #34
+  // item 6p); pin it so the Settings baselines are deterministic. The value
+  // must satisfy getProfilePrefix's ^[a-z0-9]{3,8}$ guard (profile.ts m1) —
+  // an invalid value is discarded and a random prefix minted instead.
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem('doc-qa-profile-id', 'baseline');
+    } catch {
+      /* ignore */
+    }
+  });
   await page.goto('/');
   await waitReady(page);
 }
@@ -247,6 +261,24 @@ async function seedPopulated(page: Page): Promise<void> {
           t.oncomplete = () => res();
           t.onerror = () => rej(t.error);
         });
+      // Conversations are per-profile since issue #34 item 6p: the store is
+      // the ACTIVE profile's Dexie database (`<prefix>-doc-qa-conversations`,
+      // version 2 schema conversations+meta), not the retired shared legacy
+      // name `docqa_conversations`.
+      const openConversations = () =>
+        new Promise<IDBDatabase>((res, rej) => {
+          const r = indexedDB.open(`${prefix}-doc-qa-conversations`);
+          r.onupgradeneeded = () => {
+            if (!r.result.objectStoreNames.contains('conversations')) {
+              r.result.createObjectStore('conversations', { keyPath: 'id' });
+            }
+            if (!r.result.objectStoreNames.contains('meta')) {
+              r.result.createObjectStore('meta', { keyPath: 'key' });
+            }
+          };
+          r.onsuccess = () => res(r.result);
+          r.onerror = () => rej(r.error);
+        });
       const docs = await open(`${prefix}-doc-qa-documents`);
       const doc = (id: string, fileName: string, status: string, extra: object = {}) => ({
         id,
@@ -267,7 +299,7 @@ async function seedPopulated(page: Page): Promise<void> {
         doc('d3', 'Broken.pdf', 'error', { errorMessage: 'Could not extract text', progress: 0, chunkCount: 0 })
       );
       docs.close();
-      const conv = await open('docqa_conversations');
+      const conv = await openConversations();
       const msg = (id: string, role: string, content: string, extra: object = {}) => ({
         id,
         role,
@@ -350,6 +382,24 @@ function hardwareValueMasks(page: Page): Locator[] {
 }
 
 /**
+ * Machine-pinned VALUE spans of the Profile data section only (issue #34 item 6p):
+ * the active profile id after "Active profile:" and each registered-profile list
+ * name. The values are deterministic (boot pins doc-qa-profile-id = 'baseline'),
+ * but the monospace face's sub-pixel hinting drifts between Chromium builds: CI
+ * round 2's web-ui-visual-baseline job failed on exactly the 16 settings /
+ * settings-external PNGs at ~56 px each, localized inside these two spans (the
+ * values themselves were correct). Per the Hardware Capability pattern above, only
+ * the VALUE cells are masked — the section card, heading, labels, copy and buttons
+ * stay in the baseline so a restyle of that section still shows a diff.
+ */
+function profileValueMasks(page: Page): Locator[] {
+  return [
+    page.getByTestId('active-profile-value'),
+    page.getByTestId('profile-registry-name'),
+  ];
+}
+
+/**
  * The re-index notice banner's rounded bottom-left corner rasterizes in one of two
  * ways at dark @ 1024 (an anti-aliasing wobble at x 89-92, y 158-160). The committed
  * baseline is the MINORITY rasterization: with zero tolerance it fails about 9 runs in 10,
@@ -370,6 +420,7 @@ function dynamicMasks(page: Page): Locator[] {
     // The whole memory meter (label, percentage and fill are machine-derived).
     page.getByRole('progressbar', { name: /Memory Used/i }),
     ...hardwareValueMasks(page),
+    ...profileValueMasks(page),
     page.locator('time'),
   ];
 }

@@ -15,6 +15,10 @@ import {
 import { subscribeLatestModelStatus } from './lib/desktop-models-events';
 import { isKnownUnsupportedBrowser } from './lib/browser/browser-compat';
 import { migrateLegacyProviderToDesktop } from './lib/llm/external-migration';
+import { INACTIVITY_TIMEOUT_KEY } from './lib/storage/persisted-keys';
+import { ensureCurrentProfileRegistered } from './lib/storage/profile';
+import { startInactivityWatch, INACTIVITY_DEFAULT_MIN } from './lib/session/inactivity';
+import { anyHandlerBusy } from './lib/session/session-clear';
 import { AppLayout } from './layouts/AppLayout';
 import { FirstRunGate } from './components/FirstRunWizard';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -248,6 +252,34 @@ function AppContent() {
   // HOOK-ORDER NOTE: above the `if (!isInitialized)` early return, like every hook here.
   useEffect(() => {
     setBrowserUnsupported(!isElectron() && isKnownUnsupportedBrowser());
+    // Issue #34 item 6p (R4-5): register the active profile in the profile
+    // registry at boot — browser path only (Electron keeps its own profile
+    // identity in the backend; the registry would be dead weight there).
+    if (!isElectron()) ensureCurrentProfileRegistered();
+  }, []);
+
+  // Issue #34 item 6p (AC6): the workstation-wide inactivity auto-clear. The
+  // threshold is the workstation-level Settings value (default 15 min, 0
+  // disables); busy arbitration comes from the session-clear bus; a completed
+  // clear surfaces the notice banner below. startInactivityWatch disables
+  // itself (disclosed) where Web Locks are unavailable.
+  const [inactivityClearedNotice, setInactivityClearedNotice] = useState(false);
+  useEffect(() => {
+    const watch = startInactivityWatch({
+      getThresholdMin: () => {
+        try {
+          const raw = localStorage.getItem(INACTIVITY_TIMEOUT_KEY);
+          if (raw === null) return INACTIVITY_DEFAULT_MIN;
+          const parsed = Number(raw);
+          return Number.isFinite(parsed) ? parsed : INACTIVITY_DEFAULT_MIN;
+        } catch {
+          return INACTIVITY_DEFAULT_MIN;
+        }
+      },
+      isBusy: () => anyHandlerBusy(),
+      onCleared: () => setInactivityClearedNotice(true),
+    });
+    return () => watch.stop();
   }, []);
   const showBrowserNotice = browserUnsupported && !browserNoticeDismissed;
   const browserNotice = (className?: string) => (
@@ -488,6 +520,23 @@ function AppContent() {
       {/* E2 (issue #85): first-run validation wizard gate — renders the
           overlay only when a first run (or drift re-run) is needed. */}
       <FirstRunGate />
+      {/* Issue #34 item 6p (AC6): the inactivity auto-clear notice. */}
+      {inactivityClearedNotice && (
+        <Banner
+          tone="warning"
+          className="app-notice"
+          action={
+            <IconButton
+              icon="x"
+              size="sm"
+              aria-label="Dismiss inactivity-clear notice"
+              onClick={() => setInactivityClearedNotice(false)}
+            />
+          }
+        >
+          Conversation history cleared after inactivity.
+        </Banner>
+      )}
       {persistenceError && (
         <Banner
           tone="danger"
