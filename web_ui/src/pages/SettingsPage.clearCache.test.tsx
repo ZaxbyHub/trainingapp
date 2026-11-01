@@ -297,6 +297,11 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     await waitFor(() => {
       expect(deleteNamespaceMock).toHaveBeenCalledWith('testprfx');
     });
+    // Await the terminal state so the clear-cache promise chain settles INSIDE
+    // the test: a continuation resolving after vitest tears down the jsdom
+    // environment fails CI with an unhandled 'window is not defined' rejection
+    // (runner timing only; observed on the PR #264 first web-ui run).
+    await screen.findByText('Cache cleared');
   });
 
   test('Clear Cache deletes the EdgeVec blob key from edgevec-db (PRR-008)', async () => {
@@ -317,6 +322,11 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     await waitFor(() => {
       expect(mockObjectStore.delete).toHaveBeenCalledWith('testprfx-doc-qa-index');
     });
+    // Await the terminal state so the clear-cache promise chain settles INSIDE
+    // the test: a continuation resolving after vitest tears down the jsdom
+    // environment fails CI with an unhandled 'window is not defined' rejection
+    // (runner timing only; observed on the PR #264 first web-ui run).
+    await screen.findByText('Cache cleared');
   });
 
   test('second Clear Cache click deletes all three WebLLM Cache Storage entries', async () => {
@@ -337,6 +347,11 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     expect(caches.delete).toHaveBeenCalledWith('webllm/model');
     expect(caches.delete).toHaveBeenCalledWith('webllm/config');
     expect(caches.delete).toHaveBeenCalledWith('webllm/wasm');
+    // Await the terminal state so the clear-cache promise chain settles INSIDE
+    // the test: a continuation resolving after vitest tears down the jsdom
+    // environment fails CI with an unhandled 'window is not defined' rejection
+    // (runner timing only; observed on the PR #264 first web-ui run).
+    await screen.findByText('Cache cleared');
   });
 
   test('second Clear Cache click deletes the settings IndexedDB', async () => {
@@ -353,6 +368,11 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     await waitFor(() => {
       expect(indexedDB.deleteDatabase).toHaveBeenCalledWith('doc-qa-settings');
     });
+    // Await the terminal state so the clear-cache promise chain settles INSIDE
+    // the test: a continuation resolving after vitest tears down the jsdom
+    // environment fails CI with an unhandled 'window is not defined' rejection
+    // (runner timing only; observed on the PR #264 first web-ui run).
+    await screen.findByText('Cache cleared');
   });
 
   test('Clear Cache does NOT delete the bare (non-prefixed) doc-qa-documents name', async () => {
@@ -377,6 +397,11 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
       (c: unknown[]) => c[0]
     );
     expect(deleteCalls).not.toContain('doc-qa-documents');
+    // Await the terminal state so the clear-cache promise chain settles INSIDE
+    // the test: a continuation resolving after vitest tears down the jsdom
+    // environment fails CI with an unhandled 'window is not defined' rejection
+    // (runner timing only; observed on the PR #264 first web-ui run).
+    await screen.findByText('Cache cleared');
   });
 
   test('shows "Cache cleared" result feedback after clearing', async () => {
@@ -737,5 +762,10 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     });
     expect(deleteNamespaceMock).not.toHaveBeenCalledWith('orphan1');
     expect(deleteNamespaceMock).not.toHaveBeenCalledWith('orphan2');
+    // Await the terminal state so the clear-cache promise chain settles INSIDE
+    // the test: a continuation resolving after vitest tears down the jsdom
+    // environment fails CI with an unhandled 'window is not defined' rejection
+    // (runner timing only; observed on the PR #264 first web-ui run).
+    await screen.findByText('Cache cleared');
   });
 });
