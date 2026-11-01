@@ -19,7 +19,7 @@
 
 import { createServer } from 'node:http';
 import { createReadStream, existsSync, statSync } from 'node:fs';
-import { dirname, extname, join, normalize } from 'node:path';
+import { dirname, extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { exec } from 'node:child_process';
 
@@ -135,9 +135,13 @@ const server = createServer((req, res) => {
     let pathname = decodeURIComponent(url.pathname);
     if (pathname === '/') pathname = '/index.html';
 
-    // Normalize and prevent directory traversal.
+    // Normalize and prevent directory traversal. PRR-112 (PR #264 review,
+    // mirroring start.ps1's PRR-003 pattern): compare against the base WITH a
+    // trailing separator, case-insensitively — a bare startsWith(DIST_DIR)
+    // also admits a SIBLING directory like "dist-evil".
     const filePath = normalize(join(DIST_DIR, pathname));
-    if (!filePath.startsWith(DIST_DIR)) {
+    const distRoot = DIST_DIR.endsWith(sep) ? DIST_DIR : DIST_DIR + sep;
+    if (!filePath.toLowerCase().startsWith(distRoot.toLowerCase())) {
       res.writeHead(403, COI_HEADERS);
       res.end('Forbidden');
       return;

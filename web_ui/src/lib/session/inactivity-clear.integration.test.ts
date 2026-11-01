@@ -226,7 +226,7 @@ describe('inactivity fire -> persisted clear through REAL locks (review F1)', ()
     await vi.advanceTimersByTimeAsync(15 * MIN);
     expect(conversationsOf(DB_NAME)).toHaveLength(0);
     expect(await readConversationEpoch()).toBe(1);
-    expect(readClearRecord()).toEqual({ pending: null, completed: { epochGoal: 1 } });
+    expect(readClearRecord()).toEqual({ pending: null, completed: { epochGoal: 1, profile: PREFIX } });
     expect(onClear).toHaveBeenCalledTimes(1);
     expect(onCleared).toHaveBeenCalledTimes(1);
 
@@ -271,14 +271,14 @@ describe('inactivity fire -> persisted clear through REAL locks (review F1)', ()
     await vi.advanceTimersByTimeAsync(30_000);
     expect(conversationsOf(DB_NAME)).toHaveLength(0);
     expect(await readConversationEpoch()).toBe(1);
-    expect(readClearRecord()).toEqual({ pending: null, completed: { epochGoal: 1 } });
+    expect(readClearRecord()).toEqual({ pending: null, completed: { epochGoal: 1, profile: PREFIX } });
     expect(onCleared).toHaveBeenCalledTimes(1);
     const recordWrites = setItemSpy.mock.calls
       .filter(([key]) => key === CONVERSATIONS_CLEARED_KEY)
       .map(([, value]) => JSON.parse(value as string) as { pending: unknown; completed: unknown });
     expect(recordWrites.length).toBeGreaterThanOrEqual(2);
     expect(recordWrites[0]?.pending).toEqual({ epochGoal: 1, profile: PREFIX });
-    expect(recordWrites.at(-1)).toEqual({ pending: null, completed: { epochGoal: 1 } });
+    expect(recordWrites.at(-1)).toEqual({ pending: null, completed: { epochGoal: 1, profile: PREFIX } });
     setItemSpy.mockRestore();
   });
 
@@ -296,5 +296,53 @@ describe('inactivity fire -> persisted clear through REAL locks (review F1)', ()
     // session-active lock is free for any colleague.
     expect(locks.heldModes(SESSION_LOCK)).toEqual([]);
     expect(onCleared).toHaveBeenCalledTimes(1);
+  });
+
+  it('PRR-114(e): a pending clear from a crashed tab is resolved by the idle fire (notice, no double clear) — and the replay branch itself executes when no shared hold is racing the release', async () => {
+    for (let i = 0; i < 3; i++) await createConversation(conv(i));
+    // A crashed tab's pending record: the pending stamp was written, the
+    // epoch transaction never ran. The epoch (0) is below the goal (1).
+    localStorage.setItem(
+      CONVERSATIONS_CLEARED_KEY,
+      JSON.stringify({ pending: { epochGoal: 1, profile: PREFIX }, completed: null }),
+    );
+    const onClear = vi.fn();
+    registerClearHandler({ isBusy: () => false, onClear });
+    const onCleared = vi.fn();
+    startWatch({ threshold: () => 15, onCleared });
+    activity();
+
+    // FIRST fire: the watch's own shared-hold release is asynchronous, so
+    // the replay's exclusive-ifAvailable arbitration can lose the race and
+    // defer — the fire then falls through to requestSessionClear, whose own
+    // arbitration completes the clear and resolves the pending. Either way
+    // the pending is resolved exactly once (epoch lands AT the goal — no
+    // double clear) and the notice surfaces.
+    await vi.advanceTimersByTimeAsync(15 * MIN);
+    expect(conversationsOf(DB_NAME)).toHaveLength(0);
+    expect(await readConversationEpoch()).toBe(1);
+    expect(onCleared).toHaveBeenCalledTimes(1);
+    expect(readClearRecord()).toEqual({ pending: null, completed: { epochGoal: 1, profile: PREFIX } });
+    const clearsAfterFirstFire = onClear.mock.calls.length;
+
+    // SECOND fire with NO activity in between: the watch released its shared
+    // hold at the first fire and re-acquires it only on activity, so nothing
+    // races the release — the REPLAY BRANCH itself executes (a fresh pending
+    // is resolved by replayPendingConversationClear, not by the bus clear:
+    // the bus handler count does not move).
+    for (let i = 10; i < 13; i++) await createConversation(conv(i));
+    expect(conversationsOf(DB_NAME)).toHaveLength(3);
+    localStorage.setItem(
+      CONVERSATIONS_CLEARED_KEY,
+      JSON.stringify({ pending: { epochGoal: 2, profile: PREFIX }, completed: null }),
+    );
+    await vi.advanceTimersByTimeAsync(15 * MIN);
+    expect(conversationsOf(DB_NAME)).toHaveLength(0);
+    expect(await readConversationEpoch()).toBe(2);
+    expect(onCleared).toHaveBeenCalledTimes(2);
+    // The replay branch, proven: the bus clear (which invokes onClear) never
+    // ran on the second fire.
+    expect(onClear.mock.calls.length).toBe(clearsAfterFirstFire);
+    expect(readClearRecord()).toEqual({ pending: null, completed: { epochGoal: 2, profile: PREFIX } });
   });
 });

@@ -33,20 +33,18 @@ export interface ConversationMutationOptions {
 
 /**
  * Run `mutate` under the origin-wide write lock with the epoch gate applied.
- * Returns true when the mutation was applied, false when the gate aborted it
- * (the caller discards its stale state instead of surfacing an error).
+ * Returns true when the mutation was applied, false ONLY when the gate
+ * aborted a stale write (the caller discards its stale state instead of
+ * surfacing an error). A GENUINE write failure propagates (PRR-105, PR #264
+ * review): the old catch-all returned false for real errors too, flattening
+ * base's user-visible save/delete/rename failure banners into silent no-ops.
  */
 async function gatedMutation(
   options: ConversationMutationOptions | undefined,
   mutate: () => unknown,
 ): Promise<boolean> {
   const stateEpoch = options?.stateEpoch ?? (await readConversationEpoch());
-  try {
-    return await withConversationWriteLock(() => withEpochGate(stateEpoch, mutate));
-  } catch (error) {
-    console.error('[conversations] Gated mutation failed:', error);
-    return false;
-  }
+  return withConversationWriteLock(() => withEpochGate(stateEpoch, mutate));
 }
 
 /**

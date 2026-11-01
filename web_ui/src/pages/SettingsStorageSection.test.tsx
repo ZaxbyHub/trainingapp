@@ -13,12 +13,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { SettingsStorageSection } from './SettingsStorageSection';
 
-interface EstimeMock {
+interface EstimateMock {
   usage: number;
   quota: number;
 }
 
-let estimateMock: EstimeMock;
+let estimateMock: EstimateMock;
 let persistedMock: boolean;
 let persistMock: ReturnType<typeof vi.fn>;
 let persistGranted: boolean;
@@ -133,5 +133,101 @@ describe('SettingsStorageSection (storage-pressure indicator)', () => {
       expect(screen.getByTestId('settings-storage-persist-note').textContent).toContain('not granted');
     });
     expect(screen.getByTestId('settings-storage-persisted').textContent).toContain('not persistent');
+  });
+
+  // PRR-114(d) (PR #264 review): the five failure branches of the storage
+  // section, each asserting the EXACT user-visible copy.
+  it('estimate() rejecting surfaces the exact read-failure copy', async () => {
+    Object.defineProperty(navigator, 'storage', {
+      configurable: true,
+      value: {
+        estimate: async () => {
+          throw new Error('boom');
+        },
+        persisted: async () => false,
+      },
+    });
+    render(<SettingsStorageSection />);
+    await waitFor(() => {
+      expect(screen.getByTestId('settings-storage-section').textContent).toContain(
+        'Storage usage could not be read.',
+      );
+    });
+  });
+
+  it('persisted() rejecting leaves the persistence state unknown', async () => {
+    Object.defineProperty(navigator, 'storage', {
+      configurable: true,
+      value: {
+        estimate: async () => ({ ...estimateMock }),
+        persisted: async () => {
+          throw new Error('boom');
+        },
+        persist: persistMock,
+      },
+    });
+    render(<SettingsStorageSection />);
+    await waitFor(() => {
+      expect(screen.getByTestId('settings-storage-persisted').textContent).toContain(
+        'Persistence state unknown.',
+      );
+    });
+  });
+
+  it('a browser with no persist() surfaces the exact cannot-request copy', async () => {
+    Object.defineProperty(navigator, 'storage', {
+      configurable: true,
+      value: {
+        estimate: async () => ({ ...estimateMock }),
+        persisted: async () => false,
+        // no persist
+      },
+    });
+    render(<SettingsStorageSection />);
+    await waitFor(() => {
+      expect(screen.getByTestId('settings-storage-persist-btn')).toBeTruthy();
+    });
+    fireEvent.click(screen.getByTestId('settings-storage-persist-btn'));
+    await waitFor(() => {
+      expect(screen.getByTestId('settings-storage-persist-note').textContent).toBe(
+        'Persistent storage cannot be requested in this browser.',
+      );
+    });
+  });
+
+  it('persist() rejecting surfaces the exact request-failed copy', async () => {
+    Object.defineProperty(navigator, 'storage', {
+      configurable: true,
+      value: {
+        estimate: async () => ({ ...estimateMock }),
+        persisted: async () => false,
+        persist: vi.fn(async () => {
+          throw new Error('boom');
+        }),
+      },
+    });
+    render(<SettingsStorageSection />);
+    await waitFor(() => {
+      expect(screen.getByTestId('settings-storage-persist-btn')).toBeTruthy();
+    });
+    fireEvent.click(screen.getByTestId('settings-storage-persist-btn'));
+    await waitFor(() => {
+      expect(screen.getByTestId('settings-storage-persist-note').textContent).toBe(
+        'The persistence request failed.',
+      );
+    });
+  });
+
+  it('a browser with no storage API at all surfaces the exact unavailable copy', async () => {
+    Object.defineProperty(navigator, 'storage', {
+      configurable: true,
+      value: undefined,
+    });
+    render(<SettingsStorageSection />);
+    await waitFor(() => {
+      expect(screen.getByTestId('settings-storage-section').textContent).toContain(
+        'Storage information is not available in this browser.',
+      );
+    });
   });
 });

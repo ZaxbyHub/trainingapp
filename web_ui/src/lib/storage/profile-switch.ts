@@ -22,7 +22,7 @@ import {
   registerProfile,
   type RegisteredProfiles,
 } from './profile';
-import { adoptLegacyConversations, hasWebLocks } from '../../db/conv-protocol';
+import { adoptLegacyConversations } from '../../db/conv-protocol';
 
 /** Same prefix shape getProfilePrefix enforces (DB_NAME regex window). */
 export const PROFILE_PREFIX_SHAPE = /^[a-z0-9]{3,8}$/;
@@ -92,19 +92,14 @@ export type LegacyAdoptionOutcome =
 
 /**
  * Settings "Adopt legacy conversation history" wrapper (R5-2/R7-1): adopts
- * the pre-profile SHARED conversations db into the CURRENT profile. Refused
- * with a visible message when Web Locks are absent — the concurrent-adoption
- * arbitration this action relies on requires a secure context (insecure
- * origins get the disclosed degraded state, never a racing adoption).
+ * the pre-profile SHARED conversations db into the CURRENT profile.
+ * PRR-115 (PR #264 review): NO Web Locks refusal — the claim protocol is
+ * lock-free BY DESIGN (plan R5-2: the IndexedDB-atomic claim row in the
+ * legacy db itself arbitrates concurrent adoptions; Web Locks only gate the
+ * AUTOMATIC boot adoption). The manual action works on origins without Web
+ * Locks; every failure outcome keeps its user-visible message.
  */
 export async function adoptLegacyConversationsForCurrentProfile(): Promise<LegacyAdoptionOutcome> {
-  if (!hasWebLocks()) {
-    return {
-      status: 'refused',
-      message:
-        'Legacy adoption is unavailable here: this origin has no Web Locks support (a secure context is required), so concurrent adoption cannot be arbitrated safely.',
-    };
-  }
   const result = await adoptLegacyConversations(getProfilePrefix());
   if (result.outcome === 'adopted') return { status: 'adopted', count: result.count };
   if (result.outcome === 'already-done') return { status: 'already-done' };

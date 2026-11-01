@@ -105,12 +105,27 @@ export class FakeTable {
 
   orderBy(key: string) {
     return collection({
-      source: () => [...this.rows.values()].sort((a, b) => Number(a[key]) - Number(b[key])),
+      source: () => [...this.rows.values()].sort((a, b) => compareByKey(a, b, key)),
       offset: 0,
       limit: Number.POSITIVE_INFINITY,
       filters: [],
     });
   }
+}
+
+/**
+ * Sort comparator that is numeric for number keys and lexicographic for
+ * everything else (Dexie orders an index over strings lexicographically). A
+ * plain Number() coercion yields NaN for string ids, leaving page-windowed
+ * reads (offset/limit over orderBy('id')) in unspecified order.
+ */
+function compareByKey(a: Row, b: Row, key: string): number {
+  const av = a[key];
+  const bv = b[key];
+  if (typeof av === 'number' && typeof bv === 'number') return av - bv;
+  const as = String(av);
+  const bs = String(bv);
+  return as < bs ? -1 : as > bs ? 1 : 0;
 }
 
 interface DatabaseState {
@@ -132,6 +147,14 @@ function stateFor(name: string): DatabaseState {
 /** The DocQADatabase stand-in: one shared state per database NAME. */
 export class FakeDocQADatabase {
   private readonly explicitName?: string;
+  /**
+   * PRR-101/PRR-122 (PR #264 review): while a transaction is active its
+   * table scope is enforced — accessing a table that was NOT passed to the
+   * transaction throws, exactly as a real IndexedDB transaction would
+   * (NotFoundError). The previous scope-ignoring fake masked the adoption
+   * claim's meta-only transaction reading conversations inside it.
+   */
+  private txScope: Set<FakeTable> | null = null;
 
   constructor(name?: string) {
     this.explicitName = name;
@@ -148,17 +171,47 @@ export class FakeDocQADatabase {
 
   /** Lazy: always the CURRENT state for this name (resetFakeDexie-safe). */
   get conversations(): FakeTable {
-    return stateFor(this.name).conversations;
+    return this.scoped(stateFor(this.name).conversations, 'conversations');
   }
 
   get meta(): FakeTable {
-    return stateFor(this.name).meta;
+    return this.scoped(stateFor(this.name).meta, 'meta');
   }
 
-  /** Sequential (non-atomic) transaction stand-in; runs the callback. */
+  private scoped(table: FakeTable, label: string): FakeTable {
+    if (this.txScope === null || this.txScope.has(table)) return table;
+    throw new Error(
+      `TransactionScopeError: table '${label}' (db '${this.name}') is not in this transaction's table list`,
+    );
+  }
+
+  /**
+   * Sequential (non-atomic) transaction stand-in; runs the callback with the
+   * passed tables as the transaction's scope (varargs OR a single array —
+   * both Dexie forms). The scope stays active until the callback's promise
+   * settles.
+   */
   transaction(_mode: string, ...rest: unknown[]): Promise<unknown> {
     const callback = rest[rest.length - 1] as () => unknown;
-    return Promise.resolve(callback());
+    const tables: FakeTable[] = [];
+    for (const arg of rest.slice(0, -1)) {
+      if (arg instanceof FakeTable) tables.push(arg);
+      else if (Array.isArray(arg)) {
+        for (const entry of arg) if (entry instanceof FakeTable) tables.push(entry);
+      }
+    }
+    const previous = this.txScope;
+    this.txScope = new Set(tables);
+    let result: unknown;
+    try {
+      result = callback();
+    } catch (error) {
+      this.txScope = previous;
+      return Promise.reject(error);
+    }
+    return Promise.resolve(result).finally(() => {
+      this.txScope = previous;
+    });
   }
 
   close(): void {

@@ -33,12 +33,22 @@ function storageApi(): StorageLike | undefined {
   return (navigator as { storage?: StorageLike }).storage;
 }
 
+/**
+ * PRR-116 (PR #264 review): the numeric part goes through Intl.NumberFormat
+ * (locale-aware formatting/grouping) — units stay as-is.
+ */
+const byteFraction = new Intl.NumberFormat(undefined, {
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+});
+const byteWhole = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
+
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return '—';
-  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
-  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${bytes} B`;
+  if (bytes >= 1024 ** 3) return `${byteFraction.format(bytes / 1024 ** 3)} GB`;
+  if (bytes >= 1024 ** 2) return `${byteFraction.format(bytes / 1024 ** 2)} MB`;
+  if (bytes >= 1024) return `${byteWhole.format(bytes / 1024)} KB`;
+  return `${byteWhole.format(bytes)} B`;
 }
 
 export function SettingsStorageSection(): React.ReactElement {

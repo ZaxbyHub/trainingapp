@@ -218,6 +218,83 @@ describe('legacy adoption claim protocol (R6-1/R7-1)', () => {
     expect(result).toEqual({ outcome: 'nothing-to-adopt' });
     expect(localStorage.getItem(LEGACY_CONV_MIGRATION_DONE_KEY)).toBe('1');
   });
+
+  it('PRR-106: a superseded adoption ABORTS — a non-empty target inside the copy transaction refuses instead of resurrecting', async () => {
+    await seedLegacy(2);
+    // A crashed earlier adopt left the claim at 'copying' for THIS profile
+    // (the resume path skips the claim's emptiness guard), and a concurrent
+    // write landed rows in the profile db between the claim and the copy.
+    const legacy = new DocQADatabase(LEGACY_CONVERSATIONS_DB_NAME);
+    await legacy.meta.put({ key: 'legacy-adopt-claim', value: { target: PROFILE_A, phase: 'copying' } });
+    await createConversation(conv(50));
+    expect(conversationsOf(DB_A)).toHaveLength(1);
+
+    const result = await adoptLegacyConversations(PROFILE_A);
+    // The in-copy emptiness re-check aborts the adoption: the pre-existing
+    // profile row is never bulkPut over, and the legacy rows are NOT copied.
+    expect(result).toEqual({ outcome: 'refused', reason: 'profile-not-empty' });
+    expect(conversationsOf(DB_A)).toHaveLength(1);
+    expect(conversationsOf(DB_A)[0]?.id).toBe('conv-50');
+    // The legacy db survives a refused adoption (retryable).
+    expect(conversationsOf(LEGACY_CONVERSATIONS_DB_NAME)).toHaveLength(2);
+  });
+
+  it('PRR-111: the done-marker fast path RE-ADOPTS rows a mixed-build/rollback tab left behind, then deletes the legacy db', async () => {
+    // An adoption completed (marker + claim done), but the legacy db survived
+    // AND a rolled-back tab wrote two NEW rows into it afterwards.
+    await seedLegacy(2);
+    localStorage.setItem(LEGACY_CONV_MIGRATION_DONE_KEY, '1');
+    const legacy = new DocQADatabase(LEGACY_CONVERSATIONS_DB_NAME);
+    await legacy.conversations.add(conv(91));
+    await legacy.conversations.add(conv(92));
+    expect(conversationsOf(LEGACY_CONVERSATIONS_DB_NAME)).toHaveLength(4);
+
+    const result = await adoptLegacyConversations(PROFILE_A);
+    expect(result).toEqual({ outcome: 'already-done' });
+    // The leftover rows were recovered into the profile db (idempotent by
+    // id — bulkPut), and the legacy db is gone.
+    expect(conversationsOf(DB_A).map((c) => c.id).sort()).toEqual(['conv-0', 'conv-1', 'conv-91', 'conv-92']);
+    expect(conversationsOf(LEGACY_CONVERSATIONS_DB_NAME)).toHaveLength(0);
+  });
+
+  it('PRR-111: the automatic path also re-adopts leftover rows before its fast-path delete', async () => {
+    stubWebLocks(true);
+    await seedLegacy(1);
+    localStorage.setItem(LEGACY_CONV_MIGRATION_DONE_KEY, '1');
+    const legacy = new DocQADatabase(LEGACY_CONVERSATIONS_DB_NAME);
+    await legacy.conversations.add(conv(77));
+    await maybeAutoMigrateLegacyConversations();
+    expect(conversationsOf(DB_A).map((c) => c.id).sort()).toEqual(['conv-0', 'conv-77']);
+    expect(conversationsOf(LEGACY_CONVERSATIONS_DB_NAME)).toHaveLength(0);
+  });
+
+  it('PRR-121: the adoption copy is chunked — 1200 legacy rows all land (page-windowed copy)', async () => {
+    await seedLegacy(1200);
+    const result = await adoptLegacyConversations(PROFILE_A);
+    expect(result).toEqual({ outcome: 'adopted', count: 1200 });
+    expect(conversationsOf(DB_A)).toHaveLength(1200);
+    expect(conversationsOf(LEGACY_CONVERSATIONS_DB_NAME)).toHaveLength(0);
+  });
+
+  it('PRR-101 regression: the fake enforces transaction table scope (a meta-only tx reading conversations throws)', async () => {
+    await seedLegacy(1);
+    const legacy = new DocQADatabase(LEGACY_CONVERSATIONS_DB_NAME);
+    // The pre-fix claim transaction shape: scoped ONLY to meta, but reading
+    // legacy.conversations inside — the honest fake (and a real browser)
+    // refuse; the old scope-ignoring fake masked it.
+    await expect(
+      legacy.transaction('rw', legacy.meta, async () => {
+        await legacy.conversations.count();
+      }),
+    ).rejects.toThrow(/TransactionScopeError/);
+    // And the REAL claim transaction (both stores) does not throw:
+    await expect(
+      legacy.transaction('rw', [legacy.conversations, legacy.meta], async () => {
+        await legacy.meta.get('legacy-adopt-claim');
+        return legacy.conversations.count();
+      }),
+    ).resolves.toBe(1);
+  });
 });
 
 describe('automatic legacy migration (R4-2/R5-2)', () => {
@@ -228,6 +305,16 @@ describe('automatic legacy migration (R4-2/R5-2)', () => {
     expect(conversationsOf(LEGACY_CONVERSATIONS_DB_NAME)).toHaveLength(2);
     expect(conversationsOf(DB_A)).toHaveLength(0);
     expect(localStorage.getItem(LEGACY_CONV_MIGRATION_DONE_KEY)).toBeNull();
+  });
+
+  it('PRR-115: the MANUAL adopt path needs no Web Locks — navigator.locks undefined, the claim protocol still adopts', async () => {
+    stubWebLocks(false);
+    await seedLegacy(3);
+    const { adoptLegacyConversationsForCurrentProfile } = await import('../lib/storage/profile-switch');
+    const outcome = await adoptLegacyConversationsForCurrentProfile();
+    expect(outcome).toEqual({ status: 'adopted', count: 3 });
+    expect(conversationsOf(DB_A)).toHaveLength(3);
+    expect(conversationsOf(LEGACY_CONVERSATIONS_DB_NAME)).toHaveLength(0);
   });
 
   it('adopts under the migration lock when Web Locks exist', async () => {

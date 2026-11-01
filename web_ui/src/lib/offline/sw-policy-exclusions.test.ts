@@ -18,20 +18,29 @@ const ORIGIN = 'http://127.0.0.1:4174';
 class FakeResponse {
   body: string;
   status: number;
+  statusText: string;
   ok: boolean;
-  constructor(body: unknown, init?: { status?: number }) {
+  headers: Headers;
+  constructor(body: unknown, init?: { status?: number; statusText?: string; headers?: HeadersInit }) {
     this.body = body === undefined || body === null ? '' : String(body);
     this.status = init?.status ?? 200;
+    this.statusText = init?.statusText ?? '';
     this.ok = this.status >= 200 && this.status < 300;
-    this.headers = { get: () => null, has: () => false };
+    // PRR-114(b): real Headers, so the worker's stripVary() actually runs
+    // (the dev/preview server's `Vary: Origin` is modeled by netFetch below)
+    // and survives clone().
+    this.headers = new Headers(init?.headers);
   }
   async text(): Promise<string> {
     return this.body;
   }
   clone(): FakeResponse {
-    return new FakeResponse(this.body, { status: this.status });
+    return new FakeResponse(this.body, {
+      status: this.status,
+      statusText: this.statusText,
+      headers: new Headers(this.headers),
+    });
   }
-  headers: { get(): null; has(): boolean };
 }
 
 interface FetchOpts {
@@ -39,6 +48,14 @@ interface FetchOpts {
   destination?: string;
   method?: string;
   range?: boolean;
+}
+
+function safeHeader(response: FakeResponse, name: string): string | null {
+  try {
+    return response.headers.get(name);
+  } catch {
+    return null;
+  }
 }
 
 class FakeRequest {
@@ -63,6 +80,12 @@ interface FetchResult {
   body?: string;
 }
 
+interface PutCall {
+  key: string;
+  vary: string | null;
+  keptHeader: string | null;
+}
+
 interface Harness {
   netUp: boolean;
   netUrls: string[];
@@ -70,20 +93,24 @@ interface Harness {
   seed(pathname: string, body: string): number;
   fetchPath(pathname: string, opts?: FetchOpts): Promise<FetchResult>;
   cachesDeleteNames(): string[];
+  /** Every cache.put call (key + the stored response's Vary/x-test headers). */
+  putCalls(): PutCall[];
 }
 
 /**
  * Boot the SW script under stubs, run install + activate, and return the
- * harness. `seedCache` (optional) writes entries into a FOREIGN cache before
- * install so activation's cleanup can be observed against it.
+ * harness. `foreignCacheName` (optional) writes entries into a FOREIGN cache
+ * before install so activation's cleanup can be observed against it.
+ * `swLocation` (optional) places the worker at a sub-path scope (PRR-108).
  */
 async function makeHarness(
   manifest: string[],
-  options: { foreignCacheName?: string; foreignEntries?: string[] } = {},
+  options: { foreignCacheName?: string; foreignEntries?: string[]; swLocation?: string } = {},
 ): Promise<Harness> {
   const cachesStore = new Map<string, Map<string, FakeResponse>>();
   const listeners: Record<string, Array<(event: Record<string, unknown>) => void>> = {};
   const deletedCacheNames: string[] = [];
+  const putRecord: PutCall[] = [];
   const harness: Harness = {
     netUp: true,
     netUrls: [],
@@ -131,6 +158,9 @@ async function makeHarness(
     cachesDeleteNames() {
       return [...deletedCacheNames];
     },
+    putCalls() {
+      return [...putRecord];
+    },
   };
 
   if (options.foreignCacheName !== undefined) {
@@ -145,7 +175,11 @@ async function makeHarness(
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     harness.netUrls.push(url);
     if (!harness.netUp) return Promise.reject(new TypeError('Failed to fetch (offline)'));
-    return Promise.resolve(new FakeResponse(`NET:${url}`));
+    // The dev/preview server emits `Vary: Origin` (the reason stripVary
+    // exists); x-test rides along to prove non-Vary headers survive.
+    return Promise.resolve(
+      new FakeResponse(`NET:${url}`, { headers: { vary: 'Origin', 'x-test': 'keep' } }),
+    );
   };
 
   const pathOf = (a: FakeRequest | string | URL): string => {
@@ -163,6 +197,11 @@ async function makeHarness(
       const entries = cachesStore.get(name) as Map<string, FakeResponse>;
       return {
         async put(a: FakeRequest | string | URL, response: FakeResponse) {
+          putRecord.push({
+            key: pathOf(a),
+            vary: safeHeader(response, 'vary'),
+            keptHeader: safeHeader(response, 'x-test'),
+          });
           entries.set(pathOf(a), response);
         },
         async match(a: FakeRequest | string | URL) {
@@ -198,7 +237,7 @@ async function makeHarness(
         return Promise.resolve();
       },
     },
-    location: new URL(ORIGIN + '/'),
+    location: new URL(options.swLocation ?? ORIGIN + '/'),
   };
   swSelf.self = swSelf;
 
@@ -208,6 +247,9 @@ async function makeHarness(
     fetch: netFetch,
     Response: FakeResponse,
     Request: FakeRequest,
+    // PRR-114(b): Headers must be present or stripVary()'s `new Headers(...)`
+    // throws (silently caught) and the Vary header rides into the cache.
+    Headers,
     URL,
     Promise,
     Map,
@@ -323,6 +365,16 @@ describe('app-shell SW runtime policy (R4-6 precedence)', () => {
     // Online non-navigation index fetch goes to the NETWORK even though a
     // cached copy exists from install.
     expect(r.body).toBe('NET:http://127.0.0.1:4174/index.html');
+    // PRR-114(a): NOW give the cached shell a DISTINCT body — with the
+    // identical install-time body the old assertion could not tell cache
+    // from network.
+    expect(h.seed('/index.html', 'CACHED:SHELL')).toBe(1);
+    // And the offline NAVIGATION fallback serves the CACHED copy (the two
+    // arms really differ).
+    h.netUp = false;
+    const offline = await h.fetchPath('/', { mode: 'navigate', destination: 'document' });
+    expect(offline.handled).toBe(true);
+    expect(offline.body).toBe('CACHED:SHELL');
   });
 
   it('fills unmanifested assets/ chunks network-first and falls back offline afterwards (R5-8)', async () => {
@@ -333,6 +385,68 @@ describe('app-shell SW runtime policy (R4-6 precedence)', () => {
     h.netUp = false;
     const offline = await h.fetchPath('/assets/late-chunk-9931.js', { mode: 'no-cors', destination: 'script' });
     expect(offline.body).toBe('NET:http://127.0.0.1:4174/assets/late-chunk-9931.js');
+  });
+
+  it('PRR-108: a sub-path deployment falls back to the correctly-located precached shell', async () => {
+    // The archive served under /training-app/: the worker, its manifest
+    // entries and the shell all live under the scope. The hardcoded
+    // '/index.html' fallback key could never find the precached
+    // /training-app/index.html (origin-absolute vs SW-relative).
+    const h2 = await makeHarness(['index.html', 'assets/app-4f2a9b7c.js'], {
+      swLocation: `${ORIGIN}/training-app/sw.js`,
+    });
+    h2.netUp = false;
+    const r = await h2.fetchPath('/training-app/', { mode: 'navigate', destination: 'document' });
+    expect(r.handled).toBe(true);
+    expect(r.body).toBe(`NET:${ORIGIN}/training-app/index.html`);
+    // And an online sub-path ROOT navigation refreshes the shell under the
+    // sub-path key (not the origin root's).
+    h2.netUp = true;
+    h2.seed('/training-app/index.html', 'CACHED:OLD');
+    const online = await h2.fetchPath('/training-app/', { mode: 'navigate', destination: 'document' });
+    expect(online.body).toBe(`NET:${ORIGIN}/training-app/`);
+    expect(h2.cachedPaths()).toContain('/training-app/index.html');
+    expect(h2.cachedPaths()).not.toContain('/index.html');
+  });
+
+  it('PRR-109: a NON-shell navigation never writes the shell key (a /documents JSON stays out of the offline shell)', async () => {
+    // Seed a distinct shell body; a navigation to a non-shell path must not
+    // overwrite it, and must never be written under the shell key.
+    expect(h.seed('/index.html', 'CACHED:SHELL')).toBe(1);
+    const putsBefore = h.putCalls().length; // drop the install-time precache puts
+    h.netUp = true;
+    const r = await h.fetchPath('/documents', { mode: 'navigate', destination: 'document' });
+    expect(r.handled).toBe(true);
+    expect(r.body).toBe(`NET:${ORIGIN}/documents`);
+    // No cache.put landed on the shell key for that navigation.
+    expect(h.putCalls().slice(putsBefore).filter((c) => c.key === '/index.html')).toEqual([]);
+    // The distinct shell body survives.
+    h.netUp = false;
+    const offline = await h.fetchPath('/documents', { mode: 'navigate', destination: 'document' });
+    expect(offline.body).toBe('CACHED:SHELL');
+    // ...and the scope-root navigation still DOES refresh the shell key.
+    h.netUp = true;
+    await h.fetchPath('/', { mode: 'navigate', destination: 'document' });
+    expect(h.putCalls().slice(putsBefore).some((c) => c.key === '/index.html')).toBe(true);
+  });
+
+  it('PRR-114(b): cache.put receives a Vary-STRIPPED response (other headers preserved)', async () => {
+    // The network emits Vary: Origin + x-test; every stored response must
+    // have vary gone and x-test kept. Before Headers existed in the sandbox,
+    // stripVary silently no-oped and the Vary header rode into the cache —
+    // making stored entries unmatchable for page-initiated fetches.
+    const shellPuts = h.putCalls().filter((c) => c.key === '/index.html');
+    expect(shellPuts.length).toBeGreaterThanOrEqual(1); // the install precache
+    for (const call of h.putCalls()) {
+      expect(call.vary, `put(${call.key}) must strip Vary`).toBeNull();
+      expect(call.keptHeader, `put(${call.key}) must keep x-test`).toBe('keep');
+    }
+    // And a navigation refresh goes through the same strip.
+    h.netUp = true;
+    await h.fetchPath('/', { mode: 'navigate', destination: 'document' });
+    const navPut = h.putCalls().filter((c) => c.key === '/index.html').at(-1);
+    expect(navPut?.vary).toBeNull();
+    expect(navPut?.keptHeader).toBe('keep');
   });
 
   it('never deletes foreign caches on activate (R3-6)', async () => {

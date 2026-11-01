@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+- **Offline app shell + shared-workstation profiles and conversation clearing (issue #34 items 6p and 7 via #26)**: the
+  browser app gains an app-shell service worker (`web_ui/public/sw.js`) — a strict-allowlist runtime policy
+  (excluded paths pass through untouched; navigations and `index.html` are network-first with a cached-shell offline
+  fallback refreshed by shell navigations; content-hashed `assets/**` manifest members are cache-first; late chunks
+  network-first with fill; foreign caches never deleted) fed by a build-emitted precache manifest — plus a live
+  `navigator.storage` pressure indicator in Settings (usage/quota meter, near-quota warning in an always-mounted live
+  region, persisted() state and a Request-persist control). Conversations are now stored per profile
+  (`{prefix}-doc-qa-conversations`) with a four-part cross-tab protocol: origin-wide Web Locks arbitration
+  (`docqa-conv-write` serializes mutations, `docqa-session-active` shared/exclusive gates clears), a per-database
+  monotonic epoch gate that aborts stale writes inside their own transaction, a pending-clear record replayed at boot,
+  and an IndexedDB-atomic legacy-adoption claim so exactly one profile adopts the pre-profile shared history (offered
+  manually in Settings otherwise). Settings gains a Profile data section: the registered-profile list with runtime
+  Switch (two-click confirm), create-new, explicit Adopt/Delete for unregistered orphan namespaces, the fail-closed
+  corrupt-registry reset, and the "Adopt legacy conversation history" action. A workstation-level inactivity auto-clear
+  (default 15 minutes, 0 disables, Settings-adjustable) clears the workstation's conversations when no tab is
+  active or streaming, deferring live turns. Automatic orphan-namespace merging at boot is retired — the Settings →
+  Profile data surface is the only route to an unregistered namespace's data. The training service worker's unregister
+  scope is fixed to its own registration so it can no longer tear down the app shell's registration. Hardened in PR
+  review: the clear resolves its target database by the passed profile's name (a stale tab can never destroy another
+  profile's history), genuine write failures surface their error banners instead of masquerading as gate no-ops, the
+  completed clear marker names its profile, the legacy adoption's claim transaction spans both stores (it never
+  succeeded in a real browser), its copy runs under the write lock with an emptiness re-check and page-bounded memory,
+  leftover mixed-build legacy rows are re-adopted before the fast-path delete, the offline shell key is SW-relative so
+  sub-path hosting works and only shell navigations refresh it, orphan Delete removes conversation history too, and
+  ChatPage releases its busy-signal controller on turn completion so the inactivity auto-clear can re-arm.
 - **In-chat pack-version provenance indicator (issue #34 item 3)**: assistant answers grounded in
   knowledge-pack chunks now carry an aggregate provenance line — "Grounded by knowledge pack(s):
   <id> v<version>, …" — rendered above the citation pills it summarizes (new `PackProvenance`

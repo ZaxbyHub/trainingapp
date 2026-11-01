@@ -298,17 +298,28 @@ export function useConversations() {
    *
    * @param id - Conversation ID to rename
    * @param newTitle - New title string
+   * @returns true when the rename landed; false when the write failed OR the
+   *   epoch gate aborted it (PRR-105: the boolean is honored — no success
+   *   reporting, current state untouched, error surfaced)
    */
-  const renameConversation = useCallback(async (id: string, newTitle: string) => {
+  const renameConversation = useCallback(async (id: string, newTitle: string): Promise<boolean> => {
     try {
-      await updateConversation(id, { title: newTitle, updatedAt: Date.now() }, {
+      const applied = await updateConversation(id, { title: newTitle, updatedAt: Date.now() }, {
         stateEpoch: await stateEpochRef.current,
       });
+      if (!applied) {
+        // PRR-105: a genuine epoch mismatch aborted the write (a cross-tab
+        // clear moved the db on). Do NOT report success.
+        setPersistenceError('Failed to rename conversation');
+        return false;
+      }
       await refreshConversations();
       setPersistenceError(null);
+      return true;
     } catch (error) {
       console.error('[useConversations] Failed to rename conversation:', error);
       setPersistenceError('Failed to rename conversation');
+      return false;
     }
   }, [refreshConversations]);
 
@@ -489,11 +500,20 @@ export function useConversations() {
    * clears currentConversationId and currentMessages.
    *
    * @param id - Conversation ID to delete
-   * @returns true when deleted, false when the delete failed (error state is set)
+   * @returns true when deleted, false when the delete failed OR the epoch gate
+   *   aborted it (PRR-105: the boolean is honored — no state clearing, no
+   *   success reporting, error surfaced)
    */
   const removeConversation = useCallback(async (id: string): Promise<boolean> => {
     try {
-      await deleteConversation(id, { stateEpoch: await stateEpochRef.current });
+      const applied = await deleteConversation(id, { stateEpoch: await stateEpochRef.current });
+      if (!applied) {
+        // PRR-105: a genuine epoch mismatch aborted the delete (a cross-tab
+        // clear moved the db on) — treat as a failed delete: keep the current
+        // state, surface the error, report failure.
+        setPersistenceError('Failed to delete conversation');
+        return false;
+      }
       if (currentConversationId === id) {
         setCurrentConversationIdBoth(undefined);
         setCurrentMessages([]);

@@ -238,4 +238,13 @@ describe('the three new Settings surfaces inside the REAL SettingsPage', () => {
     await screen.findByTestId('inactivity-control');
     expect(screen.getByTestId('inactivity-threshold-input').getAttribute('value')).toBe('45');
   });
+
+  it('PRR-107: the orphan Delete copy names the conversation history (it is deleted with the namespace)', async () => {
+    render(<SettingsPage />);
+    await screen.findByTestId('profile-data-section');
+    // The explanatory paragraph renders whether or not orphans exist; pin the
+    // copy so the enumeration can never silently drop a store again.
+    const para = screen.getByText(/Delete permanently removes/i);
+    expect(para.textContent).toContain("namespace's documents, indexes and conversation history");
+  });
 });

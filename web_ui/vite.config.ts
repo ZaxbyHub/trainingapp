@@ -286,7 +286,20 @@ function swPrecacheManifestPlugin(): Plugin {
       walk(outDir);
       entries.sort();
       const body = `self.__PRECACHE_MANIFEST = ${JSON.stringify(entries)};\n`;
-      fs.writeFileSync(path.join(outDir, 'sw-precache-manifest.js'), body, 'utf8');
+      // PRR-118 (PR #264 review): a failed manifest write must FAIL THE
+      // BUILD loudly with context. A silent writeFileSync failure (locked
+      // file, full disk) would otherwise ship an offline bundle whose
+      // service worker precaches nothing — an offline shell that cannot
+      // boot offline.
+      const manifestPath = path.join(outDir, 'sw-precache-manifest.js');
+      try {
+        fs.writeFileSync(manifestPath, body, 'utf8');
+      } catch (error) {
+        throw new Error(
+          `sw-precache-manifest: failed to write ${manifestPath} (${entries.length} entries): ` +
+            `${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
       this.info(`sw-precache-manifest: ${entries.length} entries`);
     },
   };

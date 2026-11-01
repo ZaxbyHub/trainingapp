@@ -426,6 +426,72 @@ describe('useConversations', () => {
       expect(result.current.persistenceError).toBe('Failed to delete conversation');
     });
 
+    it('PRR-105: an epoch-gate-aborted delete resolves false, keeps the current state and surfaces the error', async () => {
+      const conv = createMockConversation({ id: 'conv-1' });
+      mockListConversations
+        .mockResolvedValueOnce([conv])
+        .mockResolvedValueOnce([conv]);
+      mockGetConversation.mockResolvedValueOnce(conv);
+      mockCountConversations.mockResolvedValueOnce(1);
+      // The gate aborted the write (a cross-tab clear moved the db epoch).
+      mockDeleteConversation.mockResolvedValueOnce(false);
+
+      const { result } = renderHook(() => useConversations());
+      await waitFor(() => {
+        expect(result.current.currentConversationId).toBe('conv-1');
+      });
+
+      let ok: boolean | undefined;
+      await act(async () => {
+        ok = await result.current.removeConversation('conv-1');
+      });
+      // Honored boolean: no success, an error banner, and the CURRENT state
+      // is NOT cleared (the delete never landed — clearing would pretend it
+      // did).
+      expect(ok).toBe(false);
+      expect(result.current.persistenceError).toBe('Failed to delete conversation');
+      expect(result.current.currentConversationId).toBe('conv-1');
+      expect(result.current.conversations.length).toBe(1);
+    });
+
+    it('PRR-105: an epoch-gate-aborted rename resolves false and surfaces the error (no success reporting)', async () => {
+      const conv = createMockConversation({ id: 'conv-1', title: 'Old' });
+      mockListConversations.mockResolvedValue([conv]);
+      mockCountConversations.mockResolvedValue(1);
+      mockUpdateConversation.mockResolvedValueOnce(false);
+
+      const { result } = renderHook(() => useConversations());
+      await waitFor(() => {
+        expect(result.current.conversations.length).toBe(1);
+      });
+
+      let ok: boolean | undefined;
+      await act(async () => {
+        ok = await result.current.renameConversation('conv-1', 'New');
+      });
+      expect(ok).toBe(false);
+      expect(result.current.persistenceError).toBe('Failed to rename conversation');
+      // The list was not refreshed over the failed rename.
+      expect(result.current.conversations[0].title).toBe('Old');
+    });
+
+    it('PRR-105: a rejected (async) save surfaces the base error banner', async () => {
+      const messages: ChatMessage[] = [
+        { id: 'msg-1', role: 'user', content: 'Hello', timestamp: Date.now() },
+      ];
+      mockListConversations.mockResolvedValue([]);
+      mockCreateConversation.mockRejectedValueOnce(new Error('quota exceeded'));
+
+      const { result } = renderHook(() => useConversations());
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await act(async () => {
+        await result.current.saveMessages(undefined, messages, 'server', 'test-model');
+      });
+      expect(result.current.persistenceError).toBe('Failed to save conversation');
+    });
+
     it('clearPersistenceError clears the error', async () => {
       mockListConversations.mockRejectedValueOnce(new Error('Database error'));
 
@@ -991,6 +1057,7 @@ describe('useConversations', () => {
       mockUpdateConversation.mockImplementation(async (id: string, changes: { title?: string }) => {
         const row = live.get(id);
         if (row && changes.title) live.set(id, { ...row, title: changes.title });
+        return true; // PRR-105: the rename's applied-boolean is honored
       });
       const { result } = await mountWithPage();
       act(() => result.current.setSearchQuery('budget'));

@@ -7,6 +7,7 @@ import {
   getStorageDbNames,
   migrateOrphanedNamespaces,
   listStalePrefixes,
+  deleteNamespace,
 } from './profile';
 
 describe('profile (F1 stable namespace)', () => {
@@ -232,6 +233,67 @@ describe('profile (F1 stable namespace)', () => {
       expect(stale).toContain('orphan01');
       expect(stale).toContain('orphan02');
       expect(stale).not.toContain(current);
+    });
+
+    it('PRR-107: a conversations-only namespace is a discoverable orphan candidate', async () => {
+      const current = getProfilePrefix();
+      const databases = vi.fn(async () => [
+        { name: `${current}-doc-qa-documents` },
+        { name: 'chattab1-doc-qa-conversations' },
+      ]);
+      Object.defineProperty(globalThis, 'indexedDB', {
+        value: { databases },
+        writable: true,
+        configurable: true,
+      });
+      expect(await listStalePrefixes()).toContain('chattab1');
+    });
+  });
+
+  describe('deleteNamespace (PRR-107)', () => {
+    /** An IDBRequest-like stub whose onsuccess fires on assignment. */
+    function makeFiringRequest(): { onsuccess: (() => void) | null } {
+      const req: { onsuccess: (() => void) | null } = { onsuccess: null };
+      Object.defineProperty(req, 'onsuccess', {
+        get: () => null,
+        set: (fn: (() => void) | null) => {
+          if (typeof fn === 'function') queueMicrotask(fn);
+        },
+        configurable: true,
+      });
+      return req;
+    }
+
+    it('deletes the conversations database with the rest of the namespace', async () => {
+      const deleted: string[] = [];
+      Object.defineProperty(globalThis, 'indexedDB', {
+        value: {
+          deleteDatabase: vi.fn((name: string) => {
+            deleted.push(name);
+            return makeFiringRequest();
+          }),
+        },
+        writable: true,
+        configurable: true,
+      });
+      await deleteNamespace('orphan01');
+      expect(deleted).toEqual([
+        'orphan01-doc-qa-documents',
+        'orphan01-doc-qa-indexes',
+        'orphan01-doc-qa-keywords',
+        'orphan01-doc-qa-conversations',
+      ]);
+    });
+
+    it('refuses an invalid prefix shape (nothing deleted)', async () => {
+      const deleteDatabase = vi.fn(() => makeFiringRequest());
+      Object.defineProperty(globalThis, 'indexedDB', {
+        value: { deleteDatabase },
+        writable: true,
+        configurable: true,
+      });
+      await deleteNamespace('BAD');
+      expect(deleteDatabase).not.toHaveBeenCalled();
     });
   });
 });

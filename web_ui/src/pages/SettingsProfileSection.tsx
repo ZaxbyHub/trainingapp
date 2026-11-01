@@ -39,7 +39,11 @@ function switchFailureMessage(reason: Exclude<ProfileSwitchResult, { switched: t
       return 'Could not register the profile — the profile registry is unreadable.';
     case 'storage-unavailable':
       return 'Browser storage is unavailable, so the switch could not be saved.';
-    return 'The switch failed.';
+    default:
+      // Copilot-1 (PR #264): the exhaustive cases above made the trailing
+      // return unreachable; the explicit default keeps the fallback live for
+      // any future reason value.
+      return 'The switch failed.';
   }
 }
 
@@ -231,7 +235,8 @@ export function SettingsProfileSection(): React.ReactElement {
             )}
             <p className="settings-text">
               Adopt registers an orphan namespace as a switchable profile (its data stays in place). Adopting never
-              merges or moves data. Delete permanently removes that namespace&apos;s documents and indexes.
+              merges or moves data. Delete permanently removes that namespace&apos;s documents, indexes and
+              conversation history.
             </p>
           </div>
 
@@ -258,6 +263,7 @@ export function SettingsProfileSection(): React.ReactElement {
                     ? 'settings-text settings-tone--danger'
                     : 'settings-text settings-tone--success'
                 }
+                role={legacyResult.status === 'refused' ? 'alert' : 'status'}
                 data-testid="legacy-adopt-result"
               >
                 {legacyResult.status === 'adopted' && `Adopted ${legacyResult.count} legacy conversations.`}

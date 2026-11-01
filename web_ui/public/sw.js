@@ -78,8 +78,33 @@
     manifestPaths[manifestPath(PRECACHE_LIST[i])] = true;
   }
 
+  // PRR-108 (PR #264 review): the shell's cache key is resolved AGAINST THE
+  // WORKER'S OWN LOCATION, never hardcoded '/index.html'. On the documented
+  // sub-path hosting (the archive served under /training-app/), the precache
+  // install writes /training-app/index.html while a hardcoded fallback key
+  // read/wrote origin-absolute /index.html — the offline fallback could never
+  // find the shell and AC2 failed. Derived once; identical to '/index.html'
+  // for a root-scope worker.
+  var SHELL_INDEX_PATH = manifestPath('index.html');
+  // PRR-109: the navigation arm may refresh the shell key ONLY for the app's
+  // own shell paths — the shell document itself and the SW scope root (the
+  // SPA entry). Every OTHER navigation (e.g. a top-level nav to a packaged
+  // same-origin API path whose response is JSON) stays network-first with
+  // the cached-shell fallback but is never written into the shell key.
+  var SCOPE_ROOT_PATH = (function () {
+    try {
+      return new URL('.', self.location.href).pathname;
+    } catch (err) {
+      return '/';
+    }
+  })();
+
   function isIndexHtmlPath(path) {
-    return path === '/index.html' || path === '/' || path === '';
+    return path === SHELL_INDEX_PATH || path === '/' || path === '';
+  }
+
+  function isShellNavigationPath(path) {
+    return path === SHELL_INDEX_PATH || path === SCOPE_ROOT_PATH;
   }
 
   function isExcludedPath(path) {
@@ -161,25 +186,26 @@
 
   /**
    * Navigation/index.html arm: network-first, cached fallback, refresh on
-   * success. The offline fallback ('/index.html' in the shell cache) is
-   * refreshed by APP-DOCUMENT navigations — the app boots at '/' (or a deep
-   * link) — so a changed index with an unchanged asset set updates the
-   * offline shell (R5-1). A direct document fetch of the literal /index.html
-   * path is served network-first like every navigation but does not rewrite
-   * the fallback copy.
+   * success. The offline fallback (SHELL_INDEX_PATH in the shell cache) is
+   * refreshed by SHELL navigations — the app boots at the scope root (or the
+   * shell document itself) — so a changed index with an unchanged asset set
+   * updates the offline shell (R5-1). PRR-109: ONLY those two paths may
+   * write the shell key; every other navigation (deep links, same-origin
+   * packaged API paths) is served network-first and falls back to the cached
+   * shell offline, but its response is NEVER stored as the shell document.
    */
   function handleNavigation(request, cache, path) {
     return fetch(request).then(
       function (response) {
-        if (response && response.ok && path !== '/index.html') {
+        if (response && response.ok && isShellNavigationPath(path)) {
           // Refresh the offline fallback with the fresh document (R5-1). The
           // clone is consumed by put; the original goes back to the page.
-          cache.put('/index.html', stripVary(response.clone())).catch(function () {});
+          cache.put(SHELL_INDEX_PATH, stripVary(response.clone())).catch(function () {});
         }
         return response;
       },
       function () {
-        return cache.match('/index.html').then(function (cached) {
+        return cache.match(SHELL_INDEX_PATH).then(function (cached) {
           if (cached) return cached;
           return new Response('Offline', { status: 503, statusText: 'Offline' });
         });

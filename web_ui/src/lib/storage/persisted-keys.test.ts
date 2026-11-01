@@ -460,6 +460,25 @@ describe('Training keys are cleared by Clear Cache (PRR-220)', () => {
   });
 });
 
+// PRR-113 (PR #264 review): the Clear Cache copy (SettingsPage +
+// CONFIGURATION.md) names the workstation inactivity auto-clear threshold
+// among the removed user settings; pin the key so the copy and the registry
+// cannot drift apart.
+describe('The inactivity auto-clear threshold is cleared by Clear Cache (PRR-113)', () => {
+  it('INACTIVITY_TIMEOUT_KEY is a registered user setting, not an internal key', () => {
+    expect(registry.USER_SETTING_KEYS).toContain(registry.INACTIVITY_TIMEOUT_KEY);
+    expect(registry.INTERNAL_KEYS).not.toContain(registry.INACTIVITY_TIMEOUT_KEY);
+  });
+
+  it('clearUserSettings removes the stored threshold', () => {
+    localStorage.clear();
+    localStorage.setItem(registry.INACTIVITY_TIMEOUT_KEY, '15');
+    const removed = registry.clearUserSettings();
+    expect(removed).toContain(registry.INACTIVITY_TIMEOUT_KEY);
+    expect(localStorage.getItem(registry.INACTIVITY_TIMEOUT_KEY)).toBeNull();
+  });
+});
+
 // Review round 2 (R2-F3): the sessionStorage leg of Clear Cache. A session-only
 // (Remember off) external API key and its bound origin are written to
 // sessionStorage; every entry written there must be registered in

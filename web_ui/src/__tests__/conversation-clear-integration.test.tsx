@@ -106,8 +106,9 @@ describe('clearAllConversationsInDb (full protocol)', () => {
     expect(result).toEqual({ cleared: true });
     expect(conversationsOf(DB_NAME)).toHaveLength(0);
     expect(metaOf(DB_NAME).get('epoch')?.value).toBe(1);
-    // The pending record resolved to completed (R5-6/R7-2).
-    expect(readClearRecord()).toEqual({ pending: null, completed: { epochGoal: 1 } });
+    // The pending record resolved to completed (R5-6/R7-2) — naming the
+    // profile whose clear finished (PRR-104).
+    expect(readClearRecord()).toEqual({ pending: null, completed: { epochGoal: 1, profile: PREFIX } });
   });
 
   it('is idempotent: a second clear re-arms and stays clear', async () => {
@@ -128,7 +129,54 @@ describe('clearAllConversationsInDb (full protocol)', () => {
     const { replayed } = await replayPendingConversationClear();
     expect(replayed).toBe(true);
     expect(conversationsOf(DB_NAME)).toHaveLength(0);
-    expect(readClearRecord().completed).toEqual({ epochGoal: 1 });
+    expect(readClearRecord().completed).toEqual({ epochGoal: 1, profile: PREFIX });
+  });
+
+  it('PRR-104: a completed marker from ANOTHER profile never suppresses this profile\'s pending replay', async () => {
+    // Profile A's clear completed long ago (epochGoal 5 — far ahead).
+    localStorage.setItem(
+      CONVERSATIONS_CLEARED_KEY,
+      JSON.stringify({
+        pending: { epochGoal: 1, profile: PREFIX },
+        completed: { epochGoal: 5, profile: 'otherp1' },
+      }),
+    );
+    await seed(3);
+    const { replayed } = await replayPendingConversationClear();
+    // Cross-profile completed values must not silence the pending replay —
+    // the record is origin-wide storage, the clears are per-profile.
+    expect(replayed).toBe(true);
+    expect(conversationsOf(DB_NAME)).toHaveLength(0);
+    expect(readClearRecord().completed).toEqual({ epochGoal: 5, profile: PREFIX });
+  });
+
+  it('PRR-104: a pre-fix completed marker without a profile never suppresses a pending replay', async () => {
+    // A record written before the profile field existed.
+    localStorage.setItem(
+      CONVERSATIONS_CLEARED_KEY,
+      JSON.stringify({
+        pending: { epochGoal: 1, profile: PREFIX },
+        completed: { epochGoal: 9 },
+      }),
+    );
+    await seed(2);
+    const { replayed } = await replayPendingConversationClear();
+    expect(replayed).toBe(true);
+    expect(conversationsOf(DB_NAME)).toHaveLength(0);
+  });
+
+  it('PRR-104: the SAME profile\'s covering completed marker still suppresses the replay (no double clear)', async () => {
+    localStorage.setItem(
+      CONVERSATIONS_CLEARED_KEY,
+      JSON.stringify({
+        pending: { epochGoal: 1, profile: PREFIX },
+        completed: { epochGoal: 1, profile: PREFIX },
+      }),
+    );
+    await seed(4);
+    const { replayed } = await replayPendingConversationClear();
+    expect(replayed).toBe(false);
+    expect(conversationsOf(DB_NAME)).toHaveLength(4);
   });
 
   it('the boot replay marks an already-satisfied goal completed without a tx (crash after commit)', async () => {
@@ -160,8 +208,14 @@ describe('clearAllConversationsInDb (full protocol)', () => {
 });
 
 describe('epoch gate (cross-tab stale writes)', () => {
-  it('withEpochGate aborts a mutation captured under a stale epoch', async () => {
+  it('withEpochGate aborts a mutation captured under a stale epoch (the GATE aborts — mutate never runs)', async () => {
     await seed(1);
+    // PRR-114(c): seed a real meta epoch row so the epoch is 1 — the gate
+    // itself (not an error swallow) must abort the stateEpoch-0 mutation.
+    // Before this seeding, the epoch read 0 and the "must not run" mutate
+    // RAN, its throw swallowed by the old catch-all: the assertion passed
+    // via the error path, not the gate.
+    await db.meta.put({ key: 'epoch', value: 1 });
     const appliedStale = await withEpochGate(0, () => {
       throw new Error('must not run');
     });
@@ -170,6 +224,33 @@ describe('epoch gate (cross-tab stale writes)', () => {
     const staleSave = await updateConversation('conv-000', { title: 'resurrected' }, { stateEpoch: 0 });
     expect(staleSave).toBe(false);
     expect(conversationsOf(DB_NAME)).toHaveLength(0);
+  });
+
+  it('PRR-105: withEpochGate PROPAGATES a genuine mutation error (false is reserved for the gate)', async () => {
+    await seed(1);
+    // The epoch matches, so the mutate body really runs — its genuine error
+    // must reach the caller (the old catch-all flattened it to false).
+    const epoch = await readConversationEpoch();
+    await expect(
+      withEpochGate(epoch, () => {
+        throw new Error('genuine write failure');
+      }),
+    ).rejects.toThrow('genuine write failure');
+  });
+
+  it('PRR-105: a genuine CRUD write failure rejects instead of resolving false', async () => {
+    await seed(1);
+    const conversationsTable = db.conversations;
+    const spy = vi.spyOn(conversationsTable, 'update').mockImplementation(() => {
+      throw new Error('quota exceeded');
+    });
+    try {
+      await expect(
+        updateConversation('conv-000', { title: 'x' }, { stateEpoch: await readConversationEpoch() }),
+      ).rejects.toThrow('quota exceeded');
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('a fresh-epoch mutation lands', async () => {
@@ -280,7 +361,54 @@ describe('useConversations against the clear protocol', () => {
     });
   });
 
-  it('a stale select that raced a clear discards its payload (no cleared state restored)', async () => {
+  it('PRR-114(f): a stale select is discarded by the EPOCH VERIFICATION even though the row still exists at select time', async () => {
+    await seed(2);
+    const { result } = renderHook(() => useConversations());
+    await waitFor(() => {
+      expect(result.current.currentConversationId).toBe('conv-001');
+    });
+    // A concurrent clear bumps the epoch WITHOUT deleting the row (a clear
+    // that raced the select's fetch): the row is still readable, so only the
+    // epoch-verification branch can discard the payload. The bump lands
+    // mid-fetch — after the select bound the (pre-bump) epoch, before the
+    // completion verify. (The old test deleted the row, so it passed via
+    // row-gone, never exercising the epoch check.)
+    const tableView = db.conversations as unknown as {
+      get(key: string): Promise<Conversation | undefined>;
+    };
+    const originalGet = tableView.get.bind(tableView);
+    let bumped = false;
+    const spy = vi.spyOn(tableView, 'get').mockImplementation(async (key: string) => {
+      if (!bumped) {
+        bumped = true;
+        // The clear lands while this fetch is in flight.
+        await db.meta.put({ key: 'epoch', value: (await readConversationEpoch()) + 1 });
+      }
+      return originalGet(key);
+    });
+    try {
+      // The select binds the pre-bump epoch, fetches (row EXISTS), completes:
+      // the verify sees the bumped epoch and discards.
+      await act(async () => {
+        await result.current.selectConversation('conv-000');
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    // The discarded select changed NOTHING: the previously-selected state
+    // (restored at init) stays, and conv-000's CONTENT never appears even
+    // though its row existed at select time.
+    expect(result.current.currentConversationId).toBe('conv-001');
+    const rendered = result.current.currentMessages.map((m) => m.content).join('|');
+    expect(rendered).not.toContain('question 0');
+    expect(rendered).toContain('question 1');
+    // ...and the row really was there the whole time (the discard was the
+    // epoch check, not a missing payload).
+    expect(conversationsOf(DB_NAME).some((c) => c.id === 'conv-000')).toBe(true);
+    expect((await listConversations(0, 50)).length).toBe(2);
+  });
+
+  it('a stale select that raced a ROW-DELETING clear also discards its payload', async () => {
     await seed(2);
     const { result } = renderHook(() => useConversations());
     await waitFor(() => {

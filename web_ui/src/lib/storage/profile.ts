@@ -121,8 +121,14 @@ export function getStorageDbNames(): StorageDbNames {
   };
 }
 
-/** Pattern matching any legacy per-session namespace's databases. */
-const ORPHAN_DB_RE = /^([a-z0-9]{3,8})-doc-qa-(documents|indexes|keywords)$/;
+/**
+ * Pattern matching any legacy per-session namespace's databases. PRR-107
+ * (PR #264 review): conversations is included — the per-profile
+ * conversations db is a first-class namespace member, so a conversation-only
+ * orphan prefix is discoverable (Adopt/Delete) and an orphan Delete removes
+ * the chat history it owns.
+ */
+const ORPHAN_DB_RE = /^([a-z0-9]{3,8})-doc-qa-(documents|indexes|keywords|conversations)$/;
 
 /**
  * One-time, best-effort migration of orphaned per-session databases into the
@@ -377,8 +383,9 @@ export async function listStalePrefixes(): Promise<string[]> {
  * Delete all IndexedDB databases for a given profile prefix.
  * Intended for the Settings "Clear Cache" UI (PR-5). Best-effort.
  *
- * NOTE (PRR-008): this deletes the documents, vector-mapping, and keyword DBs,
- * but it CANNOT delete the native EdgeVec HNSW blob for the prefix — that blob
+ * NOTE (PRR-008): this deletes the documents, vector-mapping, keyword and
+ * conversations DBs, but it CANNOT delete the native EdgeVec HNSW blob for
+ * the prefix — that blob
  * is stored as a VALUE keyed by `${prefix}-doc-qa-index` inside the shared
  * `edgevec-db` database (see vite.config.ts IndexedDbBackend stub), not in a
  * per-profile database. Clearing it requires deleting the key from
@@ -395,10 +402,14 @@ export async function deleteNamespace(prefix: string): Promise<void> {
   if (typeof indexedDB === 'undefined') {
     return;
   }
+  // PRR-107: the conversations db is deleted with the rest of the namespace
+  // (documents, indexes, keywords) — an orphan Delete previously left the
+  // chat history behind.
   const names = [
     `${prefix}-doc-qa-documents`,
     `${prefix}-doc-qa-indexes`,
     `${prefix}-doc-qa-keywords`,
+    `${prefix}-doc-qa-conversations`,
   ];
   await Promise.all(
     names.map(
