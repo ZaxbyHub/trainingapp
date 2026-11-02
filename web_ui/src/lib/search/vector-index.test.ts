@@ -508,6 +508,21 @@ describe('VectorIndex', () => {
       const instance = VectorIndex.getInstance();
       await instance.initialize();
 
+      // #270 amended: save() with no local change-log ops is a no-op (the
+      // persisted baseline is never rewritten from in-memory state), so the
+      // write path is proven with a seeded local op — addBatch records a put
+      // and retains the vector for the merge.
+      mockEdgeVecInstance.insertBatchWithProgress.mockImplementation(
+        (vectors: Float32Array[]) => {
+          const ids = vectors.map((_v, i) => BigInt(i));
+          return { ids: new BigUint64Array(ids), inserted: vectors.length, total: vectors.length, free: () => undefined };
+        }
+      );
+      mockEdgeVecInstance.liveCount.mockReturnValue(0);
+      await instance.addBatch([
+        { docId: 'doc-save-floor', chunkIndex: 0, vector: new Float32Array(768).fill(0.5), text: 'floor' },
+      ]);
+
       // Mock saveMapping to avoid IndexedDB not defined error
       const saveMappingSpy = vi.spyOn(instance as unknown as { saveMapping: () => Promise<void> }, 'saveMapping').mockResolvedValue();
 

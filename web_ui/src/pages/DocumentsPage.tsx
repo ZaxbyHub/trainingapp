@@ -9,7 +9,7 @@ import { useToast } from '../components/ToastProvider';
 import type { DocumentEntry } from '../types/document';
 import { extractDocument, SUPPORTED_EXTENSIONS } from '../lib/processing/extractor-factory';
 import { TextChunker } from '../lib/processing/text-chunker';
-import { loadDocuments, saveDocuments, deleteDocument as deleteDocumentFromStore } from '../lib/storage/document-store';
+import { loadDocuments, saveDocuments, upsertDocument, deleteDocument as deleteDocumentFromStore, onDocumentsRemoteChange } from '../lib/storage/document-store';
 import { REINDEX_FLAG_KEY } from '../lib/storage/persisted-keys';
 import { getEmbeddingService } from '../lib/embeddings/embedding-service';
 import { ensureEmbeddingServiceReady } from '../hooks/useServiceInitialization';
@@ -21,6 +21,84 @@ import { usePackClient } from '../lib/packs/pack-client';
 import type { DocumentInfo } from '../lib/api';
 import { Badge, Banner, Button, Icon, IconButton, PageHeader, Skeleton, Tabs } from '../ui';
 import './documents.css';
+
+/**
+ * #273 (C9/C10 shared guardrail): remove a document's chunks from both
+ * search indexes. Returns per-attempt success; callers decide the failure
+ * policy — the terminal-state purge is best-effort (logged, never masks the
+ * original error), document deletion fails closed (keep the row + error
+ * toast) so a failed removal never strands orphan chunks under a deleted row.
+ */
+async function purgeDocFromIndexes(docId: string): Promise<{ ok: boolean; reason?: string }> {
+  const vectorIndex = getVectorIndex();
+  if (!vectorIndex.isReady()) {
+    return { ok: false, reason: 'vector index not ready' };
+  }
+  try {
+    await vectorIndex.removeByDocId(docId);
+    await vectorIndex.save();
+  } catch (error) {
+    console.error(`Failed to remove doc ${docId} from vector index:`, error);
+    return { ok: false, reason: 'vector index removal failed' };
+  }
+  const keywordIndex = getKeywordIndex();
+  if (!keywordIndex.isReady()) {
+    return { ok: false, reason: 'keyword index not ready' };
+  }
+  try {
+    keywordIndex.removeByDocId(docId);
+    await keywordIndex.save();
+  } catch (error) {
+    console.error(`Failed to remove doc ${docId} from keyword index:`, error);
+    return { ok: false, reason: 'keyword index removal failed' };
+  }
+  return { ok: true };
+}
+
+/**
+ * #273 (C12): walk an error's cause chain looking for a storage-quota
+ * failure. The store layers now preserve the raw DOMException as cause, so
+ * the page can name the real problem (C11) instead of a generic toast.
+ */
+function isQuotaError(error: unknown): boolean {
+  let cursor: unknown = error;
+  for (let depth = 0; depth < 6 && cursor != null; depth++) {
+    const e = cursor as { name?: string; message?: string };
+    if (e.name === 'QuotaExceededError') return true;
+    if (typeof e.message === 'string' && e.message.includes('QuotaExceededError')) return true;
+    cursor = (cursor as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+const QUOTA_ERROR_MESSAGE =
+  'Browser storage is full. The document could not be indexed. Remove documents you no longer need or free up browser storage, then try again.';
+
+let persistRequested = false;
+
+/**
+ * #273 (C13/AC of issue #273 item persist): ask the browser to persist
+ * storage before the first ingest, exactly once per page session. Fully
+ * best-effort: capability absence or a rejected persist() never blocks or
+ * fails the ingest (the attempt is still consumed, so repeated ingests do
+ * not re-call).
+ */
+async function requestPersistenceOnce(): Promise<void> {
+  if (persistRequested) return;
+  persistRequested = true;
+  try {
+    const storage = navigator.storage;
+    if (!storage) return;
+    const persisted =
+      typeof storage.persisted === 'function' ? await storage.persisted() : false;
+    if (persisted === true) return;
+    if (typeof storage.persist === 'function') {
+      await storage.persist();
+    }
+  } catch {
+    // Best-effort by contract: never block ingest on persistence.
+  }
+}
 
 const DOCUMENTS_DESCRIPTION = 'Add files and knowledge packs that Chat can search and cite.';
 
@@ -191,6 +269,29 @@ export function DocumentsPage() {
     };
   }, [electronMode, desktopSession, showToast]);
 
+  // #270 (PC-3 production subscriber): when another tab commits a document
+  // change, reload this tab's list so it never serves — and later re-saves —
+  // a stale snapshot. This tab's in-flight processing rows are preserved
+  // (their live state wins until they settle).
+  useEffect(() => {
+    if (electronMode) return;
+    return onDocumentsRemoteChange(() => {
+      void (async () => {
+        try {
+          const docs = await loadDocuments();
+          setDocuments((prev) => {
+            const inFlight = new Set(cancelControllersRef.current.keys());
+            return docs.map((doc) =>
+              inFlight.has(doc.id) ? (prev.find((p) => p.id === doc.id) ?? doc) : doc
+            );
+          });
+        } catch (error) {
+          console.error('Failed to reload documents after a remote change:', error);
+        }
+      })();
+    });
+  }, [electronMode]);
+
   // Keep the latest-documents ref in sync so the debounced save and the unmount
   // flush always read CURRENT state (F4/F13).
   useEffect(() => {
@@ -262,6 +363,10 @@ export function DocumentsPage() {
       };
 
     try {
+      // C12: ask the browser to persist storage before the first ingest
+      // (once per page session, best-effort; see requestPersistenceOnce).
+      await requestPersistenceOnce();
+
       // Update status to processing
       setDocuments((prev) =>
         prev.map((doc) =>
@@ -365,6 +470,10 @@ export function DocumentsPage() {
             )
           );
         });
+        // C8: a cancel issued during encodeBatch lands here — the batch is
+        // done but NOTHING has been written to either index yet. Bail out
+        // before the writes so a cancelled document never becomes searchable.
+        throwIfCancelled();
         const entries = chunks.map((chunk, i) => ({
           docId: chunk.docId!,
           chunkIndex: chunk.chunkIndex,
@@ -375,14 +484,16 @@ export function DocumentsPage() {
         }));
         await vectorIndex.addBatch(entries);
         await vectorIndex.save();
+        // C8: a cancel issued while the vector save ran must still stop the
+        // keyword stage from writing a half-indexed document.
+        throwIfCancelled();
       } catch (indexError) {
-        console.error('Failed to add to vector index:', indexError);
-        // U2: a cancel surfaces here as an abort; rethrow so the outer handler
-        // records the terminal 'Indexing cancelled' state rather than silently
-        // continuing to keyword indexing.
-        if (controller.signal.aborted) throw indexError;
-        showToast('Failed to index document for semantic search.', 'error');
-        // Continue so keyword indexing can proceed
+        // #273 (C10/AC10): a vector-stage failure is TERMINAL — the document
+        // must not be marked ready while its chunks are missing from the
+        // vector index (that was the false-ready class this batch closes).
+        // The outer catch records the error row, purges both indexes, and
+        // toasts.
+        throw indexError;
       }
 
       // Keyword index: add text chunks
@@ -400,8 +511,9 @@ export function DocumentsPage() {
           keywordIndex.addDocuments(chunks);
           await keywordIndex.save();
         } catch (indexError) {
-          console.error('Failed to add to keyword index:', indexError);
-          // Continue so document is still marked as processed
+          // #273 (AC10): a keyword-stage failure is TERMINAL for the same
+          // reason (never ready on a failed stage).
+          throw indexError;
         }
       }
       throwIfCancelled(); // U2: check cancel before finalize
@@ -428,6 +540,20 @@ export function DocumentsPage() {
             : doc
         )
       );
+      // PC-13: persist the terminal row through the per-document production
+      // path (upsert), not just the bulk debounced list save.
+      const readyRow = latestDocumentsRef.current.find((doc) => doc.id === docId);
+      if (readyRow) {
+        void upsertDocument({
+          ...readyRow,
+          status: 'ready',
+          progress: 100,
+          chunkCount: chunks.length,
+          errorMessage: undefined,
+        }).catch((persistError: unknown) =>
+          console.error('Failed to persist document row:', persistError)
+        );
+      }
     } catch (error) {
       const errorMessage =
         error instanceof Error
@@ -437,19 +563,42 @@ export function DocumentsPage() {
           : 'Unknown error occurred';
       const wasCancelled = controller.signal.aborted;
       console.error('Failed to process document:', error);
+      // C11: a storage-quota failure (directly or anywhere in the cause
+      // chain) names the real problem and the remedy instead of a generic
+      // message.
+      const recordedMessage = isQuotaError(error) ? QUOTA_ERROR_MESSAGE : errorMessage;
 
       setDocuments((prev) =>
         prev.map((doc) =>
           doc.id === docId
-            ? { ...doc, status: 'error', errorMessage }
+            ? { ...doc, status: 'error', errorMessage: recordedMessage }
             : doc
         )
       );
+      // AC10: a terminal state owns its index footprint — purge whatever was
+      // written so a failed/cancelled document never answers queries.
+      // Best-effort by contract: a purge failure is logged, never masks the
+      // original error.
+      try {
+        const purge = await purgeDocFromIndexes(docId);
+        if (!purge.ok) {
+          console.warn(`[DocumentsPage] terminal purge for ${docId} incomplete: ${purge.reason ?? 'unknown'}`);
+        }
+      } catch (purgeError) {
+        console.error('[DocumentsPage] terminal purge failed:', purgeError);
+      }
+      // PC-13: persist the terminal error row through the production path.
+      const errorRow = latestDocumentsRef.current.find((doc) => doc.id === docId);
+      if (errorRow) {
+        void upsertDocument({ ...errorRow, status: 'error', errorMessage: recordedMessage }).catch(
+          (persistError: unknown) => console.error('Failed to persist document row:', persistError)
+        );
+      }
       // U3b: surface indexing/quota/init failures as a toast. Cancellation is
       // user-initiated, so it stays silent here (the doc already shows the
       // terminal 'Indexing cancelled' state).
       if (!wasCancelled) {
-        showToast(`Failed to process "${file.name}": ${errorMessage}`, 'error');
+        showToast(`Failed to process "${file.name}": ${recordedMessage}`, 'error');
       }
     } finally {
       // U2: drop this run's AbortController unless a newer run replaced it.
@@ -746,7 +895,20 @@ export function DocumentsPage() {
         await inFlight;
       }
 
-      // Remove from IndexedDB
+      // C10: remove from the search indexes BEFORE dropping the row, and
+      // fail closed — if a removal fails (or an index cannot be made ready)
+      // the row stays visible so the user can retry, and no orphan chunks
+      // are stranded under a deleted row.
+      const purge = await purgeDocFromIndexes(docId);
+      if (!purge.ok) {
+        showToast(
+          `Could not fully remove "${docId}" from the search index. Please try again.`,
+          'error'
+        );
+        return;
+      }
+
+      // Remove from IndexedDB (announces the change to other tabs).
       await deleteDocumentFromStore(docId);
 
       // F13: cancel any armed debounced save so it cannot fire with a stale
@@ -754,29 +916,6 @@ export function DocumentsPage() {
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
         saveTimeoutRef.current = null;
-      }
-
-      // Remove from search indexes
-      try {
-        const vectorIndex = getVectorIndex();
-        if (vectorIndex.isReady()) {
-          await vectorIndex.removeByDocId(docId);
-          await vectorIndex.save();
-        }
-      } catch (indexError) {
-        console.error('Failed to remove from vector index:', indexError);
-        // Continue even if index removal fails
-      }
-
-      try {
-        const keywordIndex = getKeywordIndex();
-        if (keywordIndex.isReady()) {
-          keywordIndex.removeByDocId(docId);
-          await keywordIndex.save();
-        }
-      } catch (indexError) {
-        console.error('Failed to remove from keyword index:', indexError);
-        // Continue even if index removal fails
       }
 
       // Remove from state

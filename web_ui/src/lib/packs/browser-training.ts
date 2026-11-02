@@ -5,6 +5,7 @@
 // the desktop app (app://training is served by the Electron main process).
 import { isElectron } from '../desktop-session';
 import { embedPendingPackChunks, getBrowserPackManager } from './browser-pack-manager';
+import { ensurePackIndexHealthThenEmbed } from './pack-index-health';
 import { getResolvedPlayerOrigin, isFramedContext, playerFramePolicyReady, resolvePlayerOrigin } from './player-origin';
 import { TrainingPlayerHost, getTrainingPlayerHost } from './training-player-host';
 
@@ -50,7 +51,12 @@ export async function startBrowserTraining(): Promise<void> {
   // version once embedded).
   window.addEventListener('embedding-service-ready', (event) => {
     if ((event as CustomEvent<{ ready?: boolean }>).detail?.ready !== true) return;
-    void embedPendingPackChunks().catch((error: unknown) => console.warn('[packs] embedding failed:', error));
+    // #270: heal wiped pack chunks BEFORE embedding pending records, so a
+    // record whose embedded flag the health pass just cleared is visible to
+    // the embed enumeration.
+    void ensurePackIndexHealthThenEmbed(getBrowserPackManager(), () => embedPendingPackChunks()).catch(
+      (error: unknown) => console.warn('[packs] embedding failed:', error)
+    );
   });
   const origin = await resolvePlayerOrigin();
   if (origin === null) return;

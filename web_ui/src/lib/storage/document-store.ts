@@ -5,6 +5,7 @@
 
 import type { DocumentEntry } from '../../types/document';
 import { getProfilePrefix, getStorageDbNames } from './profile';
+import { createStoreChannel } from './cross-tab-channel';
 
 /**
  * Generate a stable, user-scoped prefix for IndexedDB names.
@@ -23,6 +24,23 @@ const DB_NAMES = getStorageDbNames();
 export const DB_NAME = DB_NAMES.documents;
 const DB_VERSION = 1;
 const STORE_NAME = 'documents';
+
+/**
+ * Change announcements for the documents store (#270): successful commits
+ * (upsert/delete) notify other tabs so they can reload instead of serving
+ * stale in-memory state. Merge/addition-only semantics do not depend on
+ * delivery.
+ */
+const changeChannel = createStoreChannel(`${DB_NAME}-changes`);
+
+function postChange(): void {
+  changeChannel.postChange();
+}
+
+/** Subscribe to document-store changes made by other tabs/instances. */
+export function onDocumentsRemoteChange(callback: () => void): () => void {
+  return changeChannel.onRemoteChange(callback);
+}
 
 let dbInstance: IDBDatabase | null = null;
 
@@ -92,9 +110,19 @@ export async function loadDocuments(): Promise<DocumentEntry[]> {
 
 /**
  * Save all documents to IndexedDB.
- * Replaces all existing documents with the provided array.
  *
- * @param docs - Array of DocumentEntry to save
+ * #270: this was a whole-table replace (`clear()` + re-add of the caller's
+ * list), so a tab holding a stale list deleted every document another tab
+ * added since its mount-time load. It is now an ADDITION-ONLY upsert: every
+ * provided doc is written (add-or-replace) and rows absent from the list are
+ * left untouched. Document deletion belongs to `deleteDocument`, which the
+ * page calls explicitly. The whole-list helper therefore never resurrects a
+ * deleted row by removing rows, and a stale list can only re-add a row that
+ * the caller itself still holds — cross-tab deletion safety is guaranteed by
+ * the per-document production path (`upsertDocument`/`deleteDocument`), not
+ * by this helper.
+ *
+ * @param docs - Array of DocumentEntry to upsert
  */
 export async function saveDocuments(docs: DocumentEntry[]): Promise<void> {
   try {
@@ -104,12 +132,9 @@ export async function saveDocuments(docs: DocumentEntry[]): Promise<void> {
       const transaction = db.transaction(STORE_NAME, 'readwrite');
       const store = transaction.objectStore(STORE_NAME);
 
-      // Clear existing documents
-      store.clear();
-
-      // Add all documents
+      // #270: upsert only — no clear(). Rows absent from `docs` survive.
       for (const doc of docs) {
-        store.add(doc);
+        store.put(doc);
       }
 
       transaction.onerror = () => {
@@ -126,7 +151,43 @@ export async function saveDocuments(docs: DocumentEntry[]): Promise<void> {
 }
 
 /**
+ * Add or replace a single document row (#270).
+ *
+ * The per-document production write path: the page calls this for every
+ * new/changed document instead of re-writing its whole in-memory list, so a
+ * row another tab added is never overwritten by this tab's stale snapshot.
+ * Announces a change to other tabs on success.
+ */
+export async function upsertDocument(doc: DocumentEntry): Promise<void> {
+  try {
+    const db = await openDatabase();
+
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      store.put(doc);
+
+      transaction.onerror = () => {
+        reject(new Error(`Failed to upsert document: ${transaction.error}`));
+      };
+
+      transaction.oncomplete = () => {
+        resolve();
+      };
+    });
+    postChange();
+  } catch (error) {
+    console.error('Error upserting document to IndexedDB:', error);
+    throw error;
+  }
+}
+
+/**
  * Delete a document from IndexedDB by ID.
+ *
+ * #270: announces the change to other tabs on success so they reload instead
+ * of serving (and later re-saving) a stale list that still contains the
+ * deleted row.
  *
  * @param docId - ID of the document to delete
  */
@@ -134,7 +195,7 @@ export async function deleteDocument(docId: string): Promise<void> {
   try {
     const db = await openDatabase();
 
-    return new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const transaction = db.transaction(STORE_NAME, 'readwrite');
       const store = transaction.objectStore(STORE_NAME);
       const request = store.delete(docId);
@@ -147,7 +208,9 @@ export async function deleteDocument(docId: string): Promise<void> {
         resolve();
       };
     });
+    postChange();
   } catch (error) {
     console.error('Error deleting document from IndexedDB:', error);
+    throw error;
   }
 }

@@ -13,6 +13,8 @@ vi.mock('../../lib/storage/document-store', () => ({
   loadDocuments: vi.fn(),
   saveDocuments: vi.fn().mockResolvedValue(undefined),
   deleteDocument: vi.fn().mockResolvedValue(undefined),
+  upsertDocument: vi.fn(async () => {}),
+  onDocumentsRemoteChange: vi.fn((_cb: () => void) => () => {}),
 }));
 vi.mock('../../lib/storage/profile', () => ({
   migrateOrphanedNamespaces: vi.fn().mockResolvedValue(undefined),

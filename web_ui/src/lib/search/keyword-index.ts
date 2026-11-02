@@ -10,6 +10,8 @@ import { Index } from 'flexsearch';
 import type { SearchResult } from '../../types/search';
 import type { DocumentChunk } from '../../types/document';
 import { getStorageDbNames } from '../storage/profile';
+import { withStoreLock } from '../storage/cross-tab';
+import { createStoreChannel } from '../storage/cross-tab-channel';
 
 /**
  * F1: the per-store IndexedDB names now derive from the stable localStorage
@@ -21,6 +23,18 @@ const DB_NAMES = getStorageDbNames();
 const DB_NAME = DB_NAMES.keyword;
 const DB_VERSION = 1;
 const STORE_NAME = 'keyword-index';
+
+/**
+ * Change announcements (#270): successful saves notify other tabs so they can
+ * reload instead of serving (and later re-saving) stale in-memory blobs.
+ * Merge correctness never depends on delivery - every save re-reads the
+ * persisted baseline under the store lock.
+ */
+const changeChannel = createStoreChannel(`${DB_NAME}-changes`);
+
+function postChange(): void {
+  changeChannel.postChange();
+}
 
 interface IndexEntry {
   id: string;
@@ -54,6 +68,14 @@ export class KeywordIndex {
   private idMapping: Map<string, { docId: string; chunkIndex: number; text: string; source?: string; page?: number; packId?: string; packVersion?: string }> = new Map();
   // Reverse mapping: docId -> Set of chunk indices
   private docIdToChunks: Map<string, Set<string>> = new Map();
+  /**
+   * #270: this tab's own mutations since the last successful save - `put`
+   * for docIds whose chunks were (re-)added, `remove` for docIds removed.
+   * save() merges from the FRESHLY READ persisted baseline, so entries
+   * another tab wrote since our last load are merged, never wiped by a
+   * whole-blob replace.
+   */
+  private pendingOps: Map<string, 'put' | 'remove'> = new Map();
 
   /**
    * Get the singleton instance, creating it if necessary.
@@ -173,6 +195,8 @@ export class KeywordIndex {
 
     // Add to FlexSearch index
     this.index!.add(id, text);
+
+    this.pendingOps.set(docId, 'put');
   }
 
   /**
@@ -268,6 +292,10 @@ export class KeywordIndex {
       throw new Error('KeywordIndex not initialized. Call initialize() first.');
     }
 
+    // Record the removal BEFORE the early return: this tab may not hold the
+    // docId locally while another tab's saved entries still contain it.
+    this.pendingOps.set(docId, 'remove');
+
     const chunkIds = this.docIdToChunks.get(docId);
     if (!chunkIds || chunkIds.size === 0) {
       return;
@@ -327,28 +355,61 @@ export class KeywordIndex {
       throw new Error('KeywordIndex not initialized. Call initialize() first.');
     }
 
+    if (this.pendingOps.size === 0) {
+      // Nothing of ours to persist; the baseline (possibly another tab's
+      // newer state) stays untouched.
+      return;
+    }
+
     try {
-      const entries: IndexEntry[] = [];
-      for (const [id, meta] of this.idMapping) {
-        entries.push({
-          id,
-          docId: meta.docId,
-          chunkIndex: meta.chunkIndex,
-          text: meta.text,
-          source: meta.source,
-          page: meta.page,
-          ...(meta.packId !== undefined ? { packId: meta.packId } : {}),
-          ...(meta.packVersion !== undefined ? { packVersion: meta.packVersion } : {}),
-        });
-      }
-
-      const data: StoredData = {
-        entries,
-        documentChunks: this.docIdToChunks,
-      };
-
-      await this.persistToIDB(data);
-      console.info(`[KeywordIndex] Saved ${this.size()} entries to IndexedDB`);
+      await withStoreLock(`${DB_NAME}-save`, async () => {
+        // #270: snapshot the log, then merge from a FRESHLY READ persisted
+        // baseline. A whole-blob replace from this tab's in-memory state
+        // would wipe entries another tab saved since our last load; the
+        // merge keeps them. A local put REPLACES the baseline doc's entries
+        // (drop the docId from the baseline, then apply ours).
+        const snapshot = new Map(this.pendingOps);
+        const baseline = await this.loadFromIDB();
+        const merged: IndexEntry[] = (baseline?.entries ?? []).filter(
+          (e) => !snapshot.has(e.docId)
+        );
+        for (const [docId, op] of snapshot) {
+          if (op !== 'put') continue;
+          for (const [id, meta] of this.idMapping) {
+            if (meta.docId !== docId) continue;
+            merged.push({
+              id,
+              docId: meta.docId,
+              chunkIndex: meta.chunkIndex,
+              text: meta.text,
+              source: meta.source,
+              page: meta.page,
+              ...(meta.packId !== undefined ? { packId: meta.packId } : {}),
+              ...(meta.packVersion !== undefined ? { packVersion: meta.packVersion } : {}),
+            });
+          }
+        }
+        // documentChunks is DERIVED from the merged entries (PC-11): entries
+        // carry the text/citation payload the chunk-id map alone cannot
+        // rebuild.
+        const documentChunks = new Map<string, Set<string>>();
+        for (const e of merged) {
+          let ids = documentChunks.get(e.docId);
+          if (!ids) {
+            ids = new Set<string>();
+            documentChunks.set(e.docId, ids);
+          }
+          ids.add(e.id);
+        }
+        await this.persistToIDB({ entries: merged, documentChunks });
+        // Clear only the ops snapshotted at save start; mutations made while
+        // the async merge was in flight survive for the next save.
+        for (const docId of snapshot.keys()) {
+          this.pendingOps.delete(docId);
+        }
+        console.info(`[KeywordIndex] Saved ${merged.length} entries to IndexedDB`);
+      });
+      postChange();
     } catch (error) {
       throw new Error(
         `Save failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -393,9 +454,16 @@ export class KeywordIndex {
           resolve();
         };
 
+        // C16: preserve the raw error identity (e.g. QuotaExceededError) as
+        // cause, and never leave the save promise pending on abort.
+        tx.onabort = () => {
+          db.close();
+          reject(new Error('Transaction aborted', { cause: tx.error ?? undefined }));
+        };
+
         tx.onerror = () => {
           db.close();
-          reject(new Error(`Transaction failed: ${tx.error}`));
+          reject(new Error(`Transaction failed: ${tx.error}`, { cause: tx.error }));
         };
       };
     });

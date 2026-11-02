@@ -58,6 +58,9 @@ const mockKeywordIndex = {
 const mockLoadDocuments = vi.fn(async (): Promise<Array<{ id: string; fileName: string; fileSize: number; fileType: string; status: string; progress: number; uploadedAt: number; errorMessage?: string; chunkCount?: number }>> => []);
 const mockSaveDocuments = vi.fn(async (_docs: Array<{ status: string; fileName: string; errorMessage?: string }>) => {});
 const mockDeleteDocumentFromStore = vi.fn(async () => {});
+// #273: per-document production write path + remote-change subscription.
+const mockUpsertDocument = vi.fn(async (_doc: { id: string }) => {});
+const mockOnDocumentsRemoteChange = vi.fn((_cb: () => void) => () => {});
 
 // F2: mock the lazy embedding-service initializer so processFile's readiness
 // guard can be exercised without pulling in the real (heavy) service hook.
@@ -101,7 +104,9 @@ vi.mock('../lib/search/keyword-index', () => ({
 vi.mock('../lib/storage/document-store', () => ({
   loadDocuments: mockLoadDocuments,
   saveDocuments: mockSaveDocuments,
+  upsertDocument: mockUpsertDocument,
   deleteDocument: mockDeleteDocumentFromStore,
+  onDocumentsRemoteChange: mockOnDocumentsRemoteChange,
 }));
 
 vi.mock('../lib/processing/extractor-factory', () => ({
@@ -773,13 +778,14 @@ describe('DocumentsPage search index integration', () => {
       unmount();
     });
 
-    test('a vector-index addBatch failure fires a showToast with type "error" (semantic-search failure path)', async () => {
+    test('a vector-index addBatch failure is TERMINAL: error row + index purge + error toast (AC10 amended contract)', async () => {
       const { render, waitFor, act } = await import('@testing-library/react');
       const { DocumentsPage } = await import('./DocumentsPage');
 
-      // Make addBatch reject. processFile catches it inside the vector-index
-      // try and calls showToast('Failed to index document for semantic search.', 'error')
-      // (source line ~300), then continues. The doc still reaches 'ready'.
+      // Amended for #273 (PC-9): a vector-stage failure used to fire a toast
+      // and CONTINUE to 'ready' (the false-ready class). The amended contract
+      // makes it terminal — the outer catch records an error row, purges the
+      // chunks from both indexes, and toasts; the doc never reaches 'ready'.
       mockEmbeddingService.isReady.mockReturnValue(true);
       mockVectorIndex.isReady.mockReturnValue(true);
       mockEnsureEmbeddingServiceReady.mockResolvedValue(true);
@@ -796,17 +802,34 @@ describe('DocumentsPage search index integration', () => {
         input.dispatchEvent(new Event('change', { bubbles: true }));
       });
 
-      // Assert the specific semantic-search failure toast fired with type error.
+      // The failure is terminal: an error toast fires with the outer catch's
+      // message (the specific inner toast is gone with the swallow path).
       await waitFor(() => {
-        expect(showToastSpy).toHaveBeenCalledWith(
-          'Failed to index document for semantic search.',
-          'error'
-        );
+        expect(
+          showToastSpy.mock.calls.some(
+            ([message, type]) => type === 'error' && String(message).includes('Failed to process')
+          )
+        ).toBe(true);
       });
-      // And at least one error-type toast fired overall.
-      expect(
-        showToastSpy.mock.calls.some(([, type]) => type === 'error')
-      ).toBe(true);
+
+      // AC10: the terminal purge removed the doc's chunks from both indexes
+      // (removeByDocId + save on each) — nothing stays searchable.
+      await waitFor(() => {
+        expect(mockVectorIndex.removeByDocId).toHaveBeenCalledWith(expect.any(String));
+        expect(mockKeywordIndex.removeByDocId).toHaveBeenCalledWith(expect.any(String));
+        expect(mockVectorIndex.save).toHaveBeenCalled();
+        expect(mockKeywordIndex.save).toHaveBeenCalled();
+      });
+
+      // Never 'ready': the persisted row records the terminal error.
+      await waitFor(() => {
+        const calls = mockSaveDocuments.mock.calls;
+        const last = calls[calls.length - 1]?.[0] as
+          | Array<{ fileName: string; status: string }>
+          | undefined;
+        const doc = last?.find((d) => d.fileName === 'toastfail.txt');
+        expect(doc?.status).toBe('error');
+      });
 
       unmount();
     });
