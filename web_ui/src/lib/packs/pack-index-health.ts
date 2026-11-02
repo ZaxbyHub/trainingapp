@@ -21,12 +21,11 @@ import { storedVersionDocs } from './browser-pack-manager';
 // pack-ingest is imported DYNAMICALLY inside ensurePackIndexHealth (the same
 // lazy pattern browser-pack-manager uses): a static import would pull the
 // search indexes and their WASM into every module that only lists packs —
-// and into every app-shell test graph.
-
-interface PackIngestModule {
-  buildPackChunks(manifest: unknown, docs: ReadonlyMap<string, Uint8Array>): DocumentChunk[];
-  indexPackKeywords(manifest: unknown, docs: ReadonlyMap<string, Uint8Array>, targets?: unknown): Promise<DocumentChunk[]>;
-}
+// and into every app-shell test graph. Its REAL types flow from the dynamic
+// import, so tsc enforces indexPackKeywords's actual parameter shape
+// (PRR-001: the previous local interface + `as unknown as never` cast hid a
+// KeywordIndex-instance-where-PackIndexTargets-expected bug that made the
+// production repair throw while the mocked spec stayed green).
 
 /** Structural surface ensurePackIndexHealth needs from the pack manager. */
 export interface PackHealthManager {
@@ -82,7 +81,7 @@ export async function ensurePackIndexHealth(
       const mod = await import('../search/vector-index');
       return mod.getVectorIndex() as unknown as PackHealthVectorTarget;
     })());
-  const ingest = (await import('./pack-ingest')) as unknown as PackIngestModule;
+  const ingest = await import('./pack-ingest');
   // IR-21: the boot path can reach this pass BEFORE the app's service-init
   // effect has initialized the keyword index; probing an uninitialized index
   // would read an empty idMapping and diagnose every intact pack as wiped
@@ -129,11 +128,20 @@ export async function ensurePackIndexHealth(
     if (!missing) continue;
 
     // Repair the keyword side (remove + re-add + save, the install path).
-    await ingest.indexPackKeywords(
-      stored.manifest,
-      stored.docs,
-      keyword as unknown as never
-    );
+    // The injected keyword target is passed as a { keyword } bundle — the
+    // shape indexPackKeywords dereferences (PRR-001).
+    try {
+      await ingest.indexPackKeywords(stored.manifest, stored.docs, { keyword });
+    } catch (repairError) {
+      // One pack's repair failure must not abort the health pass for the
+      // remaining packs nor skip the boot embed pass (PRR-001 blast radius):
+      // leave this record's embedded flag untouched so the next boot retries.
+      console.error(
+        `[pack-index-health] repair failed for ${record.packId}@${record.version}:`,
+        repairError
+      );
+      continue;
+    }
     // Clear the embedded flag so the boot embed pass re-embeds the vector
     // side (embedPackChunks removes by docId first, so no duplicates).
     if (record.embedded === true) {
@@ -156,6 +164,12 @@ export async function ensurePackIndexHealthThenEmbed(
   embed: () => Promise<void>,
   targets?: { keyword?: PackHealthKeywordTarget; vector?: PackHealthVectorTarget }
 ): Promise<void> {
-  await ensurePackIndexHealth(manager, targets);
+  try {
+    await ensurePackIndexHealth(manager, targets);
+  } catch (error) {
+    // The health pass must never suppress the embed pass (PRR-001): a read
+    // failure here still lets pending pack embeddings run.
+    console.error('[pack-index-health] health check failed; embedding anyway:', error);
+  }
   await embed();
 }

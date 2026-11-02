@@ -374,6 +374,35 @@ describe('vector index across two tabs (shared IndexedDB + snapshot store)', () 
     expect(fresh[0]?.text).toBe('new one');
   });
 
+  it('aligned counters: both tabs boot first, both ingest, neither doc is lost (PRR-002)', async () => {
+    // The ordinary two-tab ordering: BOTH instances boot (empty baseline,
+    // aligned EdgeVec id counters) BEFORE either saves, so each tab's own
+    // addBatch assigns the same internal id. The id-only carry-over skip
+    // used to drop the second tab's doc from the persisted mapping+snapshot
+    // while clearing its pendingOps (permanent silent loss).
+    const a = await freshIndex();
+    const b = await freshIndex();
+    await a.addBatch([entry('doc-a', 0, 'alpha chunk', 80)]);
+    await a.save();
+    await b.addBatch([entry('doc-b', 0, 'beta chunk', 81)]);
+    await b.save();
+
+    const c = await freshIndex();
+    const hitA = await c.search(queryFor(80), { k: 5 });
+    expect(hitA[0]?.docId).toBe('doc-a');
+    const hitB = await c.search(queryFor(81), { k: 5 });
+    expect(hitB[0]?.docId).toBe('doc-b');
+
+    // AC3 (IR-20 strict form): every persisted mapping id resolves to a
+    // LIVE vector in the persisted snapshot.
+    const snap = h.snapshots.get([...h.snapshots.keys()][0]);
+    const mapping = (sharedDb!.get('idMapping') as { data: Array<{ id: number }> }).data;
+    expect(mapping.length).toBe(2);
+    for (const item of mapping) {
+      expect(snap?.get(item.id)?.deleted).toBe(false);
+    }
+  });
+
   it('same-tab incremental re-put carries saved chunks AND adds new ones (IR-1 floor)', async () => {
     const a = await freshIndex();
     await a.addBatch([entry('doc-x', 0, 'first chunk text', 60)]);

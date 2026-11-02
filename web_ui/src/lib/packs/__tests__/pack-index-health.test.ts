@@ -39,6 +39,7 @@ const h = vi.hoisted(() => {
     indexGate: null as Promise<void> | null,
     indexGateRelease: null as (() => void) | null,
     chunksByPack: new Map<string, DocumentChunk[]>(),
+    failPackIds: new Set<string>(),
   };
   return state;
 });
@@ -51,7 +52,23 @@ function releaseIndexGate(): void {
 
 vi.mock('../pack-ingest', () => ({
   buildPackChunks: (manifest: { id: string }) => h.chunksByPack.get(manifest.id) ?? [],
-  indexPackKeywords: async (manifest: { id: string }, docs: Map<string, Uint8Array>) => {
+  indexPackKeywords: async (
+    manifest: { id: string },
+    docs: Map<string, Uint8Array>,
+    targets?: unknown
+  ) => {
+    // PRR-001: the REAL indexPackKeywords dereferences targets.keyword.* —
+    // passing the bare KeywordIndex instance (the pre-fix production bug)
+    // makes targets.keyword undefined and throws. This mock reproduces that
+    // contract so the false-green cannot recur.
+    const kw = (targets as { keyword?: { initialize?: unknown } } | undefined)?.keyword;
+    if (!kw || typeof kw.initialize !== 'function') {
+      throw new TypeError('indexPackKeywords requires a { keyword } targets bundle');
+    }
+    (h as { lastTargets?: unknown }).lastTargets = targets;
+    if (h.failPackIds.has(manifest.id)) {
+      throw new Error(`simulated repair failure for ${manifest.id}`);
+    }
     if (h.indexGate) {
       await h.indexGate;
     }
@@ -144,6 +161,8 @@ function makeManager(
 describe('pack index health (C6)', () => {
   beforeEach(() => {
     h.indexCalls.length = 0;
+    h.failPackIds.clear();
+    (h as { lastTargets?: unknown }).lastTargets = undefined;
     h.indexGate = null;
     h.indexGateRelease = null;
     h.chunksByPack.clear();
@@ -264,6 +283,55 @@ describe('pack index health (C6)', () => {
     expect(result.repaired).toEqual([]);
     expect(h.indexCalls).toEqual([]);
     expect(m.marked).toEqual([]);
+  });
+
+  it('the repair receives a targets bundle whose keyword member is the injected target (PRR-001)', async () => {
+    const { ensurePackIndexHealth } = await import('../pack-index-health');
+    h.chunksByPack.set('wiped-pack', [chunkFor('wiped-pack', 'docs/a.md')]);
+    const m = makeManager([{ packId: 'wiped-pack', version: '1.0.0', embedded: true }]);
+    const keyword = makeKeyword(new Set());
+    const result = await ensurePackIndexHealth(m.manager, {
+      keyword,
+      vector: okVector(),
+    });
+    expect(result.repaired).toEqual(['wiped-pack@1.0.0']);
+    expect(h.indexCalls).toEqual([{ packId: 'wiped-pack', docs: 2 }]);
+    expect((h as { lastTargets?: { keyword?: unknown } }).lastTargets?.keyword).toBe(keyword);
+  });
+
+  it('a repair failure for one pack neither aborts the pass nor suppresses the embed (PRR-001)', async () => {
+    const { ensurePackIndexHealthThenEmbed } = await import('../pack-index-health');
+    h.chunksByPack.set('bad-pack', [chunkFor('bad-pack', 'docs/a.md')]);
+    h.chunksByPack.set('good-pack', [chunkFor('good-pack', 'docs/a.md')]);
+    h.failPackIds.add('bad-pack');
+    const m = makeManager([
+      { packId: 'bad-pack', version: '1.0.0', embedded: true },
+      { packId: 'good-pack', version: '1.0.0', embedded: true },
+    ]);
+    const embed = vi.fn(async () => undefined);
+    await ensurePackIndexHealthThenEmbed(m.manager, embed, {
+      keyword: makeKeyword(new Set()),
+      vector: okVector(),
+    });
+    // good-pack still repaired; bad-pack skipped with its flag untouched;
+    // the embed pass ran despite the bad-pack repair failure.
+    expect(h.indexCalls).toEqual([{ packId: 'good-pack', docs: 2 }]);
+    expect(m.marked).toEqual([{ id: 'good-pack', v: '1.0.0', e: false }]);
+    expect(embed).toHaveBeenCalledTimes(1);
+  });
+
+  it('a health-read failure still runs the embed pass (PRR-001)', async () => {
+    const { ensurePackIndexHealthThenEmbed } = await import('../pack-index-health');
+    const m = makeManager([]);
+    m.manager.activeRecords = async () => {
+      throw new Error('registry unreadable');
+    };
+    const embed = vi.fn(async () => undefined);
+    await ensurePackIndexHealthThenEmbed(m.manager, embed, {
+      keyword: makeKeyword(new Set()),
+      vector: okVector(),
+    });
+    expect(embed).toHaveBeenCalledTimes(1);
   });
 
   it('the boot call site wires health-then-embed inside the embedding-service-ready listener (IR-3/IR-22 pin)', async () => {

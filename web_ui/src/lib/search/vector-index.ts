@@ -545,7 +545,16 @@ export class VectorIndex {
           if (op !== 'put') continue;
           for (const [internalId, meta] of this.idMapping) {
             if (meta.docId !== docId) continue;
-            if (newMapping.has(internalId)) continue; // carried by the baseline
+            const carried = newMapping.get(internalId);
+            if (carried !== undefined && carried.docId === meta.docId) {
+              // OUR OWN entry already carried from the baseline (same id AND
+              // docId): its vector is live in temp — nothing to insert.
+              continue;
+            }
+            // PRR-002: any OTHER occupant of this id (a different doc's
+            // baseline entry — the aligned-counter two-tab collision) must
+            // NOT suppress our insert: fall through and re-insert with a
+            // REMAPPED id, per the contract comment above this function.
             if (this.vectorsById.has(internalId) && this.vectorsById.get(internalId) !== undefined) {
               toInsert.push({ vector: this.vectorsById.get(internalId) as Float32Array, meta });
               insertedOriginalIds.push(internalId);
@@ -630,9 +639,13 @@ export class VectorIndex {
    * (the merge baseline read; load() keeps its own repopulating path).
    */
   private async readMappingEntries(): Promise<Array<[number, VectorMappingMeta]>> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, 1);
-      request.onerror = () => resolve([]);
+      // PRR-003: an I/O error is NOT "there is no mapping" — resolving []
+      // here made the merge treat an unreadable baseline as an empty corpus
+      // and overwrite the persisted state with only this tab's pending ops.
+      request.onerror = () =>
+        reject(new Error(`Failed to open IndexedDB to read the persisted mapping: ${request.error}`));
       request.onupgradeneeded = () => {
         const db = request.result;
         if (!db.objectStoreNames.contains('mappings')) {
@@ -675,7 +688,7 @@ export class VectorIndex {
         };
         getRequest.onerror = () => {
           db.close();
-          resolve([]);
+          reject(new Error(`Failed to read the persisted mapping: ${getRequest.error}`));
         };
       };
     });
@@ -808,6 +821,9 @@ export class VectorIndex {
    *              mean-pooled) — treated as incompatible and forced through the
    *              re-index path (F9).
    *  - number  → the persisted version (compare to VECTOR_INDEX_VERSION).
+   *  - rejects → an IndexedDB I/O error (open/get failed): the save-merge
+   *              fails closed on it; load() converts it to "not loaded"
+   *              (never to a version decision).
    *
    * The fresh-install distinction is critical: opening a non-existent DB fires
    * `onupgradeneeded` with `oldVersion === 0`, which would otherwise create the
@@ -820,13 +836,17 @@ export class VectorIndex {
     if (typeof indexedDB === 'undefined') {
       return null;
     }
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, 1);
       // Track whether the DB (and thus the mappings store) existed BEFORE this
       // open call. A brand-new DB fires onupgradeneeded with oldVersion 0.
       let createdFresh = false;
 
-      request.onerror = () => resolve(null);
+      // PRR-003: an I/O error is NOT "there is nothing to check" — the
+      // save-merge must fail closed on it rather than merge into what it
+      // believes is a fresh empty corpus.
+      request.onerror = () =>
+        reject(new Error(`Failed to open IndexedDB to read the persisted index version: ${request.error}`));
 
       request.onupgradeneeded = (event: IDBVersionChangeEvent) => {
         createdFresh = event.oldVersion === 0;
@@ -862,7 +882,7 @@ export class VectorIndex {
         };
         getReq.onerror = () => {
           db.close();
-          resolve(0);
+          reject(new Error(`Failed to read the persisted index version: ${getReq.error}`));
         };
       };
     });
@@ -905,7 +925,16 @@ export class VectorIndex {
     // including 0 (a pre-v2/v1 store with no version key, i.e. mean-pooled
     // vectors from a previous build) — is incompatible and MUST be discarded so
     // a CLS-pooling client never loads mean-pooled vectors.
-    const persistedVersion = await this.readPersistedVersion();
+    let persistedVersion: number | null;
+    try {
+      persistedVersion = await this.readPersistedVersion();
+    } catch (error) {
+      // A transient read failure must never fabricate a version decision:
+      // log and treat the load as "no saved index" (the same outcome the
+      // previous resolve-on-error behavior produced), never as a mismatch.
+      console.error('[VectorIndex] Failed to read the persisted version; not loading:', error);
+      return false;
+    }
     if (persistedVersion !== null && persistedVersion !== VECTOR_INDEX_VERSION) {
       console.warn(
         `[VectorIndex] Stored index version ${persistedVersion === 0 ? '1 (pre-versioned)' : persistedVersion} ` +

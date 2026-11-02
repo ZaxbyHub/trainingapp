@@ -12,7 +12,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 const h = vi.hoisted(() => {
-  return { failMode: 'none' as 'none' | 'error' | 'abort' };
+  return { failMode: 'none' as 'none' | 'error' | 'abort' | 'get-error' };
 });
 
 vi.mock('edgevec', () => {
@@ -71,7 +71,9 @@ interface FakeRequest {
 }
 
 /** Fake IndexedDB whose write transactions fail or abort on demand. */
-function installFailModeIndexedDB(): void {
+let testDb: Map<string, unknown> | null = null;
+
+function installFailModeIndexedDB(): Map<string, unknown> {
   const db = new Map<string, unknown>();
   (globalThis as { indexedDB: unknown }).indexedDB = {
     open(_name: string): FakeRequest {
@@ -104,6 +106,13 @@ function installFailModeIndexedDB(): void {
                   get(key: string): FakeRequest {
                     const req = makeReq();
                     setTimeout(() => {
+                      if (h.failMode === 'get-error') {
+                        // Reads fail, writes still succeed: the exact
+                        // transient-read-failure window PRR-003 names.
+                        req.error = new DOMException('simulated read failure', 'UnknownError');
+                        req.onerror?.();
+                        return;
+                      }
                       req.result = db.has(key) ? structuredClone(db.get(key)) : undefined;
                       req.onsuccess?.();
                     });
@@ -148,12 +157,13 @@ function installFailModeIndexedDB(): void {
       return request;
     },
   };
+  return db;
 }
 
 describe('index save error identity (C16)', () => {
   beforeEach(() => {
     h.failMode = 'none';
-    installFailModeIndexedDB();
+    testDb = installFailModeIndexedDB();
   });
 
   describe('vector-index saveMapping', () => {
@@ -265,5 +275,47 @@ describe('index save error identity (C16)', () => {
       }
       expect(sawDomException).toBe(true);
     });
+  });
+
+  it('a transient baseline READ failure fails the save closed and never overwrites the corpus (PRR-003)', async () => {
+    // Seed a prior corpus the merge must NOT clobber. Reads (get) fail while
+    // writes (put) succeed — the transient-read-failure window the finding
+    // names; the pre-fix code resolved the failure as "empty baseline" and
+    // overwrote the seeded mapping with only the pending op (silent
+    // truncation of every other doc).
+    const db = testDb as Map<string, unknown>;
+    db.set('idMapping', {
+      key: 'idMapping',
+      data: [{ id: 7, docId: 'doc-old', chunkIndex: 0, text: 'old chunk' }],
+    });
+    db.set('version', { key: 'version', version: 3 });
+    h.failMode = 'get-error';
+
+    vi.resetModules();
+    const mod = await import('./vector-index');
+    const idx = mod.VectorIndex.getInstance();
+    await idx.initialize();
+    await idx.addBatch([
+      {
+        docId: 'doc-new',
+        chunkIndex: 0,
+        vector: new Float32Array(768).fill(0.3),
+        text: 'new chunk',
+      } as never,
+    ]);
+
+    // Fail closed: the read failure surfaces as a save rejection...
+    const err = await idx.save().then(
+      () => {
+        throw new Error('save should have rejected');
+      },
+      (e: unknown) => e as Error
+    );
+    expect(String(err.message)).toContain('Save failed');
+
+    // ...and no truncating write happened: the seeded corpus is untouched.
+    const row = db.get('idMapping') as { data: Array<{ docId: string }> };
+    expect(row.data.map((d) => d.docId)).toEqual(['doc-old']);
+    expect(db.get('version')).toEqual({ key: 'version', version: 3 });
   });
 });

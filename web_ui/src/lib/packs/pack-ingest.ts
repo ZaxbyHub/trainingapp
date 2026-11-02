@@ -130,11 +130,18 @@ function defaultTargets(): PackIndexTargets {
   };
 }
 
-/** Keyword-index ingestion (no embedding model needed). */
+/** Keyword-index ingestion (no embedding model needed).
+ *
+ * The third parameter is narrowed to the one member this function actually
+ * dereferences (`targets.keyword.*`, PRR-001): callers that inject only the
+ * keyword target (the boot pack-health repair) are now type-checked instead
+ * of erased behind a cast, while the default remains the full
+ * PackIndexTargets bundle.
+ */
 export async function indexPackKeywords(
   manifest: PackManifest,
   docs: ReadonlyMap<string, Uint8Array>,
-  targets: PackIndexTargets = defaultTargets(),
+  targets: { keyword: PackIndexTargets['keyword'] } = defaultTargets(),
 ): Promise<DocumentChunk[]> {
   const chunks = buildPackChunks(manifest, docs);
   await targets.keyword.initialize();
