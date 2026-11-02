@@ -87,7 +87,10 @@ function chunkFor(packId: string, docPath: string): DocumentChunk {
   } as DocumentChunk;
 }
 
-function makeKeyword(presentDocIds: Set<string>, lazy = false): PackHealthKeywordTarget {
+function makeKeyword(
+  presentDocIds: Set<string>,
+  lazy = false
+): PackHealthKeywordTarget & { initializeCalls: number } {
   let ready = !lazy;
   const kw = {
     initializeCalls: 0,
