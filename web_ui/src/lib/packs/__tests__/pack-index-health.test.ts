@@ -89,9 +89,11 @@ function chunkFor(packId: string, docPath: string): DocumentChunk {
 
 function makeKeyword(presentDocIds: Set<string>, lazy = false): PackHealthKeywordTarget {
   let ready = !lazy;
-  return {
+  const kw = {
+    initializeCalls: 0,
     initialize: async () => {
       ready = true;
+      kw.initializeCalls++;
     },
     isReady: () => ready,
     findChunks: (predicate: (meta: { docId: string }) => boolean, limit = 10) => {
@@ -109,6 +111,7 @@ function makeKeyword(presentDocIds: Set<string>, lazy = false): PackHealthKeywor
     removeByDocId: () => undefined,
     save: async () => undefined,
   };
+  return kw;
 }
 
 function makeManager(
@@ -239,38 +242,47 @@ describe('pack index health (C6)', () => {
     expect(m.marked).toEqual([{ id: 'vec-only-pack', v: '1.0.0', e: false }]);
   });
 
-  it('the health pass initializes a lazy keyword index before probing (IR-21)', async () => {
+  it('the health pass initializes a lazy keyword index before probing (IR-21/IR-23)', async () => {
     const { ensurePackIndexHealth } = await import('../pack-index-health');
     h.chunksByPack.set('good-pack', [chunkFor('good-pack', 'docs/a.md')]);
     const m = makeManager([{ packId: 'good-pack', version: '2.0.0', embedded: true }]);
     // Lazy keyword: uninitialized findChunks reads an empty mapping — the
-    // pre-IR-21 code would mis-diagnose the intact pack as wiped.
+    // pre-IR-21 code would mis-diagnose the intact pack as wiped. The
+    // initialize-call pin is the healing half: the pass must HAVE initialized
+    // the index and then correctly seen the intact chunks (a mutant deleting
+    // the initialize() call makes ready stay false, the pack is skipped, and
+    // initializeCalls stays 0 -> both assertions fail).
+    const keyword = makeKeyword(new Set(['good-pack:docs/a.md']), true);
     const result = await ensurePackIndexHealth(m.manager, {
-      keyword: makeKeyword(new Set(['good-pack:docs/a.md']), true),
+      keyword,
       vector: okVector(),
     });
+    expect(keyword.initializeCalls).toBe(1);
     expect(result.repaired).toEqual([]);
     expect(h.indexCalls).toEqual([]);
     expect(m.marked).toEqual([]);
   });
 
-  it('the boot call site wires health-then-embed inside the embedding-service-ready listener (IR-3 pin)', async () => {
+  it('the boot call site wires health-then-embed inside the embedding-service-ready listener (IR-3/IR-22 pin)', async () => {
     const src = readFileSync(
       path.join(import.meta.dirname, '..', '..', '..', 'lib', 'packs', 'browser-training.ts'),
       'utf-8'
     );
-    expect(src).toMatch(/ensurePackIndexHealthThenEmbed\(/);
-    expect(src).toMatch(/embedding-service-ready/);
-    // Ordering: the health call appears in the listener body that also calls
-    // embedPendingPackChunks.
-    const listener = src.slice(src.indexOf('embedding-service-ready'));
-    expect(listener.indexOf('ensurePackIndexHealthThenEmbed')).toBeGreaterThan(-1);
-    expect(listener.indexOf('embedPendingPackChunks')).toBeGreaterThan(
-      listener.indexOf('ensurePackIndexHealthThenEmbed')
-    );
-    // IR-17/IR-21: the boot path (outside the listener) wires the same
-    // composition, so an already-ready service at boot still heals.
-    const beforeListener = src.slice(0, src.indexOf('embedding-service-ready'));
-    expect(beforeListener).toMatch(/ensurePackIndexHealthThenEmbed/);
+    // IR-22: anchor at the real listener REGISTRATION (the first occurrence
+    // of the string is the IR-17 comment, not the listener), and pin the
+    // CALL SHAPE (void ensurePackIndexHealthThenEmbed() — the bare module
+    // import does not match this).
+    const listenerAt = src.indexOf("window.addEventListener('embedding-service-ready'");
+    expect(listenerAt).toBeGreaterThan(-1);
+    const beforeListener = src.slice(0, listenerAt);
+    const bootCall = beforeListener.match(/void\s+ensurePackIndexHealthThenEmbed\(/);
+    expect(bootCall).not.toBeNull();
+    // Listener ordering: health composition BEFORE the embed pass, inside
+    // the listener registration.
+    const listener = src.slice(listenerAt);
+    const healthInListener = listener.indexOf('ensurePackIndexHealthThenEmbed');
+    const embedInListener = listener.indexOf('embedPendingPackChunks');
+    expect(healthInListener).toBeGreaterThan(-1);
+    expect(embedInListener).toBeGreaterThan(healthInListener);
   });
 });
