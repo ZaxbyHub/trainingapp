@@ -87,12 +87,16 @@ function chunkFor(packId: string, docPath: string): DocumentChunk {
   } as DocumentChunk;
 }
 
-function makeKeyword(presentDocIds: Set<string>): PackHealthKeywordTarget {
+function makeKeyword(presentDocIds: Set<string>, lazy = false): PackHealthKeywordTarget {
+  let ready = !lazy;
   return {
-    initialize: async () => undefined,
-    isReady: () => true,
+    initialize: async () => {
+      ready = true;
+    },
+    isReady: () => ready,
     findChunks: (predicate: (meta: { docId: string }) => boolean, limit = 10) => {
       const hits: unknown[] = [];
+      if (!ready) return hits; // uninitialized keyword reads an empty mapping
       for (const docId of presentDocIds) {
         if (predicate({ docId })) {
           hits.push({ docId });
@@ -235,6 +239,21 @@ describe('pack index health (C6)', () => {
     expect(m.marked).toEqual([{ id: 'vec-only-pack', v: '1.0.0', e: false }]);
   });
 
+  it('the health pass initializes a lazy keyword index before probing (IR-21)', async () => {
+    const { ensurePackIndexHealth } = await import('../pack-index-health');
+    h.chunksByPack.set('good-pack', [chunkFor('good-pack', 'docs/a.md')]);
+    const m = makeManager([{ packId: 'good-pack', version: '2.0.0', embedded: true }]);
+    // Lazy keyword: uninitialized findChunks reads an empty mapping — the
+    // pre-IR-21 code would mis-diagnose the intact pack as wiped.
+    const result = await ensurePackIndexHealth(m.manager, {
+      keyword: makeKeyword(new Set(['good-pack:docs/a.md']), true),
+      vector: okVector(),
+    });
+    expect(result.repaired).toEqual([]);
+    expect(h.indexCalls).toEqual([]);
+    expect(m.marked).toEqual([]);
+  });
+
   it('the boot call site wires health-then-embed inside the embedding-service-ready listener (IR-3 pin)', async () => {
     const src = readFileSync(
       path.join(import.meta.dirname, '..', '..', '..', 'lib', 'packs', 'browser-training.ts'),
@@ -249,5 +268,9 @@ describe('pack index health (C6)', () => {
     expect(listener.indexOf('embedPendingPackChunks')).toBeGreaterThan(
       listener.indexOf('ensurePackIndexHealthThenEmbed')
     );
+    // IR-17/IR-21: the boot path (outside the listener) wires the same
+    // composition, so an already-ready service at boot still heals.
+    const beforeListener = src.slice(0, src.indexOf('embedding-service-ready'));
+    expect(beforeListener).toMatch(/ensurePackIndexHealthThenEmbed/);
   });
 });

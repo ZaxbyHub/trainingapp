@@ -83,6 +83,11 @@ export async function ensurePackIndexHealth(
       return mod.getVectorIndex() as unknown as PackHealthVectorTarget;
     })());
   const ingest = (await import('./pack-ingest')) as unknown as PackIngestModule;
+  // IR-21: the boot path can reach this pass BEFORE the app's service-init
+  // effect has initialized the keyword index; probing an uninitialized index
+  // would read an empty idMapping and diagnose every intact pack as wiped
+  // (per-boot full re-embed). initialize() is idempotent.
+  await keyword.initialize();
   const repaired: string[] = [];
   let checked = 0;
 
@@ -116,6 +121,11 @@ export async function ensurePackIndexHealth(
     const missing =
       docIds.some((docId) => keyword.findChunks((meta) => meta.docId === docId, 1).length === 0) ||
       (vectorReady && docIds.some((docId) => !vector.hasDocEntries(docId)));
+    if (!keyword.isReady()) {
+      // Initialization failed (storage unavailable): probing would read an
+      // empty mapping — skip this pack rather than mis-diagnose it as wiped.
+      continue;
+    }
     if (!missing) continue;
 
     // Repair the keyword side (remove + re-add + save, the install path).

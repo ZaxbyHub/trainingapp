@@ -266,14 +266,14 @@ describe('vector index across two tabs (shared IndexedDB + snapshot store)', () 
     // stored vector (no F11 skips).
     expect(unmappedWarns).toEqual([]);
     warnSpy.mockRestore();
-    // AC3 explicit (IR-14, mapping -> vector): every PERSISTED mapping id
-    // resolves to a live vector in the persisted snapshot.
+    // AC3 explicit (IR-14/IR-20, mapping -> vector): every PERSISTED mapping
+    // id resolves to a LIVE (non-tombstoned) vector in the persisted snapshot.
     const snapKey = [...h.snapshots.keys()][0];
     const liveSnap = h.snapshots.get(snapKey);
     const persistedMapping = (sharedDb!.get('idMapping') as { data: Array<{ id: number }> }).data;
     expect(persistedMapping.length).toBeGreaterThan(0);
     for (const item of persistedMapping) {
-      expect(liveSnap?.has(item.id)).toBe(true);
+      expect(liveSnap?.get(item.id)?.deleted).toBe(false);
     }
   });
 
@@ -297,6 +297,19 @@ describe('vector index across two tabs (shared IndexedDB + snapshot store)', () 
 
     const why = await c.search(queryFor(40), { k: 4 });
     expect(why[0]?.docId).toBe('doc-y');
+
+    // IR-20 strict form: the superseded old chunk's mapping row is gone and
+    // every persisted mapping entry points at a live vector — a mutant that
+    // keeps a superseded chunk's mapping row fails here.
+    const snapKey2 = [...h.snapshots.keys()][0];
+    const snap2 = h.snapshots.get(snapKey2);
+    const mapping2 = (sharedDb!.get('idMapping') as {
+      data: Array<{ id: number; docId: string; text?: string }>;
+    }).data;
+    expect(mapping2.some((item) => item.text === 'old chunk text')).toBe(false);
+    for (const item of mapping2) {
+      expect(snap2?.get(item.id)?.deleted).toBe(false);
+    }
   });
 
   it('mapping row without a snapshot is not retained (AC3 every-id-resolves)', async () => {
