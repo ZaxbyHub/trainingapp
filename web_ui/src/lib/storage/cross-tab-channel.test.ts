@@ -20,8 +20,11 @@ describe('createStoreChannel', () => {
         instances.push(this);
       }
       postMessage(message: unknown): void {
+        // Deliver to EVERY linked instance (including the poster's own
+        // listener path): the real sender-id guard in createStoreChannel is
+        // what filters self-delivery, so the fake must not pre-filter —
+        // otherwise a guard mutant survives these tests.
         for (const other of instances) {
-          if (other === this) continue;
           other.onmessage?.({ data: message } as MessageEvent);
         }
       }

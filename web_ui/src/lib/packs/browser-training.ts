@@ -49,6 +49,12 @@ export async function startBrowserTraining(): Promise<void> {
   // Pack chunks installed before the embedding model was ready are embedded
   // as soon as it is (resumable across reloads: the registry marks each
   // version once embedded).
+  // IR-17: run the health pass at boot as well (not only on the
+  // embedding-service-ready event) so an already-ready embedding service at
+  // startBrowserTraining time still heals wiped pack chunks.
+  void ensurePackIndexHealthThenEmbed(getBrowserPackManager(), () => embedPendingPackChunks()).catch(
+    (error: unknown) => console.warn('[packs] embedding failed:', error)
+  );
   window.addEventListener('embedding-service-ready', (event) => {
     if ((event as CustomEvent<{ ready?: boolean }>).detail?.ready !== true) return;
     // #270: heal wiped pack chunks BEFORE embedding pending records, so a

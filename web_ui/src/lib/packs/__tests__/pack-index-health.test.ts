@@ -191,7 +191,6 @@ describe('pack index health (C6)', () => {
   });
 
   it('the boot composition embeds only AFTER the health gate settles (PC-8)', async () => {
-    const { ensurePackIndexHealthThenEmbed } = await import('../pack-index-health');
     h.chunksByPack.set('repair-first', [chunkFor('repair-first', 'docs/a.md')]);
     const m = makeManager([{ packId: 'repair-first', version: '1.0.0', embedded: true }]);
     const healthTargets = { keyword: makeKeyword(new Set()), vector: okVector() };
@@ -206,14 +205,10 @@ describe('pack index health (C6)', () => {
       embedCalls.push(1);
     };
 
-    // The real composition runs ensurePackIndexHealth(manager) with default
-    // targets; the deferred-gate proof drives ensurePackIndexHealth directly
-    // through the same ordering contract helper.
-    const run = (await import('../pack-index-health')).ensurePackIndexHealth(
-      m.manager,
-      healthTargets
-    ).then(() => embed());
-    void run;
+    // IR-13: the REAL composition is under test (reversing the production
+    // order must fail this test), with injectable targets.
+    const { ensurePackIndexHealthThenEmbed: compose } = await import('../pack-index-health');
+    const run = compose(m.manager, embed, healthTargets);
     await new Promise((r) => setTimeout(r, 20));
     // The health gate is still deferred: the embed pass must NOT have run.
     expect(embedCalls).toEqual([]);

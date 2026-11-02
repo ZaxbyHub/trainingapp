@@ -173,7 +173,7 @@ describe('DocumentsPage.persist (C12)', () => {
     expect(persistSpy).toHaveBeenCalledTimes(1); // session attempt guard
   });
 
-  test('already-persisted storage never calls persist(); rejection never blocks ingest', async () => {
+  test('already-persisted storage never calls persist()', async () => {
     const { waitFor } = await import('@testing-library/react');
     const persistSpy = vi.fn(async () => true);
     Object.defineProperty(navigator, 'storage', {
@@ -186,11 +186,22 @@ describe('DocumentsPage.persist (C12)', () => {
       expect(row?.status).toBe('ready');
     });
     expect(persistSpy).not.toHaveBeenCalled();
+  });
 
-    // Rejected persist() must not block the ingest either.
+  test('a rejected persist() never blocks the ingest (IR-16: own fresh session)', async () => {
+    const { waitFor } = await import('@testing-library/react');
+    // Own test = own module registry (beforeEach resetModules): this leg is
+    // the FIRST ingest of its session, so the rejection actually executes.
+    // A mutant that lets the rejection escape (rethrow) fails this test: the
+    // row would record error instead of ready.
     Object.defineProperty(navigator, 'storage', {
       configurable: true,
-      value: { persisted: async () => false, persist: async () => { throw new Error('denied'); } },
+      value: {
+        persisted: async () => false,
+        persist: async () => {
+          throw new Error('denied');
+        },
+      },
     });
     await upload('persist-denied.txt');
     await waitFor(() => {

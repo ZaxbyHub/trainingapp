@@ -487,8 +487,16 @@ export class VectorIndex {
           baselineMappingEntries = [] as Array<[number, VectorMappingMeta]>;
         }
 
-        const baselineById = new Map(baselineMappingEntries);
-        void baselineById;
+        // IR-12 (op-aware keep/drop): a baseline entry of a snapshot docId
+        // survives ONLY when its internal id STILL RESOLVES in this.idMapping
+        // to the same docId (removeByDocId deletes those entries, so a remove
+        // op keeps nothing) AND its (docId, chunkIndex) is not superseded by
+        // an entry with a RETAINED raw vector (a new put of the same chunk
+        // replaces it; the stale vector soft-deletes so it cannot crowd the
+        // search k-window, PC-12). Everything else — removed docs, superseded
+        // chunks — soft-deletes. A surviving baseline entry keeps its vector
+        // LIVE (never soft-deleted), which is what keeps boot-loaded chunks
+        // resolvable across an incremental re-put (IR-1).
         // IR-1: supersession is per (docId, chunkIndex). A baseline chunk of a
         // put docId whose chunkIndex the in-memory state re-supplies is
         // REPLACED (soft-deleted, new vector inserted); a baseline chunk whose
@@ -514,12 +522,19 @@ export class VectorIndex {
         for (const [id, meta] of baselineMappingEntries) {
           if (!dropDocIds.has(meta.docId)) {
             newMapping.set(id, meta);
-          } else if (!superseded.has(`${meta.docId}:${meta.chunkIndex}`)) {
-            // Non-superseded saved chunk: keep the vector live and the entry.
+            continue;
+          }
+          const inMemory = this.idMapping.get(id);
+          if (
+            inMemory &&
+            inMemory.docId === meta.docId &&
+            !superseded.has(`${meta.docId}:${inMemory.chunkIndex}`)
+          ) {
+            // Still-owned, non-superseded saved chunk: keep live.
             newMapping.set(id, meta);
           } else {
-            // Superseded or removed content: soft-delete so the stale vector
-            // cannot crowd the search k-window (PC-12).
+            // Removed doc, or superseded chunk: soft-delete so the stale
+            // vector cannot crowd the search k-window (PC-12).
             temp.softDelete(id);
           }
         }
@@ -567,7 +582,14 @@ export class VectorIndex {
           await this.saveMapping();
           await temp.save(INDEX_NAME);
         } catch (writeError) {
+          // IR-18: a failed merge-save must not leak the WASM baseline
+          // instance (the live index keeps its own instance).
           this.idMapping = previousMapping;
+          if (typeof temp[Symbol.dispose] === 'function') {
+            temp[Symbol.dispose]();
+          } else if (typeof temp.free === 'function') {
+            temp.free();
+          }
           throw writeError;
         }
 

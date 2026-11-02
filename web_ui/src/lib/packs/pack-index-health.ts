@@ -143,8 +143,9 @@ export async function ensurePackIndexHealth(
  */
 export async function ensurePackIndexHealthThenEmbed(
   manager: PackHealthManager,
-  embed: () => Promise<void>
+  embed: () => Promise<void>,
+  targets?: { keyword?: PackHealthKeywordTarget; vector?: PackHealthVectorTarget }
 ): Promise<void> {
-  await ensurePackIndexHealth(manager);
+  await ensurePackIndexHealth(manager, targets);
   await embed();
 }

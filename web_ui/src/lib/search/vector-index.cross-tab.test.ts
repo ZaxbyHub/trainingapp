@@ -126,8 +126,11 @@ interface FakeRequest {
   error: unknown;
 }
 
+let sharedDb: Map<string, unknown> | null = null;
+
 function installFakeIndexedDB(): Map<string, unknown> {
   const db = new Map<string, unknown>();
+  sharedDb = db;
   (globalThis as { indexedDB: unknown }).indexedDB = {
     open(_name: string): FakeRequest {
       const request: FakeRequest = {
@@ -263,6 +266,15 @@ describe('vector index across two tabs (shared IndexedDB + snapshot store)', () 
     // stored vector (no F11 skips).
     expect(unmappedWarns).toEqual([]);
     warnSpy.mockRestore();
+    // AC3 explicit (IR-14, mapping -> vector): every PERSISTED mapping id
+    // resolves to a live vector in the persisted snapshot.
+    const snapKey = [...h.snapshots.keys()][0];
+    const liveSnap = h.snapshots.get(snapKey);
+    const persistedMapping = (sharedDb!.get('idMapping') as { data: Array<{ id: number }> }).data;
+    expect(persistedMapping.length).toBeGreaterThan(0);
+    for (const item of persistedMapping) {
+      expect(liveSnap?.has(item.id)).toBe(true);
+    }
   });
 
   it('repeated same-docId replacement: old vectors are soft-deleted, not live orphans', async () => {
@@ -308,6 +320,45 @@ describe('vector index across two tabs (shared IndexedDB + snapshot store)', () 
     const persisted = db.get('idMapping') as { data: Array<{ docId: string }> };
     expect(persisted.data.some((item) => item.docId === 'ghost-doc')).toBe(false);
     expect(persisted.data.some((item) => item.docId === 'doc-real')).toBe(true);
+  });
+
+  it('a remove op REMOVES: saved chunks vanish after removeByDocId + save (IR-12 floor)', async () => {
+    const a = await freshIndex();
+    await a.addBatch([entry('doc-r', 0, 'x chunk', 70)]);
+    await a.save();
+
+    // Remove through the change log (the delete/terminal-purge path).
+    a.removeByDocId('doc-r');
+    await a.save();
+
+    const c = await freshIndex();
+    const hits = await c.search(queryFor(70), { k: 4 });
+    expect(hits).toEqual([]); // IR-12: a remove op removes nothing was the defect
+
+    // And the persisted mapping holds no entry for the removed doc.
+    const persisted = (sharedDb!.get('idMapping') as { data: Array<{ docId: string }> }).data;
+    expect(persisted.some((item) => item.docId === 'doc-r')).toBe(false);
+  });
+
+  it('remove-then-reput with fewer chunks leaves no stale trailing chunk (IR-12 floor 2)', async () => {
+    const a = await freshIndex();
+    await a.addBatch([
+      entry('doc-t', 0, 'old one', 71),
+      entry('doc-t', 1, 'old two', 72),
+    ]);
+    await a.save();
+
+    // removeByDocId then re-add only chunk 0: chunk 1 must not survive.
+    a.removeByDocId('doc-t');
+    await a.addBatch([entry('doc-t', 0, 'new one', 73)]);
+    await a.save();
+
+    const c = await freshIndex();
+    const stale = await c.search(queryFor(72), { k: 4 });
+    expect(stale.find((r) => r.text === 'old two')).toBeUndefined();
+
+    const fresh = await c.search(queryFor(73), { k: 4 });
+    expect(fresh[0]?.text).toBe('new one');
   });
 
   it('same-tab incremental re-put carries saved chunks AND adds new ones (IR-1 floor)', async () => {
