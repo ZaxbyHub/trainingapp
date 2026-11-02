@@ -488,12 +488,39 @@ export class VectorIndex {
         }
 
         const baselineById = new Map(baselineMappingEntries);
+        void baselineById;
+        // IR-1: supersession is per (docId, chunkIndex). A baseline chunk of a
+        // put docId whose chunkIndex the in-memory state re-supplies is
+        // REPLACED (soft-deleted, new vector inserted); a baseline chunk whose
+        // chunkIndex is absent from the in-memory state is carried forward
+        // LIVE (its vector must never be soft-deleted, or the carried mapping
+        // id would dangle) — this is what makes a same-tab incremental re-put
+        // correct for boot-loaded entries that carry no retained raw vector.
+        const superseded = new Set<string>();
+        for (const [docId, op] of snapshot) {
+          if (op !== 'put') continue;
+          for (const [internalId, meta] of this.idMapping) {
+            if (meta.docId !== docId) continue;
+            // Only entries with a RETAINED raw vector are new puts of this
+            // save; boot-loaded copies of the same chunks (no retained
+            // vector) must not mark their own chunkIndexes superseded.
+            if (this.vectorsById.has(internalId)) {
+              superseded.add(`${docId}:${meta.chunkIndex}`);
+            }
+          }
+        }
+
         const newMapping = new Map<number, VectorMappingMeta>();
         for (const [id, meta] of baselineMappingEntries) {
-          if (dropDocIds.has(meta.docId)) {
-            temp.softDelete(id);
-          } else {
+          if (!dropDocIds.has(meta.docId)) {
             newMapping.set(id, meta);
+          } else if (!superseded.has(`${meta.docId}:${meta.chunkIndex}`)) {
+            // Non-superseded saved chunk: keep the vector live and the entry.
+            newMapping.set(id, meta);
+          } else {
+            // Superseded or removed content: soft-delete so the stale vector
+            // cannot crowd the search k-window (PC-12).
+            temp.softDelete(id);
           }
         }
 
@@ -503,17 +530,13 @@ export class VectorIndex {
           if (op !== 'put') continue;
           for (const [internalId, meta] of this.idMapping) {
             if (meta.docId !== docId) continue;
-            const baseMeta = baselineById.get(internalId);
-            if (baseMeta && baseMeta.docId === meta.docId) {
-              // This tab saved this entry before and the baseline still
-              // carries it under the same id: carry the entry over as-is.
-              newMapping.set(internalId, meta);
-            } else if (this.vectorsById.has(internalId) && this.vectorsById.get(internalId) !== undefined) {
+            if (newMapping.has(internalId)) continue; // carried by the baseline
+            if (this.vectorsById.has(internalId) && this.vectorsById.get(internalId) !== undefined) {
               toInsert.push({ vector: this.vectorsById.get(internalId) as Float32Array, meta });
               insertedOriginalIds.push(internalId);
             } else {
-              // No raw vector available (defensive): skip rather than write a
-              // mapping entry whose vector cannot resolve (AC3 invariant).
+              // No raw vector and no baseline carrier (defensive): skip rather
+              // than write a mapping entry whose vector cannot resolve (AC3).
               console.warn(
                 `[VectorIndex] Skipping mapping entry without a resolvable vector for docId ${meta.docId}`
              );
@@ -534,10 +557,19 @@ export class VectorIndex {
           result.free();
         }
 
-        // F11 order preserved: mapping+version FIRST, then the snapshot.
+        // F11 order preserved: mapping+version FIRST, then the snapshot. If
+        // the snapshot write fails after the mapping row landed, restore the
+        // in-memory mapping so the live instance stays consistent with the
+        // still-persisted previous snapshot (IR-5).
+        const previousMapping = this.idMapping;
         this.idMapping = newMapping;
-        await this.saveMapping();
-        await temp.save(INDEX_NAME);
+        try {
+          await this.saveMapping();
+          await temp.save(INDEX_NAME);
+        } catch (writeError) {
+          this.idMapping = previousMapping;
+          throw writeError;
+        }
 
         // Swap only after both writes succeeded; dispose the old live
         // instance (same disposal pattern as load()).
@@ -914,6 +946,19 @@ export class VectorIndex {
       // Return false on load failure - index remains empty but usable
       return false;
     }
+  }
+
+  /**
+   * Whether the loaded mapping holds any entry for a document id (#270 AC6
+   * vector-side health probe). Mapping rows only survive a successful
+   * snapshot load, so a wiped/lost vector store answers false at boot and the
+   * pack health pass clears the embedded flag.
+   */
+  hasDocEntries(docId: string): boolean {
+    for (const meta of this.idMapping.values()) {
+      if (meta.docId === docId) return true;
+    }
+    return false;
   }
 
   /**

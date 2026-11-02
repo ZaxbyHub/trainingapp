@@ -32,7 +32,16 @@ import './documents.css';
 async function purgeDocFromIndexes(docId: string): Promise<{ ok: boolean; reason?: string }> {
   const vectorIndex = getVectorIndex();
   if (!vectorIndex.isReady()) {
-    return { ok: false, reason: 'vector index not ready' };
+    // IR-6: attempt idempotent initialization once — a delete arriving before
+    // boot finished should still be able to clean the indexes.
+    try {
+      await vectorIndex.initialize();
+    } catch (initError) {
+      console.warn(`Vector index init during purge failed:`, initError);
+    }
+    if (!vectorIndex.isReady()) {
+      return { ok: false, reason: 'vector index not ready' };
+    }
   }
   try {
     await vectorIndex.removeByDocId(docId);
@@ -43,7 +52,14 @@ async function purgeDocFromIndexes(docId: string): Promise<{ ok: boolean; reason
   }
   const keywordIndex = getKeywordIndex();
   if (!keywordIndex.isReady()) {
-    return { ok: false, reason: 'keyword index not ready' };
+    try {
+      await keywordIndex.initialize();
+    } catch (initError) {
+      console.warn(`Keyword index init during purge failed:`, initError);
+    }
+    if (!keywordIndex.isReady()) {
+      return { ok: false, reason: 'keyword index not ready' };
+    }
   }
   try {
     keywordIndex.removeByDocId(docId);
@@ -901,8 +917,10 @@ export function DocumentsPage() {
       // are stranded under a deleted row.
       const purge = await purgeDocFromIndexes(docId);
       if (!purge.ok) {
+        const docName =
+          latestDocumentsRef.current.find((doc) => doc.id === docId)?.fileName ?? docId;
         showToast(
-          `Could not fully remove "${docId}" from the search index. Please try again.`,
+          `Could not fully remove "${docName}" from the search index. Please try again.`,
           'error'
         );
         return;

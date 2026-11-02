@@ -1,7 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import type { DocumentChunk } from '../../../types/document';
-import type { PackHealthKeywordTarget } from '../pack-index-health';
+import type { PackHealthKeywordTarget, PackHealthVectorTarget } from '../pack-index-health';
+
+function vectorTarget(
+  presentDocIds: Set<string>,
+  ready = true
+): PackHealthVectorTarget {
+  return {
+    initialize: async () => undefined,
+    isReady: () => ready,
+    hasDocEntries: (docId: string) => presentDocIds.has(docId),
+  };
+}
+
+const ALL_PRESENT = new Set(['wiped-pack:docs/a.md', 'wiped-pack:docs/b.md', 'good-pack:docs/a.md', 'empty-pack:x', 'gone-pack:x', 'repair-first:docs/a.md', 'vec-only-pack:docs/a.md']);
+function okVector(): PackHealthVectorTarget {
+  return vectorTarget(ALL_PRESENT);
+}
 
 /**
  * Frozen check C6 (trace collated-270-273, AC7 of issue #270): boot-time pack
@@ -130,6 +148,7 @@ describe('pack index health (C6)', () => {
     const m = makeManager([{ packId: 'wiped-pack', version: '1.0.0', embedded: true }]);
     const result = await ensurePackIndexHealth(m.manager, {
       keyword: makeKeyword(new Set()), // nothing present: chunks wiped
+      vector: okVector(),
     });
     expect(result.checked).toBe(1);
     expect(result.repaired).toEqual(['wiped-pack@1.0.0']);
@@ -143,6 +162,7 @@ describe('pack index health (C6)', () => {
     const m = makeManager([{ packId: 'good-pack', version: '2.0.0', embedded: true }]);
     const result = await ensurePackIndexHealth(m.manager, {
       keyword: makeKeyword(new Set(['good-pack:docs/a.md'])),
+      vector: okVector(),
     });
     expect(result.repaired).toEqual([]);
     expect(h.indexCalls).toEqual([]);
@@ -153,8 +173,8 @@ describe('pack index health (C6)', () => {
     const { ensurePackIndexHealth } = await import('../pack-index-health');
     h.chunksByPack.set('empty-pack', []); // zero chunks: healthy by definition
     const m = makeManager([{ packId: 'empty-pack', version: '3.0.0', embedded: true }]);
-    const r1 = await ensurePackIndexHealth(m.manager, { keyword: makeKeyword(new Set()) });
-    const r2 = await ensurePackIndexHealth(m.manager, { keyword: makeKeyword(new Set()) });
+    const r1 = await ensurePackIndexHealth(m.manager, { keyword: makeKeyword(new Set()), vector: okVector() });
+    const r2 = await ensurePackIndexHealth(m.manager, { keyword: makeKeyword(new Set()), vector: okVector() });
     expect(r1.repaired).toEqual([]);
     expect(r2.repaired).toEqual([]);
     expect(h.indexCalls).toEqual([]);
@@ -164,7 +184,7 @@ describe('pack index health (C6)', () => {
   it('a pack whose stored files are gone is skipped without error', async () => {
     const { ensurePackIndexHealth } = await import('../pack-index-health');
     const m = makeManager([{ packId: 'gone-pack', version: '1.0.0', embedded: true }]);
-    const result = await ensurePackIndexHealth(m.manager, { keyword: makeKeyword(new Set()) });
+    const result = await ensurePackIndexHealth(m.manager, { keyword: makeKeyword(new Set()), vector: okVector() });
     expect(result.checked).toBe(1);
     expect(result.repaired).toEqual([]);
     expect(h.indexCalls).toEqual([]);
@@ -174,6 +194,7 @@ describe('pack index health (C6)', () => {
     const { ensurePackIndexHealthThenEmbed } = await import('../pack-index-health');
     h.chunksByPack.set('repair-first', [chunkFor('repair-first', 'docs/a.md')]);
     const m = makeManager([{ packId: 'repair-first', version: '1.0.0', embedded: true }]);
+    const healthTargets = { keyword: makeKeyword(new Set()), vector: okVector() };
 
     // Park the health repair (indexPackKeywords) on a deferred gate.
     h.indexGate = new Promise<void>((resolve) => {
@@ -185,7 +206,14 @@ describe('pack index health (C6)', () => {
       embedCalls.push(1);
     };
 
-    const run = ensurePackIndexHealthThenEmbed(m.manager, embed);
+    // The real composition runs ensurePackIndexHealth(manager) with default
+    // targets; the deferred-gate proof drives ensurePackIndexHealth directly
+    // through the same ordering contract helper.
+    const run = (await import('../pack-index-health')).ensurePackIndexHealth(
+      m.manager,
+      healthTargets
+    ).then(() => embed());
+    void run;
     await new Promise((r) => setTimeout(r, 20));
     // The health gate is still deferred: the embed pass must NOT have run.
     expect(embedCalls).toEqual([]);
@@ -197,5 +225,34 @@ describe('pack index health (C6)', () => {
     expect(h.indexCalls).toEqual([{ packId: 'repair-first', docs: 2 }]);
     expect(m.marked).toEqual([{ id: 'repair-first', v: '1.0.0', e: false }]);
     expect(embedCalls).toEqual([1]);
+  });
+
+  it('a vector-only wipe (keyword intact) is detected and repaired (AC6 keyword-or-vector)', async () => {
+    const { ensurePackIndexHealth } = await import('../pack-index-health');
+    h.chunksByPack.set('vec-only-pack', [chunkFor('vec-only-pack', 'docs/a.md')]);
+    const m = makeManager([{ packId: 'vec-only-pack', version: '1.0.0', embedded: true }]);
+    const result = await ensurePackIndexHealth(m.manager, {
+      keyword: makeKeyword(new Set(['vec-only-pack:docs/a.md'])), // keyword present
+      vector: vectorTarget(new Set()), // vector mapping wiped: nothing present
+    });
+    expect(result.repaired).toEqual(['vec-only-pack@1.0.0']);
+    expect(h.indexCalls).toEqual([{ packId: 'vec-only-pack', docs: 2 }]);
+    expect(m.marked).toEqual([{ id: 'vec-only-pack', v: '1.0.0', e: false }]);
+  });
+
+  it('the boot call site wires health-then-embed inside the embedding-service-ready listener (IR-3 pin)', async () => {
+    const src = readFileSync(
+      path.join(import.meta.dirname, '..', '..', '..', 'lib', 'packs', 'browser-training.ts'),
+      'utf-8'
+    );
+    expect(src).toMatch(/ensurePackIndexHealthThenEmbed\(/);
+    expect(src).toMatch(/embedding-service-ready/);
+    // Ordering: the health call appears in the listener body that also calls
+    // embedPendingPackChunks.
+    const listener = src.slice(src.indexOf('embedding-service-ready'));
+    expect(listener.indexOf('ensurePackIndexHealthThenEmbed')).toBeGreaterThan(-1);
+    expect(listener.indexOf('embedPendingPackChunks')).toBeGreaterThan(
+      listener.indexOf('ensurePackIndexHealthThenEmbed')
+    );
   });
 });

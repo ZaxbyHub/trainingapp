@@ -68,6 +68,19 @@ describe('createStoreChannel', () => {
     expect(a2Seen).toHaveLength(1);
   });
 
+  it('a listener on the POSTING instance never fires even when it posts twice (sender-id guard mutant floor)', () => {
+    const { factory } = makeLinkedFakes();
+    const a = createStoreChannel('docqa-self-hear', { channelFactory: factory });
+    const seen: number[] = [];
+    a.onRemoteChange(() => seen.push(1));
+    a.postChange();
+    a.postChange();
+    a.postChange();
+    // A mutant that drops the sender-id guard makes the posting instance hear
+    // its own posts; this floor kills it.
+    expect(seen).toHaveLength(0);
+  });
+
   it('unsubscribe stops delivery', () => {
     const { factory } = makeLinkedFakes();
     const a = createStoreChannel('docqa-unsub', { channelFactory: factory });

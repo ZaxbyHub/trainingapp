@@ -131,6 +131,11 @@ function lastPersistedRow(
 
 describe('DocumentsPage.persist (C12)', () => {
   beforeEach(() => {
+    // IR-8: the once-per-session persist guard is module state in the PAGE
+    // module — reset the registry so each test starts with a fresh flag
+    // (without this, the first test consumes the attempt for the whole file
+    // and the later assertions pass vacuously).
+    vi.resetModules();
     vi.clearAllMocks();
     mockEnsureEmbeddingServiceReady.mockResolvedValue(true);
     mockEmbeddingService.isReady.mockReturnValue(true);

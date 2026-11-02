@@ -126,7 +126,7 @@ interface FakeRequest {
   error: unknown;
 }
 
-function installFakeIndexedDB(): void {
+function installFakeIndexedDB(): Map<string, unknown> {
   const db = new Map<string, unknown>();
   (globalThis as { indexedDB: unknown }).indexedDB = {
     open(_name: string): FakeRequest {
@@ -199,6 +199,7 @@ function installFakeIndexedDB(): void {
       return request;
     },
   };
+  return db;
 }
 
 function entry(docId: string, i: number, text: string, seed: number): EmbeddingEntry {
@@ -244,6 +245,11 @@ describe('vector index across two tabs (shared IndexedDB + snapshot store)', () 
     await b.save(); // merges into A's snapshot; B's id 0 collides with A's id 0
 
     const c = await freshIndex();
+    const unmappedWarns: string[] = [];
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+      const message = args.map(String).join(' ');
+      if (message.includes('unmapped internal id')) unmappedWarns.push(message);
+    });
     const hitsA = await c.search(queryFor(10), { k: 5 });
     expect(hitsA.length).toBeGreaterThanOrEqual(1);
     expect(hitsA[0]?.docId).toBe('doc-a');
@@ -253,6 +259,10 @@ describe('vector index across two tabs (shared IndexedDB + snapshot store)', () 
     expect(hitsB.length).toBeGreaterThanOrEqual(1);
     expect(hitsB[0]?.docId).toBe('doc-b');
     expect(hitsB[0]?.text).toBe('beta chunk');
+    // AC3 explicit: every candidate id the snapshot produced resolved to a
+    // stored vector (no F11 skips).
+    expect(unmappedWarns).toEqual([]);
+    warnSpy.mockRestore();
   });
 
   it('repeated same-docId replacement: old vectors are soft-deleted, not live orphans', async () => {
@@ -278,25 +288,44 @@ describe('vector index across two tabs (shared IndexedDB + snapshot store)', () 
   });
 
   it('mapping row without a snapshot is not retained (AC3 every-id-resolves)', async () => {
-    // A ghost mapping row + version row with NO persisted snapshot: the merge
-    // must treat the missing snapshot as an empty baseline (ghost dropped).
-    const dbMod = (globalThis as unknown as {
-      __c3fakeDb?: Map<string, unknown>;
+    // Seed a REAL ghost mapping row (unique id + docId, so a mutant carrying
+    // it forward keeps a visible dangling entry) plus a version row, with NO
+    // persisted snapshot. The merge must treat the missing snapshot as an
+    // empty baseline and drop the ghost.
+    const db = installFakeIndexedDB();
+    db.set('idMapping', {
+      key: 'idMapping',
+      data: [{ id: 99, docId: 'ghost-doc', chunkIndex: 0, text: 'ghost text' }],
     });
-    void dbMod;
+    db.set('version', { key: 'version', version: 3 });
+
     const idx = await freshIndex();
     await idx.addBatch([entry('doc-real', 0, 'real chunk', 50)]);
     await idx.save();
-    // Simulate a lost snapshot blob (mapping rows remain).
-    h.snapshots.clear();
-    // Re-save: baseline loader sees version 3 but no snapshot -> fresh empty
-    // baseline; the real doc's unsaved vector re-inserts; ghost never written.
-    await idx.addBatch([entry('doc-two', 0, 'second chunk', 51)]);
-    await idx.save();
+
+    // The persisted mapping row holds ONLY the real doc's entry: the ghost
+    // was dropped with the missing snapshot (every mapping id resolves).
+    const persisted = db.get('idMapping') as { data: Array<{ docId: string }> };
+    expect(persisted.data.some((item) => item.docId === 'ghost-doc')).toBe(false);
+    expect(persisted.data.some((item) => item.docId === 'doc-real')).toBe(true);
+  });
+
+  it('same-tab incremental re-put carries saved chunks AND adds new ones (IR-1 floor)', async () => {
+    const a = await freshIndex();
+    await a.addBatch([entry('doc-x', 0, 'first chunk text', 60)]);
+    await a.save();
+
+    // A fresh instance boot-loads doc-x (entries WITHOUT retained raw
+    // vectors), then re-puts the same docId with an additional chunk.
+    const b = await freshIndex();
+    await b.addBatch([entry('doc-x', 1, 'second chunk text', 61)]);
+    await b.save();
 
     const c = await freshIndex();
-    const hits = await c.search(queryFor(51), { k: 4 });
-    expect(hits.some((r) => r.docId === 'doc-real' || r.docId === 'doc-two')).toBe(true);
-    expect(hits.every((r) => r.docId !== 'ghost')).toBe(true);
+    const first = await c.search(queryFor(60), { k: 4 });
+    expect(first[0]?.text).toBe('first chunk text'); // carried, not dangling
+
+    const second = await c.search(queryFor(61), { k: 4 });
+    expect(second[0]?.text).toBe('second chunk text');
   });
 });

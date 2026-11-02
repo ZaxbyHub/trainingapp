@@ -426,10 +426,6 @@ export async function storedVersionDocs(
 let embedInFlight: Promise<void> | null = null;
 let embedRerunQueued = false;
 
-export function embedPendingPackChunksForTest(): { inFlight(): Promise<void> | null } {
-  return { inFlight: () => embedInFlight };
-}
-
 export async function embedPendingPackChunks(manager: BrowserPackManager = getBrowserPackManager()): Promise<void> {
   if (embedInFlight !== null) {
     // Join the active run; the rerun flag guarantees a follow-up pass covers

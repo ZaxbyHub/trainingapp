@@ -158,6 +158,10 @@ export async function saveDocuments(docs: DocumentEntry[]): Promise<void> {
  * row another tab added is never overwritten by this tab's stale snapshot.
  * Announces a change to other tabs on success.
  */
+// Design note (IR-9): the per-document writes are single-transaction
+// single-row atomic upserts with no read-modify-write cycle, so they do not
+// take the cross-tab store lock; the lock guards the keyword/vector merge
+// saves, which read a baseline before writing.
 export async function upsertDocument(doc: DocumentEntry): Promise<void> {
   try {
     const db = await openDatabase();

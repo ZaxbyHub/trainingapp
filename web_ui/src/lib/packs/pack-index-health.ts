@@ -49,6 +49,13 @@ export interface PackHealthKeywordTarget {
   save(): Promise<void>;
 }
 
+/** Vector-index surface for the vector-side wipe probe (AC6 keyword-or-vector). */
+export interface PackHealthVectorTarget {
+  initialize(): Promise<void>;
+  isReady(): boolean;
+  hasDocEntries(docId: string): boolean;
+}
+
 export interface PackHealthResult {
   checked: number;
   repaired: string[];
@@ -66,9 +73,15 @@ async function defaultKeywordTarget(): Promise<PackHealthKeywordTarget> {
  */
 export async function ensurePackIndexHealth(
   manager: PackHealthManager,
-  targets?: { keyword?: PackHealthKeywordTarget }
+  targets?: { keyword?: PackHealthKeywordTarget; vector?: PackHealthVectorTarget }
 ): Promise<PackHealthResult> {
   const keyword = targets?.keyword ?? (await defaultKeywordTarget());
+  const vector =
+    targets?.vector ??
+    (await (async () => {
+      const mod = await import('../search/vector-index');
+      return mod.getVectorIndex() as unknown as PackHealthVectorTarget;
+    })());
   const ingest = (await import('./pack-ingest')) as unknown as PackIngestModule;
   const repaired: string[] = [];
   let checked = 0;
@@ -88,9 +101,21 @@ export async function ensurePackIndexHealth(
     if (chunks.length === 0) continue;
 
     const docIds = [...new Set(chunks.map((c) => c.docId).filter((id): id is string => !!id))];
-    const missing = docIds.some(
-      (docId) => keyword.findChunks((meta) => meta.docId === docId, 1).length === 0
-    );
+    // AC6: keyword OR vector wipe. A vector-only wipe (keyword intact, vector
+    // store lost) is detected through the loaded mapping probe: mapping rows
+    // only survive a successful snapshot load.
+    let vectorReady = false;
+    if (docIds.length > 0) {
+      try {
+        await vector.initialize();
+        vectorReady = vector.isReady();
+      } catch {
+        vectorReady = false;
+      }
+    }
+    const missing =
+      docIds.some((docId) => keyword.findChunks((meta) => meta.docId === docId, 1).length === 0) ||
+      (vectorReady && docIds.some((docId) => !vector.hasDocEntries(docId)));
     if (!missing) continue;
 
     // Repair the keyword side (remove + re-add + save, the install path).
