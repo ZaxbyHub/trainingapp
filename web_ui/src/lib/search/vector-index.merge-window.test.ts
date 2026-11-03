@@ -12,6 +12,13 @@
  * and the mid-save put lands while that promise is parked (no wall-clock
  * sleeps anywhere in this spec).
  *
+ * Amendment round 1 (plan-critic finding, pre-implementation): the scenario
+ * ALSO re-puts an existing snapshot doc (doc-merge-c chunk 1 lands during the
+ * window) and proves vector resolution the way the AC words it — every id in
+ * the persisted mapping row must be an id that was actually inserted into a
+ * merged snapshot instance (a mapping-without-vector row fails this), not
+ * merely present as metadata.
+ *
  * RED at base (the swap wipes the mid-save put's mapping entry; the next
  * save's discovery loop never sees it), GREEN after the fix.
  */
@@ -133,17 +140,24 @@ function makeStatefulIdb(seed: Record<string, unknown>) {
   } as unknown as typeof indexedDB & { rows: Map<string, unknown> };
 }
 
+/**
+ * Every id a merged snapshot instance accepted via insertBatchWithProgress —
+ * i.e. every vector that instance would persist with its mapping row. The
+ * final assertion checks the persisted mapping row is a subset of this set,
+ * so a mapping id that was never inserted (mapping-without-vector) fails.
+ */
+let savedVectorIds = new Set<number>();
+
 /** A controllable baseline instance handed to save()'s merge via EdgeVec.load. */
 function makeTempInstance() {
   return {
     softDelete: vi.fn(),
     insertBatchWithProgress: vi.fn(
-      (vectors: Float32Array[], _onProgress?: (done: number, total: number) => void) => ({
-        ids: new BigUint64Array(vectors.map((_v, i) => BigInt(i))),
-        inserted: vectors.length,
-        total: vectors.length,
-        free: vi.fn(),
-      })
+      (vectors: Float32Array[], _onProgress?: (done: number, total: number) => void) => {
+        const ids = new BigUint64Array(vectors.map((_v, i) => BigInt(i)));
+        for (const id of ids) savedVectorIds.add(Number(id));
+        return { ids, inserted: vectors.length, total: vectors.length, free: vi.fn() };
+      }
     ),
     save: vi.fn(async () => {}),
     liveCount: vi.fn(() => 0),
@@ -162,6 +176,7 @@ const flushTasks = (): Promise<void> => new Promise((resolve) => setTimeout(reso
 describe('VectorIndex merge-window put retention (C1)', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    savedVectorIds = new Set<number>();
 
     VectorIndex['instance'] = null;
 
@@ -237,6 +252,11 @@ describe('VectorIndex merge-window put retention (C1)', () => {
     mockEdgeVecInstance.insert.mockReturnValueOnce(100);
     await instance.addVector(new Float32Array(768), 'doc-merge-a', 0, { text: 'chunk a' });
 
+    // Doc C chunk 0 is ALSO put before the save (an existing snapshot doc
+    // that will be re-put inside the merge window below).
+    mockEdgeVecInstance.insert.mockReturnValueOnce(102);
+    await instance.addVector(new Float32Array(768), 'doc-merge-c', 0, { text: 'chunk c0' });
+
     // Start save #1 and let it reach the parked baseline load.
     const save1 = instance.save();
     await flushTasks();
@@ -246,33 +266,68 @@ describe('VectorIndex merge-window put retention (C1)', () => {
     mockEdgeVecInstance.insert.mockReturnValueOnce(101);
     await instance.addVector(new Float32Array(768), 'doc-merge-b', 0, { text: 'chunk b' });
 
+    // Doc C is RE-PUT inside the merge window: chunk 1 of an existing
+    // snapshot doc lands while save #1 is parked (the same-doc re-put case
+    // the plan-critic required this spec to cover).
+    mockEdgeVecInstance.insert.mockReturnValueOnce(103);
+    await instance.addVector(new Float32Array(768), 'doc-merge-c', 1, { text: 'chunk c1' });
+
     // Complete save #1 (the pre-write idMapping swap happens after this).
     releaseBaselineLoad();
     await save1;
 
     // Discriminator 1: the mid-save put's mapping entry must still resolve
     // after the save's swap. At base the swap (vector-index.ts:643) wipes it.
-    const mappingAfterSave1 = (instance as unknown as { idMapping: Map<number, { docId: string }> })
-      .idMapping;
+    const mappingAfterSave1 = (instance as unknown as {
+      idMapping: Map<number, { docId: string; chunkIndex: number }>;
+    }).idMapping;
     expect(
       Array.from(mappingAfterSave1.values()).some((meta) => meta.docId === 'doc-merge-b')
+    ).toBe(true);
+    // The re-put chunk of the existing snapshot doc must resolve too.
+    expect(
+      Array.from(mappingAfterSave1.values()).some(
+        (meta) => meta.docId === 'doc-merge-c' && meta.chunkIndex === 1
+      )
     ).toBe(true);
 
     // Discriminator 2: the next save persists the mid-save put.
     await instance.save();
-    const persisted = idb.rows.get('idMapping') as { data: Array<{ docId: string }> } | undefined;
+    const persisted = idb.rows.get('idMapping') as
+      | { data: Array<{ id: number; docId: string; chunkIndex: number }> }
+      | undefined;
     expect(persisted).toBeDefined();
     expect(
       persisted!.data.some((entry) => entry.docId === 'doc-merge-b')
     ).toBe(true);
+    // Both chunks of the re-put doc are persisted (chunk 0 from the snapshot
+    // path, chunk 1 from the mid-window re-put).
+    expect(
+      persisted!.data.some(
+        (entry) => entry.docId === 'doc-merge-c' && entry.chunkIndex === 0
+      )
+    ).toBe(true);
+    expect(
+      persisted!.data.some(
+        (entry) => entry.docId === 'doc-merge-c' && entry.chunkIndex === 1
+      )
+    ).toBe(true);
+
+    // Discriminator 2b (vector resolution): EVERY id in the persisted mapping
+    // row must be an id a merged snapshot instance actually inserted — a row
+    // persisted without its vector (the dangling-id failure mode) fails here.
+    for (const entry of persisted!.data) {
+      expect(savedVectorIds.has(entry.id)).toBe(true);
+    }
 
     // Discriminator 3: after a reload, every chunk id added during the merge
-    // window resolves to a live vector (the mapping row covers doc B).
+    // window resolves to a live vector (the mapping row covers docs B and C).
     instance.dispose();
     VectorIndex['instance'] = null;
     const reloaded = VectorIndex.getInstance();
     await reloaded.initialize();
     expect(reloaded.hasDocEntries('doc-merge-a')).toBe(true);
     expect(reloaded.hasDocEntries('doc-merge-b')).toBe(true);
+    expect(reloaded.hasDocEntries('doc-merge-c')).toBe(true);
   });
 });
