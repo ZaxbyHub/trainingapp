@@ -424,12 +424,19 @@ describe('DocumentsPage.cancel-before-write (C8)', () => {
     const firstReloadHold = new Promise<void>((r) => {
       releaseFirstReload = r;
     });
-    let holdNextReload = false;
+    let releaseDrainReload!: () => void;
+    const drainReloadHold = new Promise<void>((r) => {
+      releaseDrainReload = r;
+    });
+    let holdWhich: 'first' | 'drain' | null = null;
     mockLoadDocuments.mockImplementation(async () => {
       loadCalls += 1;
-      if (holdNextReload) {
-        holdNextReload = false;
+      if (holdWhich === 'first') {
+        holdWhich = null;
         await firstReloadHold;
+      } else if (holdWhich === 'drain') {
+        holdWhich = null;
+        await drainReloadHold;
       }
       return [];
     });
@@ -442,7 +449,7 @@ describe('DocumentsPage.cancel-before-write (C8)', () => {
     const remoteCb = calls[calls.length - 1]?.[0] as (() => void) | undefined;
     expect(remoteCb).toBeTypeOf('function');
 
-    holdNextReload = true;
+    holdWhich = 'first';
     await act(async () => {
       remoteCb!(); // announcement 1 -> reload #1 (held open)
       await new Promise((r) => setTimeout(r, 150)); // past the 100ms debounce
@@ -453,16 +460,80 @@ describe('DocumentsPage.cancel-before-write (C8)', () => {
       remoteCb!(); // announcement 2 arrives WHILE reload #1 is held
       await new Promise((r) => setTimeout(r, 250)); // past its debounce too
     });
-    // Serialized: reload #2 must be QUEUED, not started. The timer-only
-    // coalescer restarts the debounce but still fires a SECOND reload while
-    // the first is in flight (stale-last-wins on the merge updaters).
+    // Serialized: reload #2 must be QUEUED, not started (the timer-only
+    // coalescer would start it concurrently with the held reload #1).
+    expect(loadCalls).toBe(2);
+
+    // Drain edge (reviewer round-4c Finding): hold the DRAINED trailing run
+    // too — if the drain bypassed the guard, a later timer would start a
+    // concurrent load right here.
+    holdWhich = 'drain';
+    await act(async () => {
+      releaseFirstReload!();
+      await new Promise((r) => setTimeout(r, 150)); // drain enters loadDocuments
+    });
+    expect(loadCalls).toBe(3);
+
+    await act(async () => {
+      remoteCb!(); // announcement 3 during the DRAINED run
+      await new Promise((r) => setTimeout(r, 250));
+    });
+    // The drained run is still guarded: no third concurrent load.
+    expect(loadCalls).toBe(3);
+
+    await act(async () => {
+      releaseDrainReload!();
+      await new Promise((r) => setTimeout(r, 300));
+    });
+    // The queued trailing reload ran after the drained run settled.
+    expect(loadCalls).toBe(4);
+  });
+
+  test('a queued reload does not run after unmount (teardown flag)', async () => {
+    const { render, act, waitFor } = await import('@testing-library/react');
+    let loadCalls = 0;
+    let releaseFirstReload!: () => void;
+    const firstReloadHold = new Promise<void>((r) => {
+      releaseFirstReload = r;
+    });
+    let holdNextReload = false;
+    mockLoadDocuments.mockImplementation(async () => {
+      loadCalls += 1;
+      if (holdNextReload) {
+        holdNextReload = false;
+        await firstReloadHold;
+      }
+      return [];
+    });
+
+    const { DocumentsPage } = await import('./DocumentsPage');
+    const view = render(<ToastProvider><DocumentsPage /></ToastProvider>);
+    await waitFor(() => expect(loadCalls).toBe(1)); // mount load
+
+    const calls = mockOnDocumentsRemoteChange.mock.calls;
+    const remoteCb = calls[calls.length - 1]?.[0] as (() => void) | undefined;
+    expect(remoteCb).toBeTypeOf('function');
+
+    holdNextReload = true;
+    await act(async () => {
+      remoteCb!(); // reload #1 starts and is held
+      await new Promise((r) => setTimeout(r, 150));
+    });
     expect(loadCalls).toBe(2);
 
     await act(async () => {
+      remoteCb!(); // announcement 2 -> queued drain pending
+      await new Promise((r) => setTimeout(r, 250));
+    });
+    expect(loadCalls).toBe(2);
+
+    // Unmount with a queued drain pending: the cleanup flag must stop it.
+    await act(async () => {
+      view.unmount();
       releaseFirstReload!();
       await new Promise((r) => setTimeout(r, 300));
     });
-    // The queued trailing reload ran after the first settled.
-    expect(loadCalls).toBe(3);
+    expect(loadCalls).toBe(2);
+    expect(view.container.textContent).toBe('');
   });
 });

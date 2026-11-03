@@ -330,10 +330,12 @@ export function DocumentsPage() {
     // the same shape the keyword/vector stores use.
     let reloadRunning = false;
     let reloadQueued = false;
+    let reloadStopped = false;
     const runReload = () => {
       void (async () => {
         try {
           const loaded = await loadDocuments();
+          if (reloadStopped) return; // unmounted mid-load: never merge
           // Classification depends only on refs (stable across this await): a
           // `loaded` row this tab OWNS — accepted into its queue or carrying a
           // cancel controller — serves this tab's LIVE copy, because the
@@ -395,7 +397,11 @@ export function DocumentsPage() {
           reloadRunning = false;
           if (reloadQueued) {
             reloadQueued = false;
-            runReload();
+            // Drain through the GUARDED entry (reviewer round-4c Finding):
+            // runReload() directly would leave the guard DOWN during the
+            // trailing run, letting a later timer fire a concurrent load —
+            // the same shape the stores use (scheduleRefresh, not load).
+            if (!reloadStopped) reload();
           }
         }
       })();
@@ -414,6 +420,7 @@ export function DocumentsPage() {
     };
     const unsubscribe = onDocumentsRemoteChange(onRemote);
     return () => {
+      reloadStopped = true;
       if (reloadTimer !== undefined) clearTimeout(reloadTimer);
       unsubscribe();
     };
