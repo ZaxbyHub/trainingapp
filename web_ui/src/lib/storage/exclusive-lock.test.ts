@@ -17,6 +17,15 @@
  * `withPackLock` unbounded, `withConversationWriteLock` its own fallback), so
  * the helper and this spec are absent at base.
  *
+ * Amendment round 3 (plan-critic round 3 finding, pre-implementation): the
+ * `makeLockManager` mock's request is a `vi.fn` typed with a
+ * `Promise<unknown>` callback/result, which is NOT assignable to the
+ * production interface's generic `request<T>` once `./exclusive-lock` exists
+ * (TS2322, currently masked by the module-absent TS2307). The mock object is
+ * cast to `LockManagerLike['request']` at the STRUCTURAL BOUNDARY only — the
+ * object handed to the helper — while the un-cast mock is retained for call
+ * assertions. The production interface stays generic.
+ *
  * RED at base (module absent), GREEN after the fix.
  */
 
@@ -58,7 +67,12 @@ describe('withExclusiveLock (shared named exclusive lock, C3)', () => {
           return run;
         }
       );
-      return { manager: { request }, request };
+      // Round-3 amendment: cast ONLY the test double at the structural
+      // boundary — the concrete `vi.fn` type (Promise<unknown> callback and
+      // result) is not assignable to the generic `request<T>` method, and
+      // `as unknown as` here is confined to the object the helper receives.
+      // The un-cast `request` stays in scope for the call assertions below.
+      return { manager: { request: request as unknown as LockManagerLike['request'] }, request };
     }
 
     it('runs the second critical section only after the first settles', async () => {
