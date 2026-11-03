@@ -322,7 +322,15 @@ export function DocumentsPage() {
   useEffect(() => {
     if (electronMode) return;
     let reloadTimer: ReturnType<typeof setTimeout> | undefined;
-    const reload = () => {
+    // Serialized reload (reviewer round-4b follow-up): the 100ms timer
+    // coalesces bursts but does not prevent a SECOND reload from starting
+    // while the first is still awaiting loadDocuments — two overlapping merge
+    // updaters race, and whichever finishes last wins (a stale snapshot could
+    // overwrite fresher state). Single-flight with ONE queued trailing run,
+    // the same shape the keyword/vector stores use.
+    let reloadRunning = false;
+    let reloadQueued = false;
+    const runReload = () => {
       void (async () => {
         try {
           const loaded = await loadDocuments();
@@ -383,8 +391,22 @@ export function DocumentsPage() {
           });
         } catch (error) {
           console.error('Failed to reload documents after a remote change:', error);
+        } finally {
+          reloadRunning = false;
+          if (reloadQueued) {
+            reloadQueued = false;
+            runReload();
+          }
         }
       })();
+    };
+    const reload = () => {
+      if (reloadRunning) {
+        reloadQueued = true;
+        return;
+      }
+      reloadRunning = true;
+      runReload();
     };
     const onRemote = () => {
       if (reloadTimer !== undefined) clearTimeout(reloadTimer);

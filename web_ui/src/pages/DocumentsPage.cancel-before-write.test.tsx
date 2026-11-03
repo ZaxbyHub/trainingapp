@@ -416,4 +416,53 @@ describe('DocumentsPage.cancel-before-write (C8)', () => {
       );
     });
   });
+
+  test('remote reloads are serialized: a reload burst never runs two loads concurrently (page single-flight)', async () => {
+    const { render, act, waitFor } = await import('@testing-library/react');
+    let loadCalls = 0;
+    let releaseFirstReload!: () => void;
+    const firstReloadHold = new Promise<void>((r) => {
+      releaseFirstReload = r;
+    });
+    let holdNextReload = false;
+    mockLoadDocuments.mockImplementation(async () => {
+      loadCalls += 1;
+      if (holdNextReload) {
+        holdNextReload = false;
+        await firstReloadHold;
+      }
+      return [];
+    });
+
+    const { DocumentsPage } = await import('./DocumentsPage');
+    render(<ToastProvider><DocumentsPage /></ToastProvider>);
+    await waitFor(() => expect(loadCalls).toBe(1)); // mount load
+
+    const calls = mockOnDocumentsRemoteChange.mock.calls;
+    const remoteCb = calls[calls.length - 1]?.[0] as (() => void) | undefined;
+    expect(remoteCb).toBeTypeOf('function');
+
+    holdNextReload = true;
+    await act(async () => {
+      remoteCb!(); // announcement 1 -> reload #1 (held open)
+      await new Promise((r) => setTimeout(r, 150)); // past the 100ms debounce
+    });
+    expect(loadCalls).toBe(2);
+
+    await act(async () => {
+      remoteCb!(); // announcement 2 arrives WHILE reload #1 is held
+      await new Promise((r) => setTimeout(r, 250)); // past its debounce too
+    });
+    // Serialized: reload #2 must be QUEUED, not started. The timer-only
+    // coalescer restarts the debounce but still fires a SECOND reload while
+    // the first is in flight (stale-last-wins on the merge updaters).
+    expect(loadCalls).toBe(2);
+
+    await act(async () => {
+      releaseFirstReload!();
+      await new Promise((r) => setTimeout(r, 300));
+    });
+    // The queued trailing reload ran after the first settled.
+    expect(loadCalls).toBe(3);
+  });
 });
