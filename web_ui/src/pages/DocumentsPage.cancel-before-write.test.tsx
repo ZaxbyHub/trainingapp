@@ -299,4 +299,49 @@ describe('DocumentsPage.cancel-before-write (C8)', () => {
       );
     });
   });
+
+  test('a foreign interrupted row imports recovered and never resurrects after a remote delete (PRR-005 Q1)', async () => {
+    const { render, act, waitFor } = await import('@testing-library/react');
+    // Mount empty; reload 1 imports another crashed tab's raw 'processing'
+    // row; reload 2 reflects that the other tab deleted it.
+    mockLoadDocuments
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: 'doc-zombie',
+          fileName: 'zombie.txt',
+          status: 'processing',
+          uploadedAt: 5,
+          progress: 40,
+          fileSize: 5,
+          fileType: 'txt',
+        },
+      ] as never)
+      .mockResolvedValueOnce([]);
+    const { DocumentsPage } = await import('./DocumentsPage');
+    render(<ToastProvider><DocumentsPage /></ToastProvider>);
+    await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
+
+    const calls = mockOnDocumentsRemoteChange.mock.calls;
+    const remoteCb = calls[calls.length - 1]?.[0] as (() => void) | undefined;
+    expect(remoteCb).toBeTypeOf('function');
+
+    // Import: the raw processing row arrives RECOVERED (mount recovery
+    // mirrored), never stuck on 'processing'.
+    await act(async () => {
+      remoteCb!();
+      await new Promise((r) => setTimeout(r, 250));
+    });
+    expect(document.body.textContent).toContain('zombie.txt');
+    expect(document.body.textContent).toContain('Processing was interrupted');
+
+    // The other tab deletes it: the reload must NOT retain the row (only
+    // queued/processing rows THIS tab owns are kept; the recovered copy is
+    // 'error'), so the debounced save can never re-put it.
+    await act(async () => {
+      remoteCb!();
+      await new Promise((r) => setTimeout(r, 250));
+    });
+    expect(document.body.textContent).not.toContain('zombie.txt');
+  });
 });

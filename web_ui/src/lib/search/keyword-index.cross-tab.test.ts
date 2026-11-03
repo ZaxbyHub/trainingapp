@@ -297,16 +297,27 @@ describe('keyword index across two tabs (shared IndexedDB)', () => {
     const a = A.getKeywordIndex();
     await a.initialize();
 
-    // Hold every load open so a second announcement arriving mid-load would
-    // overlap unless the refresh is single-flight with a queued trailing run.
+    // DETERMINISTIC handshake (reviewer round-2 Q2): hold the FIRST refresh
+    // load open until BOTH announcements are delivered — a second
+    // announcement must queue, not start a concurrent load (the pre-fix
+    // shape bumps maxConcurrent while the hold is open, before any
+    // wall-clock elapses).
     let concurrent = 0;
     let maxConcurrent = 0;
+    let releaseFirstLoad!: () => void;
+    const firstLoadHold = new Promise<void>((resolve) => {
+      releaseFirstLoad = resolve;
+    });
+    let firstLoad = true;
     const wrapped = a as unknown as { load: () => Promise<boolean> };
     const origLoad = wrapped.load.bind(a);
     wrapped.load = async () => {
       concurrent += 1;
       maxConcurrent = Math.max(maxConcurrent, concurrent);
-      await new Promise((resolve) => setTimeout(resolve, 120));
+      if (firstLoad) {
+        firstLoad = false;
+        await firstLoadHold;
+      }
       try {
         return await origLoad();
       } finally {
@@ -319,9 +330,10 @@ describe('keyword index across two tabs (shared IndexedDB)', () => {
     const b = B.getKeywordIndex();
     await b.initialize();
     b.addDocuments([chunk('doc-b1', 0, 'first remote text')]);
-    await b.save(); // announcement 1 opens a's refresh (held by the wrap)
+    await b.save(); // announcement 1 opens a's refresh — held open now
     b.addDocuments([chunk('doc-b2', 0, 'second remote text')]);
-    await b.save(); // announcement 2 must queue, not start a second load
+    await b.save(); // announcement 2 delivered while load #1 is held
+    releaseFirstLoad();
 
     // Drain: the queued trailing run must apply the second announcement.
     const deadline = Date.now() + 3000;

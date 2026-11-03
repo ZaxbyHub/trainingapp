@@ -480,12 +480,20 @@ describe('vector index across two tabs (shared IndexedDB + snapshot store)', () 
     const a = await freshIndex();
     let concurrent = 0;
     let maxConcurrent = 0;
+    let releaseFirstLoad!: () => void;
+    const firstLoadHold = new Promise<void>((resolve) => {
+      releaseFirstLoad = resolve;
+    });
+    let firstLoad = true;
     const wrapped = a as unknown as { load: () => Promise<boolean> };
     const origLoad = wrapped.load.bind(a);
     wrapped.load = async () => {
       concurrent += 1;
       maxConcurrent = Math.max(maxConcurrent, concurrent);
-      await new Promise((resolve) => setTimeout(resolve, 120));
+      if (firstLoad) {
+        firstLoad = false;
+        await firstLoadHold;
+      }
       try {
         return await origLoad();
       } finally {
@@ -495,9 +503,10 @@ describe('vector index across two tabs (shared IndexedDB + snapshot store)', () 
 
     const b = await freshIndex();
     await b.addBatch([entry('doc-b1', 0, 'first remote chunk', 70)]);
-    await b.save(); // announcement 1 opens a's refresh (held by the wrap)
+    await b.save(); // announcement 1 opens a's refresh — held open now
     await b.addBatch([entry('doc-b2', 0, 'second remote chunk', 71)]);
-    await b.save(); // announcement 2 must queue, not start a second load
+    await b.save(); // announcement 2 delivered while load #1 is held
+    releaseFirstLoad();
 
     const deadline = Date.now() + 3000;
     let hits = await a.search(queryFor(71), { k: 5 });

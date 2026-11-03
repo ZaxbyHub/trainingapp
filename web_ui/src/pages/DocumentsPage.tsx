@@ -123,6 +123,28 @@ function generateId(): string {
 }
 
 /**
+ * PRR-007 recovery: a browser/tab close during processing leaves documents
+ * persisted with a non-terminal status ('processing'/'uploading') and no
+ * in-flight promise to resume them. Reset any such stale document to 'error'
+ * so it doesn't render stuck forever; the user can delete and re-add it.
+ * Applied to the mount load AND to the remote reload's foreign rows (reviewer
+ * round-2 Q1): a raw row imported from another tab's crash must not render
+ * stuck — and after another tab deletes it, the merge must drop it instead of
+ * retaining a zombie the debounced save would re-put.
+ */
+function recoverInterrupted(docs: DocumentEntry[]): DocumentEntry[] {
+  return docs.map((doc) =>
+    doc.status === 'processing' || doc.status === 'uploading'
+      ? {
+          ...doc,
+          status: 'error' as const,
+          errorMessage: 'Processing was interrupted. Please delete and re-add this document.',
+        }
+      : doc
+  );
+}
+
+/**
  * B9 (issue #67): map the frozen contract's DocumentInfo (id = source PATH,
  * see document-surface.ts) to the page's display row. The server store is the
  * authoritative source in Electron mode; fileSize is unknown server-side and
@@ -262,21 +284,7 @@ export function DocumentsPage() {
         // silently folded in here.
         const docs = await loadDocuments();
         if (cancelled) return;
-        // PRR-007: a browser/tab close during processing leaves documents
-        // persisted with a non-terminal status ('processing'/'uploading') and
-        // no in-flight promise to resume them. Reset any such stale documents
-        // to 'error' so they don't render stuck forever; the user can delete
-        // and re-add them.
-        const recovered = docs.map((doc) =>
-          doc.status === 'processing' || doc.status === 'uploading'
-            ? {
-                ...doc,
-                status: 'error' as const,
-                errorMessage: 'Processing was interrupted. Please delete and re-add this document.',
-              }
-            : doc
-        );
-        setDocuments(recovered);
+        setDocuments(recoverInterrupted(docs));
       } catch (error) {
         console.error('Failed to load documents:', error);
         showToast('Failed to load documents. Please reload the page.', 'error');
@@ -307,17 +315,37 @@ export function DocumentsPage() {
         try {
           const loaded = await loadDocuments();
           setDocuments((prev) => {
+            const inFlight = new Set(cancelControllersRef.current.keys());
+            const prevById = new Map(prev.map((doc) => [doc.id, doc]));
+            const live: DocumentEntry[] = [];
+            const foreign: DocumentEntry[] = [];
+            for (const doc of loaded) {
+              if (inFlight.has(doc.id)) {
+                // This tab is actively working on the row: the persisted copy
+                // is only a mid-flight checkpoint — serve THIS tab's live row.
+                live.push(prevById.get(doc.id) ?? doc);
+              } else {
+                foreign.push(doc);
+              }
+            }
             const loadedIds = new Set(loaded.map((doc) => doc.id));
-            // No controller gate: rows for files still QUEUED behind the
+            // No controller gate on ABSENT rows: files still QUEUED behind the
             // sequential processFile loop have no controller yet but are just
             // as un-persisted — dropping them orphans their chunks (their
-            // terminal upsert is gated on finding this row).
-            const kept = prev.filter(
+            // terminal upsert is gated on finding this row). Only rows this
+            // tab owns qualify (queued/processing here); foreign rows arrive
+            // through `loaded` below.
+            const queued = prev.filter(
               (doc) =>
                 !loadedIds.has(doc.id) &&
                 (doc.status === 'uploading' || doc.status === 'processing')
             );
-            const merged = [...kept, ...loaded];
+            // Foreign rows recover interrupted statuses (mount recovery
+            // mirrored — reviewer round-2 Q1): a crashed tab's raw processing
+            // row never renders stuck, and once another tab deletes it the
+            // 'error' copy is NOT retained (no zombie re-put by the debounced
+            // save).
+            const merged = [...live, ...recoverInterrupted(foreign), ...queued];
             merged.sort((a, b) => b.uploadedAt - a.uploadedAt);
             return merged;
           });
