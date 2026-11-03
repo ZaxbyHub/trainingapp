@@ -451,10 +451,9 @@ describe('DocumentsPage.cancel-before-write (C8)', () => {
 
     holdWhich = 'first';
     await act(async () => {
-      remoteCb!(); // announcement 1 -> reload #1 (held open)
-      await new Promise((r) => setTimeout(r, 150)); // past the 100ms debounce
+      remoteCb!(); // announcement 1 -> reload #1 starts
     });
-    expect(loadCalls).toBe(2);
+    await waitFor(() => expect(loadCalls).toBe(2)); // held open inside the mock
 
     await act(async () => {
       remoteCb!(); // announcement 2 arrives WHILE reload #1 is held
@@ -468,11 +467,8 @@ describe('DocumentsPage.cancel-before-write (C8)', () => {
     // too — if the drain bypassed the guard, a later timer would start a
     // concurrent load right here.
     holdWhich = 'drain';
-    await act(async () => {
-      releaseFirstReload!();
-      await new Promise((r) => setTimeout(r, 150)); // drain enters loadDocuments
-    });
-    expect(loadCalls).toBe(3);
+    releaseFirstReload();
+    await waitFor(() => expect(loadCalls).toBe(3)); // drain enters loadDocuments
 
     await act(async () => {
       remoteCb!(); // announcement 3 during the DRAINED run
@@ -481,12 +477,9 @@ describe('DocumentsPage.cancel-before-write (C8)', () => {
     // The drained run is still guarded: no third concurrent load.
     expect(loadCalls).toBe(3);
 
-    await act(async () => {
-      releaseDrainReload!();
-      await new Promise((r) => setTimeout(r, 300));
-    });
+    releaseDrainReload();
     // The queued trailing reload ran after the drained run settled.
-    expect(loadCalls).toBe(4);
+    await waitFor(() => expect(loadCalls).toBe(4));
   });
 
   test('a queued reload does not run after unmount (teardown flag)', async () => {
@@ -516,14 +509,13 @@ describe('DocumentsPage.cancel-before-write (C8)', () => {
 
     holdNextReload = true;
     await act(async () => {
-      remoteCb!(); // reload #1 starts and is held
-      await new Promise((r) => setTimeout(r, 150));
+      remoteCb!(); // reload #1 starts
     });
-    expect(loadCalls).toBe(2);
+    await waitFor(() => expect(loadCalls).toBe(2)); // held open inside the mock
 
     await act(async () => {
       remoteCb!(); // announcement 2 -> queued drain pending
-      await new Promise((r) => setTimeout(r, 250));
+      await new Promise((r) => setTimeout(r, 250)); // absence needs a window
     });
     expect(loadCalls).toBe(2);
 
