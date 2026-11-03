@@ -352,7 +352,6 @@ export function DocumentsPage() {
               .map((doc) => doc.id)
           );
           setDocuments((prev) => {
-            const prevById = new Map(prev.map((doc) => [doc.id, doc]));
             const loadedIds = new Set(loaded.map((doc) => doc.id));
             // No gate on ABSENT rows: files still QUEUED behind the
             // sequential processFile loop have no controller yet but are just
@@ -368,9 +367,10 @@ export function DocumentsPage() {
             );
             const merged = [
               // Owned rows: this tab's live copy wins over the persisted one.
-              ...loaded
-                .filter((doc) => liveIds.has(doc.id))
-                .map((doc) => prevById.get(doc.id) ?? doc),
+              // Served from `prev` only — if the row is gone from prev (a
+              // local delete won the race against this reload), the stale
+              // `loaded` snapshot must NOT re-insert it (reviewer round-4 Q4).
+              ...prev.filter((doc) => liveIds.has(doc.id)),
               // Foreign rows recover interrupted statuses (mount recovery
               // mirrored — reviewer round-2 Q1): a crashed tab's raw row
               // never renders stuck and, once deleted elsewhere, is not
