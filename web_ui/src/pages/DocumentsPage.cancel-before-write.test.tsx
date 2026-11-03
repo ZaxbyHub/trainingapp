@@ -335,6 +335,17 @@ describe('DocumentsPage.cancel-before-write (C8)', () => {
     expect(document.body.textContent).toContain('zombie.txt');
     expect(document.body.textContent).toContain('Processing was interrupted');
 
+    // Persistence-level proof (reviewer round-3 Q2): wait out the 500ms
+    // debounce while the recovered copy is still in state — no save may
+    // re-put it (the suppression closes the save-vs-delete race).
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 600));
+    });
+    for (const call of mockSaveDocuments.mock.calls) {
+      const list = (call as unknown as [Array<{ fileName?: string }>])[0];
+      expect(list.some((d) => d.fileName === 'zombie.txt')).toBe(false);
+    }
+
     // The other tab deletes it: the reload must NOT retain the row (only
     // queued/processing rows THIS tab owns are kept; the recovered copy is
     // 'error'), so the debounced save can never re-put it.
@@ -343,5 +354,66 @@ describe('DocumentsPage.cancel-before-write (C8)', () => {
       await new Promise((r) => setTimeout(r, 250));
     });
     expect(document.body.textContent).not.toContain('zombie.txt');
+  });
+
+  test('a QUEUED own row persisted by the bulk save is not recovered as an interruption (round-3 Finding 1)', async () => {
+    const { render, act, waitFor } = await import('@testing-library/react');
+    let release!: () => void;
+    const parked = new Promise<void>((r) => {
+      release = r;
+    });
+    let encodeEntered = false;
+    mockEmbeddingService.encodeBatch.mockImplementation(async (texts: string[]) => {
+      encodeEntered = true;
+      await parked;
+      return texts.map(() => new Array(768).fill(0));
+    });
+
+    // Mount empty; the reload after the upload returns the QUEUED row's own
+    // persisted copy (the 500ms bulk save persisted it during file 1's gap —
+    // it still has NO controller).
+    mockLoadDocuments.mockResolvedValueOnce([]);
+    await uploadFiles([
+      new File(['first content'], 'own-first.txt', { type: 'text/plain' }),
+      new File(['second content'], 'own-second.txt', { type: 'text/plain' }),
+    ]);
+    await waitFor(() => expect(encodeEntered).toBe(true));
+
+    const row = Array.from(document.querySelectorAll<HTMLElement>('[data-doc-id]')).find((el) =>
+      (el.textContent ?? '').includes('own-second.txt')
+    );
+    expect(row).toBeTruthy();
+    const rowId = row?.dataset.docId as string;
+    mockLoadDocuments.mockResolvedValueOnce([
+      {
+        id: rowId,
+        fileName: 'own-second.txt',
+        status: 'uploading',
+        uploadedAt: 11,
+        progress: 0,
+        fileSize: 5,
+        fileType: 'txt',
+      },
+    ] as never);
+
+    const calls = mockOnDocumentsRemoteChange.mock.calls;
+    const remoteCb = calls[calls.length - 1]?.[0] as (() => void) | undefined;
+    expect(remoteCb).toBeTypeOf('function');
+    await act(async () => {
+      remoteCb!();
+      await new Promise((r) => setTimeout(r, 250));
+    });
+
+    // OWNED: this tab's live queue copy is served — never a false
+    // 'interrupted' error (the round-5 controller-only split stamped it).
+    expect(document.body.textContent).toContain('own-second.txt');
+    expect(document.body.textContent).not.toContain('Processing was interrupted');
+
+    release();
+    await waitFor(() => {
+      expect(mockUpsertDocument).toHaveBeenCalledWith(
+        expect.objectContaining({ fileName: 'own-second.txt', status: 'ready' })
+      );
+    });
   });
 });

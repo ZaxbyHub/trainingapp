@@ -232,6 +232,18 @@ export function DocumentsPage() {
   // start and checks controller.signal between stages; the UI Cancel button
   // calls controller.abort() so the next check throws (caught -> terminal error).
   const cancelControllersRef = useRef<Map<string, AbortController>>(new Map());
+  // Round-6 ownership (reviewer round-3 Finding 1): ids accepted into THIS
+  // tab's upload queue, from accept time until their processFile run ends (or
+  // a delete lands). The merge's live/foreign split classifies by OWNERSHIP,
+  // not by controller — queued files have no controller yet, and the 500ms
+  // bulk save persists them; recovering such a row would stamp a false
+  // 'interrupted' error on this tab's own live queue.
+  const ownedIdsRef = useRef<Set<string>>(new Set());
+  // Foreign rows recovered from raw non-terminal status on the latest reload
+  // (reviewer round-3 Q1): this tab's saves never re-put them — if another
+  // tab deleted the underlying doc between the reload and the debounce
+  // firing, re-putting would resurrect it on disk.
+  const recoveredForeignIdsRef = useRef<Set<string>>(new Set());
 
   // F9: surface the re-index requirement once. The flag is set by VectorIndex
   // on version mismatch; cleared here on dismiss so the user sees it once.
@@ -314,38 +326,58 @@ export function DocumentsPage() {
       void (async () => {
         try {
           const loaded = await loadDocuments();
+          // Classification depends only on refs (stable across this await): a
+          // `loaded` row this tab OWNS — accepted into its queue or carrying a
+          // cancel controller — serves this tab's LIVE copy, because the
+          // 500ms bulk save persists QUEUED rows before any controller exists
+          // (reviewer round-3 Finding 1: controller-only classification
+          // recovered this tab's own live queue row as a foreign
+          // interruption). Recovery applies only to rows with NO local owner.
+          const inFlight = new Set(cancelControllersRef.current.keys());
+          const owned = ownedIdsRef.current;
+          const liveIds = new Set(
+            loaded.filter((doc) => inFlight.has(doc.id) || owned.has(doc.id)).map((doc) => doc.id)
+          );
+          // Rows this pass recovers from raw non-terminal foreign status are
+          // never re-put by this tab's saves (reviewer round-3 Q1): an
+          // intervening remote delete must not be resurrected by the
+          // debounce firing while the recovered copy still sits in state.
+          recoveredForeignIdsRef.current = new Set(
+            loaded
+              .filter(
+                (doc) =>
+                  !liveIds.has(doc.id) &&
+                  (doc.status === 'processing' || doc.status === 'uploading')
+              )
+              .map((doc) => doc.id)
+          );
           setDocuments((prev) => {
-            const inFlight = new Set(cancelControllersRef.current.keys());
             const prevById = new Map(prev.map((doc) => [doc.id, doc]));
-            const live: DocumentEntry[] = [];
-            const foreign: DocumentEntry[] = [];
-            for (const doc of loaded) {
-              if (inFlight.has(doc.id)) {
-                // This tab is actively working on the row: the persisted copy
-                // is only a mid-flight checkpoint — serve THIS tab's live row.
-                live.push(prevById.get(doc.id) ?? doc);
-              } else {
-                foreign.push(doc);
-              }
-            }
             const loadedIds = new Set(loaded.map((doc) => doc.id));
-            // No controller gate on ABSENT rows: files still QUEUED behind the
+            // No gate on ABSENT rows: files still QUEUED behind the
             // sequential processFile loop have no controller yet but are just
             // as un-persisted — dropping them orphans their chunks (their
-            // terminal upsert is gated on finding this row). Only rows this
-            // tab owns qualify (queued/processing here); foreign rows arrive
-            // through `loaded` below.
+            // terminal upsert is gated on finding this row). Absent +
+            // non-terminal implies this tab's own row: foreign rows only ever
+            // arrive through `loaded`, and unrecovered foreign ones arrive as
+            // terminal or 'error' status.
             const queued = prev.filter(
               (doc) =>
                 !loadedIds.has(doc.id) &&
                 (doc.status === 'uploading' || doc.status === 'processing')
             );
-            // Foreign rows recover interrupted statuses (mount recovery
-            // mirrored — reviewer round-2 Q1): a crashed tab's raw processing
-            // row never renders stuck, and once another tab deletes it the
-            // 'error' copy is NOT retained (no zombie re-put by the debounced
-            // save).
-            const merged = [...live, ...recoverInterrupted(foreign), ...queued];
+            const merged = [
+              // Owned rows: this tab's live copy wins over the persisted one.
+              ...loaded
+                .filter((doc) => liveIds.has(doc.id))
+                .map((doc) => prevById.get(doc.id) ?? doc),
+              // Foreign rows recover interrupted statuses (mount recovery
+              // mirrored — reviewer round-2 Q1): a crashed tab's raw row
+              // never renders stuck and, once deleted elsewhere, is not
+              // retained (the 'error' copy fails the keep filter above).
+              ...recoverInterrupted(loaded.filter((doc) => !liveIds.has(doc.id))),
+              ...queued,
+            ];
             merged.sort((a, b) => b.uploadedAt - a.uploadedAt);
             return merged;
           });
@@ -406,7 +438,10 @@ export function DocumentsPage() {
 
     saveTimeoutRef.current = setTimeout(async () => {
       try {
-        await saveDocuments(latestDocumentsRef.current);
+        const toSave = latestDocumentsRef.current.filter(
+          (doc) => !recoveredForeignIdsRef.current.has(doc.id)
+        );
+        await saveDocuments(toSave);
       } catch (error) {
         console.error('Failed to save documents:', error);
         showToast('Failed to save document changes. They may not persist after reload.', 'error');
@@ -430,7 +465,9 @@ export function DocumentsPage() {
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
         saveTimeoutRef.current = null;
-        void saveDocuments(latestDocumentsRef.current).catch((error) => {
+        void saveDocuments(
+          latestDocumentsRef.current.filter((doc) => !recoveredForeignIdsRef.current.has(doc.id))
+        ).catch((error) => {
           console.error('Failed to flush documents on unmount:', error);
         });
       }
@@ -700,6 +737,9 @@ export function DocumentsPage() {
       if (cancelControllersRef.current.get(docId) === controller) {
         cancelControllersRef.current.delete(docId);
       }
+      // Ownership ends when the run settles (terminal row); a later reload
+      // then treats the row on its persisted status alone.
+      ownedIdsRef.current.delete(docId);
     }
     }; // end run()
 
@@ -889,6 +929,10 @@ export function DocumentsPage() {
 
       // Add new entries to state
       setDocuments((prev) => [...accepted.map((a) => a.entry), ...prev]);
+      // Ownership starts at accept time — before any controller exists.
+      for (const { entry } of accepted) {
+        ownedIdsRef.current.add(entry.id);
+      }
 
       // Process each accepted file
       for (const { file, entry } of accepted) {
@@ -1023,6 +1067,7 @@ export function DocumentsPage() {
 
       // Remove from state
       setDocuments((prev) => prev.filter((doc) => doc.id !== docId));
+      ownedIdsRef.current.delete(docId);
       // U3b: confirm the deletion to the user.
       showToast('Document deleted', 'success');
     } catch (error) {
