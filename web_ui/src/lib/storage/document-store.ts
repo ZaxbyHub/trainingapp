@@ -153,9 +153,11 @@ export async function saveDocuments(docs: DocumentEntry[]): Promise<void> {
 /**
  * Add or replace a single document row (#270).
  *
- * The per-document production write path: the page calls this for every
- * new/changed document instead of re-writing its whole in-memory list, so a
- * row another tab added is never overwritten by this tab's stale snapshot.
+ * The per-document production write path: the page calls this for TERMINAL
+ * rows (indexing finished or failed) so they persist immediately instead of
+ * waiting out the debounced bulk save. That bulk save still writes the whole
+ * list — addition-only, so a row another tab added survives it — while this
+ * single-row upsert is the guaranteed path for terminal state.
  * Announces a change to other tabs on success.
  */
 // Design note (IR-9): the per-document writes are single-transaction

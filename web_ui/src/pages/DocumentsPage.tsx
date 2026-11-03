@@ -965,7 +965,8 @@ export function DocumentsPage() {
       const purge = await purgeDocFromIndexes(docId);
       if (!purge.ok) {
         const docName =
-          latestDocumentsRef.current.find((doc) => doc.id === docId)?.fileName ?? docId;
+          latestDocumentsRef.current.find((doc) => doc.id === docId)?.fileName ??
+          'this document';
         showToast(
           `Could not fully remove "${docName}" from the search index. Please try again.`,
           'error'

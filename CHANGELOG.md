@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+- **Cross-tab retrieval-store safety and ingest consistency (issues #270 + #273, collated)**: the
+  browser document, keyword and vector stores coordinate across tabs instead of each tab writing
+  its whole in-memory state over the persisted blobs — exclusive Web-Locks with a bounded
+  acquisition timeout (and an in-tab promise-chain fallback) guard change-log merges that re-read
+  the fresh persisted baseline under the lock (fail-closed on read errors), supersede chunks per
+  (docId, chunkIndex) over retained vectors only, and post a change announcement their peers
+  subscribe to for a pendingOps-guarded live refresh. The documents page keeps un-persisted
+  in-flight rows across a remote reload and coalesces announcement bursts; pack-index health
+  repairs run single-flight with per-pack failure isolation; deletes stay fail-closed (index
+  purge before row removal, focus returned to the retained row, terminal purge for failed
+  indexing, health-pass repairs passing a real targets bundle). The web-ui CI job pins Node 24
+  (`lts/*` floated to 26 mid-run and broke diff-foreign specs). Pinned by the frozen C1-C16
+  drivers plus the cross-tab, channel-seam and failure-injection specs.
+
 - **Offline app shell + shared-workstation profiles and conversation clearing (issue #34 items 6p and 7 via #26)**: the
   browser app gains an app-shell service worker (`web_ui/public/sw.js`) — a strict-allowlist runtime policy
   (excluded paths pass through untouched; navigations and `index.html` are network-first with a cached-shell offline
