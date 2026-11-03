@@ -508,6 +508,21 @@ describe('VectorIndex', () => {
       const instance = VectorIndex.getInstance();
       await instance.initialize();
 
+      // #270 amended: save() with no local change-log ops is a no-op (the
+      // persisted baseline is never rewritten from in-memory state), so the
+      // write path is proven with a seeded local op — addBatch records a put
+      // and retains the vector for the merge.
+      mockEdgeVecInstance.insertBatchWithProgress.mockImplementation(
+        (vectors: Float32Array[]) => {
+          const ids = vectors.map((_v, i) => BigInt(i));
+          return { ids: new BigUint64Array(ids), inserted: vectors.length, total: vectors.length, free: () => undefined };
+        }
+      );
+      mockEdgeVecInstance.liveCount.mockReturnValue(0);
+      await instance.addBatch([
+        { docId: 'doc-save-floor', chunkIndex: 0, vector: new Float32Array(768).fill(0.5), text: 'floor' },
+      ]);
+
       // Mock saveMapping to avoid IndexedDB not defined error
       const saveMappingSpy = vi.spyOn(instance as unknown as { saveMapping: () => Promise<void> }, 'saveMapping').mockResolvedValue();
 
@@ -522,18 +537,31 @@ describe('VectorIndex', () => {
       const instance = VectorIndex.getInstance();
       await instance.initialize();
 
-      // saveMapping is spied in sibling test; here we just ensure init works and
-      // that the prefix logic (shared with DB_NAME) is active. The concrete
-      // prefixed name is asserted via the dynamic matcher in the parent save test.
+      // PRR-019: save() is a no-op with no local change-log ops, so the old
+      // un-seeded save produced zero EdgeVec.save calls and the prefix check
+      // below was silently skipped (vacuous green). Seed an op so the write
+      // path is guaranteed to run.
+      mockEdgeVecInstance.insertBatchWithProgress.mockImplementation(
+        (vectors: Float32Array[]) => {
+          const ids = vectors.map((_v, i) => BigInt(i));
+          return { ids: new BigUint64Array(ids), inserted: vectors.length, total: vectors.length, free: () => undefined };
+        }
+      );
+      mockEdgeVecInstance.liveCount.mockReturnValue(0);
+      await instance.addBatch([
+        { docId: 'doc-prefix', chunkIndex: 0, vector: new Float32Array(768).fill(0.5), text: 'prefix' },
+      ]);
+
+      // saveMapping is spied so the merge reaches the snapshot write without
+      // touching IndexedDB.
       const saveMappingSpy = vi.spyOn(instance as unknown as { saveMapping: () => Promise<void> }, 'saveMapping').mockResolvedValue();
       await instance.save();
 
-      // INDEX_NAME and DB_NAME use the same USER_PREFIX; if save received a prefixed name
-      // then DB_NAME would have been too.
+      // INDEX_NAME and DB_NAME use the same USER_PREFIX; assert hard now that
+      // the save actually happened.
       const calls = mockEdgeVecInstance.save.mock.calls;
-      if (calls.length > 0) {
-        expect(calls[calls.length - 1][0]).toMatch(/-doc-qa-index$/);
-      }
+      expect(calls.length).toBeGreaterThan(0);
+      expect(calls[calls.length - 1][0]).toMatch(/-doc-qa-index$/);
       saveMappingSpy.mockRestore();
     });
   });

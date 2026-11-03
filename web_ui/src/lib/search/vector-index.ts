@@ -9,6 +9,8 @@ import type { EmbeddingEntry, EmbeddingVector } from '../../types/embedding';
 import type { SearchResult, VectorIndexConfig, VectorSearchOptions } from '../../types/search';
 import initWasm, { EdgeVec, EdgeVecConfig } from 'edgevec';
 import { getStorageDbNames } from '../storage/profile';
+import { withStoreLock } from '../storage/cross-tab';
+import { createStoreChannel } from '../storage/cross-tab-channel';
 import { REINDEX_FLAG_KEY } from '../storage/persisted-keys';
 
 /**
@@ -20,6 +22,41 @@ import { REINDEX_FLAG_KEY } from '../storage/persisted-keys';
 const DB_NAMES = getStorageDbNames();
 const DB_NAME = DB_NAMES.vectorMapping;
 const INDEX_NAME = DB_NAMES.vector;
+
+/**
+ * Change announcements (#270): successful saves notify other tabs, and this
+ * store SUBSCRIBES too — a remote save refreshes this tab's live
+ * mapping/snapshot state from the persisted corpus whenever this tab has no
+ * unsaved local ops (a refresh would otherwise wipe the metadata those ops
+ * live in; the next save merges them anyway). Merge correctness never
+ * depends on delivery - every merge-save re-reads the persisted baseline
+ * under the store lock.
+ */
+const changeChannel = createStoreChannel(`${DB_NAME}-changes`);
+
+function postChange(): void {
+  changeChannel.postChange();
+}
+
+/** Free an EdgeVec instance via Symbol.dispose or free() (PRR-012). */
+function disposeEdgeVec(instance: EdgeVec): void {
+  if (typeof instance[Symbol.dispose] === 'function') {
+    instance[Symbol.dispose]();
+  } else if (typeof instance.free === 'function') {
+    instance.free();
+  }
+}
+
+/** Mapping-row metadata shape shared by the merge helpers below. */
+interface VectorMappingMeta {
+  docId: string;
+  chunkIndex: number;
+  text?: string;
+  source?: string;
+  page?: number;
+  packId?: string;
+  packVersion?: string;
+}
 
 /**
  * Vector index content version. Bump when the persisted idMapping schema OR the
@@ -62,8 +99,27 @@ export class VectorIndex {
   private config: VectorIndexConfig;
   private ready: boolean = false;
   private initPromise: Promise<void> | null = null;
-  private idMapping: Map<number, { docId: string; chunkIndex: number; text?: string; source?: string; page?: number; packId?: string; packVersion?: string }> = new Map();
+  private idMapping: Map<number, VectorMappingMeta> = new Map();
   private disposed: boolean = false;
+  /** Unsubscribe for the remote-change refresh (PRR-004); nulled on dispose. */
+  private channelUnsub: (() => void) | null = null;
+  /**
+   * #270: this tab's own mutations since the last successful save - `put`
+   * for docIds whose vectors were (re-)added, `remove` for docIds removed.
+   * save() merges from the freshly read persisted baseline instead of
+   * replacing the whole snapshot blob from in-memory state.
+   */
+  private pendingOps: Map<string, 'put' | 'remove'> = new Map();
+  /**
+   * Raw vectors for entries not yet persisted (cleared after each successful
+   * save). The snapshot-rebuild merge needs the raw floats to re-insert them
+   * into the freshly loaded baseline instance; EdgeVec exposes no vector
+   * export. Disclosed memory cost: about 3KB per unsaved 768-dim vector.
+   */
+  private vectorsById: Map<number, Float32Array> = new Map();
+  /** Remote-refresh serialization state (PRR-004): see KeywordIndex's twin. */
+  private refreshRunning = false;
+  private refreshQueued = false;
 
   /**
    * Get the singleton instance, creating it if necessary.
@@ -107,25 +163,35 @@ export class VectorIndex {
   /**
    * Internal initialization logic.
    */
+  /**
+   * Build a fresh EdgeVec instance with this index's configuration. Shared by
+   * doInitialize and the merge-save baseline loader (PC-10: a missing or
+   * version-mismatched snapshot merges into a freshly constructed index, not
+   * a failed save).
+   */
+  private async createEdgeVec(): Promise<EdgeVec> {
+    // Initialize EdgeVec WASM module - MUST be called before using EdgeVec
+    await initWasm();
+
+    const config = new EdgeVecConfig(this.config.dimension);
+    config.metric = this.config.metric;
+    config.ef_construction = this.config.efConstruction;
+    config.m = this.config.M;
+    // ef_search controls HNSW search quality (higher = better recall, slower).
+    // Issue #37 R2: raised from 50 to 128 to support the candidate-multiplier
+    // over-fetch path. quality preset fetches up to topK×mult = 64 candidates;
+    // ef_search should be ≥ 2× the fetch k to avoid HNSW pruning out the
+    // chunks the reranker is meant to consider. edgevec 0.6's search(query,k)
+    // takes no per-call ef, so this is set once at construction.
+    config.ef_search = 128;
+    const index = new EdgeVec(config);
+    config.free();
+    return index;
+  }
+
   private async doInitialize(): Promise<void> {
     try {
-      // Initialize EdgeVec WASM module - MUST be called before using EdgeVec
-      await initWasm();
-
-      // Create EdgeVec index with EdgeVecConfig instance
-      const config = new EdgeVecConfig(this.config.dimension);
-      config.metric = this.config.metric;
-      config.ef_construction = this.config.efConstruction;
-      config.m = this.config.M;
-      // ef_search controls HNSW search quality (higher = better recall, slower).
-      // Issue #37 R2: raised from 50 to 128 to support the candidate-multiplier
-      // over-fetch path. quality preset fetches up to topK×mult = 64 candidates;
-      // ef_search should be ≥ 2× the fetch k to avoid HNSW pruning out the
-      // chunks the reranker is meant to consider. edgevec 0.6's search(query,k)
-      // takes no per-call ef, so this is set once at construction.
-      config.ef_search = 128;
-      this.index = new EdgeVec(config);
-      config.free();
+      this.index = await this.createEdgeVec();
 
       // Try to load persisted index from IndexedDB using native EdgeVec.load
       const loaded = await this.load();
@@ -134,6 +200,13 @@ export class VectorIndex {
       }
 
       this.ready = true;
+      // PRR-004: refresh the live state on other tabs' saves — only when
+      // this tab has no unsaved local ops (a refresh replaces the mapping
+      // their metadata lives in; the next save merges them anyway).
+      this.channelUnsub = changeChannel.onRemoteChange(() => {
+        if (this.disposed || this.pendingOps.size > 0) return;
+        this.scheduleRefresh();
+      });
     } catch (error) {
       this.index = null;
       this.ready = false;
@@ -197,6 +270,8 @@ export class VectorIndex {
         ...(meta?.packId !== undefined ? { packId: meta.packId } : {}),
         ...(meta?.packVersion !== undefined ? { packVersion: meta.packVersion } : {}),
       });
+      this.vectorsById.set(internalId, vector as Float32Array);
+      this.pendingOps.set(docId, 'put');
     } catch (error) {
       throw new Error(
         `Failed to add vector: ${error instanceof Error ? error.message : String(error)}`,
@@ -265,6 +340,11 @@ export class VectorIndex {
           ...(entry.packId !== undefined ? { packId: entry.packId } : {}),
           ...(entry.packVersion !== undefined ? { packVersion: entry.packVersion } : {}),
         });
+        // #270: retain the raw float vector until the next successful save;
+        // the snapshot-rebuild merge re-inserts unsaved vectors into the
+        // freshly loaded baseline instance.
+        this.vectorsById.set(internalId, vectors[j]);
+        this.pendingOps.set(entry.docId!, 'put');
       }
       console.info(`[VectorIndex] Batch indexed ${result.inserted} vectors`);
       result.free();
@@ -342,6 +422,9 @@ export class VectorIndex {
       throw new Error('VectorIndex not initialized. Call initialize() first.');
     }
 
+    // Record the removal BEFORE any early return: this tab may not hold the
+    // docId locally while another tab's saved entries still contain it.
+    this.pendingOps.set(docId, 'remove');
     try {
       // Find all internal IDs associated with this document
       const toRemove: number[] = [];
@@ -355,6 +438,10 @@ export class VectorIndex {
       for (const internalId of toRemove) {
         this.index!.softDelete(internalId);
         this.idMapping.delete(internalId);
+        // PRR-011: a removed id can never re-enter idMapping, so its
+        // retained raw vector can never be re-inserted — release it or the
+        // map grows without bound across delete/re-embed cycles.
+        this.vectorsById.delete(internalId);
       }
 
       console.info(`[VectorIndex] Removed ${toRemove.length} vectors for docId: ${docId}`);
@@ -374,19 +461,234 @@ export class VectorIndex {
       throw new Error('VectorIndex not initialized. Call initialize() first.');
     }
 
-    try {
-      // F11: persist idMapping BEFORE the EdgeVec snapshot. The two writes span
-      // different databases/transactions so they cannot be made fully atomic,
-      // but writing the mapping first means a crash between the two leaves the
-      // PREVIOUS consistent state (old snapshot + old mapping) rather than a
-      // new snapshot whose internal IDs have no resolvable metadata. A mapping
-      // without its snapshot is harmless (loads as empty); a snapshot without
-      // its mapping yields orphaned internal IDs that previously produced
-      // fabricated `docId:'unknown'` search results.
-      await this.saveMapping();
-      await this.index!.save(INDEX_NAME);
+    if (this.pendingOps.size === 0) {
+      // Nothing of ours to persist; the baseline (possibly another tab's
+      // newer state) stays untouched.
+      return;
+    }
 
-      console.info(`[VectorIndex] Saved ${this.size()} vectors to IndexedDB`);
+    try {
+      await withStoreLock(`${DB_NAME}-save`, async () => {
+        // #270 snapshot-rebuild merge. EdgeVec exposes no vector export, so a
+        // merge loads the FRESH persisted baseline as a second instance and
+        // re-inserts this tab's unsaved raw vectors into it. Steps:
+        //  1. version-aware baseline load (missing snapshot or version
+        //     mismatch => a freshly constructed empty instance + empty
+        //     mapping - PC-10; a mapping row without a snapshot cannot be
+        //     retained, AC3's every-id-resolves invariant);
+        //  2. baseline entries of replaced/removed docIds are dropped AND
+        //     their vectors soft-deleted so they cannot crowd the search
+        //     k-window (PC-12, the existing removeByDocId invariant);
+        //  3. put docIds' in-memory entries are carried over when the
+        //     baseline holds the same internal id AND docId (saved by this
+        //     tab), else re-inserted from the retained raw vector with a
+        //     REMAPPED id (per-tab internal id spaces can collide - PC-2);
+        //  4. mapping+version written BEFORE the snapshot (the F11 order),
+        //     and the live instance swaps only after BOTH writes succeed;
+        //  5. only the ops/vectors snapshotted at save start are cleared,
+        //     so mutations during the async merge survive (PC-2).
+        const snapshot = new Map(this.pendingOps);
+        const dropDocIds = new Set(snapshot.keys());
+
+        const persistedVersion = await this.readPersistedVersion();
+        let temp: EdgeVec;
+        let baselineMappingEntries: Array<[number, VectorMappingMeta]> = [];
+        if (persistedVersion === VECTOR_INDEX_VERSION) {
+          let snapshotLoaded = false;
+          try {
+            temp = await EdgeVec.load(INDEX_NAME);
+            snapshotLoaded = true;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (/not found/i.test(message)) {
+              // First-ever ingest (or snapshot lost): a mapping row without a
+              // snapshot is not retained - baseline is a fresh empty index.
+              temp = await this.createEdgeVec();
+            } else {
+              // Load failed: temp was never assigned — nothing leaks.
+              throw error;
+            }
+          }
+          if (snapshotLoaded) {
+            try {
+              baselineMappingEntries = await this.readMappingEntries();
+            } catch (readError) {
+              // PRR-012: the snapshot instance exists on this path — a
+              // rejected mapping read must not leak it.
+              disposeEdgeVec(temp);
+              throw readError;
+            }
+          } else {
+            baselineMappingEntries = [];
+          }
+        } else {
+          // Version mismatch or absent: consistent with load()'s discard
+          // discipline - merge into an empty baseline.
+          temp = await this.createEdgeVec();
+          baselineMappingEntries = [] as Array<[number, VectorMappingMeta]>;
+        }
+
+        // IR-12 (op-aware keep/drop): a baseline entry of a snapshot docId
+        // survives ONLY when its internal id STILL RESOLVES in this.idMapping
+        // to the same docId (removeByDocId deletes those entries, so a remove
+        // op keeps nothing) AND its (docId, chunkIndex) is not superseded by
+        // an entry with a RETAINED raw vector (a new put of the same chunk
+        // replaces it; the stale vector soft-deletes so it cannot crowd the
+        // search k-window, PC-12). Everything else — removed docs, superseded
+        // chunks — soft-deletes. A surviving baseline entry keeps its vector
+        // LIVE (never soft-deleted), which is what keeps boot-loaded chunks
+        // resolvable across an incremental re-put (IR-1).
+        // IR-1: supersession is per (docId, chunkIndex). A baseline chunk of a
+        // put docId whose chunkIndex the in-memory state re-supplies is
+        // REPLACED (soft-deleted, new vector inserted); a baseline chunk whose
+        // chunkIndex is absent from the in-memory state is carried forward
+        // LIVE (its vector must never be soft-deleted, or the carried mapping
+        // id would dangle) — this is what makes a same-tab incremental re-put
+        // correct for boot-loaded entries that carry no retained raw vector.
+        const superseded = new Set<string>();
+        for (const [docId, op] of snapshot) {
+          if (op !== 'put') continue;
+          for (const [internalId, meta] of this.idMapping) {
+            if (meta.docId !== docId) continue;
+            // Only entries with a RETAINED raw vector are new puts of this
+            // save; boot-loaded copies of the same chunks (no retained
+            // vector) must not mark their own chunkIndexes superseded.
+            if (this.vectorsById.has(internalId)) {
+              superseded.add(`${docId}:${meta.chunkIndex}`);
+            }
+          }
+        }
+
+        const newMapping = new Map<number, VectorMappingMeta>();
+        for (const [id, meta] of baselineMappingEntries) {
+          if (!dropDocIds.has(meta.docId)) {
+            newMapping.set(id, meta);
+            continue;
+          }
+          const inMemory = this.idMapping.get(id);
+          if (
+            inMemory &&
+            inMemory.docId === meta.docId &&
+            !superseded.has(`${meta.docId}:${inMemory.chunkIndex}`)
+          ) {
+            // Still-owned, non-superseded saved chunk: keep live.
+            newMapping.set(id, meta);
+          } else {
+            // Removed doc, or superseded chunk: soft-delete so the stale
+            // vector cannot crowd the search k-window (PC-12).
+            try {
+              temp.softDelete(id);
+            } catch (sdError) {
+              // PRR-012: a mid-merge throw must not leak the baseline copy.
+              disposeEdgeVec(temp);
+              throw sdError;
+            }
+          }
+        }
+
+        const insertedOriginalIds: number[] = [];
+        const toInsert: Array<{ vector: Float32Array; meta: VectorMappingMeta }> = [];
+        for (const [docId, op] of snapshot) {
+          if (op !== 'put') continue;
+          for (const [internalId, meta] of this.idMapping) {
+            if (meta.docId !== docId) continue;
+            const carried = newMapping.get(internalId);
+            if (carried !== undefined && carried.docId === meta.docId) {
+              // OUR OWN entry already carried from the baseline (same id AND
+              // docId): its vector is live in temp — nothing to insert.
+              continue;
+            }
+            // PRR-002: any OTHER occupant of this id (a different doc's
+            // baseline entry — the aligned-counter two-tab collision) must
+            // NOT suppress our insert: fall through and re-insert with a
+            // REMAPPED id, per the contract comment above this function.
+            if (this.vectorsById.has(internalId) && this.vectorsById.get(internalId) !== undefined) {
+              toInsert.push({ vector: this.vectorsById.get(internalId) as Float32Array, meta });
+              insertedOriginalIds.push(internalId);
+            } else {
+              // No raw vector and no baseline carrier (defensive): skip rather
+              // than write a mapping entry whose vector cannot resolve (AC3).
+              console.warn(
+                `[VectorIndex] Skipping mapping entry without a resolvable vector for docId ${meta.docId}`
+             );
+            }
+          }
+        }
+
+        if (toInsert.length > 0) {
+          let result: ReturnType<EdgeVec['insertBatchWithProgress']>;
+          try {
+            result = temp.insertBatchWithProgress(
+              toInsert.map((e) => e.vector),
+              () => {
+                /* progress not surfaced through the merge path */
+              }
+            );
+          } catch (insertError) {
+            // PRR-012: a mid-merge throw must not leak the baseline copy.
+            disposeEdgeVec(temp);
+            throw insertError;
+          }
+          for (let j = 0; j < result.inserted; j++) {
+            newMapping.set(Number(result.ids[j]), toInsert[j].meta);
+          }
+          result.free();
+        }
+
+        // F11 order preserved: mapping+version FIRST, then the snapshot. If
+        // the snapshot write fails after the mapping row landed, restore the
+        // in-memory mapping so the live instance stays consistent with the
+        // still-persisted previous snapshot (IR-5).
+        const previousMapping = this.idMapping;
+        this.idMapping = newMapping;
+        try {
+          await this.saveMapping();
+          await temp.save(INDEX_NAME);
+        } catch (writeError) {
+          // IR-18: a failed merge-save must not leak the WASM baseline
+          // instance (the live index keeps its own instance).
+          this.idMapping = previousMapping;
+          // PRR-007: the MERGED mapping row may already be committed on disk
+          // (F11 writes mapping before snapshot) — rewrite it to the
+          // SNAPSHOT-PAIRED BASELINE (the row read before this save, which is
+          // exactly what the still-persisted snapshot represents) so the
+          // persisted pair never stays ahead of the snapshot. The in-memory
+          // restore above keeps this tab's live truth, which includes the
+          // not-yet-persisted inserts; those re-enter through the next save.
+          try {
+            await this.saveMapping(new Map(baselineMappingEntries));
+          } catch {
+            // Best-effort: if this also fails, the mapping write itself was
+            // the original failure and the row never advanced.
+          }
+          disposeEdgeVec(temp);
+          throw writeError;
+        }
+
+        // Swap only after both writes succeeded; dispose the old live
+        // instance (same disposal pattern as load()).
+        if (this.index) {
+          if (typeof this.index[Symbol.dispose] === 'function') {
+            this.index[Symbol.dispose]();
+          } else if (typeof this.index.free === 'function') {
+            this.index.free();
+          }
+        }
+        this.index = temp;
+
+        // Clear only the snapshotted ops/vectors; mutations made during the
+        // async merge survive for the next save.
+        for (const docId of snapshot.keys()) {
+          this.pendingOps.delete(docId);
+        }
+        for (const internalId of insertedOriginalIds) {
+          this.vectorsById.delete(internalId);
+        }
+        console.info(
+          `[VectorIndex] Saved ${newMapping.size} vectors to IndexedDB (merged ${snapshot.size} local ops)`
+        );
+      });
+      postChange();
     } catch (error) {
       throw new Error(
         `Save failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -396,9 +698,71 @@ export class VectorIndex {
   }
 
   /**
+   * Read the persisted mapping rows WITHOUT mutating the in-memory mapping
+   * (the merge baseline read; load() keeps its own repopulating path).
+   */
+  private async readMappingEntries(): Promise<Array<[number, VectorMappingMeta]>> {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(DB_NAME, 1);
+      // PRR-003: an I/O error is NOT "there is no mapping" — resolving []
+      // here made the merge treat an unreadable baseline as an empty corpus
+      // and overwrite the persisted state with only this tab's pending ops.
+      request.onerror = () =>
+        reject(new Error(`Failed to open IndexedDB to read the persisted mapping: ${request.error}`));
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains('mappings')) {
+          db.createObjectStore('mappings', { keyPath: 'key' });
+        }
+      };
+      request.onsuccess = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains('mappings')) {
+          db.close();
+          resolve([]);
+          return;
+        }
+        const tx = db.transaction('mappings', 'readonly');
+        const store = tx.objectStore('mappings');
+        const getRequest = store.get('idMapping');
+        getRequest.onsuccess = () => {
+          const result = getRequest.result;
+          db.close();
+          if (!result || !Array.isArray(result.data)) {
+            resolve([]);
+            return;
+          }
+          const entries: Array<[number, VectorMappingMeta]> = [];
+          for (const item of result.data) {
+            entries.push([
+              item.id,
+              {
+                docId: item.docId,
+                chunkIndex: item.chunkIndex,
+                text: item.text,
+                source: item.source,
+                page: item.page,
+                ...(item.packId !== undefined ? { packId: item.packId } : {}),
+                ...(item.packVersion !== undefined ? { packVersion: item.packVersion } : {}),
+              },
+            ]);
+          }
+          resolve(entries);
+        };
+        getRequest.onerror = () => {
+          db.close();
+          reject(new Error(`Failed to read the persisted mapping: ${getRequest.error}`));
+        };
+      };
+    });
+  }
+
+  /**
    * Persist idMapping to IndexedDB as JSON blob.
    */
-  private async saveMapping(): Promise<void> {
+  private async saveMapping(
+    mapping: ReadonlyMap<number, VectorMappingMeta> = this.idMapping
+  ): Promise<void> {
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, 1);
       request.onerror = () => reject(new Error('Failed to open IndexedDB for mapping save'));
@@ -415,7 +779,7 @@ export class VectorIndex {
         const tx = db.transaction('mappings', 'readwrite');
         const store = tx.objectStore('mappings');
 
-        const mappingArray = Array.from(this.idMapping.entries()).map(([id, meta]) => ({
+        const mappingArray = Array.from(mapping.entries()).map(([id, meta]) => ({
           id,
           docId: meta.docId,
           chunkIndex: meta.chunkIndex,
@@ -432,9 +796,15 @@ export class VectorIndex {
           db.close();
           resolve();
         };
+        // C16: preserve the raw error identity (e.g. QuotaExceededError) as
+        // cause, and never leave the save promise pending on abort.
+        tx.onabort = () => {
+          db.close();
+          reject(new Error('Failed to save idMapping (aborted)', { cause: tx.error ?? undefined }));
+        };
         tx.onerror = () => {
           db.close();
-          reject(new Error('Failed to save idMapping'));
+          reject(new Error('Failed to save idMapping', { cause: tx.error }));
         };
       };
     });
@@ -443,14 +813,20 @@ export class VectorIndex {
   /**
    * Load idMapping from IndexedDB.
    */
-  private async loadMapping(): Promise<void> {
+  private async loadMapping(): Promise<boolean> {
     return new Promise((resolve) => {
       const request = indexedDB.open(DB_NAME, 1);
 
       request.onerror = () => {
+        // PRR-004: never wipe live state (unsaved local ops' metadata lives
+        // only here) on a read failure during a refresh.
+        if (this.pendingOps.size > 0) {
+          resolve(false);
+          return;
+        }
         // IndexedDB might not exist yet, which is fine
         this.idMapping.clear();
-        resolve();
+        resolve(true);
       };
 
       request.onupgradeneeded = () => {
@@ -464,8 +840,12 @@ export class VectorIndex {
         const db = request.result;
         if (!db.objectStoreNames.contains('mappings')) {
           db.close();
+          if (this.pendingOps.size > 0) {
+            resolve(false);
+            return;
+          }
           this.idMapping.clear();
-          resolve();
+          resolve(true);
           return;
         }
 
@@ -475,6 +855,14 @@ export class VectorIndex {
 
         getRequest.onsuccess = () => {
           const result = getRequest.result;
+          // PRR-004: single sync apply — guard immediately before the only
+          // mutation, so an unsaved local op interleaved during the awaits
+          // cannot be wiped (no await between this check and the writes).
+          if (this.pendingOps.size > 0) {
+            db.close();
+            resolve(false);
+            return;
+          }
           if (result && result.data) {
             this.idMapping.clear();
             for (const item of result.data) {
@@ -492,13 +880,17 @@ export class VectorIndex {
             this.idMapping.clear();
           }
           db.close();
-          resolve();
+          resolve(true);
         };
 
         getRequest.onerror = () => {
           db.close();
+          if (this.pendingOps.size > 0) {
+            resolve(false);
+            return;
+          }
           this.idMapping.clear();
-          resolve();
+          resolve(true);
         };
       };
     });
@@ -516,6 +908,9 @@ export class VectorIndex {
    *              mean-pooled) — treated as incompatible and forced through the
    *              re-index path (F9).
    *  - number  → the persisted version (compare to VECTOR_INDEX_VERSION).
+   *  - rejects → an IndexedDB I/O error (open/get failed): the save-merge
+   *              fails closed on it; load() converts it to "not loaded"
+   *              (never to a version decision).
    *
    * The fresh-install distinction is critical: opening a non-existent DB fires
    * `onupgradeneeded` with `oldVersion === 0`, which would otherwise create the
@@ -528,13 +923,17 @@ export class VectorIndex {
     if (typeof indexedDB === 'undefined') {
       return null;
     }
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, 1);
       // Track whether the DB (and thus the mappings store) existed BEFORE this
       // open call. A brand-new DB fires onupgradeneeded with oldVersion 0.
       let createdFresh = false;
 
-      request.onerror = () => resolve(null);
+      // PRR-003: an I/O error is NOT "there is nothing to check" — the
+      // save-merge must fail closed on it rather than merge into what it
+      // believes is a fresh empty corpus.
+      request.onerror = () =>
+        reject(new Error(`Failed to open IndexedDB to read the persisted index version: ${request.error}`));
 
       request.onupgradeneeded = (event: IDBVersionChangeEvent) => {
         createdFresh = event.oldVersion === 0;
@@ -570,7 +969,7 @@ export class VectorIndex {
         };
         getReq.onerror = () => {
           db.close();
-          resolve(0);
+          reject(new Error(`Failed to read the persisted index version: ${getReq.error}`));
         };
       };
     });
@@ -602,6 +1001,24 @@ export class VectorIndex {
    *
    * @returns true if a saved index was loaded, false if no saved index exists
    */
+  /** Serialized remote refresh (PRR-004). */
+  private scheduleRefresh(): void {
+    if (this.refreshRunning) {
+      this.refreshQueued = true;
+      return;
+    }
+    this.refreshRunning = true;
+    void this.load()
+      .catch((error: unknown) => console.warn('[VectorIndex] remote refresh failed:', error))
+      .finally(() => {
+        this.refreshRunning = false;
+        if (this.refreshQueued) {
+          this.refreshQueued = false;
+          if (!this.disposed && this.pendingOps.size === 0) this.scheduleRefresh();
+        }
+      });
+  }
+
   async load(): Promise<boolean> {
     if (this.index === null) {
       throw new Error('VectorIndex not initialized');
@@ -613,7 +1030,16 @@ export class VectorIndex {
     // including 0 (a pre-v2/v1 store with no version key, i.e. mean-pooled
     // vectors from a previous build) — is incompatible and MUST be discarded so
     // a CLS-pooling client never loads mean-pooled vectors.
-    const persistedVersion = await this.readPersistedVersion();
+    let persistedVersion: number | null;
+    try {
+      persistedVersion = await this.readPersistedVersion();
+    } catch (error) {
+      // A transient read failure must never fabricate a version decision:
+      // log and treat the load as "no saved index" (the same outcome the
+      // previous resolve-on-error behavior produced), never as a mismatch.
+      console.error('[VectorIndex] Failed to read the persisted version; not loading:', error);
+      return false;
+    }
     if (persistedVersion !== null && persistedVersion !== VECTOR_INDEX_VERSION) {
       console.warn(
         `[VectorIndex] Stored index version ${persistedVersion === 0 ? '1 (pre-versioned)' : persistedVersion} ` +
@@ -637,7 +1063,13 @@ export class VectorIndex {
       }
 
       // Load mapping FIRST — if this fails, we dispose loadedIndex and keep old index intact
-      await this.loadMapping();
+      const mappingApplied = await this.loadMapping();
+      if (!mappingApplied) {
+        // PRR-004: unsaved local ops arrived during the refresh read — abort
+        // the swap so their metadata is not wiped; the next save merges.
+        disposeEdgeVec(loadedIndex);
+        return false;
+      }
 
       // Only assign index after mapping loads successfully
       if (this.index) {
@@ -679,6 +1111,19 @@ export class VectorIndex {
   }
 
   /**
+   * Whether the loaded mapping holds any entry for a document id (#270 AC6
+   * vector-side health probe). Mapping rows only survive a successful
+   * snapshot load, so a wiped/lost vector store answers false at boot and the
+   * pack health pass clears the embedded flag.
+   */
+  hasDocEntries(docId: string): boolean {
+    for (const meta of this.idMapping.values()) {
+      if (meta.docId === docId) return true;
+    }
+    return false;
+  }
+
+  /**
    * Get the number of vectors in the index.
    */
   size(): number {
@@ -690,6 +1135,8 @@ export class VectorIndex {
    */
   dispose(): void {
     this.disposed = true;
+    this.channelUnsub?.();
+    this.channelUnsub = null;
 
     if (this.index !== null) {
       // Free WASM resources using Symbol.dispose or free()

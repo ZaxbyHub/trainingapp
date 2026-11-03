@@ -10,6 +10,8 @@ import { Index } from 'flexsearch';
 import type { SearchResult } from '../../types/search';
 import type { DocumentChunk } from '../../types/document';
 import { getStorageDbNames } from '../storage/profile';
+import { withStoreLock } from '../storage/cross-tab';
+import { createStoreChannel } from '../storage/cross-tab-channel';
 
 /**
  * F1: the per-store IndexedDB names now derive from the stable localStorage
@@ -21,6 +23,21 @@ const DB_NAMES = getStorageDbNames();
 const DB_NAME = DB_NAMES.keyword;
 const DB_VERSION = 1;
 const STORE_NAME = 'keyword-index';
+
+/**
+ * Change announcements (#270): successful saves notify other tabs, and this
+ * store SUBSCRIBES too — a remote save rebuilds this tab's live serving
+ * state (FlexSearch/idMapping/docIdToChunks) from the persisted corpus
+ * whenever this tab has no unsaved local ops (a rebuild would otherwise wipe
+ * the metadata those ops live in; the next save merges them anyway).
+ * Merge correctness never depends on delivery - every save re-reads the
+ * persisted baseline under the store lock.
+ */
+const changeChannel = createStoreChannel(`${DB_NAME}-changes`);
+
+function postChange(): void {
+  changeChannel.postChange();
+}
 
 interface IndexEntry {
   id: string;
@@ -54,6 +71,21 @@ export class KeywordIndex {
   private idMapping: Map<string, { docId: string; chunkIndex: number; text: string; source?: string; page?: number; packId?: string; packVersion?: string }> = new Map();
   // Reverse mapping: docId -> Set of chunk indices
   private docIdToChunks: Map<string, Set<string>> = new Map();
+  /**
+   * #270: this tab's own mutations since the last successful save - `put`
+   * for docIds whose chunks were (re-)added, `remove` for docIds removed.
+   * save() merges from the FRESHLY READ persisted baseline, so entries
+   * another tab wrote since our last load are merged, never wiped by a
+   * whole-blob replace.
+   */
+  private pendingOps: Map<string, 'put' | 'remove'> = new Map();
+  /** Remote-refresh serialization state (PRR-004): exactly one load runs at a
+   * time; a burst queues ONE trailing run instead of racing concurrent loads
+   * (whichever finished last would win the swap — a stale overwrite). */
+  private refreshRunning = false;
+  private refreshQueued = false;
+  /** Unsubscribe for the remote-change refresh (PRR-004); nulled on dispose. */
+  private channelUnsub: (() => void) | null = null;
 
   /**
    * Get the singleton instance, creating it if necessary.
@@ -93,17 +125,67 @@ export class KeywordIndex {
   /**
    * Internal initialization logic.
    */
+  /** Fresh FlexSearch index with the canonical config (shared by init and
+   * the PRR-004 refresh rebuild — a refresh must never leave stale chunks
+   * searchable in the old index). */
+  private createFlexIndex(): InstanceType<typeof Index> {
+    // Using tokenize: "full" for better phrase matching. `worker: false` is a
+    // valid runtime option (keeps the index serializable for IndexedDB) but is
+    // not in the v0.8 IndexOptions type — cast to preserve behavior.
+    return new Index({
+      tokenize: 'full',
+      worker: false,
+      resolution: 9,
+    } as ConstructorParameters<typeof Index>[0]);
+  }
+
+  /** Fold a full entry set into the LIVE serving state (PRR-004). */
+  private rebuildFromEntries(entries: IndexEntry[]): void {
+    const index = this.createFlexIndex();
+    this.idMapping.clear();
+    this.docIdToChunks.clear();
+    for (const entry of entries) {
+      this.idMapping.set(entry.id, {
+        docId: entry.docId,
+        chunkIndex: entry.chunkIndex,
+        text: entry.text,
+        source: entry.source,
+        page: entry.page,
+        ...(entry.packId !== undefined ? { packId: entry.packId } : {}),
+        ...(entry.packVersion !== undefined ? { packVersion: entry.packVersion } : {}),
+      });
+      let ids = this.docIdToChunks.get(entry.docId);
+      if (ids === undefined) {
+        ids = new Set<string>();
+        this.docIdToChunks.set(entry.docId, ids);
+      }
+      ids.add(entry.id);
+      index.add(entry.id, entry.text);
+    }
+    this.index = index;
+  }
+
+  /** Serialized remote refresh (PRR-004). */
+  private scheduleRefresh(): void {
+    if (this.refreshRunning) {
+      this.refreshQueued = true;
+      return;
+    }
+    this.refreshRunning = true;
+    void this.load()
+      .catch((error: unknown) => console.warn('[KeywordIndex] remote refresh failed:', error))
+      .finally(() => {
+        this.refreshRunning = false;
+        if (this.refreshQueued) {
+          this.refreshQueued = false;
+          if (!this.disposed && this.pendingOps.size === 0) this.scheduleRefresh();
+        }
+      });
+  }
+
   private async doInitialize(): Promise<void> {
     try {
-      // Create FlexSearch Index with resolution-based ranking
-      // Using tokenize: "full" for better phrase matching. `worker: false` is a
-      // valid runtime option (keeps the index serializable for IndexedDB) but is
-      // not in the v0.8 IndexOptions type — cast to preserve behavior.
-      this.index = new Index({
-        tokenize: 'full',
-        worker: false,
-        resolution: 9,
-      } as ConstructorParameters<typeof Index>[0]);
+      this.index = this.createFlexIndex();
 
       // Try to load persisted index from IndexedDB
       const loaded = await this.load();
@@ -112,6 +194,13 @@ export class KeywordIndex {
       }
 
       this.ready = true;
+      // PRR-004: rebuild the live serving state on other tabs' saves — only
+      // when this tab has no unsaved local ops (a rebuild replaces the
+      // mapping their metadata lives in; the next save merges them anyway).
+      this.channelUnsub = changeChannel.onRemoteChange(() => {
+        if (this.disposed || this.pendingOps.size > 0) return;
+        this.scheduleRefresh();
+      });
     } catch (error) {
       this.index = null;
       this.ready = false;
@@ -173,6 +262,8 @@ export class KeywordIndex {
 
     // Add to FlexSearch index
     this.index!.add(id, text);
+
+    this.pendingOps.set(docId, 'put');
   }
 
   /**
@@ -268,6 +359,10 @@ export class KeywordIndex {
       throw new Error('KeywordIndex not initialized. Call initialize() first.');
     }
 
+    // Record the removal BEFORE the early return: this tab may not hold the
+    // docId locally while another tab's saved entries still contain it.
+    this.pendingOps.set(docId, 'remove');
+
     const chunkIds = this.docIdToChunks.get(docId);
     if (!chunkIds || chunkIds.size === 0) {
       return;
@@ -327,28 +422,88 @@ export class KeywordIndex {
       throw new Error('KeywordIndex not initialized. Call initialize() first.');
     }
 
+    if (this.pendingOps.size === 0) {
+      // Nothing of ours to persist; the baseline (possibly another tab's
+      // newer state) stays untouched.
+      return;
+    }
+
     try {
-      const entries: IndexEntry[] = [];
-      for (const [id, meta] of this.idMapping) {
-        entries.push({
-          id,
-          docId: meta.docId,
-          chunkIndex: meta.chunkIndex,
-          text: meta.text,
-          source: meta.source,
-          page: meta.page,
-          ...(meta.packId !== undefined ? { packId: meta.packId } : {}),
-          ...(meta.packVersion !== undefined ? { packVersion: meta.packVersion } : {}),
-        });
-      }
-
-      const data: StoredData = {
-        entries,
-        documentChunks: this.docIdToChunks,
-      };
-
-      await this.persistToIDB(data);
-      console.info(`[KeywordIndex] Saved ${this.size()} entries to IndexedDB`);
+      await withStoreLock(`${DB_NAME}-save`, async () => {
+        // #270: snapshot the log, then merge from a FRESHLY READ persisted
+        // baseline. A whole-blob replace from this tab's in-memory state
+        // would wipe entries another tab saved since our last load; the
+        // merge keeps them. A local put REPLACES the baseline doc's entries
+        // (drop the docId from the baseline, then apply ours).
+        const snapshot = new Map(this.pendingOps);
+        const baseline = await this.loadFromIDB();
+        const merged: IndexEntry[] = (baseline?.entries ?? []).filter(
+          (e) => !snapshot.has(e.docId)
+        );
+        for (const [docId, op] of snapshot) {
+          if (op !== 'put') continue;
+          for (const [id, meta] of this.idMapping) {
+            if (meta.docId !== docId) continue;
+            merged.push({
+              id,
+              docId: meta.docId,
+              chunkIndex: meta.chunkIndex,
+              text: meta.text,
+              source: meta.source,
+              page: meta.page,
+              ...(meta.packId !== undefined ? { packId: meta.packId } : {}),
+              ...(meta.packVersion !== undefined ? { packVersion: meta.packVersion } : {}),
+            });
+          }
+        }
+        // documentChunks is DERIVED from the merged entries (PC-11): entries
+        // carry the text/citation payload the chunk-id map alone cannot
+        // rebuild.
+        const documentChunks = new Map<string, Set<string>>();
+        for (const e of merged) {
+          let ids = documentChunks.get(e.docId);
+          if (!ids) {
+            ids = new Set<string>();
+            documentChunks.set(e.docId, ids);
+          }
+          ids.add(e.id);
+        }
+        await this.persistToIDB({ entries: merged, documentChunks });
+        // Clear only the ops snapshotted at save start; mutations made while
+        // the async merge was in flight survive for the next save.
+        for (const docId of snapshot.keys()) {
+          this.pendingOps.delete(docId);
+        }
+        // PRR-004 (handoff 4(a), the saving-tab asymmetry): the merge result
+        // is now the persisted truth and this tab's own announcement is
+        // self-filtered — fold `merged` into the LIVE serving state here, or
+        // the tab that saves last keeps serving its pre-merge view (missing
+        // baseline entries it never loaded; a peer's earlier announcement was
+        // skipped while local ops were pending). Ops that arrived while the
+        // merge ran are still pending: serve their CURRENT in-memory entries
+        // instead of their (possibly stale) baseline copies.
+        const stillPending = new Set(this.pendingOps.keys());
+        const pendingEntries: IndexEntry[] = [];
+        for (const [id, meta] of this.idMapping) {
+          if (!stillPending.has(meta.docId)) continue;
+          pendingEntries.push({
+            id,
+            docId: meta.docId,
+            chunkIndex: meta.chunkIndex,
+            text: meta.text,
+            source: meta.source,
+            page: meta.page,
+            ...(meta.packId !== undefined ? { packId: meta.packId } : {}),
+            ...(meta.packVersion !== undefined ? { packVersion: meta.packVersion } : {}),
+          });
+        }
+        this.rebuildFromEntries([
+          ...merged.filter((e) => !stillPending.has(e.docId)),
+          ...pendingEntries,
+        ]);
+        console.info(`[KeywordIndex] Saved ${merged.length} entries to IndexedDB`);
+      });
+      postChange();
     } catch (error) {
       throw new Error(
         `Save failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -393,9 +548,16 @@ export class KeywordIndex {
           resolve();
         };
 
+        // C16: preserve the raw error identity (e.g. QuotaExceededError) as
+        // cause, and never leave the save promise pending on abort.
+        tx.onabort = () => {
+          db.close();
+          reject(new Error('Transaction aborted', { cause: tx.error ?? undefined }));
+        };
+
         tx.onerror = () => {
           db.close();
-          reject(new Error(`Transaction failed: ${tx.error}`));
+          reject(new Error(`Transaction failed: ${tx.error}`, { cause: tx.error }));
         };
       };
     });
@@ -419,30 +581,15 @@ export class KeywordIndex {
         return false;
       }
 
-      // Clear existing mappings before repopulating to avoid corruption
-      this.idMapping.clear();
-      for (const entry of data.entries) {
-        this.idMapping.set(entry.id, {
-          docId: entry.docId,
-          chunkIndex: entry.chunkIndex,
-          text: entry.text,
-          source: entry.source,
-          page: entry.page,
-          ...(entry.packId !== undefined ? { packId: entry.packId } : {}),
-          ...(entry.packVersion !== undefined ? { packVersion: entry.packVersion } : {}),
-        });
+      // PRR-004: a refresh must not wipe metadata of unsaved local ops that
+      // arrived while loadFromIDB was awaiting — skip; the next save merges.
+      if (this.pendingOps.size > 0) {
+        console.info('[KeywordIndex] load/refresh skipped: unsaved local ops present');
+        return false;
       }
-
-      // Restore docIdToChunks reverse mapping
-      this.docIdToChunks.clear();
-      for (const [docId, ids] of Object.entries(data.documentChunks)) {
-        this.docIdToChunks.set(docId, new Set(ids as string[]));
-      }
-
-      // Re-add all entries to FlexSearch index
-      for (const entry of data.entries) {
-        this.index!.add(entry.id, entry.text);
-      }
+      // Rebuild the live serving state from the persisted entries (fresh
+      // FlexSearch index + both mappings) — no stale chunk can survive.
+      this.rebuildFromEntries(data.entries);
 
       console.info(`[KeywordIndex] Loaded ${this.size()} entries from IndexedDB`);
       return true;
@@ -524,6 +671,8 @@ export class KeywordIndex {
    */
   dispose(): void {
     this.disposed = true;
+    this.channelUnsub?.();
+    this.channelUnsub = null;
     this.index = null;
     this.idMapping.clear();
     this.docIdToChunks.clear();

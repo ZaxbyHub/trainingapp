@@ -9,7 +9,7 @@ import { useToast } from '../components/ToastProvider';
 import type { DocumentEntry } from '../types/document';
 import { extractDocument, SUPPORTED_EXTENSIONS } from '../lib/processing/extractor-factory';
 import { TextChunker } from '../lib/processing/text-chunker';
-import { loadDocuments, saveDocuments, deleteDocument as deleteDocumentFromStore } from '../lib/storage/document-store';
+import { loadDocuments, saveDocuments, upsertDocument, deleteDocument as deleteDocumentFromStore, onDocumentsRemoteChange } from '../lib/storage/document-store';
 import { REINDEX_FLAG_KEY } from '../lib/storage/persisted-keys';
 import { getEmbeddingService } from '../lib/embeddings/embedding-service';
 import { ensureEmbeddingServiceReady } from '../hooks/useServiceInitialization';
@@ -22,10 +22,126 @@ import type { DocumentInfo } from '../lib/api';
 import { Badge, Banner, Button, Icon, IconButton, PageHeader, Skeleton, Tabs } from '../ui';
 import './documents.css';
 
+/**
+ * #273 (C9/C10 shared guardrail): remove a document's chunks from both
+ * search indexes. Returns per-attempt success; callers decide the failure
+ * policy — the terminal-state purge is best-effort (logged, never masks the
+ * original error), document deletion fails closed (keep the row + error
+ * toast) so a failed removal never strands orphan chunks under a deleted row.
+ */
+async function purgeDocFromIndexes(docId: string): Promise<{ ok: boolean; reason?: string }> {
+  const vectorIndex = getVectorIndex();
+  if (!vectorIndex.isReady()) {
+    // IR-6: attempt idempotent initialization once — a delete arriving before
+    // boot finished should still be able to clean the indexes.
+    try {
+      await vectorIndex.initialize();
+    } catch (initError) {
+      console.warn(`Vector index init during purge failed:`, initError);
+    }
+    if (!vectorIndex.isReady()) {
+      return { ok: false, reason: 'vector index not ready' };
+    }
+  }
+  try {
+    await vectorIndex.removeByDocId(docId);
+    await vectorIndex.save();
+  } catch (error) {
+    console.error(`Failed to remove doc ${docId} from vector index:`, error);
+    return { ok: false, reason: 'vector index removal failed' };
+  }
+  const keywordIndex = getKeywordIndex();
+  if (!keywordIndex.isReady()) {
+    try {
+      await keywordIndex.initialize();
+    } catch (initError) {
+      console.warn(`Keyword index init during purge failed:`, initError);
+    }
+    if (!keywordIndex.isReady()) {
+      return { ok: false, reason: 'keyword index not ready' };
+    }
+  }
+  try {
+    keywordIndex.removeByDocId(docId);
+    await keywordIndex.save();
+  } catch (error) {
+    console.error(`Failed to remove doc ${docId} from keyword index:`, error);
+    return { ok: false, reason: 'keyword index removal failed' };
+  }
+  return { ok: true };
+}
+
+/**
+ * #273 (C12): walk an error's cause chain looking for a storage-quota
+ * failure. The store layers now preserve the raw DOMException as cause, so
+ * the page can name the real problem (C11) instead of a generic toast.
+ */
+function isQuotaError(error: unknown): boolean {
+  let cursor: unknown = error;
+  for (let depth = 0; depth < 6 && cursor != null; depth++) {
+    const e = cursor as { name?: string; message?: string };
+    if (e.name === 'QuotaExceededError') return true;
+    if (typeof e.message === 'string' && e.message.includes('QuotaExceededError')) return true;
+    cursor = (cursor as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+const QUOTA_ERROR_MESSAGE =
+  'Browser storage is full. The document could not be indexed. Remove documents you no longer need or free up browser storage, then try again.';
+
+let persistRequested = false;
+
+/**
+ * #273 (C13/AC of issue #273 item persist): ask the browser to persist
+ * storage before the first ingest, exactly once per page session. Fully
+ * best-effort: capability absence or a rejected persist() never blocks or
+ * fails the ingest (the attempt is still consumed, so repeated ingests do
+ * not re-call).
+ */
+async function requestPersistenceOnce(): Promise<void> {
+  if (persistRequested) return;
+  persistRequested = true;
+  try {
+    const storage = navigator.storage;
+    if (!storage) return;
+    const persisted =
+      typeof storage.persisted === 'function' ? await storage.persisted() : false;
+    if (persisted === true) return;
+    if (typeof storage.persist === 'function') {
+      await storage.persist();
+    }
+  } catch {
+    // Best-effort by contract: never block ingest on persistence.
+  }
+}
+
 const DOCUMENTS_DESCRIPTION = 'Add files and knowledge packs that Chat can search and cite.';
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
+/**
+ * PRR-007 recovery: a browser/tab close during processing leaves documents
+ * persisted with a non-terminal status ('processing'/'uploading') and no
+ * in-flight promise to resume them. Reset any such stale document to 'error'
+ * so it doesn't render stuck forever; the user can delete and re-add it.
+ * Applied to the mount load AND to the remote reload's foreign rows (reviewer
+ * round-2 Q1): a raw row imported from another tab's crash must not render
+ * stuck — and after another tab deletes it, the merge must drop it instead of
+ * retaining a zombie the debounced save would re-put.
+ */
+function recoverInterrupted(docs: DocumentEntry[]): DocumentEntry[] {
+  return docs.map((doc) =>
+    doc.status === 'processing' || doc.status === 'uploading'
+      ? {
+          ...doc,
+          status: 'error' as const,
+          errorMessage: 'Processing was interrupted. Please delete and re-add this document.',
+        }
+      : doc
+  );
 }
 
 /**
@@ -66,6 +182,11 @@ export function DocumentsPage() {
   const [documents, setDocuments] = useState<DocumentEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // PRR-017: docId of a fail-closed delete whose retained row should receive
+  // focus. Carried as STATE (not a ref off deletingId) because act/React
+  // batching can collapse deletingId's null -> docId -> null into no visible
+  // transition, which a [deletingId]-keyed effect would never observe.
+  const [focusAfterDeleteId, setFocusAfterDeleteId] = useState<string | null>(null);
   // F9: one-time banner when the embedding model was upgraded and the stored
   // vector index was discarded as incompatible (see VECTOR_INDEX_VERSION).
   const [showReindexNotice, setShowReindexNotice] = useState(false);
@@ -111,6 +232,18 @@ export function DocumentsPage() {
   // start and checks controller.signal between stages; the UI Cancel button
   // calls controller.abort() so the next check throws (caught -> terminal error).
   const cancelControllersRef = useRef<Map<string, AbortController>>(new Map());
+  // Round-6 ownership (reviewer round-3 Finding 1): ids accepted into THIS
+  // tab's upload queue, from accept time until their processFile run ends (or
+  // a delete lands). The merge's live/foreign split classifies by OWNERSHIP,
+  // not by controller — queued files have no controller yet, and the 500ms
+  // bulk save persists them; recovering such a row would stamp a false
+  // 'interrupted' error on this tab's own live queue.
+  const ownedIdsRef = useRef<Set<string>>(new Set());
+  // Foreign rows recovered from raw non-terminal status on the latest reload
+  // (reviewer round-3 Q1): this tab's saves never re-put them — if another
+  // tab deleted the underlying doc between the reload and the debounce
+  // firing, re-putting would resurrect it on disk.
+  const recoveredForeignIdsRef = useRef<Set<string>>(new Set());
 
   // F9: surface the re-index requirement once. The flag is set by VectorIndex
   // on version mismatch; cleared here on dismiss so the user sees it once.
@@ -163,21 +296,7 @@ export function DocumentsPage() {
         // silently folded in here.
         const docs = await loadDocuments();
         if (cancelled) return;
-        // PRR-007: a browser/tab close during processing leaves documents
-        // persisted with a non-terminal status ('processing'/'uploading') and
-        // no in-flight promise to resume them. Reset any such stale documents
-        // to 'error' so they don't render stuck forever; the user can delete
-        // and re-add them.
-        const recovered = docs.map((doc) =>
-          doc.status === 'processing' || doc.status === 'uploading'
-            ? {
-                ...doc,
-                status: 'error' as const,
-                errorMessage: 'Processing was interrupted. Please delete and re-add this document.',
-              }
-            : doc
-        );
-        setDocuments(recovered);
+        setDocuments(recoverInterrupted(docs));
       } catch (error) {
         console.error('Failed to load documents:', error);
         showToast('Failed to load documents. Please reload the page.', 'error');
@@ -191,11 +310,149 @@ export function DocumentsPage() {
     };
   }, [electronMode, desktopSession, showToast]);
 
+  // #270 (PC-3 production subscriber): when another tab commits a document
+  // change, reload this tab's list so it never serves — and later re-saves —
+  // a stale snapshot. Two protections:
+  // - Merge, don't replace (PRR-005): rows that are queued or processing in
+  //   THIS tab but not yet persisted (their debounce save has not fired) are
+  //   absent from the loaded list; a pure replace would drop them — queued
+  //   files have no cancel controller until their processFile starts — and
+  //   orphan their index chunks when they later settle.
+  // - Coalesce (PRR-021): announcement bursts collapse into one reload.
+  useEffect(() => {
+    if (electronMode) return;
+    let reloadTimer: ReturnType<typeof setTimeout> | undefined;
+    // Serialized reload (reviewer round-4b follow-up): the 100ms timer
+    // coalesces bursts but does not prevent a SECOND reload from starting
+    // while the first is still awaiting loadDocuments — two overlapping merge
+    // updaters race, and whichever finishes last wins (a stale snapshot could
+    // overwrite fresher state). Single-flight with ONE queued trailing run,
+    // the same shape the keyword/vector stores use.
+    let reloadRunning = false;
+    let reloadQueued = false;
+    let reloadStopped = false;
+    const runReload = () => {
+      void (async () => {
+        try {
+          const loaded = await loadDocuments();
+          if (reloadStopped) return; // unmounted mid-load: never merge
+          // Classification depends only on refs (stable across this await): a
+          // `loaded` row this tab OWNS — accepted into its queue or carrying a
+          // cancel controller — serves this tab's LIVE copy, because the
+          // 500ms bulk save persists QUEUED rows before any controller exists
+          // (reviewer round-3 Finding 1: controller-only classification
+          // recovered this tab's own live queue row as a foreign
+          // interruption). Recovery applies only to rows with NO local owner.
+          const inFlight = new Set(cancelControllersRef.current.keys());
+          const owned = ownedIdsRef.current;
+          const liveIds = new Set(
+            loaded.filter((doc) => inFlight.has(doc.id) || owned.has(doc.id)).map((doc) => doc.id)
+          );
+          // Rows this pass recovers from raw non-terminal foreign status are
+          // never re-put by this tab's saves (reviewer round-3 Q1): an
+          // intervening remote delete must not be resurrected by the
+          // debounce firing while the recovered copy still sits in state.
+          recoveredForeignIdsRef.current = new Set(
+            loaded
+              .filter(
+                (doc) =>
+                  !liveIds.has(doc.id) &&
+                  (doc.status === 'processing' || doc.status === 'uploading')
+              )
+              .map((doc) => doc.id)
+          );
+          setDocuments((prev) => {
+            const loadedIds = new Set(loaded.map((doc) => doc.id));
+            // No gate on ABSENT rows: files still QUEUED behind the
+            // sequential processFile loop have no controller yet but are just
+            // as un-persisted — dropping them orphans their chunks (their
+            // terminal upsert is gated on finding this row). Absent +
+            // non-terminal implies this tab's own row: foreign rows only ever
+            // arrive through `loaded`, and unrecovered foreign ones arrive as
+            // terminal or 'error' status.
+            const queued = prev.filter(
+              (doc) =>
+                !loadedIds.has(doc.id) &&
+                (doc.status === 'uploading' || doc.status === 'processing')
+            );
+            const merged = [
+              // Owned rows: this tab's live copy wins over the persisted one.
+              // Served from `prev` only — if the row is gone from prev (a
+              // local delete won the race against this reload), the stale
+              // `loaded` snapshot must NOT re-insert it (reviewer round-4 Q4).
+              ...prev.filter((doc) => liveIds.has(doc.id)),
+              // Foreign rows recover interrupted statuses (mount recovery
+              // mirrored — reviewer round-2 Q1): a crashed tab's raw row
+              // never renders stuck and, once deleted elsewhere, is not
+              // retained (the 'error' copy fails the keep filter above).
+              ...recoverInterrupted(loaded.filter((doc) => !liveIds.has(doc.id))),
+              ...queued,
+            ];
+            merged.sort((a, b) => b.uploadedAt - a.uploadedAt);
+            return merged;
+          });
+        } catch (error) {
+          console.error('Failed to reload documents after a remote change:', error);
+        } finally {
+          reloadRunning = false;
+          if (reloadQueued) {
+            reloadQueued = false;
+            // Drain through the GUARDED entry (reviewer round-4c Finding):
+            // runReload() directly would leave the guard DOWN during the
+            // trailing run, letting a later timer fire a concurrent load —
+            // the same shape the stores use (scheduleRefresh, not load).
+            if (!reloadStopped) reload();
+          }
+        }
+      })();
+    };
+    const reload = () => {
+      if (reloadRunning) {
+        reloadQueued = true;
+        return;
+      }
+      reloadRunning = true;
+      runReload();
+    };
+    const onRemote = () => {
+      if (reloadTimer !== undefined) clearTimeout(reloadTimer);
+      reloadTimer = setTimeout(reload, 100);
+    };
+    const unsubscribe = onDocumentsRemoteChange(onRemote);
+    return () => {
+      reloadStopped = true;
+      if (reloadTimer !== undefined) clearTimeout(reloadTimer);
+      unsubscribe();
+    };
+  }, [electronMode]);
+
   // Keep the latest-documents ref in sync so the debounced save and the unmount
   // flush always read CURRENT state (F4/F13).
   useEffect(() => {
     latestDocumentsRef.current = documents;
   }, [documents]);
+
+  // PRR-017: land the fail-closed delete's focus hand-off on the retained
+  // row's delete control. The confirm button already unmounted (the list's
+  // neighbour hand-off owns focus at confirm time), and while deletingId is
+  // still set the control is disabled — focus() on a disabled button no-ops.
+  // Retry across renders until the button is present and enabled; consume the
+  // request only on a successful focus so a not-yet-flushed commit (act can
+  // collapse the intermediate deletingId transition) is retried on the next
+  // keyed run instead of being dropped.
+  useEffect(() => {
+    const docId = focusAfterDeleteId;
+    if (docId === null) return;
+    // Match the ROW by id: file names are not unique, so an aria-label
+    // comparison could hand focus to a same-named neighbour's control.
+    const row = Array.from(document.querySelectorAll<HTMLElement>('[data-doc-id]')).find(
+      (el) => el.dataset.docId === docId
+    );
+    const retained = row?.querySelector<HTMLButtonElement>('button[data-doc-action="delete"]');
+    if (!retained || retained.disabled) return;
+    retained.focus();
+    setFocusAfterDeleteId(null);
+  }, [focusAfterDeleteId, deletingId]);
 
   // Save documents to IndexedDB when they change (debounced).
   // F13: the save callback reads latestDocumentsRef.current at FIRE TIME rather
@@ -210,7 +467,10 @@ export function DocumentsPage() {
 
     saveTimeoutRef.current = setTimeout(async () => {
       try {
-        await saveDocuments(latestDocumentsRef.current);
+        const toSave = latestDocumentsRef.current.filter(
+          (doc) => !recoveredForeignIdsRef.current.has(doc.id)
+        );
+        await saveDocuments(toSave);
       } catch (error) {
         console.error('Failed to save documents:', error);
         showToast('Failed to save document changes. They may not persist after reload.', 'error');
@@ -234,7 +494,9 @@ export function DocumentsPage() {
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
         saveTimeoutRef.current = null;
-        void saveDocuments(latestDocumentsRef.current).catch((error) => {
+        void saveDocuments(
+          latestDocumentsRef.current.filter((doc) => !recoveredForeignIdsRef.current.has(doc.id))
+        ).catch((error) => {
           console.error('Failed to flush documents on unmount:', error);
         });
       }
@@ -262,6 +524,10 @@ export function DocumentsPage() {
       };
 
     try {
+      // C12: ask the browser to persist storage before the first ingest
+      // (once per page session, best-effort; see requestPersistenceOnce).
+      await requestPersistenceOnce();
+
       // Update status to processing
       setDocuments((prev) =>
         prev.map((doc) =>
@@ -365,6 +631,10 @@ export function DocumentsPage() {
             )
           );
         });
+        // C8: a cancel issued during encodeBatch lands here — the batch is
+        // done but NOTHING has been written to either index yet. Bail out
+        // before the writes so a cancelled document never becomes searchable.
+        throwIfCancelled();
         const entries = chunks.map((chunk, i) => ({
           docId: chunk.docId!,
           chunkIndex: chunk.chunkIndex,
@@ -375,14 +645,16 @@ export function DocumentsPage() {
         }));
         await vectorIndex.addBatch(entries);
         await vectorIndex.save();
+        // C8: a cancel issued while the vector save ran must still stop the
+        // keyword stage from writing a half-indexed document.
+        throwIfCancelled();
       } catch (indexError) {
-        console.error('Failed to add to vector index:', indexError);
-        // U2: a cancel surfaces here as an abort; rethrow so the outer handler
-        // records the terminal 'Indexing cancelled' state rather than silently
-        // continuing to keyword indexing.
-        if (controller.signal.aborted) throw indexError;
-        showToast('Failed to index document for semantic search.', 'error');
-        // Continue so keyword indexing can proceed
+        // #273 (C10/AC10): a vector-stage failure is TERMINAL — the document
+        // must not be marked ready while its chunks are missing from the
+        // vector index (that was the false-ready class this batch closes).
+        // The outer catch records the error row, purges both indexes, and
+        // toasts.
+        throw indexError;
       }
 
       // Keyword index: add text chunks
@@ -400,8 +672,9 @@ export function DocumentsPage() {
           keywordIndex.addDocuments(chunks);
           await keywordIndex.save();
         } catch (indexError) {
-          console.error('Failed to add to keyword index:', indexError);
-          // Continue so document is still marked as processed
+          // #273 (AC10): a keyword-stage failure is TERMINAL for the same
+          // reason (never ready on a failed stage).
+          throw indexError;
         }
       }
       throwIfCancelled(); // U2: check cancel before finalize
@@ -428,6 +701,20 @@ export function DocumentsPage() {
             : doc
         )
       );
+      // PC-13: persist the terminal row through the per-document production
+      // path (upsert), not just the bulk debounced list save.
+      const readyRow = latestDocumentsRef.current.find((doc) => doc.id === docId);
+      if (readyRow) {
+        void upsertDocument({
+          ...readyRow,
+          status: 'ready',
+          progress: 100,
+          chunkCount: chunks.length,
+          errorMessage: undefined,
+        }).catch((persistError: unknown) =>
+          console.error('Failed to persist document row:', persistError)
+        );
+      }
     } catch (error) {
       const errorMessage =
         error instanceof Error
@@ -437,25 +724,51 @@ export function DocumentsPage() {
           : 'Unknown error occurred';
       const wasCancelled = controller.signal.aborted;
       console.error('Failed to process document:', error);
+      // C11: a storage-quota failure (directly or anywhere in the cause
+      // chain) names the real problem and the remedy instead of a generic
+      // message.
+      const recordedMessage = isQuotaError(error) ? QUOTA_ERROR_MESSAGE : errorMessage;
 
       setDocuments((prev) =>
         prev.map((doc) =>
           doc.id === docId
-            ? { ...doc, status: 'error', errorMessage }
+            ? { ...doc, status: 'error', errorMessage: recordedMessage }
             : doc
         )
       );
+      // AC10: a terminal state owns its index footprint — purge whatever was
+      // written so a failed/cancelled document never answers queries.
+      // Best-effort by contract: a purge failure is logged, never masks the
+      // original error.
+      try {
+        const purge = await purgeDocFromIndexes(docId);
+        if (!purge.ok) {
+          console.warn(`[DocumentsPage] terminal purge for ${docId} incomplete: ${purge.reason ?? 'unknown'}`);
+        }
+      } catch (purgeError) {
+        console.error('[DocumentsPage] terminal purge failed:', purgeError);
+      }
+      // PC-13: persist the terminal error row through the production path.
+      const errorRow = latestDocumentsRef.current.find((doc) => doc.id === docId);
+      if (errorRow) {
+        void upsertDocument({ ...errorRow, status: 'error', errorMessage: recordedMessage }).catch(
+          (persistError: unknown) => console.error('Failed to persist document row:', persistError)
+        );
+      }
       // U3b: surface indexing/quota/init failures as a toast. Cancellation is
       // user-initiated, so it stays silent here (the doc already shows the
       // terminal 'Indexing cancelled' state).
       if (!wasCancelled) {
-        showToast(`Failed to process "${file.name}": ${errorMessage}`, 'error');
+        showToast(`Failed to process "${file.name}": ${recordedMessage}`, 'error');
       }
     } finally {
       // U2: drop this run's AbortController unless a newer run replaced it.
       if (cancelControllersRef.current.get(docId) === controller) {
         cancelControllersRef.current.delete(docId);
       }
+      // Ownership ends when the run settles (terminal row); a later reload
+      // then treats the row on its persisted status alone.
+      ownedIdsRef.current.delete(docId);
     }
     }; // end run()
 
@@ -645,6 +958,10 @@ export function DocumentsPage() {
 
       // Add new entries to state
       setDocuments((prev) => [...accepted.map((a) => a.entry), ...prev]);
+      // Ownership starts at accept time — before any controller exists.
+      for (const { entry } of accepted) {
+        ownedIdsRef.current.add(entry.id);
+      }
 
       // Process each accepted file
       for (const { file, entry } of accepted) {
@@ -746,7 +1063,28 @@ export function DocumentsPage() {
         await inFlight;
       }
 
-      // Remove from IndexedDB
+      // C10: remove from the search indexes BEFORE dropping the row, and
+      // fail closed — if a removal fails (or an index cannot be made ready)
+      // the row stays visible so the user can retry, and no orphan chunks
+      // are stranded under a deleted row.
+      const purge = await purgeDocFromIndexes(docId);
+      if (!purge.ok) {
+        const docName =
+          latestDocumentsRef.current.find((doc) => doc.id === docId)?.fileName ??
+          'this document';
+        showToast(
+          `Could not fully remove "${docName}" from the search index. Please try again.`,
+          'error'
+        );
+        // PRR-017: the confirm button unmounted with the dialog and the
+        // row's delete control may still be disabled (deletingId clears only
+        // in finally) — carry the focus request as state; the effect below
+        // lands it once the control is present and enabled.
+        setFocusAfterDeleteId(docId);
+        return;
+      }
+
+      // Remove from IndexedDB (announces the change to other tabs).
       await deleteDocumentFromStore(docId);
 
       // F13: cancel any armed debounced save so it cannot fire with a stale
@@ -756,31 +1094,9 @@ export function DocumentsPage() {
         saveTimeoutRef.current = null;
       }
 
-      // Remove from search indexes
-      try {
-        const vectorIndex = getVectorIndex();
-        if (vectorIndex.isReady()) {
-          await vectorIndex.removeByDocId(docId);
-          await vectorIndex.save();
-        }
-      } catch (indexError) {
-        console.error('Failed to remove from vector index:', indexError);
-        // Continue even if index removal fails
-      }
-
-      try {
-        const keywordIndex = getKeywordIndex();
-        if (keywordIndex.isReady()) {
-          keywordIndex.removeByDocId(docId);
-          await keywordIndex.save();
-        }
-      } catch (indexError) {
-        console.error('Failed to remove from keyword index:', indexError);
-        // Continue even if index removal fails
-      }
-
       // Remove from state
       setDocuments((prev) => prev.filter((doc) => doc.id !== docId));
+      ownedIdsRef.current.delete(docId);
       // U3b: confirm the deletion to the user.
       showToast('Document deleted', 'success');
     } catch (error) {

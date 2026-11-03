@@ -37,6 +37,13 @@ const EMBEDDING_DIMENSIONS = 768;
 interface PendingRequest {
   resolve(value: unknown): void;
   reject(reason: unknown): void;
+  /**
+   * #273 (C14): batch-progress messages carry the request id, so progress is
+   * routed to THIS request's callback only — never to another concurrent
+   * request's callback, and never to a request that already settled (the
+   * entry is deleted on result/error).
+   */
+  onProgress?: EmbeddingProgressCallback;
 }
 
 /**
@@ -170,9 +177,19 @@ export class EmbeddingService {
             resolve();
           } else if (msg.kind === 'error' && msg.id === -1) {
             reject(new Error(msg.message));
+          } else if (msg.kind === 'batch-progress') {
+            // #273 (C14): the worker posts batch-progress during encodeBatch;
+            // route it by request id to that request's callback only.
+            const pending = pendingRequests.get(msg.id);
+            if (pending?.onProgress) {
+              pending.onProgress(msg.processed, msg.total);
+            }
           } else if (msg.kind === 'encode-result' || msg.kind === 'encodeBatch-result' || msg.kind === 'error') {
             const pending = pendingRequests.get(msg.id);
             if (pending) {
+              // Deleting the entry also retires its progress callback: a
+              // late/stray progress message for a settled request finds no
+              // pending entry and is dropped.
               pendingRequests.delete(msg.id);
               if (msg.kind === 'error') {
                 pending.reject(new Error(msg.message));
@@ -219,10 +236,13 @@ export class EmbeddingService {
    * Each request gets a unique correlation id stored in
    * pendingRequests until the worker replies.
    */
-  private _postAndWait(msg: Record<string, unknown>): Promise<unknown> {
+  private _postAndWait(
+    msg: Record<string, unknown>,
+    onProgress?: EmbeddingProgressCallback
+  ): Promise<unknown> {
     const id = nextRequestId++;
     return new Promise((resolve, reject) => {
-      pendingRequests.set(id, { resolve, reject });
+      pendingRequests.set(id, { resolve, reject, ...(onProgress ? { onProgress } : {}) });
       worker!.postMessage({ id, ...msg });
     });
   }
@@ -268,7 +288,7 @@ export class EmbeddingService {
    */
   async encodeBatch(
     texts: string[],
-    _onProgress?: EmbeddingProgressCallback
+    onProgress?: EmbeddingProgressCallback
   ): Promise<EmbeddingVector[]> {
     if (!this.isReady()) {
       throw new Error('EmbeddingService not initialized. Call initialize() first.');
@@ -284,10 +304,13 @@ export class EmbeddingService {
       }
     }
 
-    const result = await this._postAndWait({
-      kind: 'encodeBatch',
-      texts,
-    }) as {
+    const result = await this._postAndWait(
+      {
+        kind: 'encodeBatch',
+        texts,
+      },
+      onProgress
+    ) as {
       kind: 'encodeBatch-result';
       id: number;
       vectors: Float32Array[];

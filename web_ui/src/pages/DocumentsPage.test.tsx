@@ -11,6 +11,11 @@ vi.mock('../lib/storage/document-store', () => ({
   loadDocuments: vi.fn().mockResolvedValue([]),
   saveDocuments: vi.fn().mockResolvedValue(undefined),
   deleteDocument: vi.fn().mockResolvedValue(undefined),
+  // PRR-016: DocumentsPage gained these two imports in PR #274; the excluded
+  // spec's factory must stay in sync or the file breaks the moment it is
+  // re-enabled.
+  upsertDocument: vi.fn(async () => {}),
+  onDocumentsRemoteChange: vi.fn(() => () => {}),
 }));
 
 vi.mock('../lib/processing/extractor-factory', () => ({

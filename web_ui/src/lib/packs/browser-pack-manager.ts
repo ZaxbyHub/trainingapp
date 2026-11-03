@@ -178,6 +178,17 @@ export class BrowserPackManager {
     return (await this.deps.registry.list()).filter((r) => r.active && r.embedded !== true);
   }
 
+  /**
+   * Every active installed version record, embedded flag included (#270
+   * pack-index-health enumeration: the health check must also see records
+   * whose flag is true so wiped chunks can be detected and re-embedded).
+   */
+  async activeRecords(): Promise<Array<{ packId: string; version: string; dir: string; embedded?: boolean }>> {
+    return (await this.deps.registry.list())
+      .filter((r) => r.active)
+      .map((r) => ({ packId: r.packId, version: r.version, dir: r.dir, embedded: r.embedded }));
+  }
+
   /** Read one file of a pack's ACTIVE version (the player relay's only read path). */
   async readActiveFile(packId: string, segments: readonly string[]): Promise<Blob | null> {
     const record = await this.activeVersion(packId);
@@ -385,7 +396,7 @@ export class BrowserPackManager {
 let singleton: BrowserPackManager | null = null;
 
 /** Parse a version's stored pack.json and read its manifest docs back from storage. */
-async function storedVersionDocs(
+export async function storedVersionDocs(
   manager: BrowserPackManager,
   record: PackVersionRecord,
 ): Promise<{ manifest: PackManifest; docs: Map<string, Uint8Array> } | null> {
@@ -405,14 +416,45 @@ async function storedVersionDocs(
  * was not ready at install time). Called after an install and on the app's
  * 'embedding-service-ready' event; each version is marked once embedded, so
  * the work resumes after a reload.
+ *
+ * #273 (C13): single-flight with a rerun flag. Overlapping calls JOIN the
+ * in-flight run instead of re-enumerating the same pending records and
+ * inserting duplicate vectors. A version that becomes pending DURING the
+ * active run is picked up by an automatic follow-up pass (the rerun flag),
+ * so the joined callers still observe that version embedded exactly once.
  */
+let embedInFlight: Promise<void> | null = null;
+let embedRerunQueued = false;
+
 export async function embedPendingPackChunks(manager: BrowserPackManager = getBrowserPackManager()): Promise<void> {
+  if (embedInFlight !== null) {
+    // Join the active run; the rerun flag guarantees a follow-up pass covers
+    // anything that became pending while it ran.
+    embedRerunQueued = true;
+    return embedInFlight;
+  }
+  embedInFlight = runEmbedPendingPass(manager);
+  try {
+    await embedInFlight;
+  } finally {
+    embedInFlight = null;
+  }
+}
+
+async function runEmbedPendingPass(manager: BrowserPackManager): Promise<void> {
   const ingest = await import('./pack-ingest');
+  embedRerunQueued = false;
   for (const record of await manager.pendingEmbeddings()) {
     const stored = await storedVersionDocs(manager, record);
     if (stored === null) continue;
     const chunks = ingest.buildPackChunks(stored.manifest, stored.docs);
     if (await ingest.embedPackChunks(chunks)) await manager.markEmbedded(record.packId, record.version, true);
+  }
+  // A version became pending mid-run (install/activate during the pass): run
+  // exactly one follow-up pass so late joiners observe it embedded.
+  if (embedRerunQueued) {
+    embedRerunQueued = false;
+    await runEmbedPendingPass(manager);
   }
 }
 
