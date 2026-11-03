@@ -44,6 +44,24 @@ export function subscribe(listener: (state: RetrievalHealthState) => void): () =
   };
 }
 
+/**
+ * U8/U7 (#268): the most recent embedding-service initialization failure
+ * message (cleared to null once init succeeds). The orchestrator surfaces it
+ * as the keyword-only health cause so the persistent notice names the REAL
+ * problem (e.g. the staging error `embedding model not staged: <url>`).
+ */
+let lastInitFailure: string | null = null;
+
+/** Record the latest embedding-init failure message (null = recovered). */
+export function noteEmbeddingInitFailure(message: string | null): void {
+  lastInitFailure = message;
+}
+
+/** The last embedding-init failure message, or null once init succeeds. */
+export function getLastEmbeddingInitFailure(): string | null {
+  return lastInitFailure;
+}
+
 export function resetRetrievalHealth(): void {
   state = { status: 'ok' };
   notify();

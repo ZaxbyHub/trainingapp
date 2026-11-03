@@ -31,8 +31,8 @@ import { getLLMService } from '../llm/llm-factory';
 import { buildLearnResults, type LinkedSlide } from './learn-kernel';
 import { linkedSlidesWithin } from './learn-links';
 import { DEFAULT_N_CTX } from '../llm/wllama-service';
-import { ensureEmbeddingServiceReady, ensureReadinessGateChecked } from '../../hooks/useServiceInitialization';
-import { getRetrievalHealth, setKeywordOnly, setOk } from './retrieval-health';
+import { ensureEmbeddingServiceReady, ensureReadinessGateChecked } from '../../hooks/useServiceInitialization'
+import { getRetrievalHealth, getLastEmbeddingInitFailure, setKeywordOnly, setOk } from './retrieval-health';
 
 /**
  * Options for RAG query execution.
@@ -474,8 +474,11 @@ export class RAGOrchestrator {
       // ok -> keyword-only transition (C8 counts exactly 1 across queries).
       if (getRetrievalHealth().status !== 'keyword-only') {
         console.warn('[RAGOrchestrator] Embedding service unavailable; using keyword-only retrieval');
-        setKeywordOnly('Embedding service unavailable');
       }
+      // The cause names the REAL failure when one is known (U8: e.g.
+      // 'embedding model not staged: <url>'), falling back to the generic
+      // line; the transition gate above keeps the warn once-per-session.
+      setKeywordOnly(getLastEmbeddingInitFailure() ?? 'Embedding service unavailable');
       retrievalDegraded = true;
     }
 

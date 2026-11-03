@@ -23,8 +23,8 @@ import {
   EMBEDDING_MODEL_DIR,
 } from '../models/model-manifest';
 
-/** The staged config path this probe checks. */
-export function embeddingConfigProbePath(): string {
+/** The staged config path this probe checks (module-private helper). */
+function embeddingConfigProbePath(): string {
   return `${EMBEDDING_MODELS_BASE}/${EMBEDDING_MODEL_DIR}/config.json`;
 }
 

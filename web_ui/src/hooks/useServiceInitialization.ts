@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { BrowserEngine } from '../types/llm';
 import { getEmbeddingService } from '../lib/embeddings/embedding-service';
+import { noteEmbeddingInitFailure } from '../lib/rag/retrieval-health';
 import { getVectorIndex } from '../lib/search/vector-index';
 import { getKeywordIndex } from '../lib/search/keyword-index';
 import { getRerankerService } from '../lib/search/reranker';
@@ -91,6 +92,9 @@ export async function ensureEmbeddingServiceReady(): Promise<boolean> {
       const embeddingService = getEmbeddingService();
       await embeddingService.initialize();
       embeddingServiceReady = embeddingService.isReady();
+      if (embeddingServiceReady) {
+        noteEmbeddingInitFailure(null);
+      }
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(
@@ -103,6 +107,10 @@ export async function ensureEmbeddingServiceReady(): Promise<boolean> {
       return embeddingServiceReady;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to load embedding model';
+      // U8/U7 (#268): remember the concrete init failure (in the health
+      // store) so the session health cause can name the REAL problem (e.g.
+      // the staging error `embedding model not staged: <url>`).
+      noteEmbeddingInitFailure(message);
       if (typeof window !== 'undefined') {
         window.dispatchEvent(
           new CustomEvent('embedding-service-error', {

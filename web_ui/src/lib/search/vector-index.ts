@@ -694,6 +694,15 @@ export class VectorIndex {
         for (const [id, meta] of previousMapping) {
           if (
             !newMapping.has(id) &&
+            // Excludes ids ALREADY inserted this save under remapped ids: a
+            // mid-window re-put of a snapshot doc is consumed by the
+            // discovery loop (its vector lands in the merged snapshot under
+            // a NEW id), so overlaying the original live id here would leave
+            // a live-mapping entry whose vector only exists in the disposed
+            // pre-swap instance (and a later removeByDocId softDelete on
+            // that id throws). The live map must only hold ids that resolve
+            // in the live index.
+            !insertedOriginalIds.includes(id) &&
             this.vectorsById.has(id) &&
             this.pendingOps.has(meta.docId) &&
             (!snapshot.has(meta.docId) ||
@@ -987,7 +996,8 @@ export class VectorIndex {
   /**
    * Read the persisted content version from IndexedDB WITHOUT loading the
    * native EdgeVec blob. Return contract:
-   *  - `null`  → there is nothing to check: either IndexedDB is unavailable
+   *  - `null`  → there is nothing to check: IndexedDB is unavailable, or the
+   *    store is fresh-empty (no version row AND no idMapping row — U6)
    *              (some test contexts) OR the database did not exist before this
    *              call (a brand-new install with no prior corpus). The caller
    *              skips the version check and proceeds with the normal load path.
@@ -1131,7 +1141,8 @@ export class VectorIndex {
     }
 
     // F9: check the persisted content version BEFORE loading the native blob.
-    // `null` means IndexedDB is unavailable (e.g. a test context) — proceed with
+    // `null` means nothing is stored to check (no IndexedDB, or a fresh-empty
+    // store per U6) — proceed with
     // the normal load path. Any non-null value that isn't VECTOR_INDEX_VERSION —
     // including 0 (a pre-v2/v1 store with no version key, i.e. mean-pooled
     // vectors from a previous build) — is incompatible and MUST be discarded so
