@@ -70,7 +70,16 @@ export interface UseServiceInitialization {
  */
 export async function ensureEmbeddingServiceReady(): Promise<boolean> {
   if (embeddingServiceReady) {
-    return true;
+    // Readiness-cache honesty (U7b, #268): the cached flag can go stale when
+    // the worker dies AFTER a successful init (U9's failure path nulls the
+    // service's worker). Verify the service is ACTUALLY ready before
+    // trusting the cache; a no-longer-ready service falls through to a real
+    // re-initialize attempt (flag cleared first), so the next query retries
+    // instead of being served the stale `true` forever.
+    if (getEmbeddingService().isReady()) {
+      return true;
+    }
+    embeddingServiceReady = false;
   }
 
   if (embeddingServiceInitPromise) {

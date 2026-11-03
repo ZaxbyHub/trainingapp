@@ -79,6 +79,22 @@ export class KeywordIndex {
    * whole-blob replace.
    */
   private pendingOps: Map<string, 'put' | 'remove'> = new Map();
+  /**
+   * U2 (#275): per-docId op sequence — a monotone counter bumped at every
+   * `pendingOps.set` site, so the post-save clear can tell a re-set op (the
+   * same docId put again while the async merge was in flight, where value
+   * comparison cannot — a re-put writes the same 'put' string) from an
+   * untouched snapshot op and keep the re-set op pending for the next save.
+   */
+  private pendingOpsSeq: Map<string, number> = new Map();
+  /** U2: monotone source for pendingOpsSeq values. */
+  private pendingOpsCounter = 0;
+
+  /** U2: bump the per-doc op sequence (called beside every pendingOps.set). */
+  private bumpOpSeq(docId: string): void {
+    this.pendingOpsCounter += 1;
+    this.pendingOpsSeq.set(docId, this.pendingOpsCounter);
+  }
   /** Remote-refresh serialization state (PRR-004): exactly one load runs at a
    * time; a burst queues ONE trailing run instead of racing concurrent loads
    * (whichever finished last would win the swap — a stale overwrite). */
@@ -264,6 +280,7 @@ export class KeywordIndex {
     this.index!.add(id, text);
 
     this.pendingOps.set(docId, 'put');
+    this.bumpOpSeq(docId);
   }
 
   /**
@@ -362,6 +379,7 @@ export class KeywordIndex {
     // Record the removal BEFORE the early return: this tab may not hold the
     // docId locally while another tab's saved entries still contain it.
     this.pendingOps.set(docId, 'remove');
+    this.bumpOpSeq(docId);
 
     const chunkIds = this.docIdToChunks.get(docId);
     if (!chunkIds || chunkIds.size === 0) {
@@ -436,6 +454,8 @@ export class KeywordIndex {
         // merge keeps them. A local put REPLACES the baseline doc's entries
         // (drop the docId from the baseline, then apply ours).
         const snapshot = new Map(this.pendingOps);
+        // U2: per-doc op sequences at snapshot time (see the clear below).
+        const snapshotSeq = new Map(this.pendingOpsSeq);
         const baseline = await this.loadFromIDB();
         const merged: IndexEntry[] = (baseline?.entries ?? []).filter(
           (e) => !snapshot.has(e.docId)
@@ -470,9 +490,15 @@ export class KeywordIndex {
         }
         await this.persistToIDB({ entries: merged, documentChunks });
         // Clear only the ops snapshotted at save start; mutations made while
-        // the async merge was in flight survive for the next save.
+        // the async merge was in flight survive for the next save. U2: the
+        // clear is SEQUENCE-CONDITIONAL — a snapshot docId whose op was
+        // re-set during the merge (its live sequence moved past the
+        // snapshot's) stays pending, and the stillPending rebuild below then
+        // serves its CURRENT in-memory entries as designed.
         for (const docId of snapshot.keys()) {
-          this.pendingOps.delete(docId);
+          if ((this.pendingOpsSeq.get(docId) ?? 0) === (snapshotSeq.get(docId) ?? 0)) {
+            this.pendingOps.delete(docId);
+          }
         }
         // PRR-004 (handoff 4(a), the saving-tab asymmetry): the merge result
         // is now the persisted truth and this tab's own announcement is

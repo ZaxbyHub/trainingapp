@@ -111,6 +111,22 @@ export class VectorIndex {
    */
   private pendingOps: Map<string, 'put' | 'remove'> = new Map();
   /**
+   * U1 (#275): per-docId op sequence — a monotone counter is bumped at every
+   * `pendingOps.set` site, so the save path can tell a re-set op (the same
+   * docId put AGAIN after the snapshot was taken, e.g. a same-doc re-put
+   * landing inside the merge window) from an untouched snapshot op, where
+   * value comparison cannot (a re-put writes the same 'put' string).
+   */
+  private pendingOpsSeq: Map<string, number> = new Map();
+  /** U1: monotone source for pendingOpsSeq values. */
+  private pendingOpsCounter = 0;
+
+  /** U1: bump the per-doc op sequence (called beside every pendingOps.set). */
+  private bumpOpSeq(docId: string): void {
+    this.pendingOpsCounter += 1;
+    this.pendingOpsSeq.set(docId, this.pendingOpsCounter);
+  }
+  /**
    * Raw vectors for entries not yet persisted (cleared after each successful
    * save). The snapshot-rebuild merge needs the raw floats to re-insert them
    * into the freshly loaded baseline instance; EdgeVec exposes no vector
@@ -272,6 +288,7 @@ export class VectorIndex {
       });
       this.vectorsById.set(internalId, vector as Float32Array);
       this.pendingOps.set(docId, 'put');
+      this.bumpOpSeq(docId);
     } catch (error) {
       throw new Error(
         `Failed to add vector: ${error instanceof Error ? error.message : String(error)}`,
@@ -345,6 +362,7 @@ export class VectorIndex {
         // freshly loaded baseline instance.
         this.vectorsById.set(internalId, vectors[j]);
         this.pendingOps.set(entry.docId!, 'put');
+        this.bumpOpSeq(entry.docId!);
       }
       console.info(`[VectorIndex] Batch indexed ${result.inserted} vectors`);
       result.free();
@@ -425,6 +443,7 @@ export class VectorIndex {
     // Record the removal BEFORE any early return: this tab may not hold the
     // docId locally while another tab's saved entries still contain it.
     this.pendingOps.set(docId, 'remove');
+    this.bumpOpSeq(docId);
     try {
       // Find all internal IDs associated with this document
       const toRemove: number[] = [];
@@ -489,6 +508,10 @@ export class VectorIndex {
         //     so mutations during the async merge survive (PC-2).
         const snapshot = new Map(this.pendingOps);
         const dropDocIds = new Set(snapshot.keys());
+        // U1: per-doc op sequences AT SNAPSHOT TIME. A docId whose live
+        // sequence is HIGHER at the overlay/clear points re-set its op after
+        // the snapshot (a same-doc re-put landing inside the merge window).
+        const snapshotSeq = new Map(this.pendingOpsSeq);
 
         const persistedVersion = await this.readPersistedVersion();
         let temp: EdgeVec;
@@ -639,15 +662,74 @@ export class VectorIndex {
         // the snapshot write fails after the mapping row landed, restore the
         // in-memory mapping so the live instance stays consistent with the
         // still-persisted previous snapshot (IR-5).
+        //
+        // U1 (#275): COPY-FIRST persisted row. `persistedMapping` is an
+        // immutable copy of exactly what this save writes, taken BEFORE the
+        // swap (post-swap, `newMapping` IS the live map; an overlay applied
+        // to it before the write would be persisted WITHOUT its vector — the
+        // mapping-without-vector failure mode). The overlay below writes the
+        // LIVE map only. `saveMapping()`'s default argument is `this.idMapping`,
+        // so the write below passes the copy explicitly.
+        const persistedMapping = new Map(newMapping);
         const previousMapping = this.idMapping;
         this.idMapping = newMapping;
+        // U1: overlay — swap and reconcile in ONE synchronous block (no await
+        // between them, so no put can interleave between overlay and swap).
+        // Every entry of the PRE-swap live map that is not already carried in
+        // the new map is a mutation registered after this save's merge loop
+        // read it (a blind delta):
+        //   - `!newMapping.has(id)` — not carried/inserted this save;
+        //   - `this.vectorsById.has(id)` — this exact entry has an un-persisted
+        //     raw vector, the marker of a not-yet-persisted put (boot-loaded
+        //     and superseded entries have none, so stale entries are
+        //     structurally excluded and cannot be resurrected);
+        //   - the doc still has a live op, re-set after the snapshot (U1 seq:
+        //     the docId is new since the snapshot, or its sequence moved) —
+        //     covers new-doc puts, remove→put re-puts (whose `toInsert`
+        //     discovery skipped the post-snapshot re-put), and put→put
+        //     re-puts that land during the merge.
+        // The overlay writes ONLY the live map; `persistedMapping` stays
+        // snapshot-consistent — no mapping entry is persisted without its
+        // vector in this save's snapshot (no dangling ids).
+        for (const [id, meta] of previousMapping) {
+          if (
+            !newMapping.has(id) &&
+            this.vectorsById.has(id) &&
+            this.pendingOps.has(meta.docId) &&
+            (!snapshot.has(meta.docId) ||
+              (this.pendingOpsSeq.get(meta.docId) ?? 0) > (snapshotSeq.get(meta.docId) ?? 0))
+          ) {
+            newMapping.set(id, meta);
+          }
+        }
         try {
-          await this.saveMapping();
+          await this.saveMapping(persistedMapping);
           await temp.save(INDEX_NAME);
         } catch (writeError) {
           // IR-18: a failed merge-save must not leak the WASM baseline
           // instance (the live index keeps its own instance).
+          //
+          // U1 rollback: entries that registered into the live map during the
+          // two write awaits must survive the restore. Capture the map that
+          // was live DURING the awaits BEFORE restoring (post-swap that
+          // reference is `newMapping`; the explicit capture names the intent
+          // and keeps the loop honest), restore, then re-apply the SAME
+          // overlay predicate with the absence test against the RESTORED
+          // destination (`!previousMapping.has(id)`), retaining the raw-vector
+          // and sequence guards.
+          const liveDuringWrites = this.idMapping;
           this.idMapping = previousMapping;
+          for (const [id, meta] of liveDuringWrites) {
+            if (
+              !previousMapping.has(id) &&
+              this.vectorsById.has(id) &&
+              this.pendingOps.has(meta.docId) &&
+              (!snapshot.has(meta.docId) ||
+                (this.pendingOpsSeq.get(meta.docId) ?? 0) > (snapshotSeq.get(meta.docId) ?? 0))
+            ) {
+              previousMapping.set(id, meta);
+            }
+          }
           // PRR-007: the MERGED mapping row may already be committed on disk
           // (F11 writes mapping before snapshot) — rewrite it to the
           // SNAPSHOT-PAIRED BASELINE (the row read before this save, which is
@@ -677,9 +759,15 @@ export class VectorIndex {
         this.index = temp;
 
         // Clear only the snapshotted ops/vectors; mutations made during the
-        // async merge survive for the next save.
+        // async merge survive for the next save. U1: the clear is now
+        // SEQUENCE-CONDITIONAL — a snapshot docId whose op was re-set during
+        // the window (its live sequence moved past the snapshot's) survives
+        // for the next save, which re-inserts its post-snapshot vectors
+        // (e.g. the same-doc re-put of an existing snapshot doc).
         for (const docId of snapshot.keys()) {
-          this.pendingOps.delete(docId);
+          if ((this.pendingOpsSeq.get(docId) ?? 0) === (snapshotSeq.get(docId) ?? 0)) {
+            this.pendingOps.delete(docId);
+          }
         }
         for (const internalId of insertedOriginalIds) {
           this.vectorsById.delete(internalId);
@@ -961,11 +1049,29 @@ export class VectorIndex {
         const store = tx.objectStore('mappings');
         const getReq = store.get('version');
         getReq.onsuccess = () => {
-          db.close();
           const v = getReq.result?.version;
-          // No version row → pre-v2 (v1) index. Resolve 0 so the mismatch check
-          // forces a re-index rather than loading incompatible mean-pooled vectors.
-          resolve(typeof v === 'number' ? v : 0);
+          if (typeof v === 'number') {
+            db.close();
+            resolve(v);
+            return;
+          }
+          // U6 (#268): a MISSING version row is ambiguous — a fresh empty
+          // store (nothing ever stored) or a genuine pre-v2 (v1) corpus
+          // (idMapping rows exist). Disambiguate by consulting the idMapping
+          // row itself: present → pre-v2 corpus (resolve 0 → the mismatch
+          // check forces the re-index, exactly as before); absent → fresh
+          // empty store (resolve null → load()'s null branch loads without
+          // warning or flag, so a fresh install no longer claims the corpus
+          // was discarded).
+          const mapReq = store.get('idMapping');
+          mapReq.onsuccess = () => {
+            db.close();
+            resolve(mapReq.result ? 0 : null);
+          };
+          mapReq.onerror = () => {
+            db.close();
+            reject(new Error(`Failed to read the persisted idMapping row: ${mapReq.error}`));
+          };
         };
         getReq.onerror = () => {
           db.close();

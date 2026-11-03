@@ -522,6 +522,15 @@ export function DocumentsPage() {
           throw new Error('Indexing cancelled');
         }
       };
+      // U3 (#275): ownership gate — a row whose ownership was removed
+      // (deleted while queued behind an earlier file, or mid-flight) must
+      // never reach an index write. Every pre-write checkpoint below calls
+      // this beside `throwIfCancelled`.
+      const throwIfDeleted = () => {
+        if (!ownedIdsRef.current.has(docId)) {
+          throw new Error('Document deleted');
+        }
+      };
 
     try {
       // C12: ask the browser to persist storage before the first ingest
@@ -538,6 +547,7 @@ export function DocumentsPage() {
       // Extract text from document
       const extractionResult = await extractDocument(file);
       throwIfCancelled(); // U2: check cancel after extraction
+      throwIfDeleted(); // U3: row still owned after extraction
 
       setDocuments((prev) =>
         prev.map((doc) =>
@@ -564,6 +574,7 @@ export function DocumentsPage() {
         )
       );
       throwIfCancelled(); // U2: check cancel before model init
+      throwIfDeleted(); // U3: row still owned before indexing starts
 
       // F2: ensure BOTH the embedding service and the vector index are ready
       // before deciding whether to vector-index. The embedding model is
@@ -635,6 +646,7 @@ export function DocumentsPage() {
         // done but NOTHING has been written to either index yet. Bail out
         // before the writes so a cancelled document never becomes searchable.
         throwIfCancelled();
+        throwIfDeleted(); // U3: row still owned before the vector stage writes
         const entries = chunks.map((chunk, i) => ({
           docId: chunk.docId!,
           chunkIndex: chunk.chunkIndex,
@@ -648,6 +660,7 @@ export function DocumentsPage() {
         // C8: a cancel issued while the vector save ran must still stop the
         // keyword stage from writing a half-indexed document.
         throwIfCancelled();
+        throwIfDeleted(); // U3: row still owned before the keyword stage writes
       } catch (indexError) {
         // #273 (C10/AC10): a vector-stage failure is TERMINAL — the document
         // must not be marked ready while its chunks are missing from the
@@ -678,6 +691,7 @@ export function DocumentsPage() {
         }
       }
       throwIfCancelled(); // U2: check cancel before finalize
+      throwIfDeleted(); // U3: row still owned before terminal persistence
 
       // Update progress to 90 after indexing and clear the in-flight status text.
       setDocuments((prev) =>
@@ -757,8 +771,14 @@ export function DocumentsPage() {
       }
       // U3b: surface indexing/quota/init failures as a toast. Cancellation is
       // user-initiated, so it stays silent here (the doc already shows the
-      // terminal 'Indexing cancelled' state).
-      if (!wasCancelled) {
+      // terminal 'Indexing cancelled' state). U3: a 'Document deleted'
+      // failure is ALSO user-initiated and the row is already gone — the
+      // error-state map and the terminal upsert above are both row-presence
+      // gated (a removed row matches nothing), which is what keeps a deleted
+      // row from being re-created; this toast gate extends that to the
+      // surface noise explicitly so a future refactor cannot regress it.
+      const wasDeleted = errorMessage === 'Document deleted';
+      if (!wasCancelled && !wasDeleted) {
         showToast(`Failed to process "${file.name}": ${recordedMessage}`, 'error');
       }
     } finally {
@@ -965,6 +985,13 @@ export function DocumentsPage() {
 
       // Process each accepted file
       for (const { file, entry } of accepted) {
+        // U3 (#275): the loop iterates the LOCAL `accepted` array — deleting
+        // a row from state does not stop the loop, so a row deleted while
+        // queued behind an earlier file would still be indexed. Skip rows
+        // whose ownership was removed before their turn starts.
+        if (!ownedIdsRef.current.has(entry.id)) {
+          continue;
+        }
         await processFile(file, entry.id);
       }
     },

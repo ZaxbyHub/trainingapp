@@ -116,6 +116,14 @@ describe('EmbeddingService worker liveness (C13)', () => {
         rejected = true;
         throw error;
       });
+      // Amendment (CHECK_WRONG, path repair of the same class as C3's):
+      // `tracked` rethrows, so it is REJECTED before its only consumer
+      // attaches (the expect below runs a macrotask later) — Node fires
+      // unhandledRejection, vitest reports "Errors 1" and exits 1 even with
+      // both tests green, and the check could never pass with a correct
+      // implementation. The synchronous no-op catch is a handler for that
+      // window; the expect still observes the rejection.
+      tracked.catch(() => {});
 
       firstWorker.fireError('worker died (uncaught outside handler)');
       await new Promise((resolve) => setTimeout(resolve, 0));
