@@ -117,6 +117,9 @@ export class VectorIndex {
    * export. Disclosed memory cost: about 3KB per unsaved 768-dim vector.
    */
   private vectorsById: Map<number, Float32Array> = new Map();
+  /** Remote-refresh serialization state (PRR-004): see KeywordIndex's twin. */
+  private refreshRunning = false;
+  private refreshQueued = false;
 
   /**
    * Get the singleton instance, creating it if necessary.
@@ -202,9 +205,7 @@ export class VectorIndex {
       // their metadata lives in; the next save merges them anyway).
       this.channelUnsub = changeChannel.onRemoteChange(() => {
         if (this.disposed || this.pendingOps.size > 0) return;
-        void this.load().catch((error: unknown) =>
-          console.warn('[VectorIndex] remote refresh failed:', error)
-        );
+        this.scheduleRefresh();
       });
     } catch (error) {
       this.index = null;
@@ -1000,6 +1001,24 @@ export class VectorIndex {
    *
    * @returns true if a saved index was loaded, false if no saved index exists
    */
+  /** Serialized remote refresh (PRR-004). */
+  private scheduleRefresh(): void {
+    if (this.refreshRunning) {
+      this.refreshQueued = true;
+      return;
+    }
+    this.refreshRunning = true;
+    void this.load()
+      .catch((error: unknown) => console.warn('[VectorIndex] remote refresh failed:', error))
+      .finally(() => {
+        this.refreshRunning = false;
+        if (this.refreshQueued) {
+          this.refreshQueued = false;
+          if (!this.disposed && this.pendingOps.size === 0) this.scheduleRefresh();
+        }
+      });
+  }
+
   async load(): Promise<boolean> {
     if (this.index === null) {
       throw new Error('VectorIndex not initialized');

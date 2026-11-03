@@ -293,10 +293,11 @@ export function DocumentsPage() {
   // #270 (PC-3 production subscriber): when another tab commits a document
   // change, reload this tab's list so it never serves — and later re-saves —
   // a stale snapshot. Two protections:
-  // - Merge, don't replace (PRR-005): rows that are in flight in THIS tab
-  //   but not yet persisted (their debounce save has not fired) are absent
-  //   from the loaded list; a pure replace would drop them mid-processing
-  //   and orphan their index chunks when they later settle.
+  // - Merge, don't replace (PRR-005): rows that are queued or processing in
+  //   THIS tab but not yet persisted (their debounce save has not fired) are
+  //   absent from the loaded list; a pure replace would drop them — queued
+  //   files have no cancel controller until their processFile starts — and
+  //   orphan their index chunks when they later settle.
   // - Coalesce (PRR-021): announcement bursts collapse into one reload.
   useEffect(() => {
     if (electronMode) return;
@@ -306,12 +307,14 @@ export function DocumentsPage() {
         try {
           const loaded = await loadDocuments();
           setDocuments((prev) => {
-            const inFlight = new Set(cancelControllersRef.current.keys());
             const loadedIds = new Set(loaded.map((doc) => doc.id));
+            // No controller gate: rows for files still QUEUED behind the
+            // sequential processFile loop have no controller yet but are just
+            // as un-persisted — dropping them orphans their chunks (their
+            // terminal upsert is gated on finding this row).
             const kept = prev.filter(
               (doc) =>
                 !loadedIds.has(doc.id) &&
-                inFlight.has(doc.id) &&
                 (doc.status === 'uploading' || doc.status === 'processing')
             );
             const merged = [...kept, ...loaded];
@@ -351,12 +354,13 @@ export function DocumentsPage() {
   useEffect(() => {
     const docId = focusAfterDeleteId;
     if (docId === null) return;
-    const docName =
-      latestDocumentsRef.current.find((doc) => doc.id === docId)?.fileName ?? docId;
-    const retained = Array.from(
-      document.querySelectorAll<HTMLButtonElement>('button[data-doc-action="delete"]')
-    ).find((btn) => btn.getAttribute('aria-label') === `Delete ${docName}`);
-    if (retained === undefined || retained.disabled) return;
+    // Match the ROW by id: file names are not unique, so an aria-label
+    // comparison could hand focus to a same-named neighbour's control.
+    const row = Array.from(document.querySelectorAll<HTMLElement>('[data-doc-id]')).find(
+      (el) => el.dataset.docId === docId
+    );
+    const retained = row?.querySelector<HTMLButtonElement>('button[data-doc-action="delete"]');
+    if (!retained || retained.disabled) return;
     retained.focus();
     setFocusAfterDeleteId(null);
   }, [focusAfterDeleteId, deletingId]);

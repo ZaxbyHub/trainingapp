@@ -79,6 +79,11 @@ export class KeywordIndex {
    * whole-blob replace.
    */
   private pendingOps: Map<string, 'put' | 'remove'> = new Map();
+  /** Remote-refresh serialization state (PRR-004): exactly one load runs at a
+   * time; a burst queues ONE trailing run instead of racing concurrent loads
+   * (whichever finished last would win the swap — a stale overwrite). */
+  private refreshRunning = false;
+  private refreshQueued = false;
   /** Unsubscribe for the remote-change refresh (PRR-004); nulled on dispose. */
   private channelUnsub: (() => void) | null = null;
 
@@ -160,6 +165,24 @@ export class KeywordIndex {
     this.index = index;
   }
 
+  /** Serialized remote refresh (PRR-004). */
+  private scheduleRefresh(): void {
+    if (this.refreshRunning) {
+      this.refreshQueued = true;
+      return;
+    }
+    this.refreshRunning = true;
+    void this.load()
+      .catch((error: unknown) => console.warn('[KeywordIndex] remote refresh failed:', error))
+      .finally(() => {
+        this.refreshRunning = false;
+        if (this.refreshQueued) {
+          this.refreshQueued = false;
+          if (!this.disposed && this.pendingOps.size === 0) this.scheduleRefresh();
+        }
+      });
+  }
+
   private async doInitialize(): Promise<void> {
     try {
       this.index = this.createFlexIndex();
@@ -176,9 +199,7 @@ export class KeywordIndex {
       // mapping their metadata lives in; the next save merges them anyway).
       this.channelUnsub = changeChannel.onRemoteChange(() => {
         if (this.disposed || this.pendingOps.size > 0) return;
-        void this.load().catch((error: unknown) =>
-          console.warn('[KeywordIndex] remote refresh failed:', error)
-        );
+        this.scheduleRefresh();
       });
     } catch (error) {
       this.index = null;
@@ -453,6 +474,33 @@ export class KeywordIndex {
         for (const docId of snapshot.keys()) {
           this.pendingOps.delete(docId);
         }
+        // PRR-004 (handoff 4(a), the saving-tab asymmetry): the merge result
+        // is now the persisted truth and this tab's own announcement is
+        // self-filtered — fold `merged` into the LIVE serving state here, or
+        // the tab that saves last keeps serving its pre-merge view (missing
+        // baseline entries it never loaded; a peer's earlier announcement was
+        // skipped while local ops were pending). Ops that arrived while the
+        // merge ran are still pending: serve their CURRENT in-memory entries
+        // instead of their (possibly stale) baseline copies.
+        const stillPending = new Set(this.pendingOps.keys());
+        const pendingEntries: IndexEntry[] = [];
+        for (const [id, meta] of this.idMapping) {
+          if (!stillPending.has(meta.docId)) continue;
+          pendingEntries.push({
+            id,
+            docId: meta.docId,
+            chunkIndex: meta.chunkIndex,
+            text: meta.text,
+            source: meta.source,
+            page: meta.page,
+            ...(meta.packId !== undefined ? { packId: meta.packId } : {}),
+            ...(meta.packVersion !== undefined ? { packVersion: meta.packVersion } : {}),
+          });
+        }
+        this.rebuildFromEntries([
+          ...merged.filter((e) => !stillPending.has(e.docId)),
+          ...pendingEntries,
+        ]);
         console.info(`[KeywordIndex] Saved ${merged.length} entries to IndexedDB`);
       });
       postChange();

@@ -475,4 +475,37 @@ describe('vector index across two tabs (shared IndexedDB + snapshot store)', () 
     // so retaining it is a pure leak.
     expect(vectors.size).toBe(0);
   });
+
+  it('remote refreshes are serialized: a burst never runs two loads concurrently (PRR-004)', async () => {
+    const a = await freshIndex();
+    let concurrent = 0;
+    let maxConcurrent = 0;
+    const wrapped = a as unknown as { load: () => Promise<boolean> };
+    const origLoad = wrapped.load.bind(a);
+    wrapped.load = async () => {
+      concurrent += 1;
+      maxConcurrent = Math.max(maxConcurrent, concurrent);
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      try {
+        return await origLoad();
+      } finally {
+        concurrent -= 1;
+      }
+    };
+
+    const b = await freshIndex();
+    await b.addBatch([entry('doc-b1', 0, 'first remote chunk', 70)]);
+    await b.save(); // announcement 1 opens a's refresh (held by the wrap)
+    await b.addBatch([entry('doc-b2', 0, 'second remote chunk', 71)]);
+    await b.save(); // announcement 2 must queue, not start a second load
+
+    const deadline = Date.now() + 3000;
+    let hits = await a.search(queryFor(71), { k: 5 });
+    while (!hits.some((h) => h.docId === 'doc-b2') && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      hits = await a.search(queryFor(71), { k: 5 });
+    }
+    expect(hits.some((h) => h.docId === 'doc-b2')).toBe(true);
+    expect(maxConcurrent).toBe(1);
+  });
 });

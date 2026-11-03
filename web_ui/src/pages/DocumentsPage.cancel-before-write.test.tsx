@@ -95,6 +95,20 @@ async function upload(fileName: string): Promise<void> {
   });
 }
 
+async function uploadFiles(files: File[]): Promise<void> {
+  const { render, act, waitFor } = await import('@testing-library/react');
+  const { DocumentsPage } = await import('./DocumentsPage');
+  render(<ToastProvider><DocumentsPage /></ToastProvider>);
+  await waitFor(() =>
+    expect(document.querySelector(DOCUMENT_FILE_INPUT)).toBeTruthy()
+  );
+  const input = document.querySelector(DOCUMENT_FILE_INPUT) as HTMLInputElement;
+  await act(async () => {
+    Object.defineProperty(input, 'files', { value: files, writable: false, configurable: true });
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}
+
 async function clickCancelFor(fileName: string): Promise<void> {
   const { act } = await import('@testing-library/react');
   const button = document.querySelector(
@@ -236,5 +250,53 @@ describe('DocumentsPage.cancel-before-write (C8)', () => {
       await new Promise((r) => setTimeout(r, 250));
     });
     expect(mockLoadDocuments.mock.calls.length).toBe(before + 1);
+  });
+
+  test('a remote change keeps QUEUED upload rows that have no cancel controller yet (PRR-005)', async () => {
+    const { waitFor, act } = await import('@testing-library/react');
+    // Park encodeBatch so file 1 blocks the sequential processFile loop while
+    // file 2's row sits QUEUED (added upfront, no controller until its turn).
+    let release!: () => void;
+    const parked = new Promise<void>((r) => {
+      release = r;
+    });
+    let encodeEntered = false;
+    mockEmbeddingService.encodeBatch.mockImplementation(async (texts: string[]) => {
+      encodeEntered = true;
+      await parked;
+      return texts.map(() => new Array(768).fill(0));
+    });
+
+    await uploadFiles([
+      new File(['first content'], 'first.txt', { type: 'text/plain' }),
+      new File(['second content'], 'second.txt', { type: 'text/plain' }),
+    ]);
+    await waitFor(() => expect(encodeEntered).toBe(true));
+    // Both rows were added upfront; second.txt is queued (no controller).
+    expect(document.body.textContent).toContain('first.txt');
+    expect(document.body.textContent).toContain('second.txt');
+
+    const calls = mockOnDocumentsRemoteChange.mock.calls;
+    const remoteCb = calls[calls.length - 1]?.[0] as (() => void) | undefined;
+    expect(remoteCb).toBeTypeOf('function');
+    await act(async () => {
+      remoteCb!();
+      await new Promise((r) => setTimeout(r, 250)); // > the 100ms coalesce window
+    });
+
+    // The QUEUED row survived the reload (the pre-fix controller gate dropped
+    // it), and the processing row's cancel control is still mounted.
+    expect(document.body.textContent).toContain('second.txt');
+    expect(document.querySelector('button[aria-label="Cancel indexing first.txt"]')).toBeTruthy();
+
+    // Release: file 1 settles, then file 2 runs — its terminal upsert finds
+    // the row, proving no orphaned chunks (the pre-fix drop made readyRow
+    // undefined, so this upsert never fired).
+    release();
+    await waitFor(() => {
+      expect(mockUpsertDocument).toHaveBeenCalledWith(
+        expect.objectContaining({ fileName: 'second.txt', status: 'ready' })
+      );
+    });
   });
 });

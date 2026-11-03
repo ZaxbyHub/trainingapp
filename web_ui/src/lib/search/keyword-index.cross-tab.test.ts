@@ -264,4 +264,74 @@ describe('keyword index across two tabs (shared IndexedDB)', () => {
     // ...and its own unsaved doc is intact (a refresh would have wiped it).
     expect(a.search('local').length).toBeGreaterThanOrEqual(1);
   });
+
+  it('the saving tab folds the merged baseline into its live search state (PRR-004 4(a))', async () => {
+    const A = await import('./keyword-index');
+    const a = A.getKeywordIndex();
+    await a.initialize();
+
+    vi.resetModules();
+    const B = await import('./keyword-index');
+    const b = B.getKeywordIndex();
+    await b.initialize(); // both tabs boot EMPTY
+
+    // B takes a local op FIRST so its pendingOps guard blocks A's
+    // announcement — the concurrent-ingest ordering the finding names. B then
+    // saves: the merge persists A's doc-a + B's doc-b, but B's own
+    // announcement is self-filtered, so only the save-time rebuild can put
+    // doc-a into B's live FlexSearch.
+    b.addDocuments([chunk('doc-b', 0, 'beta document text')]);
+    a.addDocuments([chunk('doc-a', 0, 'alpha document text')]);
+    await a.save(); // posts; B skips (pendingOps non-empty)
+    await b.save(); // merge: baseline doc-a + local doc-b
+
+    const hits = b.search('alpha');
+    expect(hits.length).toBeGreaterThanOrEqual(1);
+    expect(hits[0]?.docId).toBe('doc-a');
+    // its own doc is still served after the rebuild
+    expect(b.search('beta').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('remote refreshes are serialized: a burst never runs two loads concurrently (PRR-004)', async () => {
+    const A = await import('./keyword-index');
+    const a = A.getKeywordIndex();
+    await a.initialize();
+
+    // Hold every load open so a second announcement arriving mid-load would
+    // overlap unless the refresh is single-flight with a queued trailing run.
+    let concurrent = 0;
+    let maxConcurrent = 0;
+    const wrapped = a as unknown as { load: () => Promise<boolean> };
+    const origLoad = wrapped.load.bind(a);
+    wrapped.load = async () => {
+      concurrent += 1;
+      maxConcurrent = Math.max(maxConcurrent, concurrent);
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      try {
+        return await origLoad();
+      } finally {
+        concurrent -= 1;
+      }
+    };
+
+    vi.resetModules();
+    const B = await import('./keyword-index');
+    const b = B.getKeywordIndex();
+    await b.initialize();
+    b.addDocuments([chunk('doc-b1', 0, 'first remote text')]);
+    await b.save(); // announcement 1 opens a's refresh (held by the wrap)
+    b.addDocuments([chunk('doc-b2', 0, 'second remote text')]);
+    await b.save(); // announcement 2 must queue, not start a second load
+
+    // Drain: the queued trailing run must apply the second announcement.
+    const deadline = Date.now() + 3000;
+    let hits = a.search('second');
+    while (hits.length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      hits = a.search('second');
+    }
+    expect(hits.length).toBeGreaterThanOrEqual(1);
+    expect(hits[0]?.docId).toBe('doc-b2');
+    expect(maxConcurrent).toBe(1);
+  });
 });
