@@ -137,8 +137,28 @@ describe('RAGOrchestrator', () => {
   let mockRerankerService: ReturnType<typeof createMockRerankerService>;
   let mockWebLLMService: ReturnType<typeof createMockWebLLMService>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+
+    // #268 AC3 (C8): reset the session-level retrieval-health latch so a
+    // once-per-session warning cannot be pre-tripped by earlier tests in
+    // this file (the :723 degrade test and the :1408 gate-false test both
+    // run the unavailable/degraded branch). The module only exists after
+    // the fix; at base the import rejects and there is no latch to reset.
+    // Deliberately NOT a static (or analyzable dynamic) import: this file
+    // is copied into a base worktree for its base leg, where the module
+    // does not exist - a literal specifier would fail vite's static
+    // import-analysis and break the whole file's collection. The
+    // @vite-ignore runtime specifier keeps the reference optional.
+    const retrievalHealthSpecifier = './retrieval-health';
+    try {
+      const health = (await import(/* @vite-ignore */ retrievalHealthSpecifier)) as {
+        resetRetrievalHealth?: () => void;
+      };
+      health.resetRetrievalHealth?.();
+    } catch {
+      /* retrieval-health module absent at base */
+    }
 
     // Create fresh mock instances
     mockEmbeddingService = createMockEmbeddingService();
@@ -757,6 +777,47 @@ describe('RAGOrchestrator', () => {
     // The LLM must never be invoked when there is no evidence.
     expect(mockWebLLMService.generate).not.toHaveBeenCalled();
     expect(mockWebLLMService.generateComplete).not.toHaveBeenCalled();
+  });
+
+  // ========================================================================
+  // #268 AC3 (C8): the `Embedding service unavailable` console warning
+  // fires exactly ONCE per session across consecutive keyword-only queries.
+  // At base the unavailable branch warns unconditionally per query
+  // (rag-orchestrator.ts:464); the session latch (retrieval-health) makes
+  // it a once-per-session transition. No new imports: the latch reset lives
+  // in the beforeEach above (dynamic import, absent-safe at base).
+  // ========================================================================
+  test('warns once per session when the embedder is unavailable (3 queries)', async () => {
+    // Embedding service never came up (mirrors the F4 gate-false test).
+    (ensureEmbeddingServiceReady as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    const keywordHits = [{ docId: 'd1', chunkIndex: 0, score: 0.5, text: 'keyword hit' }];
+    mockKeywordIndex.search.mockReturnValue(keywordHits);
+    (rrfFuse as ReturnType<typeof vi.fn>).mockReturnValue(keywordHits);
+    mockWebLLMService.generateComplete.mockResolvedValue('degraded answer');
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const orchestrator = new RAGOrchestrator();
+      for (let i = 0; i < 3; i++) {
+        const events: Array<{ type: string; data?: unknown }> = [];
+        for await (const ev of orchestrator.query('q', { streamTokens: false, rerank: false })) {
+          events.push(ev);
+        }
+        const complete = events.find((e) => e.type === 'complete') as {
+          data?: { retrievalDegraded?: boolean };
+        } | undefined;
+        expect(complete).toBeDefined();
+        expect(complete!.data?.retrievalDegraded).toBe(true);
+      }
+
+      // Only warns carrying the unavailable-branch message are counted.
+      const unavailable = warnSpy.mock.calls.filter((call) =>
+        String(call[0]).includes('Embedding service unavailable')
+      );
+      expect(unavailable).toHaveLength(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   // ========================================================================

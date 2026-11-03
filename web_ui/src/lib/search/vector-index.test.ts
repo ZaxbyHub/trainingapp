@@ -646,12 +646,14 @@ describe('VectorIndex', () => {
   describe('versioned re-index (F9)', () => {
     /**
      * Build a fake IndexedDB whose mappings store returns a configurable
-     * 'version' row (or none). Used to drive readPersistedVersion without
-     * loading the native EdgeVec blob.
+     * 'version' row (or none) plus any extra seeded rows. Used to drive
+     * readPersistedVersion without loading the native EdgeVec blob.
      */
-    function makeVersionedIdb(versionRow: unknown) {
-      const versionStore: Record<string, unknown> =
-        versionRow === undefined ? {} : { version: versionRow };
+    function makeVersionedIdb(versionRow: unknown, extraRows: Record<string, unknown> = {}) {
+      const versionStore: Record<string, unknown> = {
+        ...(versionRow === undefined ? {} : { version: versionRow }),
+        ...extraRows,
+      };
       return {
         open: vi.fn().mockImplementation(() => {
           const req = {
@@ -684,7 +686,13 @@ describe('VectorIndex', () => {
     }
 
     it('skips EdgeVec.load and flags reindex when persisted version mismatches', async () => {
-      (globalThis as { indexedDB?: unknown }).indexedDB = makeVersionedIdb({ key: 'version', version: 1 });
+      // #268 Design 1 amendment: seed an idMapping row too, so the fixture
+      // is a genuine persisted corpus (saveMapping always writes both rows)
+      // rather than a bare store shell.
+      (globalThis as { indexedDB?: unknown }).indexedDB = makeVersionedIdb(
+        { key: 'version', version: 1 },
+        { idMapping: { key: 'idMapping', data: [{ id: 1, docId: 'v1-doc', chunkIndex: 0 }] } }
+      );
       try { (globalThis as { localStorage?: Storage }).localStorage?.removeItem('rag-reindex-required'); } catch { /* noop */ }
 
       const instance = VectorIndex.getInstance();
@@ -702,11 +710,20 @@ describe('VectorIndex', () => {
       instance.dispose();
     });
 
-    it('treats a pre-v2 store with NO version key as incompatible (F9 upgrade path)', async () => {
-      // The realistic upgrade scenario: an index created before this PR has no
-      // 'version' row at all (mean-pooled v1 vectors). This MUST be treated as
-      // incompatible and discarded, NOT loaded.
-      (globalThis as { indexedDB?: unknown }).indexedDB = makeVersionedIdb(undefined);
+    it('treats a pre-v2 store with an idMapping corpus but NO version key as incompatible (F9 upgrade path, #268 Design 1)', async () => {
+      // The realistic upgrade scenario: an index created before this PR has
+      // no 'version' row at all (mean-pooled v1 vectors). This MUST be
+      // treated as incompatible and discarded, NOT loaded.
+      //
+      // #268 claim-1 amendment: a REAL v1 corpus always carries an
+      // idMapping row (saveMapping writes both rows together). The previous
+      // no-rows-at-all fixture described exactly the second-boot bug state
+      // (a fresh store that booted twice), which the fresh-store fix must
+      // treat as FRESH - so the fixture now seeds a genuine v1 corpus to
+      // keep pinning the v1-discard while the bug state is repaired.
+      (globalThis as { indexedDB?: unknown }).indexedDB = makeVersionedIdb(undefined, {
+        idMapping: { key: 'idMapping', data: [{ id: 1, docId: 'v1-doc', chunkIndex: 0 }] },
+      });
       try { (globalThis as { localStorage?: Storage }).localStorage?.removeItem('rag-reindex-required'); } catch { /* noop */ }
 
       const instance = VectorIndex.getInstance();
@@ -773,6 +790,111 @@ describe('VectorIndex', () => {
         expect((globalThis as { localStorage?: Storage }).localStorage?.getItem('rag-reindex-required')).not.toBe('1');
       } catch { /* private mode */ }
       instance.dispose();
+    });
+
+    // ----------------------------------------------------------------------
+    // #268 AC1 (C6): the SECOND boot of a fresh install must not flag
+    // re-index. Boot #1 creates the mappings store but writes no 'version'
+    // row (only saveMapping ever writes it, and nothing saves at boot), so
+    // boot #2 sees an existing store with no version row. At base that
+    // resolves 0 -> "pre-versioned" -> rag-reindex-required on a virgin
+    // install; the fix consults idMapping presence (empty store = fresh).
+    //
+    // The discriminating element is the REAL two-open sequence over one
+    // STATEFUL in-test IDB fake: `open` fires onupgradeneeded only when the
+    // named DB is not yet in a shared Map, and objectStore.get/put read and
+    // write that Map, so the second initialize() observes the store the
+    // first one created - with no save in between.
+    // ----------------------------------------------------------------------
+    it('second boot of a fresh install does not flag re-index (two-open, stateful IDB)', async () => {
+      const dbs = new Map<string, Map<string, unknown>>();
+      const statefulIdb = {
+        open: vi.fn().mockImplementation((name: string) => {
+          const req = {
+            onsuccess: null as null | (() => void),
+            onerror: null as null | (() => void),
+            onupgradeneeded: null as null | ((event: { oldVersion: number }) => void),
+            result: null as unknown,
+            error: null,
+          };
+          Promise.resolve().then(() => {
+            let rowsRef: Map<string, unknown>;
+            const existing = dbs.get(name);
+            const isNew = existing === undefined;
+            if (existing === undefined) {
+              rowsRef = new Map<string, unknown>();
+              dbs.set(name, rowsRef);
+            } else {
+              rowsRef = existing;
+            }
+            // request.result must be populated BEFORE onupgradeneeded fires
+            // (the production handler reads request.result); the store is
+            // reported as existing so no createObjectStore call is needed.
+            req.result = {
+              objectStoreNames: { contains: () => true },
+              close: vi.fn(),
+              transaction: () => ({
+                objectStore: () => ({
+                  get: (key: string) => {
+                    const r = {
+                      onsuccess: null as null | (() => void),
+                      onerror: null as null | (() => void),
+                      result: rowsRef.has(key) ? rowsRef.get(key) : null,
+                    };
+                    Promise.resolve().then(() => r.onsuccess && r.onsuccess());
+                    return r;
+                  },
+                  put: (value: { key: string }) => {
+                    rowsRef.set(value.key, value);
+                    const r = { onsuccess: null as null | (() => void), onerror: null as null | (() => void) };
+                    Promise.resolve().then(() => r.onsuccess && r.onsuccess());
+                    return r;
+                  },
+                }),
+                oncomplete: null as null | (() => void),
+                onabort: null as null | (() => void),
+                onerror: null as null | (() => void),
+              }),
+            };
+            if (isNew && req.onupgradeneeded) {
+              req.onupgradeneeded({ oldVersion: 0 });
+            }
+            req.onsuccess && req.onsuccess();
+          });
+          return req;
+        }),
+      } as unknown as typeof indexedDB;
+      (globalThis as { indexedDB?: unknown }).indexedDB = statefulIdb;
+      try { (globalThis as { localStorage?: Storage }).localStorage?.removeItem('rag-reindex-required'); } catch { /* noop */ }
+
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        // Boot #1: initialize creates the store (oldVersion 0 upgrade fires
+        // exactly once); no save happens - nothing writes at boot.
+        const first = VectorIndex.getInstance();
+        await first.initialize();
+        expect(first.isReady()).toBe(true);
+        first.dispose();
+        VectorIndex['instance'] = null;
+
+        // Boot #2 against the SAME persistent store, with no save between.
+        const second = VectorIndex.getInstance();
+        await second.initialize();
+
+        try {
+          expect(
+            (globalThis as { localStorage?: Storage }).localStorage?.getItem('rag-reindex-required')
+          ).not.toBe('1');
+        } catch { /* private mode */ }
+        const preversioned = warnSpy.mock.calls.filter((call) =>
+          String(call[0]).includes('pre-versioned')
+        );
+        expect(preversioned).toHaveLength(0);
+        second.dispose();
+      } finally {
+        warnSpy.mockRestore();
+        VectorIndex['instance'] = null;
+      }
     });
   });
 });
