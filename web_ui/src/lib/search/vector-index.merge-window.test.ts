@@ -19,6 +19,15 @@
  * merged snapshot instance (a mapping-without-vector row fails this), not
  * merely present as metadata.
  *
+ * Amendment round 2 (plan-critic round 2 finding, pre-implementation): the
+ * mock snapshot instances allocate vector ids from a MONOTONE test-wide
+ * cursor — a real EdgeVec index never re-issues ids across snapshots, and
+ * restarting at zero per temp instance made save #2's inserts overwrite
+ * save #1's mapping entries. Each snapshot also tracks the ids it accepted
+ * in its OWN set, so the vector-resolution proof asserts membership against
+ * the per-snapshot sets of the instances that produced the persisted corpus
+ * (disjoint id spaces), not one mutable global union.
+ *
  * RED at base (the swap wipes the mid-save put's mapping entry; the next
  * save's discovery loop never sees it), GREEN after the fix.
  */
@@ -141,21 +150,27 @@ function makeStatefulIdb(seed: Record<string, unknown>) {
 }
 
 /**
- * Every id a merged snapshot instance accepted via insertBatchWithProgress —
- * i.e. every vector that instance would persist with its mapping row. The
- * final assertion checks the persisted mapping row is a subset of this set,
- * so a mapping id that was never inserted (mapping-without-vector) fails.
+ * Monotone test-wide id cursor: every snapshot instance allocates inserted
+ * vector ids from it, so ids are unique across the whole test the way a real
+ * EdgeVec index never re-issues ids across snapshots (restarting at zero per
+ * temp instance would make save #2's allocations overwrite save #1's mapping
+ * entries — an unrealistic mock).
  */
-let savedVectorIds = new Set<number>();
+let nextTempVectorId = 0;
 
 /** A controllable baseline instance handed to save()'s merge via EdgeVec.load. */
 function makeTempInstance() {
+  // Ids THIS snapshot instance accepted (per-snapshot accounting, not one
+  // mutable global union): the final vector-resolution proof asserts
+  // membership against these per-snapshot sets.
+  const insertedIds = new Set<number>();
   return {
+    insertedIds,
     softDelete: vi.fn(),
     insertBatchWithProgress: vi.fn(
       (vectors: Float32Array[], _onProgress?: (done: number, total: number) => void) => {
-        const ids = new BigUint64Array(vectors.map((_v, i) => BigInt(i)));
-        for (const id of ids) savedVectorIds.add(Number(id));
+        const ids = new BigUint64Array(vectors.map(() => BigInt(nextTempVectorId++)));
+        for (const id of ids) insertedIds.add(Number(id));
         return { ids, inserted: vectors.length, total: vectors.length, free: vi.fn() };
       }
     ),
@@ -176,7 +191,7 @@ const flushTasks = (): Promise<void> => new Promise((resolve) => setTimeout(reso
 describe('VectorIndex merge-window put retention (C1)', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
-    savedVectorIds = new Set<number>();
+    nextTempVectorId = 0;
 
     VectorIndex['instance'] = null;
 
@@ -238,10 +253,13 @@ describe('VectorIndex merge-window put retention (C1)', () => {
     const parkedBaselineLoad = new Promise<unknown>((resolve) => {
       releaseBaselineLoad = () => resolve(temp1);
     });
+    // Save #2's baseline instance is captured: its per-snapshot inserted-id
+    // set participates in the final vector-resolution proof below.
+    const save2Snapshot = makeTempInstance();
     loadHandlers = [
       notFoundLoad, // boot load: no snapshot yet
       () => parkedBaselineLoad, // save #1 merge baseline: parked (the merge window)
-      () => Promise.resolve(makeTempInstance()), // save #2 merge baseline
+      () => Promise.resolve(save2Snapshot), // save #2 merge baseline
       () => Promise.resolve(makeTempInstance()), // reload boot load
     ];
 
@@ -313,11 +331,22 @@ describe('VectorIndex merge-window put retention (C1)', () => {
       )
     ).toBe(true);
 
-    // Discriminator 2b (vector resolution): EVERY id in the persisted mapping
-    // row must be an id a merged snapshot instance actually inserted — a row
-    // persisted without its vector (the dangling-id failure mode) fails here.
+    // The two participating snapshot instances' id spaces are disjoint (the
+    // monotone cursor never re-issues an id), so every persisted id below
+    // refers to the vector of exactly one known snapshot instance.
+    const temp2Ids = save2Snapshot.insertedIds;
+    for (const id of temp1.insertedIds) {
+      expect(temp2Ids.has(id)).toBe(false);
+    }
+
+    // Discriminator 2b (per-snapshot vector resolution): EVERY id in the
+    // persisted mapping row must be an id one of the participating snapshot
+    // instances actually inserted — a mapping-without-vector row (dangling
+    // id), or an id whose vector was overwritten by another snapshot
+    // re-issuing it, fails here.
+    const insertedIntoSnapshots = new Set<number>([...temp1.insertedIds, ...temp2Ids]);
     for (const entry of persisted!.data) {
-      expect(savedVectorIds.has(entry.id)).toBe(true);
+      expect(insertedIntoSnapshots.has(entry.id)).toBe(true);
     }
 
     // Discriminator 3: after a reload, every chunk id added during the merge
