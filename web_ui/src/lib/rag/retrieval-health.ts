@@ -64,5 +64,9 @@ export function getLastEmbeddingInitFailure(): string | null {
 
 export function resetRetrievalHealth(): void {
   state = { status: 'ok' };
+  // Fresh-session reset also clears the init-failure memo (the orchestrator
+  // reads it for the next degradation cause); otherwise a stale staging
+  // error would outlive the session reset.
+  lastInitFailure = null;
   notify();
 }

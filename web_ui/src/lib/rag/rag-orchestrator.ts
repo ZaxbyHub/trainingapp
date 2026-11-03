@@ -31,7 +31,7 @@ import { getLLMService } from '../llm/llm-factory';
 import { buildLearnResults, type LinkedSlide } from './learn-kernel';
 import { linkedSlidesWithin } from './learn-links';
 import { DEFAULT_N_CTX } from '../llm/wllama-service';
-import { ensureEmbeddingServiceReady, ensureReadinessGateChecked } from '../../hooks/useServiceInitialization'
+import { ensureEmbeddingServiceReady, ensureReadinessGateChecked } from '../../hooks/useServiceInitialization';
 import { getRetrievalHealth, getLastEmbeddingInitFailure, setKeywordOnly, setOk } from './retrieval-health';
 
 /**

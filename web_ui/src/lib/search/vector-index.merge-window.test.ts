@@ -309,6 +309,22 @@ describe('VectorIndex merge-window put retention (C1)', () => {
       )
     ).toBe(true);
 
+    // Amendment round 3 (reviewer round 2 finding, CHECK_WRONG): the
+    // COPY-FIRST invariant is pinned on save #1's OWN persisted row — every
+    // id in it must be an id the merged snapshot instance actually
+    // inserted. A persisted copy taken AFTER the mid-window overlay (the
+    // plan-critic's named mutant) persists the overlay's live id, whose
+    // vector is not in this snapshot; save #2 would heal that row before
+    // the final assertions below could see it, so this earlier check is
+    // what makes that mutant RED.
+    const persistedAfterSave1 = idb.rows.get('idMapping') as
+      | { data: Array<{ id: number }> }
+      | undefined;
+    expect(persistedAfterSave1).toBeDefined();
+    for (const entry of persistedAfterSave1!.data) {
+      expect(temp1.insertedIds.has(entry.id)).toBe(true);
+    }
+
     // Discriminator 2: the next save persists the mid-save put.
     await instance.save();
     const persisted = idb.rows.get('idMapping') as
