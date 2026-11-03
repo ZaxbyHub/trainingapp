@@ -220,7 +220,13 @@ describe('withExclusiveLock (shared named exclusive lock, C3)', () => {
     });
 
     it('conv-protocol.ts migrates onto the helper or is annotated deliberately divergent', () => {
-      const source = sourceOf('../db/conv-protocol.ts');
+      // Amendment round 4 (path repair, pre-implementation): the original
+      // relative path '../db/conv-protocol.ts' resolved src/lib/db/, which
+      // does not exist — the conversations protocol lives at src/db/, so
+      // the pin could never pass even with a correct implementation
+      // (CHECK_WRONG; masked until the module existed because the head leg
+      // failed at the module import first).
+      const source = sourceOf('../../db/conv-protocol.ts');
       const migrated = source.includes('exclusive-lock');
       const annotated = /deliberately divergent/i.test(source);
       expect(migrated || annotated).toBe(true);
