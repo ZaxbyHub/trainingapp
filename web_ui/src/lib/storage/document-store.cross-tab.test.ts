@@ -130,6 +130,30 @@ function installSharedFakeIndexedDB(): Map<string, Map<string, unknown>> {
   return databases;
 }
 
+/** Fake BroadcastChannel with deterministic same-tab delivery to EVERY
+ * instance of the name (including the sender - createStoreChannel's sender-id
+ * stamp filters self-echoes, exactly like production). */
+function installLinkedBroadcastChannel(): void {
+  const channels: Array<{ name: string; onmessage: ((event: MessageEvent) => void) | null }> = [];
+  class FakeChannel {
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    constructor(readonly name: string) {
+      channels.push(this);
+    }
+    postMessage(message: unknown): void {
+      for (const other of channels) {
+        if (other.name === this.name) {
+          other.onmessage?.({ data: message } as unknown as MessageEvent);
+        }
+      }
+    }
+    close(): void {
+      /* noop */
+    }
+  }
+  (globalThis as { BroadcastChannel?: unknown }).BroadcastChannel = FakeChannel;
+}
+
 function makeDoc(id: string, fileName: string): DocumentEntry {
   return {
     id,
@@ -153,11 +177,13 @@ describe('document store across two tabs (shared IndexedDB)', () => {
     const docA = makeDoc('doc-a', 'a.txt');
     await A.saveDocuments([docA]);
 
+    vi.resetModules();
     const B = await import('./document-store');
     const docB = makeDoc('doc-b', 'b.txt');
     await B.saveDocuments([docB]);
 
     // A fresh load sees both documents.
+    vi.resetModules();
     const C = await import('./document-store');
     const docs = await C.loadDocuments();
     const names = docs.map((d) => d.fileName).sort();
@@ -168,6 +194,7 @@ describe('document store across two tabs (shared IndexedDB)', () => {
     const A = await import('./document-store');
     await A.saveDocuments([makeDoc('doc-a', 'a.txt')]);
 
+    vi.resetModules();
     const B = await import('./document-store');
     await B.saveDocuments([makeDoc('doc-b', 'b.txt')]);
 
@@ -175,6 +202,7 @@ describe('document store across two tabs (shared IndexedDB)', () => {
     // delete B's doc-b.
     await A.saveDocuments([makeDoc('doc-a', 'a.txt')]);
 
+    vi.resetModules();
     const C = await import('./document-store');
     const docs = await C.loadDocuments();
     expect(docs.map((d) => d.fileName).sort()).toEqual(['a.txt', 'b.txt']);
@@ -185,6 +213,7 @@ describe('document store across two tabs (shared IndexedDB)', () => {
     await A.saveDocuments([makeDoc('doc-x', 'x.txt')]);
 
     // B's instance starts with its own snapshot containing X and Y.
+    vi.resetModules();
     const B = await import('./document-store');
     await B.saveDocuments([makeDoc('doc-x', 'x.txt'), makeDoc('doc-y', 'y.txt')]);
 
@@ -193,8 +222,30 @@ describe('document store across two tabs (shared IndexedDB)', () => {
     await A.deleteDocument('doc-x');
     await B.upsertDocument(makeDoc('doc-y', 'y.txt'));
 
+    vi.resetModules();
     const C = await import('./document-store');
     const docs = await C.loadDocuments();
     expect(docs.map((d) => d.fileName).sort()).toEqual(['y.txt']);
+  });
+
+  it('upsertDocument and deleteDocument announce the change (PRR-009 seam)', async () => {
+    installLinkedBroadcastChannel();
+    vi.resetModules();
+    const A = await import('./document-store');
+    const cb = vi.fn();
+    A.onDocumentsRemoteChange(cb);
+    expect(cb).not.toHaveBeenCalled();
+
+    vi.resetModules();
+    const B = await import('./document-store');
+    await B.saveDocuments([makeDoc('doc-s', 's.txt')]); // baseline row
+
+    const beforeUpsert = cb.mock.calls.length;
+    await B.upsertDocument(makeDoc('doc-t', 't.txt'));
+    expect(cb.mock.calls.length).toBe(beforeUpsert + 1);
+
+    const beforeDelete = cb.mock.calls.length;
+    await B.deleteDocument('doc-s');
+    expect(cb.mock.calls.length).toBe(beforeDelete + 1);
   });
 });

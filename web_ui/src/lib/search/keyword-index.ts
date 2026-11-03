@@ -25,8 +25,11 @@ const DB_VERSION = 1;
 const STORE_NAME = 'keyword-index';
 
 /**
- * Change announcements (#270): successful saves notify other tabs so they can
- * reload instead of serving (and later re-saving) stale in-memory blobs.
+ * Change announcements (#270): successful saves notify other tabs, and this
+ * store SUBSCRIBES too — a remote save rebuilds this tab's live serving
+ * state (FlexSearch/idMapping/docIdToChunks) from the persisted corpus
+ * whenever this tab has no unsaved local ops (a rebuild would otherwise wipe
+ * the metadata those ops live in; the next save merges them anyway).
  * Merge correctness never depends on delivery - every save re-reads the
  * persisted baseline under the store lock.
  */
@@ -76,6 +79,8 @@ export class KeywordIndex {
    * whole-blob replace.
    */
   private pendingOps: Map<string, 'put' | 'remove'> = new Map();
+  /** Unsubscribe for the remote-change refresh (PRR-004); nulled on dispose. */
+  private channelUnsub: (() => void) | null = null;
 
   /**
    * Get the singleton instance, creating it if necessary.
@@ -115,17 +120,49 @@ export class KeywordIndex {
   /**
    * Internal initialization logic.
    */
+  /** Fresh FlexSearch index with the canonical config (shared by init and
+   * the PRR-004 refresh rebuild — a refresh must never leave stale chunks
+   * searchable in the old index). */
+  private createFlexIndex(): InstanceType<typeof Index> {
+    // Using tokenize: "full" for better phrase matching. `worker: false` is a
+    // valid runtime option (keeps the index serializable for IndexedDB) but is
+    // not in the v0.8 IndexOptions type — cast to preserve behavior.
+    return new Index({
+      tokenize: 'full',
+      worker: false,
+      resolution: 9,
+    } as ConstructorParameters<typeof Index>[0]);
+  }
+
+  /** Fold a full entry set into the LIVE serving state (PRR-004). */
+  private rebuildFromEntries(entries: IndexEntry[]): void {
+    const index = this.createFlexIndex();
+    this.idMapping.clear();
+    this.docIdToChunks.clear();
+    for (const entry of entries) {
+      this.idMapping.set(entry.id, {
+        docId: entry.docId,
+        chunkIndex: entry.chunkIndex,
+        text: entry.text,
+        source: entry.source,
+        page: entry.page,
+        ...(entry.packId !== undefined ? { packId: entry.packId } : {}),
+        ...(entry.packVersion !== undefined ? { packVersion: entry.packVersion } : {}),
+      });
+      let ids = this.docIdToChunks.get(entry.docId);
+      if (ids === undefined) {
+        ids = new Set<string>();
+        this.docIdToChunks.set(entry.docId, ids);
+      }
+      ids.add(entry.id);
+      index.add(entry.id, entry.text);
+    }
+    this.index = index;
+  }
+
   private async doInitialize(): Promise<void> {
     try {
-      // Create FlexSearch Index with resolution-based ranking
-      // Using tokenize: "full" for better phrase matching. `worker: false` is a
-      // valid runtime option (keeps the index serializable for IndexedDB) but is
-      // not in the v0.8 IndexOptions type — cast to preserve behavior.
-      this.index = new Index({
-        tokenize: 'full',
-        worker: false,
-        resolution: 9,
-      } as ConstructorParameters<typeof Index>[0]);
+      this.index = this.createFlexIndex();
 
       // Try to load persisted index from IndexedDB
       const loaded = await this.load();
@@ -134,6 +171,15 @@ export class KeywordIndex {
       }
 
       this.ready = true;
+      // PRR-004: rebuild the live serving state on other tabs' saves — only
+      // when this tab has no unsaved local ops (a rebuild replaces the
+      // mapping their metadata lives in; the next save merges them anyway).
+      this.channelUnsub = changeChannel.onRemoteChange(() => {
+        if (this.disposed || this.pendingOps.size > 0) return;
+        void this.load().catch((error: unknown) =>
+          console.warn('[KeywordIndex] remote refresh failed:', error)
+        );
+      });
     } catch (error) {
       this.index = null;
       this.ready = false;
@@ -487,30 +533,15 @@ export class KeywordIndex {
         return false;
       }
 
-      // Clear existing mappings before repopulating to avoid corruption
-      this.idMapping.clear();
-      for (const entry of data.entries) {
-        this.idMapping.set(entry.id, {
-          docId: entry.docId,
-          chunkIndex: entry.chunkIndex,
-          text: entry.text,
-          source: entry.source,
-          page: entry.page,
-          ...(entry.packId !== undefined ? { packId: entry.packId } : {}),
-          ...(entry.packVersion !== undefined ? { packVersion: entry.packVersion } : {}),
-        });
+      // PRR-004: a refresh must not wipe metadata of unsaved local ops that
+      // arrived while loadFromIDB was awaiting — skip; the next save merges.
+      if (this.pendingOps.size > 0) {
+        console.info('[KeywordIndex] load/refresh skipped: unsaved local ops present');
+        return false;
       }
-
-      // Restore docIdToChunks reverse mapping
-      this.docIdToChunks.clear();
-      for (const [docId, ids] of Object.entries(data.documentChunks)) {
-        this.docIdToChunks.set(docId, new Set(ids as string[]));
-      }
-
-      // Re-add all entries to FlexSearch index
-      for (const entry of data.entries) {
-        this.index!.add(entry.id, entry.text);
-      }
+      // Rebuild the live serving state from the persisted entries (fresh
+      // FlexSearch index + both mappings) — no stale chunk can survive.
+      this.rebuildFromEntries(data.entries);
 
       console.info(`[KeywordIndex] Loaded ${this.size()} entries from IndexedDB`);
       return true;
@@ -592,6 +623,8 @@ export class KeywordIndex {
    */
   dispose(): void {
     this.disposed = true;
+    this.channelUnsub?.();
+    this.channelUnsub = null;
     this.index = null;
     this.idMapping.clear();
     this.docIdToChunks.clear();

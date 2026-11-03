@@ -66,11 +66,35 @@ async function defaultKeywordTarget(): Promise<PackHealthKeywordTarget> {
   return mod.getKeywordIndex() as unknown as PackHealthKeywordTarget;
 }
 
+/** In-flight health pass (PRR-010): boot and the embedding-service-ready
+ * listener can overlap; joiners await the running pass instead of
+ * interleaving two repairs of the same packs. */
+let healthInFlight: Promise<PackHealthResult> | null = null;
+
 /**
  * Compare active installed packs against the keyword index and repair the
  * gaps. Returns the repaired pack ids (empty when everything is healthy).
+ *
+ * Single-flight (PRR-010): concurrent calls share one pass — the second
+ * caller receives the first pass's result rather than racing its own scan.
  */
-export async function ensurePackIndexHealth(
+export function ensurePackIndexHealth(
+  manager: PackHealthManager,
+  targets?: { keyword?: PackHealthKeywordTarget; vector?: PackHealthVectorTarget }
+): Promise<PackHealthResult> {
+  if (healthInFlight !== null) {
+    return healthInFlight;
+  }
+  const run = runEnsurePackIndexHealth(manager, targets).finally(() => {
+    if (healthInFlight === run) {
+      healthInFlight = null;
+    }
+  });
+  healthInFlight = run;
+  return run;
+}
+
+async function runEnsurePackIndexHealth(
   manager: PackHealthManager,
   targets?: { keyword?: PackHealthKeywordTarget; vector?: PackHealthVectorTarget }
 ): Promise<PackHealthResult> {

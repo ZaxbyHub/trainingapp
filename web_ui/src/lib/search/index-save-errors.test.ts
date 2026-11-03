@@ -12,7 +12,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 const h = vi.hoisted(() => {
-  return { failMode: 'none' as 'none' | 'error' | 'abort' | 'get-error' };
+  return {
+    failMode: 'none' as 'none' | 'error' | 'abort' | 'get-error',
+    failSnapshot: false,
+  };
 });
 
 vi.mock('edgevec', () => {
@@ -32,6 +35,11 @@ vi.mock('edgevec', () => {
       return Promise.reject(new Error(`File ${name} not found`));
     }
     save(_name: string): Promise<void> {
+      if (h.failSnapshot) {
+        // PRR-007 injection: the SNAPSHOT write fails AFTER the merged
+        // mapping row already committed (F11 order).
+        return Promise.reject(new Error('simulated snapshot write failure'));
+      }
       return Promise.resolve();
     }
     insert(v: Float32Array): number {
@@ -163,6 +171,7 @@ function installFailModeIndexedDB(): Map<string, unknown> {
 describe('index save error identity (C16)', () => {
   beforeEach(() => {
     h.failMode = 'none';
+    h.failSnapshot = false;
     testDb = installFailModeIndexedDB();
   });
 
@@ -317,5 +326,49 @@ describe('index save error identity (C16)', () => {
     const row = db.get('idMapping') as { data: Array<{ docId: string }> };
     expect(row.data.map((d) => d.docId)).toEqual(['doc-old']);
     expect(db.get('version')).toEqual({ key: 'version', version: 3 });
+  });
+
+  it('a SNAPSHOT write failure rolls the persisted row back to the snapshot-paired baseline (PRR-007)', async () => {
+    // Save #1 commits the row for doc-new. The second save of the SAME chunk
+    // inserts a replacement and commits the MERGED row before the snapshot
+    // write (F11). When the snapshot write then fails, the persisted row must
+    // be rewritten to the baseline the still-persisted snapshot represents
+    // (this fake never persists a snapshot, so the baseline is empty) — not
+    // left holding the merged write (pre-fix) nor rolled back to the
+    // in-memory map, which still carries the not-yet-persisted replacement.
+    vi.resetModules();
+    const mod = await import('./vector-index');
+    const idx = mod.VectorIndex.getInstance();
+    await idx.initialize();
+    await idx.addBatch([
+      {
+        docId: 'doc-new',
+        chunkIndex: 0,
+        vector: new Float32Array(768).fill(0.3),
+        text: 'new chunk',
+      } as never,
+    ]);
+    await idx.save(); // row: [doc-new] + version
+
+    await idx.addBatch([
+      {
+        docId: 'doc-new',
+        chunkIndex: 0,
+        vector: new Float32Array(768).fill(0.4),
+        text: 'new chunk v2',
+      } as never,
+    ]);
+    h.failSnapshot = true;
+    const err = await idx.save().then(
+      () => {
+        throw new Error('save should have rejected');
+      },
+      (e: unknown) => e as Error
+    );
+    expect(String(err.message)).toContain('Save failed');
+    h.failSnapshot = false;
+
+    const row = testDb!.get('idMapping') as { data: Array<{ docId: string }> } | undefined;
+    expect((row?.data ?? []).map((d) => d.docId)).toEqual([]);
   });
 });

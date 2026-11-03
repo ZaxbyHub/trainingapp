@@ -174,4 +174,67 @@ describe('DocumentsPage.cancel-before-write (C8)', () => {
     expect(mockKeywordIndex.addDocuments).not.toHaveBeenCalled();
   });
 
+  test('a remote change preserves the not-yet-persisted in-flight row (PRR-005)', async () => {
+    const { waitFor, act } = await import('@testing-library/react');
+    // Park encodeBatch so the row stays non-terminal (processing).
+    let release!: () => void;
+    const parked = new Promise<void>((r) => {
+      release = r;
+    });
+    let encodeEntered = false;
+    mockEmbeddingService.encodeBatch.mockImplementation(async (texts: string[]) => {
+      encodeEntered = true;
+      await parked;
+      return texts.map(() => new Array(768).fill(0));
+    });
+
+    await upload('inflight.txt');
+    await waitFor(() => expect(encodeEntered).toBe(true));
+
+    // Another tab commits a change. The reload sees an EMPTY persisted list:
+    // this row's 500ms debounced save has not fired yet.
+    const calls = mockOnDocumentsRemoteChange.mock.calls;
+    const remoteCb = calls[calls.length - 1]?.[0] as (() => void) | undefined;
+    expect(remoteCb).toBeTypeOf('function');
+    await act(async () => {
+      remoteCb!();
+      await new Promise((r) => setTimeout(r, 250)); // > the 100ms coalesce window
+    });
+
+    // The row survived the reload (merge, not replace): its processing UI is
+    // still mounted...
+    expect(document.querySelector('button[aria-label="Cancel indexing inflight.txt"]')).toBeTruthy();
+
+    // ...so the terminal write still finds it (PC-13 upsert) - no orphaned
+    // index chunks and no lost terminal row.
+    release();
+    await waitFor(() => {
+      expect(mockUpsertDocument).toHaveBeenCalledWith(
+        expect.objectContaining({ fileName: 'inflight.txt', status: 'ready' })
+      );
+    });
+  });
+
+  test('remote-change bursts coalesce into one reload (PRR-021)', async () => {
+    const { render, act, waitFor } = await import('@testing-library/react');
+    const { DocumentsPage } = await import('./DocumentsPage');
+    render(
+      <ToastProvider>
+        <DocumentsPage />
+      </ToastProvider>
+    );
+    await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
+
+    const before = mockLoadDocuments.mock.calls.length;
+    const calls = mockOnDocumentsRemoteChange.mock.calls;
+    const remoteCb = calls[calls.length - 1]?.[0] as (() => void) | undefined;
+    expect(remoteCb).toBeTypeOf('function');
+    await act(async () => {
+      remoteCb!();
+      remoteCb!();
+      remoteCb!();
+      await new Promise((r) => setTimeout(r, 250));
+    });
+    expect(mockLoadDocuments.mock.calls.length).toBe(before + 1);
+  });
 });

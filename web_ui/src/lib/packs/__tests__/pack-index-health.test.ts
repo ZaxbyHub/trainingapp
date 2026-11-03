@@ -356,4 +356,31 @@ describe('pack index health (C6)', () => {
     expect(healthInListener).toBeGreaterThan(-1);
     expect(embedInListener).toBeGreaterThan(healthInListener);
   });
+
+  it('concurrent health calls join one in-flight pass (PRR-010)', async () => {
+    const { ensurePackIndexHealth } = await import('../pack-index-health');
+    h.chunksByPack.set('wiped-pack', [
+      chunkFor('wiped-pack', 'docs/a.md'),
+      chunkFor('wiped-pack', 'docs/b.md'),
+    ]);
+    const m = makeManager([{ packId: 'wiped-pack', version: '1.0.0', embedded: true }]);
+    let scans = 0;
+    const originalActiveRecords = m.manager.activeRecords.bind(m.manager);
+    m.manager.activeRecords = async () => {
+      scans++;
+      return originalActiveRecords();
+    };
+
+    const [r1, r2] = await Promise.all([
+      ensurePackIndexHealth(m.manager, { keyword: makeKeyword(new Set()), vector: okVector() }),
+      ensurePackIndexHealth(m.manager, { keyword: makeKeyword(new Set()), vector: okVector() }),
+    ]);
+
+    // One scan, one repair: the second caller joined the running pass instead
+    // of interleaving its own repair of the same packs.
+    expect(scans).toBe(1);
+    expect(h.indexCalls).toEqual([{ packId: 'wiped-pack', docs: 2 }]);
+    expect(r1.repaired).toEqual(['wiped-pack@1.0.0']);
+    expect(r2).toEqual(r1);
+  });
 });

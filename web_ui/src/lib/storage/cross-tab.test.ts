@@ -82,7 +82,7 @@ describe('withStoreLock', () => {
       });
       expect(manager.request).toHaveBeenCalledWith(
         'docqa-test',
-        { mode: 'exclusive' },
+        { mode: 'exclusive', signal: expect.any(AbortSignal) },
         expect.any(Function)
       );
     });
@@ -160,6 +160,37 @@ describe('withStoreLock', () => {
       await expect(p1).rejects.toThrow('first fails');
       await p2;
       expect(order).toEqual(['first', 'second']);
+    });
+  });
+
+  describe('acquisition timeout (PRR-014)', () => {
+    it('a holder that never settles times out the Web-Locks waiter with a clear error', async () => {
+      // Abort-aware fake: the real LockManager rejects the request with an
+      // AbortError when its signal aborts (what the production timeout uses).
+      const manager = {
+        request: vi.fn(
+          (_name: string, opts: { signal?: AbortSignal }, _callback: unknown) =>
+            new Promise((_resolve, reject) => {
+              opts.signal?.addEventListener('abort', () =>
+                reject(new DOMException('aborted', 'AbortError'))
+              );
+            })
+        ),
+      };
+      await expect(
+        withStoreLock('docqa-timeout-lock', async () => 'never', {
+          lockManager: manager as unknown as LockManager,
+          acquireTimeoutMs: 30,
+        })
+      ).rejects.toThrow(/was not acquired within 30ms/);
+    });
+
+    it('a stuck in-tab predecessor times out the chained waiter with a clear error', async () => {
+      const stuck = withStoreLock('docqa-timeout-chain', () => new Promise<never>(() => undefined));
+      await expect(
+        withStoreLock('docqa-timeout-chain', async () => 'never', { acquireTimeoutMs: 30 })
+      ).rejects.toThrow(/was not acquired within 30ms/);
+      void stuck; // intentionally never settles — only its waiters may time out
     });
   });
 });

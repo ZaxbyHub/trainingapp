@@ -160,6 +160,11 @@ export function DocumentsPage() {
   const [documents, setDocuments] = useState<DocumentEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // PRR-017: docId of a fail-closed delete whose retained row should receive
+  // focus. Carried as STATE (not a ref off deletingId) because act/React
+  // batching can collapse deletingId's null -> docId -> null into no visible
+  // transition, which a [deletingId]-keyed effect would never observe.
+  const [focusAfterDeleteId, setFocusAfterDeleteId] = useState<string | null>(null);
   // F9: one-time banner when the embedding model was upgraded and the stored
   // vector index was discarded as incompatible (see VECTOR_INDEX_VERSION).
   const [showReindexNotice, setShowReindexNotice] = useState(false);
@@ -287,25 +292,46 @@ export function DocumentsPage() {
 
   // #270 (PC-3 production subscriber): when another tab commits a document
   // change, reload this tab's list so it never serves — and later re-saves —
-  // a stale snapshot. This tab's in-flight processing rows are preserved
-  // (their live state wins until they settle).
+  // a stale snapshot. Two protections:
+  // - Merge, don't replace (PRR-005): rows that are in flight in THIS tab
+  //   but not yet persisted (their debounce save has not fired) are absent
+  //   from the loaded list; a pure replace would drop them mid-processing
+  //   and orphan their index chunks when they later settle.
+  // - Coalesce (PRR-021): announcement bursts collapse into one reload.
   useEffect(() => {
     if (electronMode) return;
-    return onDocumentsRemoteChange(() => {
+    let reloadTimer: ReturnType<typeof setTimeout> | undefined;
+    const reload = () => {
       void (async () => {
         try {
-          const docs = await loadDocuments();
+          const loaded = await loadDocuments();
           setDocuments((prev) => {
             const inFlight = new Set(cancelControllersRef.current.keys());
-            return docs.map((doc) =>
-              inFlight.has(doc.id) ? (prev.find((p) => p.id === doc.id) ?? doc) : doc
+            const loadedIds = new Set(loaded.map((doc) => doc.id));
+            const kept = prev.filter(
+              (doc) =>
+                !loadedIds.has(doc.id) &&
+                inFlight.has(doc.id) &&
+                (doc.status === 'uploading' || doc.status === 'processing')
             );
+            const merged = [...kept, ...loaded];
+            merged.sort((a, b) => b.uploadedAt - a.uploadedAt);
+            return merged;
           });
         } catch (error) {
           console.error('Failed to reload documents after a remote change:', error);
         }
       })();
-    });
+    };
+    const onRemote = () => {
+      if (reloadTimer !== undefined) clearTimeout(reloadTimer);
+      reloadTimer = setTimeout(reload, 100);
+    };
+    const unsubscribe = onDocumentsRemoteChange(onRemote);
+    return () => {
+      if (reloadTimer !== undefined) clearTimeout(reloadTimer);
+      unsubscribe();
+    };
   }, [electronMode]);
 
   // Keep the latest-documents ref in sync so the debounced save and the unmount
@@ -313,6 +339,27 @@ export function DocumentsPage() {
   useEffect(() => {
     latestDocumentsRef.current = documents;
   }, [documents]);
+
+  // PRR-017: land the fail-closed delete's focus hand-off on the retained
+  // row's delete control. The confirm button already unmounted (the list's
+  // neighbour hand-off owns focus at confirm time), and while deletingId is
+  // still set the control is disabled — focus() on a disabled button no-ops.
+  // Retry across renders until the button is present and enabled; consume the
+  // request only on a successful focus so a not-yet-flushed commit (act can
+  // collapse the intermediate deletingId transition) is retried on the next
+  // keyed run instead of being dropped.
+  useEffect(() => {
+    const docId = focusAfterDeleteId;
+    if (docId === null) return;
+    const docName =
+      latestDocumentsRef.current.find((doc) => doc.id === docId)?.fileName ?? docId;
+    const retained = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('button[data-doc-action="delete"]')
+    ).find((btn) => btn.getAttribute('aria-label') === `Delete ${docName}`);
+    if (retained === undefined || retained.disabled) return;
+    retained.focus();
+    setFocusAfterDeleteId(null);
+  }, [focusAfterDeleteId, deletingId]);
 
   // Save documents to IndexedDB when they change (debounced).
   // F13: the save callback reads latestDocumentsRef.current at FIRE TIME rather
@@ -923,6 +970,11 @@ export function DocumentsPage() {
           `Could not fully remove "${docName}" from the search index. Please try again.`,
           'error'
         );
+        // PRR-017: the confirm button unmounted with the dialog and the
+        // row's delete control may still be disabled (deletingId clears only
+        // in finally) — carry the focus request as state; the effect below
+        // lands it once the control is present and enabled.
+        setFocusAfterDeleteId(docId);
         return;
       }
 

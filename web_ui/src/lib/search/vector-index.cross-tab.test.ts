@@ -224,6 +224,31 @@ function queryFor(seed: number): Float32Array {
   return q;
 }
 
+/** Fake BroadcastChannel with deterministic same-tab delivery to EVERY
+ * instance of the name (including the sender - createStoreChannel's sender-id
+ * stamp filters self-echoes, exactly like production). */
+function installLinkedBroadcastChannel(): void {
+  const channels: Array<{ name: string; onmessage: ((event: MessageEvent) => void) | null }> = [];
+  class FakeChannel {
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    constructor(readonly name: string) {
+      channels.push(this);
+    }
+    postMessage(message: unknown): void {
+      for (const other of channels) {
+        if (other.name === this.name) {
+          other.onmessage?.({ data: message } as unknown as MessageEvent);
+        }
+      }
+    }
+    close(): void {
+      /* noop */
+    }
+  }
+  (globalThis as { BroadcastChannel?: unknown }).BroadcastChannel = FakeChannel;
+}
+
+
 async function freshIndex() {
   vi.resetModules();
   const mod = await import('./vector-index');
@@ -236,6 +261,7 @@ describe('vector index across two tabs (shared IndexedDB + snapshot store)', () 
   beforeEach(() => {
     h.snapshots.clear();
     installFakeIndexedDB();
+    installLinkedBroadcastChannel();
   });
 
   it('two instances save different docs; fresh load returns both and every id resolves', async () => {
@@ -420,5 +446,33 @@ describe('vector index across two tabs (shared IndexedDB + snapshot store)', () 
 
     const second = await c.search(queryFor(61), { k: 4 });
     expect(second[0]?.text).toBe('second chunk text');
+  });
+
+  it('a remote save refreshes the other tab live vector search state (PRR-004)', async () => {
+    const a = await freshIndex();
+    const b = await freshIndex();
+    await b.addBatch([entry('doc-b', 0, 'beta vector chunk', 95)]);
+    await b.save(); // posts the change to every channel instance
+    // The refresh reload runs async on the fake IDB's macrotask chains —
+    // poll until it lands (a fixed nap is shorter than those chains).
+    let hits = await a.search(queryFor(95), { k: 5 });
+    const deadline = Date.now() + 2000;
+    while (hits.length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      hits = await a.search(queryFor(95), { k: 5 });
+    }
+    expect(hits.length).toBeGreaterThanOrEqual(1);
+    expect(hits[0]?.docId).toBe('doc-b');
+  });
+
+  it('removeByDocId releases the removed doc raw vectors (PRR-011)', async () => {
+    const a = await freshIndex();
+    await a.addBatch([entry('doc-r', 0, 'removable chunk', 90)]);
+    const vectors = (a as unknown as { vectorsById: Map<number, Float32Array> }).vectorsById;
+    expect(vectors.size).toBe(1);
+    await a.removeByDocId('doc-r');
+    // The raw vector can never re-enter idMapping (remove ops keep nothing),
+    // so retaining it is a pure leak.
+    expect(vectors.size).toBe(0);
   });
 });

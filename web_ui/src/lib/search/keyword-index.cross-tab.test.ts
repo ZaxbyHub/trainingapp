@@ -117,10 +117,36 @@ function chunk(docId: string, i: number, text: string): DocumentChunk {
   return { docId, chunkIndex: i, text, source: `${docId}.txt`, page: i + 1 } as DocumentChunk;
 }
 
+/** Fake BroadcastChannel with deterministic same-tab delivery to EVERY
+ * instance of the name (including the sender - createStoreChannel's sender-id
+ * stamp filters self-echoes, exactly like production). */
+function installLinkedBroadcastChannel(): void {
+  const channels: Array<{ name: string; onmessage: ((event: MessageEvent) => void) | null }> = [];
+  class FakeChannel {
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    constructor(readonly name: string) {
+      channels.push(this);
+    }
+    postMessage(message: unknown): void {
+      for (const other of channels) {
+        if (other.name === this.name) {
+          other.onmessage?.({ data: message } as unknown as MessageEvent);
+        }
+      }
+    }
+    close(): void {
+      /* noop */
+    }
+  }
+  (globalThis as { BroadcastChannel?: unknown }).BroadcastChannel = FakeChannel;
+}
+
+
 describe('keyword index across two tabs (shared IndexedDB)', () => {
   beforeEach(() => {
     vi.resetModules();
     installSharedFakeIndexedDB();
+    installLinkedBroadcastChannel();
   });
 
   it('two instances save different documents; a fresh load returns both with metadata', async () => {
@@ -181,5 +207,61 @@ describe('keyword index across two tabs (shared IndexedDB)', () => {
     await c.initialize();
     expect(c.search('xray')).toEqual([]);
     expect(c.search('yankee').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('a remote save rebuilds this tab live search state (PRR-004)', async () => {
+    // Tab A: initialized and subscribed, nothing of its own pending - the
+    // refresh guard lets the reload run.
+    const A = await import('./keyword-index');
+    const a = A.getKeywordIndex();
+    await a.initialize();
+
+    vi.resetModules();
+    const B = await import('./keyword-index');
+    const b = B.getKeywordIndex();
+    await b.initialize();
+    b.addDocuments([chunk('doc-b', 0, 'beta document text')]);
+    await b.save(); // posts the change to every channel instance
+
+    // The refresh rebuild runs async on the fake IDB's macrotask chains —
+    // poll until it lands.
+    let hits = a.search('beta');
+    const deadline = Date.now() + 2000;
+    while (hits.length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      hits = a.search('beta');
+    }
+    expect(hits.length).toBeGreaterThanOrEqual(1);
+    expect(hits[0]?.docId).toBe('doc-b');
+    expect(hits[0]?.text).toContain('beta document text');
+  });
+
+  it('a tab with unsaved local ops does NOT reload on a remote change (PRR-004 guard)', async () => {
+    const A = await import('./keyword-index');
+    const a = A.getKeywordIndex();
+    await a.initialize();
+    a.addDocuments([chunk('doc-a', 0, 'local unsaved text')]); // pendingOps non-empty
+
+    vi.resetModules();
+    const B = await import('./keyword-index');
+    const b = B.getKeywordIndex();
+    await b.initialize();
+    b.addDocuments([chunk('doc-b', 0, 'remote beta text')]);
+    await b.save();
+
+    // Absence can only be time-bounded: watch a window comfortably beyond
+    // the observed refresh latency (a broken guard would surface doc-b
+    // within it).
+    const deadline = Date.now() + 600;
+    let hits = a.search('beta');
+    while (hits.length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      hits = a.search('beta');
+    }
+
+    // No refresh: a never sees doc-b...
+    expect(hits).toEqual([]);
+    // ...and its own unsaved doc is intact (a refresh would have wiped it).
+    expect(a.search('local').length).toBeGreaterThanOrEqual(1);
   });
 });

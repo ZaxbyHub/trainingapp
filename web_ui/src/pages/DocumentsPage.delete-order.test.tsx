@@ -191,6 +191,11 @@ describe('DocumentsPage.delete-order (C10)', () => {
 
     await waitFor(() => {
       expect(showToastSpy.mock.calls.some(([, type]) => type === 'error')).toBe(true);
+      // PRR-017: focus was returned to the retained row's delete control —
+      // the confirm button unmounted with the dialog, and the list's
+      // neighbour hand-off (fired at confirm time) no longer owns focus.
+      const active = document.activeElement as HTMLElement | null;
+      expect(active?.getAttribute('aria-label')).toBe('Delete keep.txt');
     });
     // fail closed: the row was NOT deleted
     expect(mockDeleteDocumentFromStore).not.toHaveBeenCalledWith('doc-keep');
