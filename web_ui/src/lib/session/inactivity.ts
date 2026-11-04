@@ -35,7 +35,7 @@ import {
   replayPendingConversationClear,
   type HeldLock,
 } from '../../db/conv-protocol';
-import { requestSessionClear } from './session-clear';
+import { requestSessionClear, runLocalClearCompletion } from './session-clear';
 
 /**
  * Re-check / retry cadence after a deferred fire (busy turn, or a persisted
@@ -160,9 +160,20 @@ export function startInactivityWatch(options: InactivityWatchOptions): Inactivit
     void replayPendingConversationClear().then((replay) => {
       if (stopped) return;
       if (replay.replayed) {
-        // The pending clear completed — surface the notice and re-arm.
-        options.onCleared();
-        armThreshold();
+        // The pending clear completed. #279 B2: the replay branch runs the
+        // FULL post-clear path — the same handler resets + cleared
+        // subscribers requestSessionClear uses (a replayed clear wiped this
+        // tab's persisted conversations too, so its in-memory state and the
+        // conversation list must reset here, not only in the bus path) —
+        // WITHOUT calling requestSessionClear again (the replay's own epoch
+        // transaction WAS the persisted clear; a second one would bump the
+        // epoch once more). Order: handlers/subscribers first, then the
+        // banner, then re-arm.
+        void runLocalClearCompletion().then(() => {
+          if (stopped) return;
+          options.onCleared();
+          armThreshold();
+        });
         return;
       }
       // NO exclusive lock is held here on purpose (review F1): Web Locks

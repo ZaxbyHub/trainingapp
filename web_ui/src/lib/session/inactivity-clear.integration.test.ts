@@ -340,9 +340,11 @@ describe('inactivity fire -> persisted clear through REAL locks (review F1)', ()
     expect(conversationsOf(DB_NAME)).toHaveLength(0);
     expect(await readConversationEpoch()).toBe(2);
     expect(onCleared).toHaveBeenCalledTimes(2);
-    // The replay branch, proven: the bus clear (which invokes onClear) never
-    // ran on the second fire.
-    expect(onClear.mock.calls.length).toBe(clearsAfterFirstFire);
+    // The replay branch, proven: it now runs the FULL post-clear path itself
+    // (#279 B2 fix) — the bus handler reset runs on the replay fire too, so
+    // a replayed clear resets this tab's in-memory state instead of leaving
+    // it stale beside a wiped store.
+    expect(onClear.mock.calls.length).toBe(clearsAfterFirstFire + 1);
     expect(readClearRecord()).toEqual({ pending: null, completed: { [PREFIX]: 2 } });
   });
 });

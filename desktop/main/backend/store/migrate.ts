@@ -15,16 +15,33 @@
 // supersedes becomes a JSON array of "id@version" strings; any legacy scalar
 // value is wrapped into a single-element array. docs.pack_id's FK is dropped
 // by re-creating docs with the v3 DDL (the FK was inert — connections default
-// foreign_keys OFF and this ladder is the only runtime code that flips them
+// to foreign_keys OFF and this ladder is the only runtime code that flips them
 // ON — but leaving v2-migrated files with a composite-PK
 // parent reference would break the day enforcement turns on, so the ladder
 // keeps every store byte-consistent with a fresh v3 apply).
+//
+// v4 (#278) adds the doc_claims table (one row per document claimant) and
+// backfills one claim per existing docs row from docs.pack_id ('pack:<id>' /
+// 'user'). Because v3 recorded only ONE owner per doc, the backfill alone
+// would lose the second pack's claim on shared content, so the step also
+// RECONCILES claims from every ACTIVE pack's retained manifest (pack.json at
+// the row's stored absolute install_path — no path recomputation). A pack
+// whose manifest is unreadable contributes no claims and leaves
+// meta.doc_claims_reconciled = 'pending' (fail closed): the claimant-aware
+// lifecycle verbs refuse while pending, because a docsMap derived from a
+// missing manifest cannot prove which docs the pack claims. The
+// reconciliation pass re-runs on every migrate() entry, so a store that
+// migrated while a manifest was unavailable heals on the next open once the
+// manifest is readable again; a complete pass stamps 'done'.
 //
 // The better-sqlite3 handle is intentionally typed structurally (the driver
 // and this module resolve better-sqlite3 through createRequire so the native
 // addon is loaded from desktop/node_modules in both src and dist layouts).
 
-export const CURRENT_SCHEMA_VERSION = 3;
+import fs from 'node:fs';
+import path from 'node:path';
+
+export const CURRENT_SCHEMA_VERSION = 4;
 
 /** Structural subset of a better-sqlite3 Database this module needs. */
 export interface StoreDb {
@@ -195,6 +212,141 @@ function migrateV2ToV3Inner(db: StoreDb): void {
   }
 }
 
+/** Minimal manifest shape the v4 reconciliation reads from pack.json. */
+interface ReconcileManifest {
+  docs: Array<{ sha256?: unknown }>;
+}
+
+/**
+ * Read an installed pack's retained manifest from its stored absolute
+ * install_path (Binding Phase-4 note: pack.json is read from install_path
+ * itself — the store dir is never consulted to recompute the path). Returns
+ * null when the manifest is missing, unparseable, or malformed — the caller
+ * decides what that means.
+ */
+function readPackManifestOrNull(installPath: string): ReconcileManifest | null {
+  try {
+    const raw = fs.readFileSync(path.join(installPath, 'pack.json'));
+    const parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(raw)) as unknown;
+    if (typeof parsed !== 'object' || parsed === null) return null;
+    const docs = (parsed as { docs?: unknown }).docs;
+    if (!Array.isArray(docs)) return null;
+    return { docs: docs as ReconcileManifest['docs'] };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reconcile pack claims from every ACTIVE pack's retained manifest: for each
+ * listed doc sha, resolve the store docs.id by content hash and INSERT OR
+ * IGNORE the (doc_id, 'pack:<id>') claim. Inactive versions contribute
+ * nothing (their claims arrive when they are activated). A row with a NULL
+ * install_path (packtool wholesale rows, which retain no managed folder)
+ * contributes nothing either — its docs keep the docs.pack_id-derived
+ * backfill claim. Returns true when any active pack's manifest was
+ * unreadable (the caller stamps the pending marker).
+ */
+function reconcileDocClaimsLocked(db: StoreDb): boolean {
+  const rows = db
+    .prepare('SELECT id, version, install_path FROM packs WHERE active = 1')
+    .all() as Array<{ id: unknown; version: unknown; install_path: unknown }>;
+  const insertClaim = db.prepare('INSERT OR IGNORE INTO doc_claims (doc_id, claimant) VALUES (?, ?)');
+  const findDocId = db.prepare('SELECT id FROM docs WHERE sha256 = ?');
+  let pending = false;
+  for (const row of rows) {
+    if (typeof row.install_path !== 'string' || row.install_path.length === 0) continue;
+    const manifest = readPackManifestOrNull(row.install_path);
+    if (manifest === null) {
+      pending = true;
+      continue;
+    }
+    const claimant = `pack:${String(row.id)}`;
+    for (const entry of manifest.docs) {
+      if (typeof entry?.sha256 !== 'string') continue;
+      const doc = findDocId.get(entry.sha256) as { id: unknown } | undefined;
+      // Manifest shas are lowercase by validation; tolerate a mixed-case row.
+      const byLower =
+        doc === undefined
+          ? (findDocId.get(entry.sha256.toLowerCase()) as { id: unknown } | undefined)
+          : undefined;
+      const docId = doc ?? byLower;
+      if (docId !== undefined && typeof docId.id === 'string') {
+        insertClaim.run(docId.id, claimant);
+      }
+    }
+  }
+  return pending;
+}
+
+/** Stamp the reconciliation marker (INSERT OR REPLACE: a fresh v4 apply has
+ * no row yet; every later pass overwrites the previous state). */
+function stampReconciled(db: StoreDb, pending: boolean): void {
+  db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('doc_claims_reconciled', ?)").run(
+    pending ? 'pending' : 'done',
+  );
+}
+
+/**
+ * Reconciliation re-attempt for stores already at v4: runs on EVERY migrate()
+ * entry (not only the v3->v4 step) so a store that migrated while an active
+ * manifest was unreadable heals on the next open. Idempotent: claims are
+ * INSERT OR IGNORE and a complete pass re-stamps 'done'.
+ */
+function reconcileDocClaims(db: StoreDb): void {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    stampReconciled(db, reconcileDocClaimsLocked(db));
+    db.exec('COMMIT');
+  } catch (error) {
+    try {
+      db.exec('ROLLBACK');
+    } catch {
+      // The connection may be unusable after some failures; surface the cause.
+    }
+    throw error;
+  }
+}
+
+/**
+ * v3 -> v4 (#278): create doc_claims, backfill one claim per docs row from
+ * its recorded owner (pack_id NOT NULL -> 'pack:<id>'; NULL -> 'user'; an
+ * orphaned docs row whose pack_id names a removed pack backfills the dead
+ * claim — retrieval's active-pack join excludes it, consistently), then run
+ * the manifest reconciliation inside the same transaction and stamp the
+ * marker. The DDL matches the authoritative contracts/store.schema.sql.
+ */
+function migrateV3ToV4(db: StoreDb): void {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.exec(
+      'CREATE TABLE doc_claims (\n' +
+        '    doc_id     TEXT NOT NULL,\n' +
+        '    claimant   TEXT NOT NULL,\n' +
+        '    PRIMARY KEY (doc_id, claimant)\n' +
+        ')',
+    );
+    db.exec(
+      "INSERT OR IGNORE INTO doc_claims (doc_id, claimant) " +
+        "SELECT id, 'pack:' || pack_id FROM docs WHERE pack_id IS NOT NULL",
+    );
+    db.exec(
+      "INSERT OR IGNORE INTO doc_claims (doc_id, claimant) " +
+        "SELECT id, 'user' FROM docs WHERE pack_id IS NULL",
+    );
+    stampReconciled(db, reconcileDocClaimsLocked(db));
+    db.prepare("UPDATE meta SET value = '4' WHERE key = 'schema_version'").run();
+    db.exec('COMMIT');
+  } catch (error) {
+    try {
+      db.exec('ROLLBACK');
+    } catch {
+      // The connection may be unusable after some failures; surface the cause.
+    }
+    throw error;
+  }
+}
+
 /**
  * Bring the store to CURRENT_SCHEMA_VERSION. Returns the final version.
  * Future versions extend this ladder; a store from the future (version >
@@ -212,6 +364,13 @@ export function migrate(db: StoreDb): number {
   }
   if (version < 3) {
     migrateV2ToV3(db);
+  }
+  if (version < 4) {
+    migrateV3ToV4(db);
+  } else {
+    // Stores already at v4 re-attempt the manifest reconciliation on every
+    // migrate() entry (heals a pending store once its manifest is readable).
+    reconcileDocClaims(db);
   }
   return readSchemaVersion(db);
 }

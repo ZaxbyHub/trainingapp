@@ -86,6 +86,18 @@ export interface PressureMonitor {
   observe(freeBytes: number, atMs?: number): void;
   evaluate(atMs?: number): PressureStatus;
   /**
+   * Issue #280 (C4): move the pressure threshold at runtime (the host wires
+   * an accepted inference.profileThresholdGb / memory.pressureThresholdGb
+   * settings change through this). Re-bases thresholdBytes only; the
+   * sustained-window and recovery semantics are untouched, so a sample
+   * already in flight is judged by the streak rules against the NEW
+   * boundary. A non-positive or non-finite value is ignored — the same
+   * junk-tolerance resolveMemoryConfig applies to the construction default,
+   * and the settings seam's own positive-number gate makes it unreachable
+   * from accepted patches anyway.
+   */
+  setThreshold(gb: number): void;
+  /**
    * Host acknowledgement after it clears a latched downgrade override (the
    * monitor's only upgrade path is the host's; PRR-F1). Clears the downgrade
    * latch and recovery state so the NEXT downgrade requires a NEW sustained
@@ -107,7 +119,8 @@ export interface PressureMonitor {
  */
 export function createPressureMonitor(options: PressureMonitorOptions = {}): PressureMonitor {
   const defaults = resolveMemoryConfig();
-  const thresholdBytes = (options.pressureThresholdGb ?? defaults.pressureThresholdGb) * GIB;
+  // Issue #280 (C4): mutable — setThreshold re-bases this at runtime.
+  let thresholdBytes = (options.pressureThresholdGb ?? defaults.pressureThresholdGb) * GIB;
   const pressureSustainedMs = options.pressureSustainedMs ?? defaults.pressureSustainedMs;
   const recoverySustainedMs = options.recoverySustainedMs ?? pressureSustainedMs;
   const nowMs = options.nowMs ?? Date.now;
@@ -153,6 +166,10 @@ export function createPressureMonitor(options: PressureMonitorOptions = {}): Pre
       recoveryEligibleLatch = false;
       pressureStreakStartMs = null;
       recoveryStreakStartMs = null;
+    },
+    setThreshold(gb) {
+      if (typeof gb !== 'number' || !Number.isFinite(gb) || gb <= 0) return;
+      thresholdBytes = gb * GIB;
     },
   };
 }

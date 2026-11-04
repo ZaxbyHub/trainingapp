@@ -71,6 +71,11 @@ export const FAMILY_ROSTER: string[] = [
   // committed re-driver (the acceptance-battery-precision pattern) — rostered
   // with it for the same no-other-home reason.
   'diagnostics-acceptance-precision.test.ts',
+  // Issue #280 (C5): the settings/OpenAPI parity contract — every inference.*
+  // settings key the engine accepts and reports must be declared in both
+  // contract schemas with the switch's domains. Accepted-but-undeclared API
+  // surface is security-adjacent and has no other merge-blocking home.
+  'settings-openapi-parity.test.ts',
 ];
 
 /** Convention-matching specs owned by another CI context, with run-line evidence. */

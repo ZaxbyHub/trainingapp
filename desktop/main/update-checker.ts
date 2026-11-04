@@ -686,7 +686,10 @@ export function validateFeedDocument(parsed: unknown): { ok: boolean; detail?: s
 
 export interface ApplyUpdateDeps {
   downloadArtifact: (url: string, expectedBytes: number) => Promise<Uint8Array>;
-  installPack: (zipBytes: Uint8Array, filename: string) => Promise<{ version: string }>;
+  /** #278: widened to return the INSTALLED identity (packId + version) so
+   * applyPackUpdate can verify the artifact that landed is the one asked
+   * for, not merely report whatever version came back. */
+  installPack: (zipBytes: Uint8Array, filename: string) => Promise<{ packId: string; version: string }>;
 }
 
 export interface ApplyUpdateResult {
@@ -727,12 +730,15 @@ export async function downloadArtifactBytes(url: string, expectedBytes: number):
 
 /** Production install leg: POST the verified zip to the app's own loopback
  * pack-install route, so the C8 guards and supersede semantics apply
- * unchanged. Needs the loopback base URL and the per-launch token. */
+ * unchanged. Needs the loopback base URL and the per-launch token. The
+ * route's response carries pack_id (required by the OpenAPI
+ * InstallPackResponse) alongside version; both are parsed so the caller can
+ * verify the installed identity (#278). */
 export function loopbackPackInstaller(
   baseUrl: string,
   token: string,
   tokenHeaderName: string,
-): (zipBytes: Uint8Array, filename: string) => Promise<{ version: string }> {
+): (zipBytes: Uint8Array, filename: string) => Promise<{ packId: string; version: string }> {
   return async (zipBytes: Uint8Array, filename: string) => {
     const form = new FormData();
     form.append('file', new Blob([new Uint8Array(zipBytes)], { type: 'application/zip' }), filename);
@@ -747,8 +753,8 @@ export function loopbackPackInstaller(
       const detail = await response.text();
       throw new Error(`pack install answered HTTP ${response.status}: ${detail.slice(0, 300)}`);
     }
-    const body = (await response.json()) as { version?: string };
-    return { version: body.version ?? '' };
+    const body = (await response.json()) as { pack_id?: string; version?: string };
+    return { packId: body.pack_id ?? '', version: body.version ?? '' };
   };
 }
 
@@ -776,6 +782,21 @@ export async function applyPackUpdate(
   }
   try {
     const installed = await deps.installPack(artifact, `${candidate.packId}-${candidate.availableVersion}.zip`);
+    // #278 post-install identity check: the download was digest-verified
+    // against the signed entry, but the INSTALL leg goes through the
+    // loopback pack route, and a substituted artifact (a different pack id
+    // or version landing in the registry) must never be reported as the
+    // requested update. Removal of the substituted pack is left to the
+    // caller (documented in the reason; ADR-0010 residuals).
+    if (installed.packId !== candidate.packId || installed.version !== candidate.availableVersion) {
+      return {
+        applied: false,
+        version: installed.version,
+        reason:
+          `install identity mismatch: requested ${candidate.packId}@${candidate.availableVersion} but ` +
+          `${installed.packId}@${installed.version} was installed; removal of the substituted pack is left to the caller`,
+      };
+    }
     return { applied: true, version: installed.version };
   } catch (err) {
     return { applied: false, reason: `install failed: ${err instanceof Error ? err.message : String(err)}` };

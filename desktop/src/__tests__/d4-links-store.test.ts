@@ -286,14 +286,17 @@ describe('d4 links runtime maintenance (issue #80)', () => {
 describe('d4 migrate ladder v1 -> v2 (issue #80)', () => {
   itReal('upgrades a v1 store: reserved links shape gains pack_id/rank/computed_at', async () => {
     const { openStore, migrate, CURRENT_SCHEMA_VERSION } = await loadModules();
-    expect(CURRENT_SCHEMA_VERSION).toBe(3);
+    expect(CURRENT_SCHEMA_VERSION).toBe(4);
     const dbPath = makeTempDbPath();
     const store = openStore({ dbPath, dims: 8, repoRoot: REPO_ROOT });
     try {
-      // Downgrade the fresh v2 store to the v1 reserved shape + version seed.
+      // Downgrade the fresh store to the v1 reserved shape + version seed
+      // (v1 had no doc_claims — drop it with the version marker).
       store.db.exec('DROP INDEX IF EXISTS links_slide_id_idx');
       store.db.exec('DROP TABLE links');
       store.db.exec('CREATE TABLE links (chunk_id TEXT NOT NULL REFERENCES chunks(id), slide_id TEXT NOT NULL, score REAL NOT NULL, PRIMARY KEY (chunk_id, slide_id))');
+      store.db.exec('DROP TABLE doc_claims');
+      store.db.exec("DELETE FROM meta WHERE key = 'doc_claims_reconciled'");
       store.db.exec("UPDATE meta SET value = '1' WHERE key = 'schema_version'");
     } finally {
       store.close();
@@ -301,19 +304,19 @@ describe('d4 migrate ladder v1 -> v2 (issue #80)', () => {
     // Re-open runs the ladder via openStore's migrate call.
     const upgraded = openStore({ dbPath, dims: 8, repoRoot: REPO_ROOT });
     try {
-      expect(upgraded.schemaVersion).toBe(3);
+      expect(upgraded.schemaVersion).toBe(4);
       const version = upgraded.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as Row;
-      expect(version.value).toBe('3');
+      expect(version.value).toBe('4');
       const columns = upgraded.db.prepare('PRAGMA table_info(links)').all() as Array<Row>;
       const names = columns.map((c) => c.name).sort();
       expect(names).toEqual(['chunk_id', 'computed_at', 'pack_id', 'rank', 'score', 'slide_id']);
     } finally {
       upgraded.close();
     }
-    // The explicit ladder is idempotent at v2.
+    // The explicit ladder is idempotent at the current version.
     const again = openStore({ dbPath, dims: 8, repoRoot: REPO_ROOT });
     try {
-      expect(migrate(again.db)).toBe(3);
+      expect(migrate(again.db)).toBe(4);
     } finally {
       again.close();
     }
@@ -321,7 +324,7 @@ describe('d4 migrate ladder v1 -> v2 (issue #80)', () => {
 
   itReal('ladder-created links table matches a fresh v2 store byte-for-byte in shape (parity pin)', async () => {
     const { openStore, migrate } = await loadModules();
-    // Fresh v2 store (schema file DDL).
+    // Fresh store (schema file DDL).
     const freshPath = makeTempDbPath();
     const fresh = openStore({ dbPath: freshPath, dims: 8, repoRoot: REPO_ROOT });
     // Downgraded v1 store, then explicit migrate (ladder DDL).
@@ -330,8 +333,10 @@ describe('d4 migrate ladder v1 -> v2 (issue #80)', () => {
     seed.db.exec('DROP INDEX IF EXISTS links_slide_id_idx');
     seed.db.exec('DROP TABLE links');
     seed.db.exec('CREATE TABLE links (chunk_id TEXT NOT NULL REFERENCES chunks(id), slide_id TEXT NOT NULL, score REAL NOT NULL, PRIMARY KEY (chunk_id, slide_id))');
+    seed.db.exec('DROP TABLE doc_claims');
+    seed.db.exec("DELETE FROM meta WHERE key = 'doc_claims_reconciled'");
     seed.db.exec("UPDATE meta SET value = '1' WHERE key = 'schema_version'");
-    expect(migrate(seed.db)).toBe(3);
+    expect(migrate(seed.db)).toBe(4);
     try {
       const shapeOf = (db: import('../../main/backend/store/sqlite-store.js').StoreHandle['db']): string =>
         JSON.stringify(

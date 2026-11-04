@@ -1,5 +1,5 @@
 -- =============================================================================
--- contracts/store.schema.sql — AUTHORITATIVE per-profile store schema (v3)
+-- contracts/store.schema.sql — AUTHORITATIVE per-profile store schema (v4)
 -- =============================================================================
 -- This file is the single source of truth for the SQLite store shared by the
 -- desktop Node backend (better-sqlite3) and the Python sidecar (sqlite3 +
@@ -19,6 +19,18 @@
 -- no longer serve a lone-id FK, and both columns are content-carried references
 -- (supersedes is a JSON array of "id@version" strings; docs.pack_id follows the
 -- links.pack_id precedent of being deliberately FK-free).
+--
+-- v4 (#278): the doc_claims table records every claimant of a document —
+-- 'pack:<id>' rows written at pack install/import and 'user' rows written by
+-- the ingest pipeline — so content shared across claimants outlives any ONE
+-- claimant's lifecycle event (a pack remove that would delete a doc another
+-- pack or the user still holds instead releases only its own claim). The
+-- v3->v4 ladder backfills one claim per existing docs row from docs.pack_id
+-- and reconciles additional pack claims from every ACTIVE pack's retained
+-- manifest (meta key doc_claims_reconciled; 'pending' while any active
+-- manifest is unreadable). The pack ARTIFACT index format is unchanged at
+-- v3 (packtool's embedded index.sqlite version): doc_claims is store-side
+-- only, stamped by the desktop at install time.
 --
 -- Pinned extension: sqlite-vec 0.1.9 (pre-1.0; exact pin required — no ranges).
 --   Node: desktop/package.json "sqlite-vec": "0.1.9"  (dependencies, exact)
@@ -125,12 +137,26 @@ CREATE TABLE links (
 );
 CREATE INDEX links_slide_id_idx ON links(slide_id);
 
+-- v4 (#278): one row per (document, claimant). claimant is 'pack:<id>' or
+-- 'user'; a byte-identical document installed by two packs and also uploaded
+-- by the user carries three rows, and its content is deleted only when the
+-- LAST claim is released. Like docs.pack_id and links.pack_id, doc_id is
+-- deliberately FK-free: docs has no natural delete-ordering guarantee, and
+-- the claimant-aware deleter (deleteDocumentLocked / the ingest path
+-- replacement) removes the claim row before — or in the same transaction as —
+-- the doc, so no claim can outlive its document.
+CREATE TABLE doc_claims (
+    doc_id     TEXT NOT NULL,               -- references docs(id) by value
+    claimant   TEXT NOT NULL,               -- 'pack:<id>' or 'user'
+    PRIMARY KEY (doc_id, claimant)
+);
+
 -- Profile-level metadata. Seeded by this schema; consumed by both runtimes.
 CREATE TABLE meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
 INSERT INTO meta (key, value) VALUES
-    ('schema_version', '3'),
+    ('schema_version', '4'),
     ('embedding_model_id', ''),
     ('embedding_dims', '__EMBEDDING_DIMS__');

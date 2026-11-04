@@ -1,5 +1,6 @@
 /*
- * sw.js — the app-shell service worker (issue #34 item 7 via #26, plan R2/R4-6/R5/R6).
+ * sw.js — the app-shell service worker (issue #34 item 7 via #26, plan
+ * R2/R4-6/R5/R6; issue #279 plan B3 + PC-5/PC2-3/PC3-2/PC3-3).
  *
  * Classic worker script: NO static import/export (importScripts only), so it can
  * be executed headlessly under a stubbed environment (check-c3) and served as a
@@ -24,18 +25,34 @@
  *   3. Precache-manifest member (other than index.html) — cache-first. The
  *      manifest holds only content-hashed assets/** files, immutable by
  *      construction (R4-1).
- *   4. GET under assets/ NOT in the manifest (a late-added chunk) —
- *      network-first with cache fallback and network fill (R5-8).
+ *   4. GET under the SCOPE-RELATIVE assets/ path (a late-added chunk) —
+ *      network-first with cache fallback and network fill (R5-8). #279 B3:
+ *      the prefix resolves against the worker's scope base (the same
+ *      scope-base helper the precache and shell paths use), so a sub-path
+ *      deployment (/training-app/) fills and serves /training-app/assets/**
+ *      instead of passing them through.
  *   5. Everything else — passthrough.
  *
  * Cache naming: 'docqa-shell-<stamp>' where stamp is a runtime hash of the
  * SORTED manifest URL list. Activation deletes ONLY caches with this prefix —
  * foreign caches (webllm/*, course caches) are never touched (R3-6).
+ *
+ * Atomic precache revision (#279 B3): a precache entry that fails to fetch
+ * leaves the new shell cache INCOMPLETE, marked by a sparse marker persisted in
+ * a metadata cache ('docqa-meta-shell-v1') that lives OUTSIDE the CACHE_PREFIX
+ * namespace (activation never deletes it, and it never serves as a shell). The
+ * marker is written ONLY on failure (a cache with no marker is complete by
+ * policy), refreshes on repeated failures, and is removed after a later fully
+ * successful install. While the new generation is marked, activation KEEPS the
+ * previous complete shell and every fetch arm serves from the newest COMPLETE
+ * shell cache (shellCache()) — a partial precache can never become the offline
+ * app shell.
  */
 (function () {
   'use strict';
 
   var CACHE_PREFIX = 'docqa-shell-';
+  var META_CACHE_NAME = 'docqa-meta-shell-v1';
   var MANIFEST_URL = 'sw-precache-manifest.js';
 
   // The manifest is a classic script that assigns self.__PRECACHE_MANIFEST.
@@ -98,6 +115,10 @@
       return '/';
     }
   })();
+  // #279 B3: the unmanifested-assets arm anchors at the scope base, the same
+  // helper the precache (manifestPath) and shell paths use — '/assets/' for a
+  // root-scope worker, '/training-app/assets/' under the sub-path hosting.
+  var ASSETS_PATH_PREFIX = SCOPE_ROOT_PATH + 'assets/';
 
   function isIndexHtmlPath(path) {
     return path === SHELL_INDEX_PATH || path === '/' || path === '';
@@ -119,7 +140,6 @@
     return path === '/player-origin.json' || path === '/training-boot.html' || path === '/training-boot.js';
   }
 
-
   /**
    * Strip the Vary header before caching. The dev/preview server emits
    * `Vary: Origin`; Cache Storage keys match() against Vary, so a response
@@ -138,13 +158,110 @@
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Sparse incomplete-markers (#279 B3, PC-5/PC2-3/PC3-2)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * True when the shell cache `name` carries an incomplete-marker in the
+   * metadata cache. The metadata cache is named OUTSIDE the CACHE_PREFIX
+   * namespace so activation never prunes it; its entries are keyed by the
+   * shell cache NAME and EXIST only for incomplete caches — no marker means
+   * complete (legacy caches are complete by construction, and adoption of an
+   * unmarked cache is validated entry-by-entry before it is trusted, PC3-3).
+   * A metadata-cache failure reads as "not marked" (best effort).
+   */
+  function isMarkedIncomplete(name) {
+    return caches
+      .open(META_CACHE_NAME)
+      .then(function (meta) {
+        return meta.match(name);
+      })
+      .then(function (hit) {
+        return hit !== undefined;
+      })
+      .catch(function () {
+        return false;
+      });
+  }
+
+  /**
+   * The shell cache every fetch arm serves from (#279 B3): the current
+   * generation when it is complete; otherwise the unmarked prefix cache with
+   * the lexicographically greatest name — a DETERMINISTIC retained generation
+   * (cache names are content hashes, not timestamps), kept by activation
+   * while the current generation is marked incomplete. The metadata cache is
+   * defensively excluded from the candidates by name (PC3-2): it never
+   * serves as a shell. When nothing complete exists the current generation
+   * is opened as a best effort.
+   */
+  function shellCache() {
+    return caches.keys().then(function (names) {
+      var shellNames = names.filter(function (name) {
+        return name.indexOf(CACHE_PREFIX) === 0 && name !== META_CACHE_NAME;
+      });
+      return Promise.all(
+        shellNames.map(function (name) {
+          return isMarkedIncomplete(name).then(function (marked) {
+            return marked ? null : name;
+          });
+        })
+      ).then(function (checked) {
+        var complete = checked.filter(function (name) {
+          return name !== null;
+        });
+        if (complete.indexOf(CACHE_NAME) !== -1) return caches.open(CACHE_NAME);
+        complete.sort();
+        if (complete.length === 0) return caches.open(CACHE_NAME);
+        return caches.open(complete[complete.length - 1]);
+      });
+    });
+  }
+
   self.addEventListener('install', function (event) {
     event.waitUntil(
-      caches.open(CACHE_NAME).then(function (cache) {
-        // Fetch + put each entry individually so one transient failure cannot
-        // abort the whole install (addAll fails atomically); the next install
-        // retries. Every entry that succeeds is cached for the offline shell.
-        return Promise.all(
+      (async function () {
+        const meta = await caches.open(META_CACHE_NAME);
+        const exists = await caches.has(CACHE_NAME);
+        const marked = await meta.match(CACHE_NAME).then(
+          function (hit) {
+            return hit !== undefined;
+          },
+          function () {
+            return false;
+          }
+        );
+        if (exists && !marked) {
+          // ADOPTION VALIDATION (PC3-3): the cache name is manifest-derived,
+          // so an existing unmarked cache should be complete — but entry
+          // count is insufficient proof (a legacy partial cache predating
+          // markers may be unmarked). Validate EVERY manifest URL (the same
+          // scope-relative conversion the writes use) is present; all
+          // present → skip refetching, any missing → repair/rebuild below.
+          const adoptable = await caches.open(CACHE_NAME);
+          let missing = false;
+          for (const entry of PRECACHE_LIST) {
+            const hit = await adoptable.match(new URL(entry, self.location.href)).then(
+              function (found) {
+                return found !== undefined;
+              },
+              function () {
+                return false;
+              }
+            );
+            if (!hit) {
+              missing = true;
+              break;
+            }
+          }
+          if (!missing) return;
+        }
+        // (Re)build: fetch + put each entry individually so one transient
+        // failure cannot abort the whole install (addAll fails atomically);
+        // the next install retries. Every entry that succeeds is cached.
+        const cache = await caches.open(CACHE_NAME);
+        let failures = 0;
+        await Promise.all(
           PRECACHE_LIST.map(function (entry) {
             var url = new URL(entry, self.location.href);
             return fetch(url)
@@ -153,28 +270,58 @@
                 return cache.put(url, stripVary(response));
               })
               .catch(function (err) {
+                failures += 1;
                 console.warn('[sw] precache skipped:', entry, err && err.message);
               });
           })
         );
-      })
+        if (failures > 0) {
+          // Sparse incomplete-only marker (PC-5): metadata is written ONLY on
+          // failure. A failed build/repair finishes with the marker present,
+          // so activation retains the previous complete shell and every
+          // fetch arm serves from it.
+          await meta.put(CACHE_NAME, new Response('incomplete', { status: 200, statusText: 'incomplete-shell-marker' }));
+          return;
+        }
+        // Full success: remove the marker ONLY if one exists (check-then-
+        // delete — no unconditional entry delete, and no write on the
+        // success-only path).
+        const marker = await meta.match(CACHE_NAME).then(
+          function (hit) {
+            return hit !== undefined;
+          },
+          function () {
+            return false;
+          }
+        );
+        if (marker) await meta.delete(CACHE_NAME);
+      })()
     );
   });
 
   self.addEventListener('activate', function (event) {
     event.waitUntil(
       (async function () {
-        // Prune ONLY this app's own stale shell caches; foreign caches
-        // (webllm, course, anything else) are never touched (R3-6).
-        const names = await caches.keys();
-        await Promise.all(
-          names.map(function (name) {
-            if (name.indexOf(CACHE_PREFIX) === 0 && name !== CACHE_NAME) {
-              return caches.delete(name);
-            }
-            return undefined;
-          })
-        );
+        // #279 B3: while the new generation is marked incomplete the previous
+        // complete shell must survive (the fetch arms fall back to it), so
+        // pruning is skipped entirely — a later complete generation resumes
+        // it. Prune ONLY this app's own stale shell caches; foreign caches
+        // (webllm, course, anything else) are never touched (R3-6), and the
+        // metadata cache lives outside the prefix (plus the defensive name
+        // exclusion below).
+        if (await isMarkedIncomplete(CACHE_NAME)) {
+          console.warn('[sw] shell cache incomplete — previous generation retained:', CACHE_NAME);
+        } else {
+          const names = await caches.keys();
+          await Promise.all(
+            names.map(function (name) {
+              if (name.indexOf(CACHE_PREFIX) === 0 && name !== CACHE_NAME && name !== META_CACHE_NAME) {
+                return caches.delete(name);
+              }
+              return undefined;
+            })
+          );
+        }
         // Take control of the already-open page on the FIRST visit, so the
         // very first load is offline-reloadable without a second visit
         // (without claim(), a first-visit page is never controlled and the
@@ -270,7 +417,7 @@
     // never cache-first, online or offline).
     if (request.mode === 'navigate' || isIndexHtmlPath(path)) {
       event.respondWith(
-        caches.open(CACHE_NAME).then(function (cache) {
+        shellCache().then(function (cache) {
           return handleNavigation(request, cache, path);
         })
       );
@@ -280,17 +427,18 @@
     // rule 3: manifest member (index.html was consumed by rule 2) → cache-first.
     if (manifestPaths[path]) {
       event.respondWith(
-        caches.open(CACHE_NAME).then(function (cache) {
+        shellCache().then(function (cache) {
           return cacheFirst(request, cache);
         })
       );
       return;
     }
 
-    // rule 4: unmanifested assets/ chunk → network-first with cache fallback + fill.
-    if (path.indexOf('/assets/') === 0) {
+    // rule 4: unmanifested assets/ chunk (scope-relative, #279 B3) →
+    // network-first with cache fallback + fill.
+    if (path.indexOf(ASSETS_PATH_PREFIX) === 0) {
       event.respondWith(
-        caches.open(CACHE_NAME).then(function (cache) {
+        shellCache().then(function (cache) {
           return networkFirst(request, cache);
         })
       );

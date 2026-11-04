@@ -768,6 +768,20 @@ export class NodeBackendHost implements BackendHost {
       pressureSustainedMs: memoryConfig.pressureSustainedMs,
       recoverySustainedMs: memoryConfig.recoverySustainedMs,
     });
+    // Issue #280 (C4): the pressure threshold live-follows an accepted
+    // inference.profileThresholdGb settings change (B4's inference knob and
+    // B8's memory knob are the SAME threshold by construction — the budget.ts
+    // cross-reference). The env override stays authoritative (b8-wiring env
+    // precedence): when TRAININGAPP_MEMORY_PRESSURE_THRESHOLD_GB pins the
+    // threshold, the settings knob never moves the monitor. The value has
+    // already passed the engine's positive-number gate by the time this
+    // runs; setThreshold re-validates regardless.
+    const followThresholdSetting = (patch: Record<string, unknown>): void => {
+      const value = patch['inference.profileThresholdGb'];
+      if (typeof value !== 'number' || !Number.isFinite(value)) return;
+      if (env.TRAININGAPP_MEMORY_PRESSURE_THRESHOLD_GB !== undefined) return;
+      this.monitor?.setThreshold(value);
+    };
     if (poolConfig.rerankerWorkerPoolSize > 1 || poolConfig.embeddingWorkerPoolSize > 1) {
       // Honest-config policy: the parser reports values as configured; the
       // CONSUMPTION site rejects >1 because onnxruntime-node aborts the whole
@@ -912,6 +926,9 @@ export class NodeBackendHost implements BackendHost {
           : {}),
         ...(persistSettings !== undefined ? { settings: () => persistSettings?.(patch) } : {}),
       });
+      // Issue #280 (C4): first-run wizard parity — the wizard's apply runs
+      // through the same live-follow seam a PUT /settings does.
+      if (result.ok) followThresholdSetting(patch);
       return result;
     };
     const server = createBackendServer({
@@ -962,6 +979,9 @@ export class NodeBackendHost implements BackendHost {
       packs: () => (this.packManager === null ? null : createPackSurface(this.packManager)),
       persistSettings,
       persistExternal,
+      // Issue #280 (C4): PUT /settings (patch and reset alike) reports the
+      // accepted patch to the live-follow seam after the commit.
+      onSettingsApplied: followThresholdSetting,
     });
     try {
       const port = await listenOnRandomPort(server);

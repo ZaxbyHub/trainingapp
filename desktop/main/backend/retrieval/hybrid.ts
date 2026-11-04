@@ -155,28 +155,46 @@ interface ChunkRow {
   id: string;
   text: string;
   path: string;
-  /** Owning pack id by value (docs.pack_id); null for unpackaged docs. */
+  /** Pack attribution resolved by claimant: the doc_claims 'pack:<id>' rows joined to ACTIVE packs, with the legacy docs.pack_id used only when the doc has no claim row of any kind. Null for user-claimed or unpackaged docs. */
   packId: string | null;
-  /** Active pack-version attribution (LEFT JOIN packs ON active = 1); null when the owning pack has no active version or the doc is unpackaged. */
+  /** Active pack-version attribution; null when the claimant pack has no active version or the doc is unpackaged. */
   packVersion: string | null;
   packPublishedAt: string | null;
 }
 
 function loadChunkRows(store: StoreHandle, chunkIds: string[]): Map<string, ChunkRow[]> {
-  // C4 (issue #71): LEFT JOIN keeps unpackaged docs in the result with NULL
-  // pack fields (neutral). Multiple ACTIVE versions of one pack id (the
-  // engineered both-active state) return one row per version so the prior
-  // can apply its precedence chain; docs.pack_id with no active pack row
-  // yields NULL version fields -> the prior drops the chunk as an orphan.
+  // C4 (issue #71) + #278 claimants join. Pack attribution resolves from
+  // doc_claims: each 'pack:<id>' claim row LEFT JOINs its pack's ACTIVE
+  // versions (one row per active pack version — the engineered both-active
+  // state stays a multi-claim input to the precedence prior; no GROUP BY).
+  // The legacy docs.pack_id path survives only through the independent
+  // NOT EXISTS branch, used when the doc has NO claim row of ANY kind —
+  // fixtures that seed raw docs.pack_id keep today's semantics, while any
+  // claim (a surviving 'user' claim included) suppresses the fallback so a
+  // stale docs.pack_id can never be resurrected after claim-aware removal.
+  // A pack claim whose pack has no active row yields packId set with NULL
+  // version fields -> the prior drops the chunk as an orphan; a user-only
+  // claim yields NULL pack fields (neutral).
   const rows = new Map<string, ChunkRow[]>();
   if (chunkIds.length === 0) return rows;
   const placeholders = chunkIds.map(() => '?').join(', ');
   const found = store.db
     .prepare(
       `SELECT c.id AS id, c.text AS text, d.path AS path,
-              d.pack_id AS packId, p.version AS packVersion, p.published_at AS packPublishedAt
-       FROM chunks c JOIN docs d ON c.doc_id = d.id
-       LEFT JOIN packs p ON p.id = d.pack_id AND p.active = 1
+              COALESCE(substr(dc.claimant, 6), legacy.packId) AS packId,
+              COALESCE(p.version, legacy.packVersion) AS packVersion,
+              COALESCE(p.published_at, legacy.packPublishedAt) AS packPublishedAt
+       FROM chunks c
+       JOIN docs d ON c.doc_id = d.id
+       LEFT JOIN doc_claims dc ON dc.doc_id = d.id AND dc.claimant LIKE 'pack:%'
+       LEFT JOIN packs p ON p.id = substr(dc.claimant, 6) AND p.active = 1
+       LEFT JOIN (
+           SELECT d0.id AS doc_id, d0.pack_id AS packId,
+                  lp.version AS packVersion, lp.published_at AS packPublishedAt
+           FROM docs d0
+           LEFT JOIN packs lp ON lp.id = d0.pack_id AND lp.active = 1
+           WHERE NOT EXISTS (SELECT 1 FROM doc_claims ac WHERE ac.doc_id = d0.id)
+       ) legacy ON legacy.doc_id = d.id
        WHERE c.id IN (${placeholders})`,
     )
     .all(...chunkIds) as Array<ChunkRow>;
@@ -232,9 +250,12 @@ export async function hybridRetrieve(
   const rows = loadChunkRows(options.store, [...fused.keys()]);
 
   // C4 (issue #71): build each fused chunk's pack claims from the joined
-  // rows, then run the precedence/recency prior. A chunk whose doc belongs
-  // to a pack with NO active version is an orphan -> empty claim list (the
-  // prior excludes it); a chunk with no pack membership stays neutral.
+  // rows, then run the precedence/recency prior. A chunk whose doc is
+  // claimed by a pack with NO active version is an orphan -> empty claim
+  // list (the prior excludes it); a chunk with no pack claimant (user-only
+  // or unpackaged) stays neutral. #278: precedenceWinner now resolves over
+  // the FULL active-claimant set, so citation attribution names a pack that
+  // actually still claims the doc.
   const packMetadataByChunk = new Map<string, PackClaim[]>();
   for (const [chunkId, chunkRows] of rows) {
     const memberOfPack = chunkRows.some((row) => row.packId !== null);
@@ -341,7 +362,14 @@ export function createRetrievalSurface(options: {
   // reranker path is live; the failure latch below flips this off so the
   // grounding value can never claim a floor decision the pipeline did not
   // make (see RetrievalSurface.floorActive).
-  let floorActive = effectiveReranker !== null;
+  // Issue #280 (C3): a floor of 0 (or an unset/invalid one) never actually
+  // GATES anything — every finite score passes `score >= 0`, and the
+  // non-finite-to-0 mapping keeps even those rows — so floorActive must not
+  // claim a floor decision in that configuration either. Reads
+  // config.relevanceFloor (the surface factory's own record; the bare
+  // `floor` identifier lives only inside the per-query retrieval function).
+  let floorActive =
+    effectiveReranker !== null && typeof config.relevanceFloor === 'number' && config.relevanceFloor > 0;
   return {
     get floorActive() {
       return floorActive;

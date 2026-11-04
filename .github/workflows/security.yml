@@ -96,6 +96,7 @@ jobs:
           src/__tests__/diagnostics-logging.test.ts
           src/__tests__/diagnostics-console-composition.test.ts
           src/__tests__/diagnostics-acceptance-precision.test.ts
+          src/__tests__/settings-openapi-parity.test.ts
 
       - name: Run Safety
         run: |
