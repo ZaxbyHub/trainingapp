@@ -138,17 +138,31 @@ export function withExclusiveLock<T>(
   ]).then((signal) => {
     if (timer !== undefined) clearTimeout(timer);
     if (signal === '__timeout__') {
+      // PR #285 review (PRR-005, round 2): release ONLY this waiter's
+      // claim. Restore the predecessor's promise as the chain tail (unless
+      // a newer caller re-published in between), so later callers keep
+      // chaining behind the still-running predecessor instead of starting
+      // concurrently with it. This handler runs before the claim's own
+      // settle-cleanup below, so the cleanup sees the restored tail and
+      // does not delete it.
+      if (localChains.get(name) === claim) localChains.set(name, prev);
       throw acquireTimeoutError(name, timeoutMs);
     }
     return work();
   });
-  // PR #285 review (PRR-005): a TIMED-OUT WAITER must NOT be tracked. Its
-  // rejection settles quickly, and track()'s settle-time cleanup would then
-  // delete the name's chain entry while the PREDECESSOR's critical section
-  // is still running — the next caller would start concurrently with it
-  // (mutual exclusion lost). The chain entry belongs to the predecessor's
-  // run until THAT settles; a waiter only races against it and owns no
-  // queue slot. (A caller arriving after a timeout still chains on the
-  // predecessor and gets its own bounded wait.)
+  // PR #285 review (PRR-005): the waiter PUBLISHES ITS OWN CLAIM as the
+  // chain tail at scheduling time, so any later caller serializes behind
+  // it (the reviewer's round-1 defect: an untracked waiter left a third
+  // caller running concurrently). The claim settles only when THIS run
+  // settles (work done, or the waiter gave up) and cleans the tail only
+  // while it is still the published one.
+  const claim = run.then(
+    () => undefined,
+    () => undefined
+  );
+  localChains.set(name, claim);
+  void claim.then(() => {
+    if (localChains.get(name) === claim) localChains.delete(name);
+  });
   return run;
 }

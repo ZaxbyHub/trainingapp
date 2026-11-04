@@ -764,12 +764,10 @@ export function DocumentsPage() {
       }
       // U3b: surface indexing/quota/init failures as a toast. Cancellation is
       // user-initiated, so it stays silent here (the doc already shows the
-      // terminal 'Indexing cancelled' state). U3: a 'Document deleted'
-      // failure is ALSO user-initiated and the row is already gone — the
-      // error-state map and the terminal upsert above are both row-presence
-      // gated (a removed row matches nothing), which is what keeps a deleted
-      // row from being re-created; this toast gate extends that to the
-      // surface noise explicitly so a future refactor cannot regress it.
+      // terminal 'Indexing cancelled' state). The error-state map and the
+      // terminal upsert above are both row-presence gated (a removed row
+      // matches nothing), which is what keeps a deleted row from ever being
+      // re-created.
       if (!wasCancelled) {
         showToast(`Failed to process "${file.name}": ${recordedMessage}`, 'error');
       }

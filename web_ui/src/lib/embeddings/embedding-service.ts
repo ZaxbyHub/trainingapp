@@ -196,20 +196,13 @@ export class EmbeddingService {
       }
       this.ready = true;
     } catch (error) {
-      const w = worker as Worker | null;
-      if (w) {
-        w.terminate();
-        worker = null;
-      }
-      // PR #285 review (PRR-008): clear the module init state ONLY when this
-      // attempt still owned the (just-terminated) worker — a stale
-      // continuation whose worker was already replaced must not strip the
-      // CURRENT attempt's bound or reject half.
-      if (initReject !== null) {
-        initReject = null;
-      }
-      initTimerClear();
-      pendingRequests.clear();
+      // PR #285 review (PRR-008, round 2): this catch touches NO module
+      // state — worker termination and the init bound/reject teardown are
+      // ownership-scoped inside _initWithWorker (which knows the worker it
+      // constructed), so a stale disposed-probe continuation (which never
+      // constructed anything) cannot strip the CURRENT attempt's worker,
+      // bound, reject, or in-flight pendings. Only INSTANCE state is
+      // cleared here.
       this.initPromise = null;
       throw new Error(
         `Failed to initialize embedding model: ${error instanceof Error ? error.message : String(error)}`,
@@ -255,6 +248,16 @@ export class EmbeddingService {
             if (isCurrent) {
               initReject = null;
               initTimerClear();
+              // PR #285 review (PRR-008, round 2): ownership-scoped teardown
+              // — this attempt's worker failed to initialize, so terminate
+              // and clear exactly what THIS attempt constructed.
+              try {
+                w.terminate();
+              } catch {
+                /* best-effort */
+              }
+              if (worker === w) worker = null;
+              pendingRequests.clear();
             }
             reject(new Error(msg.message));
           } else if (msg.kind === 'batch-progress') {
