@@ -142,5 +142,13 @@ export function withExclusiveLock<T>(
     }
     return work();
   });
-  return track(run);
+  // PR #285 review (PRR-005): a TIMED-OUT WAITER must NOT be tracked. Its
+  // rejection settles quickly, and track()'s settle-time cleanup would then
+  // delete the name's chain entry while the PREDECESSOR's critical section
+  // is still running — the next caller would start concurrently with it
+  // (mutual exclusion lost). The chain entry belongs to the predecessor's
+  // run until THAT settles; a waiter only races against it and owns no
+  // queue slot. (A caller arriving after a timeout still chains on the
+  // predecessor and gets its own bounded wait.)
+  return run;
 }

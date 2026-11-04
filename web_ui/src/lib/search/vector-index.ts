@@ -453,9 +453,25 @@ export class VectorIndex {
         }
       }
 
-      // Soft-delete from EdgeVec index using softDelete
+      // Soft-delete from EdgeVec index using softDelete. PR #285 review
+      // (PRR-006): a live-map id can transiently resolve to a vector only in
+      // the disposed pre-swap instance (a put that landed inside a save's
+      // merge window), and EdgeVec's softDelete REJECTS unknown ids
+      // (edgevec.d.ts: "Returns an error if the vector ID doesn't exist").
+      // Tolerate per id - warn and drop the stale entry - so one
+      // unresolvable id cannot abort the whole purge (the pack paths swallow
+      // purge failures via .catch(() => undefined), which would leave silent
+      // reload-persistent ghost entries) and later ids in the loop still get
+      // removed.
       for (const internalId of toRemove) {
-        this.index!.softDelete(internalId);
+        try {
+          this.index!.softDelete(internalId);
+        } catch (softDeleteError) {
+          console.warn(
+            `[VectorIndex] softDelete of internal id ${internalId} failed during remove of ${docId}; dropping the stale mapping entry.`,
+            softDeleteError
+          );
+        }
         this.idMapping.delete(internalId);
         // PRR-011: a removed id can never re-enter idMapping, so its
         // retained raw vector can never be re-inserted — release it or the
@@ -776,6 +792,10 @@ export class VectorIndex {
         for (const docId of snapshot.keys()) {
           if ((this.pendingOpsSeq.get(docId) ?? 0) === (snapshotSeq.get(docId) ?? 0)) {
             this.pendingOps.delete(docId);
+            // PR #285 review (PRR-014): the op is gone, so its sequence
+            // entry is dead weight — prune it or the seq map grows by one
+            // entry per docId ever touched, for the instance's lifetime.
+            this.pendingOpsSeq.delete(docId);
           }
         }
         for (const internalId of insertedOriginalIds) {

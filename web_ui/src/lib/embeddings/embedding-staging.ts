@@ -37,11 +37,25 @@ function embeddingConfigProbePath(): string {
  * @throws Error whose message contains `embedding model not staged` and the
  *   probed URL.
  */
+/** PR #285 review (PRR-013): the probe must not hang initialize() past this
+ * window — a stalled asset request fails through the same bounded path as
+ * any other unstaged outcome. */
+export const EMBEDDING_STAGING_PROBE_TIMEOUT_MS = 10_000;
+
 export async function assertEmbeddingModelStaged(
   fetcher: AssetFetcher = defaultAssetFetcher
 ): Promise<void> {
   const url = embeddingConfigProbePath();
-  const staged = await probeAsset(url, fetcher);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bound = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), EMBEDDING_STAGING_PROBE_TIMEOUT_MS);
+  });
+  let staged: boolean;
+  try {
+    staged = await Promise.race([probeAsset(url, fetcher), bound]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
   if (!staged) {
     throw new Error(
       `embedding model not staged: ${url} is not reachable as a real asset ` +

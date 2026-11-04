@@ -180,6 +180,13 @@ export class EmbeddingService {
       // fetch).
       if (import.meta.env.PROD) {
         await assertEmbeddingModelStaged();
+        // PR #285 review (PRR-008): the probe await is a disposal window —
+        // without this check the old continuation resumes, constructs a
+        // worker, and overwrites the module-level init bound/reject of any
+        // attempt the singleton restart made in the meantime.
+        if (this.disposed) {
+          throw new Error('EmbeddingService was disposed during initialization');
+        }
       }
 
       await this._initWithWorker();
@@ -194,8 +201,14 @@ export class EmbeddingService {
         w.terminate();
         worker = null;
       }
+      // PR #285 review (PRR-008): clear the module init state ONLY when this
+      // attempt still owned the (just-terminated) worker — a stale
+      // continuation whose worker was already replaced must not strip the
+      // CURRENT attempt's bound or reject half.
+      if (initReject !== null) {
+        initReject = null;
+      }
       initTimerClear();
-      initReject = null;
       pendingRequests.clear();
       this.initPromise = null;
       throw new Error(
@@ -225,15 +238,24 @@ export class EmbeddingService {
 
         w.onmessage = (event: MessageEvent) => {
           const msg = event.data;
+          // PR #285 review (PRR-008): only the CURRENT attempt's worker may
+          // disarm the module-level init bound/reject — a late message from
+          // a replaced/disposed worker must not clear the live attempt's
+          // state.
+          const isCurrent = worker === w;
           if (msg.kind === 'ready') {
-            this.modelInfo.dimensions = msg.dimensions;
-            this.modelInfo.cached = true;
-            initReject = null;
-            initTimerClear();
+            if (isCurrent) {
+              this.modelInfo.dimensions = msg.dimensions;
+              this.modelInfo.cached = true;
+              initReject = null;
+              initTimerClear();
+            }
             resolve();
           } else if (msg.kind === 'error' && msg.id === -1) {
-            initReject = null;
-            initTimerClear();
+            if (isCurrent) {
+              initReject = null;
+              initTimerClear();
+            }
             reject(new Error(msg.message));
           } else if (msg.kind === 'batch-progress') {
             // #273 (C14): the worker posts batch-progress during encodeBatch;

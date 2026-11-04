@@ -522,15 +522,13 @@ export function DocumentsPage() {
           throw new Error('Indexing cancelled');
         }
       };
-      // U3 (#275): ownership gate — a row whose ownership was removed
-      // (deleted while queued behind an earlier file, or mid-flight) must
-      // never reach an index write. Every pre-write checkpoint below calls
-      // this beside `throwIfCancelled`.
-      const throwIfDeleted = () => {
-        if (!ownedIdsRef.current.has(docId)) {
-          throw new Error('Document deleted');
-        }
-      };
+      // U3 (#275): the queued-row ownership gate lives in the accept loop
+      // (ownedIdsRef check before each processFile). PR #285 review
+      // (PRR-002/PRR-007): in-process throwIfDeleted checkpoints would be
+      // UNREACHABLE — handleDelete awaits the in-flight run before it
+      // removes ownership, so no in-process checkpoint can ever observe a
+      // removed id — and were removed as PR-introduced dead code; the
+      // documented delete design (await the run, then purge) is unchanged.
 
     try {
       // C12: ask the browser to persist storage before the first ingest
@@ -547,7 +545,6 @@ export function DocumentsPage() {
       // Extract text from document
       const extractionResult = await extractDocument(file);
       throwIfCancelled(); // U2: check cancel after extraction
-      throwIfDeleted(); // U3: row still owned after extraction
 
       setDocuments((prev) =>
         prev.map((doc) =>
@@ -574,7 +571,6 @@ export function DocumentsPage() {
         )
       );
       throwIfCancelled(); // U2: check cancel before model init
-      throwIfDeleted(); // U3: row still owned before indexing starts
 
       // F2: ensure BOTH the embedding service and the vector index are ready
       // before deciding whether to vector-index. The embedding model is
@@ -646,7 +642,6 @@ export function DocumentsPage() {
         // done but NOTHING has been written to either index yet. Bail out
         // before the writes so a cancelled document never becomes searchable.
         throwIfCancelled();
-        throwIfDeleted(); // U3: row still owned before the vector stage writes
         const entries = chunks.map((chunk, i) => ({
           docId: chunk.docId!,
           chunkIndex: chunk.chunkIndex,
@@ -660,7 +655,6 @@ export function DocumentsPage() {
         // C8: a cancel issued while the vector save ran must still stop the
         // keyword stage from writing a half-indexed document.
         throwIfCancelled();
-        throwIfDeleted(); // U3: row still owned before the keyword stage writes
       } catch (indexError) {
         // #273 (C10/AC10): a vector-stage failure is TERMINAL — the document
         // must not be marked ready while its chunks are missing from the
@@ -691,7 +685,6 @@ export function DocumentsPage() {
         }
       }
       throwIfCancelled(); // U2: check cancel before finalize
-      throwIfDeleted(); // U3: row still owned before terminal persistence
 
       // Update progress to 90 after indexing and clear the in-flight status text.
       setDocuments((prev) =>
@@ -777,8 +770,7 @@ export function DocumentsPage() {
       // gated (a removed row matches nothing), which is what keeps a deleted
       // row from being re-created; this toast gate extends that to the
       // surface noise explicitly so a future refactor cannot regress it.
-      const wasDeleted = errorMessage === 'Document deleted';
-      if (!wasCancelled && !wasDeleted) {
+      if (!wasCancelled) {
         showToast(`Failed to process "${file.name}": ${recordedMessage}`, 'error');
       }
     } finally {

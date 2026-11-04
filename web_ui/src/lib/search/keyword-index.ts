@@ -498,6 +498,9 @@ export class KeywordIndex {
         for (const docId of snapshot.keys()) {
           if ((this.pendingOpsSeq.get(docId) ?? 0) === (snapshotSeq.get(docId) ?? 0)) {
             this.pendingOps.delete(docId);
+            // PR #285 review (PRR-014): prune the dead sequence entry (see
+            // the vector-index twin).
+            this.pendingOpsSeq.delete(docId);
           }
         }
         // PRR-004 (handoff 4(a), the saving-tab asymmetry): the merge result
