@@ -84,7 +84,7 @@ describe('exclusive-lock fallback tail lifecycle (PRR-005 pin)', () => {
       order.push('a:end');
     }, { lockManager: null });
 
-    // The waiter queues behind , is granted when  settles,
+    // The waiter queues behind `first`, is granted when `first` settles,
     // and HOLDS ITS OWN GATE open inside its section.
     let releaseWaiter: (() => void) | null = null;
     const waiterGate = new Promise<void>((resolve) => {
@@ -98,7 +98,7 @@ describe('exclusive-lock fallback tail lifecycle (PRR-005 pin)', () => {
 
     await vi.waitFor(() => expect(order).toContain('a:end'));
 
-    //  settled; give the grant path a beat to publish the waiter as
+    // `first` settled; give the grant path a beat to publish the waiter as
     // the tail and start its section.
     await new Promise<void>((r) => setTimeout(r, 10));
     expect(order).toContain('b:start');
