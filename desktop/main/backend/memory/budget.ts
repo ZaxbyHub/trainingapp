@@ -87,8 +87,10 @@ export interface PressureMonitor {
   evaluate(atMs?: number): PressureStatus;
   /**
    * Issue #280 (C4): move the pressure threshold at runtime (the host wires
-   * an accepted inference.profileThresholdGb / memory.pressureThresholdGb
-   * settings change through this). Re-bases thresholdBytes only; the
+   * an accepted inference.profileThresholdGb settings change through this —
+   * there is no separate memory.* settings key; the only other threshold
+   * source is the TRAININGAPP_MEMORY_PRESSURE_THRESHOLD_GB env override).
+   * Re-bases thresholdBytes only; the
    * sustained-window and recovery semantics are untouched, so a sample
    * already in flight is judged by the streak rules against the NEW
    * boundary. A non-positive or non-finite value is ignored — the same

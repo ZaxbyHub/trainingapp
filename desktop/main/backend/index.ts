@@ -857,6 +857,12 @@ export class NodeBackendHost implements BackendHost {
             `[trainingapp-backend] persisted settings snapshot rejected by the engine (${applied.detail}); booting with defaults`,
           );
           storedPatch = {};
+        } else {
+          // The boot replay is a settings application too: the pressure
+          // monitor follows the persisted inference.profileThresholdGb the
+          // same way it follows a live PUT, or the thresholds drift apart
+          // until the next PUT (implementation-review IR delta).
+          followThresholdSetting(storedPatch);
         }
       }
       persistSettings = (patch, removeKeys = []) => {

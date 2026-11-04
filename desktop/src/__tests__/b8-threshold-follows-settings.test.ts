@@ -28,6 +28,7 @@ import { StubEngine } from '../../main/backend/engine.js';
 import { LlamaEngine } from '../../main/backend/inference/llama-engine.js';
 import { NodeBackendHost } from '../../main/backend/index.js';
 import { createPressureMonitor, type PressureMonitor } from '../../main/backend/memory/budget.js';
+import { saveSettingsSnapshot } from '../../main/backend/settings-store.js';
 
 const GIB = 1024 ** 3;
 const TOKEN = 'b8-threshold-follows-settings-token';
@@ -268,5 +269,33 @@ describe('C18 legs c-e: the host wiring (PUT /settings -> monitor.setThreshold; 
     monitor.observe(5 * GIB, 0);
     expect(monitor.evaluate(10_001).downgraded, 'the env-pinned 8 GiB threshold still governs').toBe(true);
     spy.mockRestore();
+  });
+
+  it('leg f: the boot replay of a persisted inference.profileThresholdGb moves the monitor before any PUT', async () => {
+    const storePath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'b8-threshold-boot-')), 'store.sqlite');
+    tmpDirs.push(path.dirname(storePath));
+    saveSettingsSnapshot(storePath, { 'inference.profileThresholdGb': 4 });
+    const host = new NodeBackendHost({
+      token: TOKEN,
+      tokenHeaderName: 'X-Desktop-Token',
+      engine: makeLlamaEngine(),
+      storePath,
+      env: { TRAININGAPP_MEMORY_TELEMETRY_INTERVAL_MS: '3600000' },
+    });
+    (host as unknown as { probeRun: unknown }).probeRun = () =>
+      Promise.resolve({ backend: 'cpu', ok: false, reason: 'spec stub verdict', device: null });
+    const handle = (await host.start()) as unknown as { port: number; url: string };
+    stoppedHosts.push(async () => {
+      await (host as unknown as { stop: () => Promise<void> }).stop().catch(() => undefined);
+    });
+    const monitor = (host as unknown as { monitor: PressureMonitor | null }).monitor;
+    expect(monitor).not.toBeNull();
+    // Behavioral: 5 GiB free is above the persisted 4 GiB boundary (no
+    // pressure) but below the 6 GiB default the boot would otherwise keep.
+    monitor!.observe(5 * GIB, 0);
+    expect(
+      monitor!.evaluate(10_001).downgraded,
+      'the boot replay aligned the monitor with the persisted threshold',
+    ).toBe(false);
   });
 });
