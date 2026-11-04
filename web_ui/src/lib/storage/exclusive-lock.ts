@@ -152,13 +152,19 @@ export function withExclusiveLock<T>(
   });
   // PR #285 review (PRR-005): the waiter PUBLISHES ITS OWN CLAIM as the
   // chain tail at scheduling time, so any later caller serializes behind
-  // it (the reviewer's round-1 defect: an untracked waiter left a third
-  // caller running concurrently). The claim settles only when THIS run
-  // settles (work done, or the waiter gave up) and cleans the tail only
-  // while it is still the published one.
+  // it (the round-1 defect: an untracked waiter left a third caller
+  // running concurrently). Round 2: a caller queued BEHIND the waiter
+  // holds the claim, so on the timeout path the claim must NOT settle at
+  // the waiter's give-up — it DEFERS to the predecessor's settlement, so
+  // everyone chained on it keeps waiting under their own bound while the
+  // predecessor still runs. Cleanup fires only while the claim is still
+  // the published tail.
   const claim = run.then(
     () => undefined,
-    () => undefined
+    () => prev.then(
+      () => undefined,
+      () => undefined
+    )
   );
   localChains.set(name, claim);
   void claim.then(() => {
