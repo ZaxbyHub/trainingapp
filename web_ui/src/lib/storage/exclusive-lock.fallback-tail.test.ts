@@ -19,6 +19,10 @@ import { describe, it, expect, vi } from 'vitest';
 import { withExclusiveLock } from './exclusive-lock';
 
 describe('exclusive-lock fallback tail lifecycle (PRR-005 pin)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('a caller queued behind a waiter that times out keeps waiting until the predecessor settles', async () => {
     vi.useFakeTimers();
     const order: string[] = [];
@@ -69,43 +73,50 @@ describe('exclusive-lock fallback tail lifecycle (PRR-005 pin)', () => {
     await stuck;
     await queuedSettled.then((v) => expect(v).toBe('ran'));
     expect(order).toEqual(['s:start', 's:end', 'q:start', 'q:end']);
-
-    vi.useRealTimers();
   });
 
-  it('a waiter that is granted publishes its claim so a caller arriving mid-section serializes behind it', async () => {
+  it('a granted waiter publishes its claim so a caller created mid-section serializes behind it', async () => {
     const order: string[] = [];
-    let release: (() => void) | null = null;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
 
     const first = withExclusiveLock('docqa-tail-grant', async () => {
       order.push('a:start');
-      await gate;
+      await new Promise<void>((r) => setTimeout(r, 10));
       order.push('a:end');
     }, { lockManager: null });
 
-    // The waiter queues, is granted after `first` settles, and runs.
+    // The waiter queues behind , is granted when  settles,
+    // and HOLDS ITS OWN GATE open inside its section.
+    let releaseWaiter: (() => void) | null = null;
+    const waiterGate = new Promise<void>((resolve) => {
+      releaseWaiter = resolve;
+    });
     const waiter = withExclusiveLock('docqa-tail-grant', async () => {
       order.push('b:start');
-      await gate;
+      await waiterGate;
       order.push('b:end');
     }, { lockManager: null });
 
-    // Release `first`; the waiter is granted and enters its section.
-    release!();
-    await first;
-    await vi.waitFor(() => expect(order).toContain('b:start'));
+    await vi.waitFor(() => expect(order).toContain('a:end'));
 
-    // A caller arriving DURING the waiter's section must serialize behind
-    // it (the round-1 defect shape: it used to start concurrently).
+    //  settled; give the grant path a beat to publish the waiter as
+    // the tail and start its section.
+    await new Promise<void>((r) => setTimeout(r, 10));
+    expect(order).toContain('b:start');
+    expect(order).not.toContain('b:end');
+
+    // A caller created MID-SECTION must serialize behind the waiter (the
+    // round-1 defect shape: without the claim publication it started
+    // concurrently). Assert it has NOT started while the waiter holds.
     const third = withExclusiveLock('docqa-tail-grant', async () => {
       order.push('c:start');
       order.push('c:end');
     }, { lockManager: null });
+    third.catch(() => {});
+    await new Promise<void>((r) => setTimeout(r, 10));
+    expect(order).not.toContain('c:start');
 
-    release!();
+    // The waiter releases: the third caller runs after it.
+    releaseWaiter!();
     await Promise.all([waiter, third]);
     expect(order).toEqual(['a:start', 'a:end', 'b:start', 'b:end', 'c:start', 'c:end']);
   });
