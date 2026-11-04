@@ -522,6 +522,13 @@ export function DocumentsPage() {
           throw new Error('Indexing cancelled');
         }
       };
+      // U3 (#275): the queued-row ownership gate lives in the accept loop
+      // (ownedIdsRef check before each processFile). PR #285 review
+      // (PRR-002/PRR-007): in-process throwIfDeleted checkpoints would be
+      // UNREACHABLE — handleDelete awaits the in-flight run before it
+      // removes ownership, so no in-process checkpoint can ever observe a
+      // removed id — and were removed as PR-introduced dead code; the
+      // documented delete design (await the run, then purge) is unchanged.
 
     try {
       // C12: ask the browser to persist storage before the first ingest
@@ -757,7 +764,10 @@ export function DocumentsPage() {
       }
       // U3b: surface indexing/quota/init failures as a toast. Cancellation is
       // user-initiated, so it stays silent here (the doc already shows the
-      // terminal 'Indexing cancelled' state).
+      // terminal 'Indexing cancelled' state). The error-state map and the
+      // terminal upsert above are both row-presence gated (a removed row
+      // matches nothing), which is what keeps a deleted row from ever being
+      // re-created.
       if (!wasCancelled) {
         showToast(`Failed to process "${file.name}": ${recordedMessage}`, 'error');
       }
@@ -965,6 +975,13 @@ export function DocumentsPage() {
 
       // Process each accepted file
       for (const { file, entry } of accepted) {
+        // U3 (#275): the loop iterates the LOCAL `accepted` array — deleting
+        // a row from state does not stop the loop, so a row deleted while
+        // queued behind an earlier file would still be indexed. Skip rows
+        // whose ownership was removed before their turn starts.
+        if (!ownedIdsRef.current.has(entry.id)) {
+          continue;
+        }
         await processFile(file, entry.id);
       }
     },

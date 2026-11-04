@@ -346,6 +346,48 @@ describe('ChatMessageBubble', () => {
     });
   });
 
+  describe('Retrieval Degraded Indicator (#268 AC7 / C12, PRESERVING)', () => {
+    it('renders the per-answer degraded indicator only when retrievalDegraded', () => {
+      // With the flag: the exact per-answer status line renders under the
+      // assistant message (ChatMessageBubble.tsx F4 - must not regress when
+      // the session-level RetrievalHealthNotice lands).
+      const degraded: ChatMessage = {
+        id: 'msg-degraded',
+        role: 'assistant',
+        content: 'Grounded answer text',
+        timestamp: Date.now(),
+        retrievalDegraded: true,
+      };
+      const degradedView = render(<ChatMessageBubble message={degraded} />);
+      expect(
+        screen.getByText('Retrieval is degraded — semantic search unavailable (showing keyword-only results).')
+      ).toBeInTheDocument();
+      degradedView.unmount();
+
+      // With the flag explicitly false: none.
+      const healthy: ChatMessage = {
+        id: 'msg-healthy',
+        role: 'assistant',
+        content: 'Grounded answer text',
+        timestamp: Date.now(),
+        retrievalDegraded: false,
+      };
+      const healthyView = render(<ChatMessageBubble message={healthy} />);
+      expect(screen.queryByText(/Retrieval is degraded/)).not.toBeInTheDocument();
+      healthyView.unmount();
+
+      // With the flag absent: none.
+      const plain: ChatMessage = {
+        id: 'msg-plain',
+        role: 'assistant',
+        content: 'Grounded answer text',
+        timestamp: Date.now(),
+      };
+      render(<ChatMessageBubble message={plain} />);
+      expect(screen.queryByText(/Retrieval is degraded/)).not.toBeInTheDocument();
+    });
+  });
+
   describe('Timer Cleanup', () => {
     it('clears copy feedback timer on unmount', async () => {
       const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');

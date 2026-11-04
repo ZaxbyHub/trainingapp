@@ -9,6 +9,17 @@
  * Uses Snowflake/snowflake-arctic-embed-m-v1.5 model (768-dim, q8 ~110MB),
  * loaded from `${EMBEDDING_MODELS_BASE}/snowflake-arctic-embed-m-v1.5/`.
  * Issue #37 R9 swapped from bge-small-en-v1.5 (384-dim, fp32 ~130MB).
+ *
+ * Worker liveness (U9, #268 / R4): every worker failure — an `error`/
+ * `messageerror` event, an init handshake that never completes, or a request
+ * that never gets a reply — routes through ONE idempotent failure path that
+ * terminates the worker, settles every pending request exactly once, drops
+ * readiness, nulls the init promise (so a later initialize() constructs a
+ * NEW worker and the orchestrator's next readiness check retries), and
+ * marks the session's retrieval health keyword-only with the cause.
+ * Handlers and timeout closures capture the CONSTRUCTED worker instance, so
+ * a late event from an already-replaced worker cannot pass the new current
+ * worker into the failure path.
  */
 
 import type {
@@ -19,6 +30,8 @@ import type {
 } from '../../types/embedding';
 import { EMBEDDING_MODEL_PATH } from '../models/model-manifest';
 import { configureOfflineEnv } from '../models/offline-env';
+import { assertEmbeddingModelStaged } from './embedding-staging';
+import { setKeywordOnly } from '../rag/retrieval-health';
 
 // Model configuration.
 // Issue #37 R9: swapped bge-small-en-v1.5 (384-dim) → snowflake-arctic-embed-
@@ -28,6 +41,18 @@ import { configureOfflineEnv } from '../models/offline-env';
 const MODEL_NAME = 'Snowflake/snowflake-arctic-embed-m-v1.5';
 const MODEL_PATH = EMBEDDING_MODEL_PATH;
 const EMBEDDING_DIMENSIONS = 768;
+
+/**
+ * Bounded no-reply window per encode/encodeBatch request (U9): a worker
+ * that never replies must not hang the caller forever.
+ */
+export const EMBEDDING_REPLY_TIMEOUT_MS = 30_000;
+
+/**
+ * Bounded init-handshake window (U9): a worker whose init reply never
+ * arrives must not hang initialize() forever.
+ */
+export const EMBEDDING_INIT_TIMEOUT_MS = 60_000;
 
 /**
  * Internal type for correlating Worker request/reply pairs.
@@ -44,6 +69,8 @@ interface PendingRequest {
    * entry is deleted on result/error).
    */
   onProgress?: EmbeddingProgressCallback;
+  /** U9: the per-request bounded no-reply timer (cleared on reply/failure). */
+  timer?: ReturnType<typeof setTimeout>;
 }
 
 /**
@@ -55,6 +82,10 @@ interface PendingRequest {
 let worker: Worker | null = null;
 let nextRequestId = 1;
 const pendingRequests = new Map<number, PendingRequest>();
+/** U9: reject half of the in-flight init promise, for the failure path. */
+let initReject: ((reason: unknown) => void) | null = null;
+/** U9: the armed init-handshake bound, cleared on the `ready` reply. */
+let initTimer: ReturnType<typeof setTimeout> | undefined;
 
 /**
  * Singleton embedding service for browser-local embeddings.
@@ -131,10 +162,33 @@ export class EmbeddingService {
    * never block the main thread.
    */
   private async doInitialize(): Promise<void> {
-    if (worker) { this.ready = true; return; }
+    if (worker) {
+      this.ready = true;
+      return;
+    }
 
     try {
       configureOfflineEnv();
+
+      // U8 (#268): in PROD builds ONLY (packaged Electron renderer, vite
+      // preview, offline build serve), probe the staged config asset BEFORE
+      // constructing the worker. An SPA-fallback HTML 200 at the config
+      // path would otherwise be fed to the worker as the model config and
+      // die with an inscrutable error; here it fails closed with a staging
+      // error that names the URL. Dev/test environments skip this probe
+      // entirely (their asset serving differs and their suites do not stub
+      // fetch).
+      if (import.meta.env.PROD) {
+        await assertEmbeddingModelStaged();
+        // PR #285 review (PRR-008): the probe await is a disposal window —
+        // without this check the old continuation resumes, constructs a
+        // worker, and overwrites the module-level init bound/reject of any
+        // attempt the singleton restart made in the meantime.
+        if (this.disposed) {
+          throw new Error('EmbeddingService was disposed during initialization');
+        }
+      }
+
       await this._initWithWorker();
 
       if (this.disposed) {
@@ -142,12 +196,13 @@ export class EmbeddingService {
       }
       this.ready = true;
     } catch (error) {
-      const w = worker as Worker | null;
-      if (w) {
-        w.terminate();
-        worker = null;
-      }
-      pendingRequests.clear();
+      // PR #285 review (PRR-008, round 2): this catch touches NO module
+      // state — worker termination and the init bound/reject teardown are
+      // ownership-scoped inside _initWithWorker (which knows the worker it
+      // constructed), so a stale disposed-probe continuation (which never
+      // constructed anything) cannot strip the CURRENT attempt's worker,
+      // bound, reject, or in-flight pendings. Only INSTANCE state is
+      // cleared here.
       this.initPromise = null;
       throw new Error(
         `Failed to initialize embedding model: ${error instanceof Error ? error.message : String(error)}`,
@@ -164,18 +219,46 @@ export class EmbeddingService {
   private async _initWithWorker(): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       try {
-        worker = new Worker(
+        // Capture the constructed instance (U9): every handler and bound
+        // below closes over `w`, never the mutable module `worker` variable,
+        // so a late event from an already-replaced worker carries the OLD
+        // instance and failWorker's identity guard makes it a no-op.
+        const w = new Worker(
           new URL('./embedding.worker.ts', import.meta.url),
           { type: 'module' }
         );
+        worker = w;
 
-        worker.onmessage = (event: MessageEvent) => {
+        w.onmessage = (event: MessageEvent) => {
           const msg = event.data;
+          // PR #285 review (PRR-008): only the CURRENT attempt's worker may
+          // disarm the module-level init bound/reject — a late message from
+          // a replaced/disposed worker must not clear the live attempt's
+          // state.
+          const isCurrent = worker === w;
           if (msg.kind === 'ready') {
-            this.modelInfo.dimensions = msg.dimensions;
-            this.modelInfo.cached = true;
+            if (isCurrent) {
+              this.modelInfo.dimensions = msg.dimensions;
+              this.modelInfo.cached = true;
+              initReject = null;
+              initTimerClear();
+            }
             resolve();
           } else if (msg.kind === 'error' && msg.id === -1) {
+            if (isCurrent) {
+              initReject = null;
+              initTimerClear();
+              // PR #285 review (PRR-008, round 2): ownership-scoped teardown
+              // — this attempt's worker failed to initialize, so terminate
+              // and clear exactly what THIS attempt constructed.
+              try {
+                w.terminate();
+              } catch {
+                /* best-effort */
+              }
+              if (worker === w) worker = null;
+              pendingRequests.clear();
+            }
             reject(new Error(msg.message));
           } else if (msg.kind === 'batch-progress') {
             // #273 (C14): the worker posts batch-progress during encodeBatch;
@@ -187,10 +270,12 @@ export class EmbeddingService {
           } else if (msg.kind === 'encode-result' || msg.kind === 'encodeBatch-result' || msg.kind === 'error') {
             const pending = pendingRequests.get(msg.id);
             if (pending) {
-              // Deleting the entry also retires its progress callback: a
-              // late/stray progress message for a settled request finds no
-              // pending entry and is dropped.
+              // Deleting the entry (and its bound) also retires its progress
+              // callback and timer: a late/stray progress message or timer
+              // fire for a settled request finds no pending entry and is
+              // dropped.
               pendingRequests.delete(msg.id);
+              if (pending.timer) clearTimeout(pending.timer);
               if (msg.kind === 'error') {
                 pending.reject(new Error(msg.message));
               } else {
@@ -200,11 +285,27 @@ export class EmbeddingService {
           }
         };
 
-        worker.onerror = (err: ErrorEvent) => {
-          reject(new Error(`Embedding Worker failed: ${err.message}`));
+        // Persistent handlers on the CAPTURED instance (U9) — kept across
+        // the worker's lifetime, not only inside the init promise closure.
+        w.onerror = (err: ErrorEvent) => {
+          this.failWorker(w, new Error(`Embedding worker failed: ${err.message}`));
+        };
+        w.onmessageerror = () => {
+          this.failWorker(w, new Error('Embedding worker message deserialization failed'));
         };
 
-        worker.postMessage({
+        // Init handshake bound (U9): a worker whose `ready` reply never
+        // arrives fails through the same idempotent path instead of hanging
+        // initialize() forever. Cleared by the `ready` reply above.
+        initTimer = setTimeout(() => {
+          this.failWorker(
+            w,
+            new Error(`Embedding worker init timed out after ${EMBEDDING_INIT_TIMEOUT_MS} ms`)
+          );
+        }, EMBEDDING_INIT_TIMEOUT_MS);
+        initReject = reject;
+
+        w.postMessage({
           kind: 'init',
           modelPath: MODEL_PATH,
           dimensions: EMBEDDING_DIMENSIONS,
@@ -215,6 +316,52 @@ export class EmbeddingService {
         ));
       }
     });
+  }
+
+  /**
+   * ONE idempotent worker-failure path (U9, #268 / R4):
+   * 1. identity guard — a stale event from an already-replaced worker is a
+   *    no-op (it carries the OLD captured instance, which no longer matches
+   *    the module `worker`);
+   * 2. detach — terminate the failed worker, clear it, drop readiness, and
+   *    null the init promise so a later initialize() constructs a NEW
+   *    worker;
+   * 3. settle — collect pending requests, clear the map and every timer
+   *    FIRST, then reject each collected entry exactly once (delete-before-
+   *    reject makes double-reject structurally impossible; a timeout arm
+   *    removes its own entry before invoking this path);
+   * 4. health — mark the session's retrieval health keyword-only with the
+   *    cause (the orchestrator's transition logic keeps repeats idempotent).
+   */
+  private failWorker(failedWorker: Worker, cause: Error): void {
+    if (worker !== failedWorker) return;
+
+    worker = null;
+    this.ready = false;
+    this.initPromise = null;
+    try {
+      failedWorker.terminate();
+    } catch {
+      /* best-effort */
+    }
+    initTimerClear();
+    if (initReject !== null) {
+      const reject = initReject;
+      initReject = null;
+      reject(cause);
+    }
+
+    // Settle exactly once: collect, clear map + timers first, then reject.
+    const entries = Array.from(pendingRequests.values());
+    pendingRequests.clear();
+    for (const entry of entries) {
+      if (entry.timer) clearTimeout(entry.timer);
+    }
+    for (const entry of entries) {
+      entry.reject(cause);
+    }
+
+    setKeywordOnly(cause.message);
   }
 
   /**
@@ -234,16 +381,39 @@ export class EmbeddingService {
   /**
    * Post a message to the worker and await the reply.
    * Each request gets a unique correlation id stored in
-   * pendingRequests until the worker replies.
+   * pendingRequests until the worker replies. The module `worker` is read
+   * ONCE at post time into `posted` (U9): the bounded no-reply timer closes
+   * over the instance the request was actually posted to, so a replacement
+   * worker can never be failed for this request's stall.
    */
   private _postAndWait(
     msg: Record<string, unknown>,
     onProgress?: EmbeddingProgressCallback
   ): Promise<unknown> {
     const id = nextRequestId++;
+    const posted = worker;
+    if (!posted) {
+      return Promise.reject(
+        new Error('EmbeddingService not initialized. Call initialize() first.')
+      );
+    }
     return new Promise((resolve, reject) => {
-      pendingRequests.set(id, { resolve, reject, ...(onProgress ? { onProgress } : {}) });
-      worker!.postMessage({ id, ...msg });
+      const timer = setTimeout(() => {
+        const entry = pendingRequests.get(id);
+        if (!entry) return;
+        // Remove this entry (and its timer) BEFORE invoking the failure
+        // path: failWorker then rejects only the REMAINING pendings, so no
+        // promise is rejected twice.
+        pendingRequests.delete(id);
+        clearTimeout(timer);
+        const timeoutError = new Error(
+          `Embedding worker reply timed out after ${EMBEDDING_REPLY_TIMEOUT_MS} ms`
+        );
+        reject(timeoutError);
+        this.failWorker(posted, timeoutError);
+      }, EMBEDDING_REPLY_TIMEOUT_MS);
+      pendingRequests.set(id, { resolve, reject, timer, ...(onProgress ? { onProgress } : {}) });
+      posted.postMessage({ id, ...msg });
     });
   }
 
@@ -340,15 +510,46 @@ export class EmbeddingService {
    */
   dispose(): void {
     this.disposed = true;
-    if (worker) {
-      worker.terminate();
-      worker = null;
+    const w = worker;
+    worker = null;
+    if (w) {
+      try {
+        w.terminate();
+      } catch {
+        /* best-effort */
+      }
     }
+    initTimerClear();
+    if (initReject !== null) {
+      const reject = initReject;
+      initReject = null;
+      // Same message as doInitialize's post-init disposed check so callers
+      // observe one stable dispose-race failure text either way.
+      reject(new Error('EmbeddingService was disposed during initialization'));
+    }
+    // Reject (never silently drop) in-flight requests (U9): callers awaiting
+    // encode/encodeBatch must observe the disposal instead of hanging.
+    const entries = Array.from(pendingRequests.values());
     pendingRequests.clear();
+    for (const entry of entries) {
+      if (entry.timer) clearTimeout(entry.timer);
+    }
+    const disposeError = new Error('EmbeddingService disposed with requests in flight');
+    for (const entry of entries) {
+      entry.reject(disposeError);
+    }
     this.ready = false;
     this.initPromise = null;
     this.modelInfo.cached = false;
     EmbeddingService.instance = null;
+  }
+}
+
+/** Clear the armed init-handshake bound if one is pending. */
+function initTimerClear(): void {
+  if (initTimer !== undefined) {
+    clearTimeout(initTimer);
+    initTimer = undefined;
   }
 }
 

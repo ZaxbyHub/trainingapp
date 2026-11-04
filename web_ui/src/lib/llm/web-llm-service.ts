@@ -227,7 +227,9 @@ export class WebLLMService implements LLMService {
     }
 
     if (this._ready) {
-      console.warn('[WebLLM] Already initialized');
+      // U10 (#268): benign early-return (a concurrent init already won), not
+      // a problem — downgrade to debug so the boot console stops warning.
+      console.debug('[WebLLM] Already initialized');
       return;
     }
 

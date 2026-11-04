@@ -556,6 +556,49 @@ describe('useServiceInitialization', () => {
       expect(mockEmbeddingService.initialize).toHaveBeenCalledTimes(1);
     });
 
+    it('U7b (PRR-003): a cached-ready flag goes stale when the worker dies — the next call re-verifies isReady and re-initializes instead of serving the stale true', async () => {
+      // First call: successful init (the cache is armed).
+      await act(async () => {
+        const first = await ensureEmbeddingServiceReady();
+        expect(first).toBe(true);
+      });
+      expect(mockEmbeddingService.initialize).toHaveBeenCalledTimes(1);
+
+      // The worker dies post-init (U9's failure path): isReady() flips
+      // false exactly once; the re-initialized service is ready again.
+      mockEmbeddingService.isReady.mockReturnValueOnce(false);
+      mockEmbeddingService.isReady.mockReturnValue(true);
+
+      // The second call MUST NOT serve the stale cached true: it
+      // re-verifies, falls through, clears the flag, and re-initializes.
+      await act(async () => {
+        const second = await ensureEmbeddingServiceReady();
+        expect(second).toBe(true);
+      });
+      expect(mockEmbeddingService.initialize).toHaveBeenCalledTimes(2);
+    });
+
+    it('U8/U7 (PRR-018): an init failure is memoized as the retrieval-health cause and cleared on success', async () => {
+      const health = await import('../lib/rag/retrieval-health');
+      mockEmbeddingService.initialize.mockRejectedValueOnce(
+        new Error('embedding model not staged: /models/embeddings/x/config.json')
+      );
+
+      await act(async () => {
+        const failed = await ensureEmbeddingServiceReady();
+        expect(failed).toBe(false);
+      });
+      expect(health.getLastEmbeddingInitFailure()).toContain('embedding model not staged');
+
+      // Recovery clears the memo (the orchestrator reads it for the next
+      // degradation cause).
+      await act(async () => {
+        const recovered = await ensureEmbeddingServiceReady();
+        expect(recovered).toBe(true);
+      });
+      expect(health.getLastEmbeddingInitFailure()).toBeNull();
+    });
+
     it('ensureReadinessGateChecked() initializes readiness on first call, updates servicesReady + calls setModelReady via event', async () => {
       vi.mocked(ModelReadinessGate).mockImplementation(() => ({
         checkReadiness: vi.fn().mockResolvedValue({

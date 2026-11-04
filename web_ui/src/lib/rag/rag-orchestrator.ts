@@ -32,6 +32,7 @@ import { buildLearnResults, type LinkedSlide } from './learn-kernel';
 import { linkedSlidesWithin } from './learn-links';
 import { DEFAULT_N_CTX } from '../llm/wllama-service';
 import { ensureEmbeddingServiceReady, ensureReadinessGateChecked } from '../../hooks/useServiceInitialization';
+import { getRetrievalHealth, getLastEmbeddingInitFailure, setKeywordOnly, setOk } from './retrieval-health';
 
 /**
  * Options for RAG query execution.
@@ -412,6 +413,11 @@ export class RAGOrchestrator {
       ensureReadinessGateChecked(),
     ]);
     const semanticAvailable = embeddingReady === true;
+    // Readiness CONFIRMED by the gate: restore session health. A later
+    // runtime encode failure re-marks degradation below (order matters).
+    if (semanticAvailable) {
+      setOk();
+    }
 
     if (signal?.aborted) {
       throw new DOMException('The operation was aborted.', 'AbortError');
@@ -453,15 +459,26 @@ export class RAGOrchestrator {
         queryEmbedding = embeddingResult.vector;
       } catch (err) {
         // Embedding failed at runtime even though the gate passed. Degrade
-        // rather than abort the whole query (F4).
+        // rather than abort the whole query (F4), and mark the SESSION
+        // degraded with the concrete cause (U7: degradation must be visible
+        // to the health store, not only the per-message flag).
         console.error('[RAGOrchestrator] Query embedding failed, degrading to keyword-only:', err);
         queryEmbedding = null;
         retrievalDegraded = true;
+        setKeywordOnly(err instanceof Error ? err.message : 'Query embedding failed');
       }
     } else {
       // Embedding service never came up. Keyword search can still serve a
-      // useful (if lower-recall) answer.
-      console.warn('[RAGOrchestrator] Embedding service unavailable; using keyword-only retrieval');
+      // useful (if lower-recall) answer. Mark the session degraded in the
+      // health store, and warn ONCE PER SESSION — only on the
+      // ok -> keyword-only transition (C8 counts exactly 1 across queries).
+      if (getRetrievalHealth().status !== 'keyword-only') {
+        console.warn('[RAGOrchestrator] Embedding service unavailable; using keyword-only retrieval');
+      }
+      // The cause names the REAL failure when one is known (U8: e.g.
+      // 'embedding model not staged: <url>'), falling back to the generic
+      // line; the transition gate above keeps the warn once-per-session.
+      setKeywordOnly(getLastEmbeddingInitFailure() ?? 'Embedding service unavailable');
       retrievalDegraded = true;
     }
 

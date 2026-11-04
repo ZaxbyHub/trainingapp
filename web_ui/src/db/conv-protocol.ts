@@ -84,6 +84,14 @@ export function hasWebLocks(): boolean {
  * Origin-wide write serialization (R4-3): every conversation mutation (and
  * the clear itself) runs inside this. Without Web Locks it degrades to a
  * direct call (single-tab semantics).
+ *
+ * Deliberately divergent from the shared `exclusive-lock.ts` helper
+ * (#275-C): that helper's no-Web-Locks fallback serializes work in an
+ * in-tab promise chain, which is NOT this function's documented contract —
+ * conv-write critical sections are synchronous-or-direct by design and
+ * serializing them in-tab would change mutation ordering. This function
+ * therefore keeps its direct-call degrade and does not route through the
+ * helper.
  */
 export function withConversationWriteLock<T>(fn: () => T | Promise<T>): Promise<T> {
   const locks = locksManager();

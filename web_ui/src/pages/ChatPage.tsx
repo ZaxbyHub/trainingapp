@@ -12,6 +12,7 @@ import { ChatInput } from '../components/ChatInput';
 import { StreamingIndicator } from '../components/StreamingIndicator';
 import { ModelBlockedOverlay } from '../components/ModelBlockedOverlay';
 import { IsolationBanner } from '../components/IsolationBanner';
+import { RetrievalHealthNotice } from '../components/RetrievalHealthNotice';
 import { PinnedSlideContext, pinnedSlideLabel, type PinnedSlide } from '../components/PinnedSlideContext';
 import { useInferenceMode } from '../lib/inference';
 import { InferenceModeToggle } from '../components/InferenceModeToggle';
@@ -1130,6 +1131,9 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   return (
     <div className="chat-page">
       <div ref={gatedContentRef} className="chat-page__content" {...(modelGateUp ? { inert: '' } : {})}>
+      {/* Session-level retrieval-degradation notice (#268): exactly one
+          persistent status line while keyword-only, nothing while ok. */}
+      <RetrievalHealthNotice />
       {/* Header (Lumen phase 5): model chip, desktop mode toggle, connection
           warning, then the conversation actions. */}
       <PageHeader

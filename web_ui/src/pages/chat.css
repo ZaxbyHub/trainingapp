@@ -43,6 +43,11 @@
 .chat-notice { box-sizing: border-box; display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2) var(--space-3); background: var(--info-subtle); border: 1px solid var(--info-border); border-radius: var(--r-card); font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-primary); }
 .chat-notice__title { font-weight: 600; }
 
+/* Session retrieval-degradation notice (#268): a polite status banner in
+   the same page-banner geometry as the isolation banner, with the standard
+   control border and surface tokens so it is not bare inherited text
+   (PR #285 review PRR-011). */
+.retrieval-health-notice { box-sizing: border-box; width: calc(100% - 2 * var(--space-6)); max-width: calc(var(--w-reading) - 2 * var(--space-6)); margin: var(--space-3) auto 0; padding: var(--space-2) var(--space-4); background: var(--bg-surface); border: 1px solid var(--border-control); border-radius: var(--r-card); font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-primary); }
 /* Page-level banners above the log: COOP/COEP misconfiguration (IsolationBanner)
    and the pinned training slide (PinnedSlideContext, D7). Same width as the column. */
 .chat-isolation, .chat-pin { box-sizing: border-box; width: calc(100% - 2 * var(--space-6)); max-width: calc(var(--w-reading) - 2 * var(--space-6)); margin: var(--space-3) auto 0; }

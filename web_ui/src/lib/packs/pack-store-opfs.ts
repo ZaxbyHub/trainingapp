@@ -10,6 +10,7 @@
 // IndexedDB transaction, so a crash mid-install leaves at most an unreferenced
 // directory that the startup orphan sweep removes (OPFS has no atomic rename).
 import { getProfilePrefix } from '../storage/profile';
+import { withExclusiveLock } from '../storage/exclusive-lock';
 
 /** One installed pack version (the registry row). */
 export interface PackVersionRecord {
@@ -294,23 +295,13 @@ export class MemoryPackFileStore implements PackFileStore {
 // cross-tab single flight
 // --------------------------------------------------------------------- //
 
-const localChains = new Map<string, Promise<unknown>>();
-
 /**
  * Run `work` while holding the named lock: Web Locks across tabs when the
  * browser has them, else an in-tab promise chain (same ordering guarantee
- * inside the tab).
+ * inside the tab). Routed through the shared bounded helper (#275-C): the
+ * migration GAINS the 60s acquisition bound and fallback entry cleanup the
+ * hand-rolled version lacked.
  */
 export function withPackLock<T>(name: string, work: () => Promise<T>): Promise<T> {
-  const locks = (typeof navigator !== 'undefined' ? (navigator as Navigator & { locks?: LockManager }).locks : undefined) ?? undefined;
-  if (locks !== undefined && typeof locks.request === 'function') {
-    return locks.request(name, { mode: 'exclusive' }, () => work()) as Promise<T>;
-  }
-  const previous = localChains.get(name) ?? Promise.resolve();
-  const next = previous.then(work, work);
-  localChains.set(
-    name,
-    next.catch(() => undefined),
-  );
-  return next;
+  return withExclusiveLock<T>(name, work);
 }
