@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import type { PackManifest } from './pack-json.js';
+import { STORE_SCHEMA_VERSION } from './pack-json.js';
 
 export const SCHEMA_RELATIVE_PATH = 'contracts/store.schema.sql';
 export const EMBEDDING_DIMS_TOKEN = '__EMBEDDING_DIMS__';
@@ -134,6 +135,18 @@ export function writePackIndex(options: WritePackIndexOptions): void {
   const { dbPath, repoRoot, dims, manifest, docs, chunks, links } = options;
   const db = openStoreWithSchema(dbPath, dims, repoRoot);
   try {
+    // PR #286 compatibility matrix (issues #278/#279/#280): the AUTHORITATIVE
+    // store schema moved to v4 (store-side doc_claims + seed 4), but the
+    // EMBEDDED PACK INDEX is a v3-format ARTIFACT — packtool pins
+    // STORE_SCHEMA_VERSION in both the manifest stamp and verifyPack, and the
+    // browser's exact-v3 gate refuses anything else. Normalize the artifact
+    // after applying the authoritative schema: drop the store-side claim
+    // table and re-stamp the artifact's own version. Desktop import validates
+    // the MANIFEST stamp (pack-manager's artifact gate), never this meta.
+    db.exec('DROP TABLE IF EXISTS doc_claims;');
+    db.exec(
+      `INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '${STORE_SCHEMA_VERSION}');`,
+    );
     db.exec('BEGIN IMMEDIATE');
     try {
       // v3 (C3/#70): active/install_path are explicit — the index's own pack
