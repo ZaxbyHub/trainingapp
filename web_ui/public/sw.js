@@ -356,10 +356,15 @@
           // is serving while the current one is marked incomplete (#279
           // review PRR-001): writing it into the retained cache would mix
           // generations and break the offline fallback it protects.
+          // The clone happens SYNCHRONOUSLY — response is handed to
+          // respondWith right after this branch, so a deferred clone would
+          // run against an already-used body and throw (silently swallowed
+          // below; caught by the sw-precache-atomic bodyUsed fidelity).
+          var refreshedShell = stripVary(response.clone());
           caches
             .open(CACHE_NAME)
             .then(function (gen) {
-              return gen.put(SHELL_INDEX_PATH, stripVary(response.clone()));
+              return gen.put(SHELL_INDEX_PATH, refreshedShell);
             })
             .catch(function () {});
         }

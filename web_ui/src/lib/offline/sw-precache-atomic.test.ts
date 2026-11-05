@@ -36,6 +36,9 @@ class FakeResponse {
   statusText: string;
   ok: boolean;
   headers: Headers;
+  /** Real-Response fidelity (#279 review PRR-001): clone() throws once the
+   * body has been used (respondWith consuming the response marks it). */
+  bodyUsed = false;
   constructor(body: unknown, init?: { status?: number; statusText?: string; headers?: HeadersInit }) {
     this.body = body === undefined || body === null ? '' : String(body);
     this.status = init?.status ?? 200;
@@ -44,9 +47,11 @@ class FakeResponse {
     this.headers = new Headers(init?.headers);
   }
   async text(): Promise<string> {
+    this.bodyUsed = true;
     return this.body;
   }
   clone(): FakeResponse {
+    if (this.bodyUsed) throw new TypeError('clone(): response body is already used');
     return new FakeResponse(this.body, {
       status: this.status,
       statusText: this.statusText,
@@ -186,7 +191,13 @@ async function makeHarness(
           respondWith(r: unknown) {
             handled = true;
             void Promise.resolve(r).then(
-              (v) => settled(v as FakeResponse),
+              (v) => {
+                // Real-Response fidelity: respondWith consuming the response
+                // marks its body used — a later clone() must throw (#279
+                // review PRR-001).
+                (v as FakeResponse).bodyUsed = true;
+                settled(v as FakeResponse);
+              },
               () => settled(new FakeResponse('', { status: 503 })),
             );
           },
@@ -243,10 +254,17 @@ async function makeHarness(
   };
 
   const cachesApi = {
-    async open(name: string) {
-      if (!cachesStore.has(name)) cachesStore.set(name, new Map());
-      const entries = cachesStore.get(name) as Map<string, FakeResponse>;
-      return {
+    // Real Cache Storage is IDB-backed: caches.open() never resolves within
+    // the same microtask batch as its caller. Modeling that latency (one
+    // macrotask) is load-bearing for the PRR-001 leg — a service worker that
+    // clones the respondWith response INSIDE the open().then() continuation
+    // must hit the bodyUsed marker, exactly as it would in a browser.
+    open(name: string) {
+      return new Promise((resolve) => {
+        setTimeout(() => {
+          if (!cachesStore.has(name)) cachesStore.set(name, new Map());
+          const entries = cachesStore.get(name) as Map<string, FakeResponse>;
+          resolve({
         async put(a: FakeRequest | string | URL, response: FakeResponse) {
           putRecord.push({
             key: pathOf(a),
@@ -264,7 +282,9 @@ async function makeHarness(
         async delete(a: FakeRequest | string | URL) {
           return entries.delete(pathOf(a));
         },
-      };
+          });
+        }, 0);
+      });
     },
     async keys() {
       return [...cachesStore.keys()];
@@ -422,6 +442,9 @@ describe('atomic precache revision (issue #279 B3)', () => {
     const nav = await h.fetchPath('/', { mode: 'navigate', destination: 'document' });
     expect(nav.handled).toBe(true);
     expect(nav.body).toBe(`NET:${ORIGIN}/`);
+    // The refresh write is fire-and-forget on a macrotask (real Cache
+    // Storage latency) — yield past it before asserting cache contents.
+    await new Promise((r) => setTimeout(r, 20));
     // The retained cache is untouched: its index.html is still the old body.
     const retained = await h.cachesOpenMatch(PREV_CACHE, '/index.html');
     expect(retained).toBe(prevBody('/index.html'));
