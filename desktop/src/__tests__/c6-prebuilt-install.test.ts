@@ -691,4 +691,62 @@ describe('c6 PackManager prebuilt-index install (issue #73 AC2)', () => {
       await expect(manager.install(packDir)).rejects.toThrow(/the manifest does not carry/);
     },
   );
+
+  // Issue #278 (binding Phase-4 note 1, final-critic FC-2): the PREBUILT
+  // import path stamps doc_claims through the same shared write helper the
+  // rebuild path uses, so a prebuilt-imported shared document survives the
+  // sibling claimant's removal exactly like a rebuild-installed one.
+  itReal(
+    'a prebuilt-index import records doc_claims and a shared prebuilt doc survives the sibling claimant removal',
+    async () => {
+      const { openStore, PackManager, HashEmbedder } = await loadModules();
+      const root = makeTempDir('c6-ws-');
+      const store = openStore({ dbPath: path.join(root, 'store.db'), dims: 384 });
+      openStores.push(store);
+      const manager = new PackManager({
+        store,
+        embedder: new HashEmbedder({ dims: 384 }),
+        packsRoot: path.join(root, 'packs'),
+        repoRoot: REPO_ROOT,
+        packsSecurity: { embeddingModelId: 'hash' },
+      });
+      const db = store.db as unknown as {
+        prepare(sql: string): { get(...params: unknown[]): unknown; all(...params: unknown[]): unknown[] };
+      };
+      const marker = 'shared prebuilt claim survival';
+      const packA = await buildAndUnpackPack('c6-prebuilt-a', '1.0.0', marker);
+      const packB = await buildAndUnpackPack('c6-prebuilt-b', '1.0.0', marker);
+      await manager.install(packA);
+      await manager.install(packB);
+
+      // Both claimants recorded for the byte-identical doc; one docs row.
+      const shaRow = db.prepare('SELECT sha256, id FROM docs LIMIT 1').get() as {
+        sha256: string;
+        id: string;
+      };
+      const claims = db
+        .prepare('SELECT claimant FROM doc_claims WHERE doc_id = ? ORDER BY claimant')
+        .all(shaRow.id) as Array<{ claimant: string }>;
+      expect(claims.map((c) => c.claimant)).toEqual(['pack:c6-prebuilt-a', 'pack:c6-prebuilt-b']);
+
+      // Removing A keeps the imported doc, its chunks, and B's claim.
+      await manager.remove('c6-prebuilt-a');
+      const docsAfter = db
+        .prepare('SELECT COUNT(*) AS n FROM docs WHERE sha256 = ?')
+        .get(shaRow.sha256) as { n: number };
+      const chunksAfter = db
+        .prepare('SELECT COUNT(*) AS n FROM chunks WHERE doc_id = ?')
+        .get(shaRow.id) as { n: number };
+      const claimsAfter = db
+        .prepare('SELECT claimant FROM doc_claims WHERE doc_id = ?')
+        .all(shaRow.id) as Array<{ claimant: string }>;
+      expect(docsAfter.n).toBe(1);
+      expect(chunksAfter.n).toBeGreaterThan(0);
+      expect(claimsAfter.map((c) => c.claimant)).toEqual(['pack:c6-prebuilt-b']);
+      const activeB = db
+        .prepare("SELECT active FROM packs WHERE id = 'c6-prebuilt-b'")
+        .get() as { active: number };
+      expect(activeB.active).toBe(1);
+    },
+  );
 });
