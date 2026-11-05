@@ -1013,16 +1013,31 @@ def test_shared_doc_survival_controls_unshared_docs_still_deleted(workspace):
 # ------------------------------------------------------------------ #
 
 
-def test_shared_doc_route_remove_keeps_shared_doc(workspace, monkeypatch):
+def route_client(monkeypatch, pm):
+    """TestClient for the pack routes that is hermetic against test-order
+    auth pollution: test_auth.py reloads auth/api_server with ENABLE_AUTH
+    enabled and leaves the reimported module cached, so the routes' auth
+    dependency is overridden explicitly (the tests/test_api_endpoints.py
+    pattern) instead of relying on the ambient auth state."""
     from fastapi.testclient import TestClient
 
     import api_server
+    from auth import authenticate
 
+    monkeypatch.setitem(
+        api_server.app.dependency_overrides,
+        authenticate,
+        lambda: {"authenticated": True, "method": "test"},
+    )
+    monkeypatch.setattr(api_server, "pack_manager", pm)
+    return TestClient(api_server.app)
+
+
+def test_shared_doc_route_remove_keeps_shared_doc(workspace, monkeypatch):
     pm = install_sibling_pair(workspace)
     shared = shared_doc_id()
     before = doc_chunk_ids(pm.store, shared)
-    test_client = TestClient(api_server.app)
-    monkeypatch.setattr(api_server, "pack_manager", pm)
+    test_client = route_client(monkeypatch, pm)
 
     response = test_client.post("/packs/remove", json={"pack_id": "pack-a"})
 
@@ -1036,10 +1051,6 @@ def test_shared_doc_route_remove_keeps_shared_doc(workspace, monkeypatch):
 
 
 def test_shared_doc_route_rollback_keeps_shared_doc(workspace, monkeypatch):
-    from fastapi.testclient import TestClient
-
-    import api_server
-
     ws = workspace
     src_a1 = build_multi_doc_pack(
         ws, "src-a1", "pack-a", "1.0.0", {"docs/a-only.json": A_ONLY_OBJ}
@@ -1061,8 +1072,7 @@ def test_shared_doc_route_rollback_keeps_shared_doc(workspace, monkeypatch):
     )
     shared = shared_doc_id()
     before = doc_chunk_ids(pm.store, shared)
-    test_client = TestClient(api_server.app)
-    monkeypatch.setattr(api_server, "pack_manager", pm)
+    test_client = route_client(monkeypatch, pm)
 
     response = test_client.post(
         "/packs/rollback", json={"pack_id": "pack-a", "to_version": "1.0.0"}
@@ -1077,10 +1087,6 @@ def test_shared_doc_route_rollback_keeps_shared_doc(workspace, monkeypatch):
 
 
 def test_shared_doc_route_remove_still_deletes_unshared_doc(workspace, monkeypatch):
-    from fastapi.testclient import TestClient
-
-    import api_server
-
     pm = make_manager(workspace)
     pm.install(
         build_multi_doc_pack(
@@ -1088,8 +1094,7 @@ def test_shared_doc_route_remove_still_deletes_unshared_doc(workspace, monkeypat
         )
     )
     only_sha = doc_id_from_bytes(json.dumps(A_ONLY_OBJ, indent=2).encode("utf-8"))
-    test_client = TestClient(api_server.app)
-    monkeypatch.setattr(api_server, "pack_manager", pm)
+    test_client = route_client(monkeypatch, pm)
 
     response = test_client.post("/packs/remove", json={"pack_id": "pack-solo"})
 
