@@ -53,6 +53,7 @@ import {
 } from './retrieval/reranker.js';
 import {
   createPressureMonitor,
+  envOverrideInForce,
   resolveConcurrencyConfig,
   resolveMemoryConfig,
   resolveWorkerPoolConfig,
@@ -779,7 +780,12 @@ export class NodeBackendHost implements BackendHost {
     const followThresholdSetting = (patch: Record<string, unknown>): void => {
       const value = patch['inference.profileThresholdGb'];
       if (typeof value !== 'number' || !Number.isFinite(value)) return;
-      if (env.TRAININGAPP_MEMORY_PRESSURE_THRESHOLD_GB !== undefined) return;
+      // Env precedence, judged the way the monitor judges it: a
+      // defined-but-junk TRAININGAPP_MEMORY_PRESSURE_THRESHOLD_GB is treated
+      // by resolveMemoryConfig as UNSET (positiveInt junk tolerance), so it
+      // must not freeze the settings-follow either (#280 review PRR-003) —
+      // only an override actually in force pins the boundary.
+      if (envOverrideInForce(env.TRAININGAPP_MEMORY_PRESSURE_THRESHOLD_GB)) return;
       this.monitor?.setThreshold(value);
     };
     if (poolConfig.rerankerWorkerPoolSize > 1 || poolConfig.embeddingWorkerPoolSize > 1) {

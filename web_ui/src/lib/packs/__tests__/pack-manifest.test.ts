@@ -91,9 +91,9 @@ describe('browser install gates (desktop validatedManifest order)', () => {
     expect((await gate(m))?.message).toBe('doc path is absolute: /abs/index.sqlite');
   });
 
-  it('index schema_version must match the store', async () => {
+  it('index schema_version must match the pack artifact index version', async () => {
     const m = manifest({ index: { path: 'index.sqlite', schema_version: 99, sqlite_vec_version: PACKS_SQLITE_VEC_PIN } });
-    expect((await gate(m))?.message).toBe('pack index schema_version 99 does not match store schema_version 3; refusing install');
+    expect((await gate(m))?.message).toBe('pack index schema_version 99 does not match the pack artifact index schema version 3; refusing install');
   });
 
   it('sqlite-vec stamp must match the pin', async () => {

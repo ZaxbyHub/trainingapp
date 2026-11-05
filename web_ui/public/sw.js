@@ -351,7 +351,17 @@
         // API/JSON response (PRR-109) can never poison the shell key and a
         // shell re-fetch cannot clobber the seeded fallback.
         if (response && response.ok && path === SCOPE_ROOT_PATH) {
-          cache.put(SHELL_INDEX_PATH, stripVary(response.clone())).catch(function () {});
+          // The refreshed shell document belongs to the CURRENT generation
+          // (CACHE_NAME), never to whichever older generation shellCache()
+          // is serving while the current one is marked incomplete (#279
+          // review PRR-001): writing it into the retained cache would mix
+          // generations and break the offline fallback it protects.
+          caches
+            .open(CACHE_NAME)
+            .then(function (gen) {
+              return gen.put(SHELL_INDEX_PATH, stripVary(response.clone()));
+            })
+            .catch(function () {});
         }
         return response;
       },

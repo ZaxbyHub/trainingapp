@@ -117,6 +117,8 @@ interface Harness {
   cacheNames(): string[];
   /** The entry keys of one named cache (empty when absent). */
   cacheEntries(name: string): string[];
+  /** The body string of one entry in a named cache (undefined when absent). */
+  cachesOpenMatch(name: string, pathname: string): Promise<string | undefined>;
   /** True when the metadata cache holds an incomplete-marker for `name`. */
   markerPresent(name: string): boolean;
   /** Re-run the worker in a fresh vm over the SAME persistent caches. */
@@ -205,6 +207,10 @@ async function makeHarness(
     },
     cacheEntries(name) {
       return [...(cachesStore.get(name)?.keys() ?? [])];
+    },
+    async cachesOpenMatch(name, pathname) {
+      const entry = cachesStore.get(name)?.get(pathname);
+      return entry === undefined ? undefined : entry.body;
     },
     markerPresent(name) {
       const meta = cachesStore.get(META_CACHE_NAME);
@@ -398,6 +404,31 @@ describe('atomic precache revision (issue #279 B3)', () => {
     // The metadata cache holds ONLY the marker key — it is never opened as a
     // shell (no shell paths inside it).
     expect(h.cacheEntries(META_CACHE_NAME)).toEqual([new URL(CACHE_V2, ORIGIN).pathname]);
+  });
+
+  it('an ONLINE navigation while marked refreshes the CURRENT generation, never the retained one', async () => {
+    const h = await makeHarness(MANIFEST_V2, {
+      seedCaches: [PREVIOUS_COMPLETE],
+      failUrls: [FAILING_ASSET],
+    });
+    // Marked current generation, retained previous complete cache serving.
+    expect(h.markerPresent(CACHE_V2)).toBe(true);
+    expect(h.cacheEntries(PREV_CACHE)).toContain('/index.html');
+    // Online root navigation: served from the network (response.ok), and the
+    // shell-key refresh must land in the CURRENT generation (CACHE_V2), never
+    // in the retained previous cache — a cross-generation write would mix the
+    // new index.html with the old cache's assets and break the offline
+    // fallback it protects (#279 review PRR-001).
+    const nav = await h.fetchPath('/', { mode: 'navigate', destination: 'document' });
+    expect(nav.handled).toBe(true);
+    expect(nav.body).toBe(`NET:${ORIGIN}/`);
+    // The retained cache is untouched: its index.html is still the old body.
+    const retained = await h.cachesOpenMatch(PREV_CACHE, '/index.html');
+    expect(retained).toBe(prevBody('/index.html'));
+    // The refreshed shell document landed in the CURRENT generation.
+    expect(h.cacheEntries(CACHE_V2)).toContain('/index.html');
+    const refreshed = await h.cachesOpenMatch(CACHE_V2, '/index.html');
+    expect(refreshed).toBe(`NET:${ORIGIN}/`);
   });
 
   it('an unchanged manifest: install validates the existing unmarked cache and skips refetching', async () => {

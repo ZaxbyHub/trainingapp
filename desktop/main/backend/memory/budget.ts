@@ -47,6 +47,21 @@ function positiveInt(raw: string | undefined, fallback: number): number {
   return Number.isFinite(value) && value > 0 && value <= MAX_TIMER_MS ? value : fallback;
 }
 
+/**
+ * True only when the env override would ACTUALLY take effect under the same
+ * junk-tolerance rules positiveInt applies (defined, digits-only, parses to a
+ * positive integer within the clamp). A defined-but-junk value (empty, non-
+ * numeric, zero, out of clamp) is treated by resolveMemoryConfig as UNSET —
+ * the settings-follow seam must therefore treat it as unset too, or an
+ * operator's malformed env var would silently freeze the threshold while the
+ * monitor runs on the default (#280 review PRR-003).
+ */
+export function envOverrideInForce(raw: string | undefined): boolean {
+  if (raw === undefined || raw === '' || !/^\d+$/.test(raw)) return false;
+  const value = Number.parseInt(raw, 10);
+  return Number.isFinite(value) && value > 0 && value <= MAX_TIMER_MS;
+}
+
 export function resolveMemoryConfig(env: Record<string, string | undefined> = process.env): MemoryBudgetConfig {
   return {
     telemetryIntervalMs: positiveInt(env.TRAININGAPP_MEMORY_TELEMETRY_INTERVAL_MS, 5000),
@@ -91,12 +106,14 @@ export interface PressureMonitor {
    * there is no separate memory.* settings key; the only other threshold
    * source is the TRAININGAPP_MEMORY_PRESSURE_THRESHOLD_GB env override).
    * Re-bases thresholdBytes only; the
-   * sustained-window and recovery semantics are untouched, so a sample
-   * already in flight is judged by the streak rules against the NEW
-   * boundary. A non-positive or non-finite value is ignored — the same
-   * junk-tolerance resolveMemoryConfig applies to the construction default,
-   * and the settings seam's own positive-number gate makes it unreachable
-   * from accepted patches anyway.
+   * sustained-window and recovery semantics are untouched. The in-flight
+   * pressure streak is RETAINED across a move (an evaluate() that fires
+   * before the next observe() judges elapsed time against the streak, which
+   * may have started under the previous boundary — the next observe()
+   * re-tests the new boundary). A non-positive or non-finite value is
+   * ignored — the same junk-tolerance resolveMemoryConfig applies to the
+   * construction default, and the settings seam's own positive-number gate
+   * makes it unreachable from accepted patches anyway.
    */
   setThreshold(gb: number): void;
   /**

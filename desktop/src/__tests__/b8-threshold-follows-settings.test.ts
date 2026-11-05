@@ -271,6 +271,28 @@ describe('C18 legs c-e: the host wiring (PUT /settings -> monitor.setThreshold; 
     spy.mockRestore();
   });
 
+  it('leg g: a JUNK env value is not an override — the settings follow still moves the monitor', async () => {
+    // resolveMemoryConfig's positiveInt junk tolerance treats a defined-but-
+    // non-numeric env value as UNSET (the monitor boots on the 6 GiB
+    // default); the follow seam must judge precedence the same way, or a
+    // malformed env var would silently freeze the threshold (#280 review
+    // PRR-003).
+    const { handle, monitor } = await startHost({ TRAININGAPP_MEMORY_PRESSURE_THRESHOLD_GB: 'not-a-number' });
+    const spy = vi.spyOn(monitor, 'setThreshold');
+    const res = await fetch(`${handle.url}/settings`, {
+      method: 'PUT',
+      headers: { 'x-desktop-token': TOKEN, 'content-type': 'application/json' },
+      body: JSON.stringify({ 'inference.profileThresholdGb': 4 }),
+    });
+    expect(res.status).toBe(200);
+    expect(spy).toHaveBeenCalledWith(4);
+    // Behavioral: 5 GiB free is above the moved 4 GiB boundary (no pressure)
+    // but below the 6 GiB default the junk-env boot kept.
+    monitor.observe(5 * GIB, 0);
+    expect(monitor.evaluate(10_001).downgraded, 'the settings-moved 4 GiB threshold governs despite the junk env value').toBe(false);
+    spy.mockRestore();
+  });
+
   it('leg f: the boot replay of a persisted inference.profileThresholdGb moves the monitor before any PUT', async () => {
     const storePath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'b8-threshold-boot-')), 'store.sqlite');
     tmpDirs.push(path.dirname(storePath));

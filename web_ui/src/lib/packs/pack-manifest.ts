@@ -16,7 +16,7 @@ import { enforceSignaturePolicy, type SignaturePolicy } from './pack-verify';
 
 /** Desktop PACKS_SQLITE_VEC_PIN (pack-manager.ts). */
 export const PACKS_SQLITE_VEC_PIN = '0.1.9';
-/** Desktop store schema version (contracts/store.schema.sql meta.schema_version). */
+/** Pack ARTIFACT index schema version (packtool STORE_SCHEMA_VERSION; the desktop store's meta.schema_version is independent). */
 export const PACK_STORE_SCHEMA_VERSION = 3;
 /** Desktop DEFAULT_PACK_EMBEDDING_MODEL_ID (pack-extract.ts, ADR-0006). */
 export const DEFAULT_PACK_EMBEDDING_MODEL_ID = 'bge-small-en-v1.5';
@@ -344,7 +344,7 @@ export async function validateManifestGates(
   }
   if (manifest.index !== undefined && manifest.index.schema_version !== PACK_STORE_SCHEMA_VERSION) {
     throw new PackManagerError(
-      `pack index schema_version ${manifest.index.schema_version} does not match store schema_version ${PACK_STORE_SCHEMA_VERSION}; refusing install`,
+      `pack index schema_version ${manifest.index.schema_version} does not match the pack artifact index schema version ${PACK_STORE_SCHEMA_VERSION}; refusing install`,
     );
   }
   if (manifest.index !== undefined && manifest.index.sqlite_vec_version !== PACKS_SQLITE_VEC_PIN) {
