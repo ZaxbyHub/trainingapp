@@ -571,7 +571,7 @@ class PackManager:
 
     def _claims_from_other_rows(
         self, rows: List[Dict[str, Any]], acting_rows: List[Dict[str, Any]]
-    ) -> set:
+    ) -> Dict[str, str]:
         """Doc ids claimed by any registry row outside the acted-on rows.
 
         Content-hash ids make a doc listed by two installed rows a single
@@ -580,15 +580,19 @@ class PackManager:
         registry rows' own per-pack docs maps -- no separate claim store --
         so an inactive version row (retained managed dir, reactivatable
         byte-identically) still counts as a claimant, while the rows the
-        verb is acting on never protect their own docs from the verb.
+        verb is acting on never protect their own docs from the verb. The
+        value names the first claiming row (`pack@version`) so a claim-skip
+        log line can say who keeps the document.
         """
         acting_ids = {id(r) for r in acting_rows}
-        claims: set = set()
+        claims: Dict[str, str] = {}
         for other in rows:
             if id(other) in acting_ids:
                 continue
             for info in other.get("docs", {}).values():
-                claims.add(info["doc_id"])
+                claims.setdefault(
+                    info["doc_id"], f"{other['pack_id']}@{other['version']}"
+                )
         return claims
 
     # ------------------------------------------------------------------ #
@@ -602,11 +606,11 @@ class PackManager:
         for info in row.get("docs", {}).values():
             if info["doc_id"] in claims:
                 logger.info(
-                    "pack %s@%s: doc %s retained: claimed by another installed"
-                    " pack version",
+                    "pack %s@%s: doc %s retained: claimed by %s",
                     row["pack_id"],
                     row["version"],
                     info["doc_id"],
+                    claims[info["doc_id"]],
                 )
                 continue
             if self.store.delete_document(info["doc_id"]):
@@ -746,10 +750,11 @@ class PackManager:
                         if info["doc_id"] in claims:
                             logger.info(
                                 "pack %s@%s: doc %s retained on upgrade: claimed"
-                                " by another installed pack version",
-                                pack_id,
-                                version,
+                                " by %s",
+                                row["pack_id"],
+                                row["version"],
                                 info["doc_id"],
+                                claims[info["doc_id"]],
                             )
                             continue
                         if self.store.delete_document(info["doc_id"]):
@@ -875,11 +880,11 @@ class PackManager:
                 for info in row.get("docs", {}).values():
                     if info["doc_id"] in claims:
                         logger.info(
-                            "pack %s@%s: doc %s retained on removal: claimed by"
-                            " another installed pack version",
+                            "pack %s@%s: doc %s retained on removal: claimed by %s",
                             row["pack_id"],
                             row["version"],
                             info["doc_id"],
+                            claims[info["doc_id"]],
                         )
                         continue
                     self.store.delete_document(info["doc_id"])

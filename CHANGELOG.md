@@ -12,7 +12,8 @@
   search retrievability survive. Unshared documents still delete (every verb keeps its
   deletion semantics when no sibling claim exists), version-scoped removal keeps what an
   inactive sibling version row claims until whole-pack removal cleans up, and claim
-  skips are logged at info naming the retention. Pinned by the `shared_doc_survival` and
+  skips are logged at info naming the surviving claimant (`pack@version`). Pinned by
+  the `shared_doc_survival` and
   `shared_doc_route` legs in `tests/test_pack_manager.py` (route legs drive
   `POST /packs/remove` and `POST /packs/rollback` through the TestClient no-lifespan
   harness).
