@@ -262,9 +262,8 @@ import { CONTEXT_SIZE } from './prompt-budget.js';
 // Issue #157: the desktop port of the browser F11 budget + the PR #48
 // token-capped history (see prompt-budget.ts for the contract).
 import {
-  CHARS_PER_TOKEN,
   MAX_HISTORY_BUDGET_TOKENS,
-  capHistoryTokens,
+  capHistoryByEstimatedTokens,
   groundedContextBudgetChars,
 } from './prompt-budget.js';
 const CANCEL_POLL_MS = 20;
@@ -275,9 +274,12 @@ export const INFERENCE_THREADS_MAX = 64;
 // Carry at most this many history turns: the browser client caps at 6
 // (buildHistorySnapshot), but the contract accepts unbounded arrays. Issue
 // #157 closes the overflow the old comment here warned about: on top of the
-// turn cap, capHistoryTokens bounds the seeded history to
-// MAX_HISTORY_BUDGET_TOKENS estimated tokens (8,192 chars), so an oversized
-// history can no longer overflow CONTEXT_SIZE on the resident model.
+// turn cap, capHistoryByEstimatedTokens bounds the seeded history to
+// MAX_HISTORY_BUDGET_TOKENS estimated tokens, so an oversized history can no
+// longer overflow CONTEXT_SIZE on the resident model. Issue #280 (C1): the
+// estimate is now CJK-aware (a CJK code point is charged a full token, not
+// the 4-chars/token Latin average), so a legal CJK conversation cannot
+// overflow the window reservation its own budget promised.
 const MAX_HISTORY_TURNS = 12;
 
 // Issue #154 AC3: this is the same groundedness rule the external path already
@@ -335,16 +337,22 @@ function contractHistoryTurns(history?: unknown[]): Array<{ role: 'user' | 'assi
  * slice (running them again on the output is an identity), and query() passes
  * the result both to the context-budget reservation (its joined text is what
  * the window will actually hold) and onward as the history generate() seeds.
+ *
+ * Issue #280 (C1): the cap is measured by capHistoryByEstimatedTokens — CJK
+ * code points are charged a full estimated token each (Latin-only histories
+ * delegate to the unchanged character cap internally). Exported so the spec
+ * binds the PRODUCTION wiring (the exact cap the reservation charges and
+ * generate() seeds), not a reimplementation.
  */
-function capContractHistory(history?: unknown[]): Array<{ role: 'user' | 'assistant'; content: string }> {
-  return capHistoryTokens(contractHistoryTurns(history), MAX_HISTORY_BUDGET_TOKENS * CHARS_PER_TOKEN);
+export function capContractHistory(history?: unknown[]): Array<{ role: 'user' | 'assistant'; content: string }> {
+  return capHistoryByEstimatedTokens(contractHistoryTurns(history), MAX_HISTORY_BUDGET_TOKENS);
 }
 
 /** Map contract history turns ({role, content}) to library chat history.
  *
  * Issue #157: on top of the MAX_HISTORY_TURNS turn cap, the history is
- * token-capped (capHistoryTokens — drop oldest whole turns, keep >= 1,
- * re-anchor user-first after the drop, tail-truncate a lone oversized
+ * token-capped (capHistoryByEstimatedTokens — drop oldest whole turns, keep
+ * >= 1, re-anchor user-first after the drop, tail-truncate a lone oversized
  * survivor; no-op passthrough when it already fits). The cap runs BEFORE the
  * turn-cap slice; that order is load-bearing for the user-first re-anchor
  * (see prompt-budget.ts). Within-budget histories map byte-identically to
@@ -1140,7 +1148,16 @@ export class LlamaEngine implements EngineSurface {
       this.assertEngineActive();
       const profile = this.effectiveProfile();
       const modelPath = this.assertModelAvailable(profile);
-      await this.ensureResident(profile, modelPath);
+      // Issue #280 (C2): chain the load onto the per-engine generation queue
+      // EXACTLY as query does. A warmup that loaded directly could dispose
+      // the resident backend (loadBackend disposes the old identity before
+      // constructing the new one) while a queued generation was still parked
+      // on it — the same mid-generation disposal the query queue exists to
+      // prevent. The single-flight loadInFlight branch inside ensureResident
+      // still merges a concurrent query load into ONE construction.
+      const load = this.queue.then(() => this.ensureResident(profile, modelPath));
+      this.queue = load.catch(() => {});
+      await load;
     } catch (err) {
       this.loadState = 'idle';
       this.loadStartedAt = null;
@@ -1623,9 +1640,9 @@ export class LlamaEngine implements EngineSurface {
     // setting can only tighten the CONTEXT_SIZE-derived bound).
     //
     // ONE-CAP RULE (plan-critic round 1, implementation review round 1): the
-    // history is capped ONCE here (filter + capHistoryTokens, the same
-    // first steps historyToChatHistory applies); the CAPPED text is what the
-    // reservation charges, and the capped array is what generate() seeds
+    // history is capped ONCE here (filter + capHistoryByEstimatedTokens, the
+    // same first steps historyToChatHistory applies); the CAPPED text is what
+    // the reservation charges, and the capped array is what generate() seeds
     // (historyToChatHistory's filter+cap on it is an identity), so the
     // estimate is exactly the seeded text — never an under-count, and never
     // the raw join's over-reservation, which zeroed all retrieved evidence on

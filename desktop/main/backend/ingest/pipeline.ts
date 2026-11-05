@@ -10,10 +10,12 @@
 // identical ids from identical content.
 //
 // Write rules (frozen by the acceptance checks):
-//   - content SHA-dedupe FIRST: bytes already in docs -> no-op success;
+//   - content SHA-dedupe FIRST: bytes already in docs -> no-op success
+//     (the user claim is still stamped — #278);
 //   - then DELETE-BEFORE-REINGEST: a different revision at the same path
 //     value has its doc + chunks + embeddings + fts + links rows removed
-//     inside the same transaction that inserts the new revision;
+//     inside the same transaction that inserts the new revision
+//     (claimant-scoped: a pack-claimed stale doc survives — #278);
 //   - per-document writes are single BEGIN IMMEDIATE..COMMIT transactions;
 //   - all DB work serializes on one queue (v1: one writer per store file);
 //   - doc->slide links (D4/#80) are refreshed inside the same transaction —
@@ -344,7 +346,25 @@ export class IngestPipeline {
       .get(docId) as { id: string } | undefined;
     if (existing !== undefined) {
       // Content dedupe: identical bytes are already in the corpus. First-seen
-      // path provenance wins; re-ingesting identical bytes is a no-op.
+      // path provenance wins; re-ingesting identical bytes is a no-op for
+      // content. #278: the USER now also claims the existing doc (keyed on
+      // the store row id, not the sha) — a pack-owned doc the user re-uploads
+      // survives that pack's removal. A single INSERT OR IGNORE is atomic on
+      // its own; a failure degrades to the per-file failure result like any
+      // other write.
+      try {
+        stmt(db, 'INSERT OR IGNORE INTO doc_claims (doc_id, claimant) VALUES (?, ?)').run(
+          existing.id,
+          'user',
+        );
+      } catch (err) {
+        return {
+          success: false,
+          documents: 0,
+          chunks_added: 0,
+          message: err instanceof Error ? err.message : String(err),
+        };
+      }
       return { success: true, documents: 0, chunks_added: 0, message: null };
     }
 
@@ -356,10 +376,19 @@ export class IngestPipeline {
       // is OFF by default (ON only on a connection that ran the v2->v3
       // migration ladder - store/migrate.ts) - so the manual ordering is
       // load-bearing in both pragma states.
+      // #278: the cascade is claimant-'user'-scoped — the stale doc's USER
+      // claim is released first and its content is deleted only when no
+      // other claimant remains, so a pack-claimed stale doc SURVIVES the
+      // user's replacement (the fresh revision inserts its own new row).
       const staleDocs = stmt(db, 'SELECT id FROM docs WHERE path = ? AND id != ?').all(docPath, docId) as Array<{
         id: string;
       }>;
       for (const doc of staleDocs) {
+        stmt(db, "DELETE FROM doc_claims WHERE doc_id = ? AND claimant = 'user'").run(doc.id);
+        const remaining = stmt(db, 'SELECT COUNT(*) AS n FROM doc_claims WHERE doc_id = ?').get(doc.id) as
+          | { n: number }
+          | undefined;
+        if ((remaining?.n ?? 0) > 0) continue;
         const chunkIds = stmt(db, 'SELECT id FROM chunks WHERE doc_id = ?').all(doc.id) as Array<{ id: string }>;
         for (const chunk of chunkIds) {
           stmt(db, 'DELETE FROM embeddings WHERE chunk_id = ?').run(chunk.id);
@@ -379,6 +408,7 @@ export class IngestPipeline {
         docPath,
         docId,
       );
+      stmt(db, 'INSERT OR IGNORE INTO doc_claims (doc_id, claimant) VALUES (?, ?)').run(docId, 'user');
 
       const insertChunk = stmt(
         db,

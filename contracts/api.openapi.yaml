@@ -1196,6 +1196,14 @@ components:
         "external.apiKeyPersisted": { type: boolean, description: false when the OS offers no encryption and the key is kept for this session only (desktop only). }
         "external.apiKeyBoundOrigin": { type: string, description: Origin the saved key is bound to; empty when none (desktop only). }
         "external.airgap": { type: boolean, description: Air-gapped build — public endpoints refused (desktop only). }
+        # settings-openapi-parity (#280): OPTIONAL desktop-backend-only
+        # inference settings, returned by the desktop engine's GET /settings
+        # report (the Python backend omits them; the required set above is
+        # unchanged). Domains mirror the engine's PUT validation switch.
+        "inference.profile": { type: string, enum: [auto, fast, quality], description: Inference profile selection (desktop only). }
+        "inference.profileThresholdGb": { type: number, exclusiveMinimum: 0, description: Free-RAM threshold in GiB for the auto profile selection (desktop only). }
+        "inference.threads": { type: integer, minimum: 1, maximum: 64, description: Native CPU thread count for local inference (desktop only). }
+        "inference.vulkan": { anyOf: [{ type: boolean }, { type: string, enum: [auto] }], description: Vulkan GPU preference — a boolean forces it and 'auto' follows the probe verdict (desktop only). }
     SettingsUpdateRequest:
       type: object
       description: Field names are the rag_* settings keys; omitted fields are unchanged.
@@ -1233,6 +1241,14 @@ components:
         "external.model": { type: string }
         "external.apiKey": { type: string, description: Write-only; '' clears the saved key. }
         "external.grounded": { type: boolean }
+        # settings-openapi-parity (#280): desktop-backend-only inference
+        # settings, validated by the desktop engine's accept switch (unknown
+        # inference.* keys are rejected there; the Python backend rejects the
+        # whole prefix). Same domains as the SettingsResponse declarations.
+        "inference.profile": { type: string, enum: [auto, fast, quality], description: Inference profile selection (desktop only). }
+        "inference.profileThresholdGb": { type: number, exclusiveMinimum: 0, description: Free-RAM threshold in GiB for the auto profile selection (desktop only). }
+        "inference.threads": { type: integer, minimum: 1, maximum: 64, description: Native CPU thread count for local inference (desktop only). }
+        "inference.vulkan": { anyOf: [{ type: boolean }, { type: string, enum: [auto] }], description: Vulkan GPU preference — a boolean forces it and 'auto' follows the probe verdict (desktop only). }
     ExternalProbeRequest:
       type: object
       required: [protocol, baseUrl]

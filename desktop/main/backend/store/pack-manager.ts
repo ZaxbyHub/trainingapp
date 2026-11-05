@@ -25,6 +25,13 @@
 // Link maintenance composes the D4 store-layer helpers (#80 named #70 as the
 // caller): removeLinksForPack / pruneOrphanLinks / recomputeLinksForDocs run
 // inside the same transactions that remove or add chunks.
+//
+// Claimant-aware lifetime (#278): every doc write stamps a doc_claims row for
+// the acting claimant ('pack:<id>' here, 'user' in the ingest pipeline), and
+// every doc deletion releases only that claimant — content shared with
+// another pack or the user survives the lifecycle event. While
+// meta.doc_claims_reconciled is 'pending' (an active pack's manifest was
+// unreadable at migration), the destructive verbs refuse outright.
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -114,6 +121,19 @@ export const PACK_SCHEMA_RELATIVE_PATH = 'contracts/pack.schema.json';
  * manifest's index block since C1 but first CONSUMED here.
  */
 export const PACKS_SQLITE_VEC_PIN = '0.1.9';
+
+/**
+ * The pack ARTIFACT index format version installs are gated against: the
+ * schema_version stamped inside a pack's embedded index.sqlite by packtool's
+ * STORE_SCHEMA_VERSION (packtool/build/pack-json.ts). Deliberately NOT the
+ * live store's schemaVersion — the store ladder moved to v4 for doc_claims
+ * (#278) while the SHIPPED-ARTIFACT format stayed at v3 (doc_claims is a
+ * store-side table the desktop stamps at install time), and gating against
+ * the store version would refuse every existing v3 artifact. Same domain in
+ * the verify.ts / pack_extract.py / browser PACK_STORE_SCHEMA_VERSION
+ * readers of the artifact version.
+ */
+const ARTIFACT_INDEX_SCHEMA_VERSION = 3;
 
 /** Raised for refused or failed pack lifecycle operations (C2 parity name). */
 export class PackManagerError extends Error {
@@ -462,6 +482,10 @@ export class PackManager {
   }
 
   private async installLocked(packPath: string): Promise<InstallResult> {
+    // #278: the destructive verbs refuse while claims reconciliation is
+    // pending — install composes delete-before-reingest over docsMap-derived
+    // maps, which an unreadable manifest cannot vouch for.
+    this.assertClaimsReconciled();
     const source = path.resolve(packPath);
     const stat = fs.statSync(source, { throwIfNoEntry: false });
     if (stat === undefined || !stat.isDirectory()) {
@@ -554,23 +578,26 @@ export class PackManager {
 
     const replacedDocIds: string[] = [];
     const supersededNames: string[] = outgoing.map((r) => `${r.id}@${r.version}`);
-    const docIds = manifest.docs.map((entry) => entry.sha256);
 
     this.inTransaction(() => {
       // delete-before-reingest: for each outgoing row, drop docs whose content
       // changed at the same manifest path, or which the new manifest no longer
       // carries. Content-identical docs keep their chunks (same ids as the
-      // incoming inserts; the delete-then-insert below dedupes).
-      for (const { docs } of outgoingDocs) {
+      // incoming inserts; the delete-then-insert below dedupes). #278: the
+      // deletion releases only the OUTGOING pack's claim — a doc another pack
+      // or the user still claims keeps its content and is NOT "replaced".
+      for (const { row, docs } of outgoingDocs) {
         for (const [relPath, info] of Object.entries(docs)) {
           const incoming = manifest.docs.find((entry) => entry.path === relPath);
           if (incoming === undefined || incoming.sha256 !== info.doc_sha256) {
-            if (this.deleteDocumentLocked(info.doc_id)) replacedDocIds.push(info.doc_id);
+            if (this.deleteDocumentLocked(info.doc_id, `pack:${row.id}`) === 'deleted') {
+              replacedDocIds.push(info.doc_id);
+            }
           }
         }
       }
 
-      this.writeLiveOrImportedChunksLocked(manifest, chunks, vectors, imported);
+      const storeDocIds = this.writeLiveOrImportedChunksLocked(manifest, chunks, vectors, imported);
 
       // Deactivate outgoing rows (files retained on disk).
       for (const row of outgoing) {
@@ -599,8 +626,11 @@ export class PackManager {
       // orphans the deletions left, recompute for the incoming docs. A
       // prebuilt index ships AUTHORITATIVE links; recomputing would clobber
       // them, so recompute runs only for the rebuild path (issue #73).
+      // recompute keys on the resolved store doc ids (#278 PC2-5).
       pruneOrphanLinks(this.db);
-      if (imported === null && docIds.length > 0) recomputeLinksForDocs(this.db, docIds);
+      if (imported === null && storeDocIds.size > 0) {
+        recomputeLinksForDocs(this.db, [...storeDocIds.values()]);
+      }
     });
 
     for (const warning of warnings) {
@@ -624,6 +654,9 @@ export class PackManager {
   }
 
   private async supersedeLocked(packId: string, fromVersion: string, toVersion: string): Promise<void> {
+    // #278: deactivation deletes claimant-scoped content from docsMap-derived
+    // maps — refuse while reconciliation is pending.
+    this.assertClaimsReconciled();
     const rows = this.readPackRows();
     const fromRow = rows.find((r) => r.id === packId && r.version === fromVersion);
     const toRow = rows.find((r) => r.id === packId && r.version === toVersion);
@@ -655,6 +688,8 @@ export class PackManager {
   }
 
   private async rollbackLocked(packId: string, toVersion: string): Promise<void> {
+    // #278: same pending guard as supersede (deactivation + reactivation).
+    this.assertClaimsReconciled();
     const rows = this.readPackRows();
     const toRow = rows.find((r) => r.id === packId && r.version === toVersion);
     if (toRow === undefined) {
@@ -680,6 +715,9 @@ export class PackManager {
   }
 
   private async removeLocked(packId: string, version?: string): Promise<number> {
+    // #278: removal releases claimant-scoped deletes from docsMap-derived
+    // maps — refuse while reconciliation is pending.
+    this.assertClaimsReconciled();
     const rows = this.readPackRows().filter(
       (r) => r.id === packId && (version === undefined || r.version === version),
     );
@@ -689,24 +727,20 @@ export class PackManager {
       );
     }
     // Derive the docs maps FIRST — they come from the managed manifests, and
-    // the managed dirs are removed inside the loop below (C2's registry kept
-    // the map in the row; this store derives it, so the read must precede the
-    // delete). The transaction is idempotent on retry either way.
+    // the managed dirs are removed after the transaction below (C2's registry
+    // kept the map in the row; this store derives it, so the read must precede
+    // the delete). The transaction is idempotent on retry either way.
     const docMaps = rows.map((row) => ({ row, docs: this.docsMapForRow(row) }));
-    for (const { row } of docMaps) {
-      if (row.install_path !== null) {
-        try {
-          fs.rmSync(row.install_path, { recursive: true, force: true });
-        } catch (error) {
-          throw new PackManagerError(
-            `failed to delete managed dir ${row.install_path}: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
-      }
-    }
+    // Rows FIRST, files after (#278 Fix A2): a failed directory delete must
+    // never leave the store holding rows whose managed manifests are gone
+    // (that is exactly the unreadable-manifest state the pending guard
+    // exists to refuse). The claimant-scoped deletes below release this
+    // pack's claims; docs another claimant holds keep their content.
     this.inTransaction(() => {
-      for (const { docs } of docMaps) {
-        for (const info of Object.values(docs)) this.deleteDocumentLocked(info.doc_id);
+      for (const { row, docs } of docMaps) {
+        for (const info of Object.values(docs)) {
+          this.deleteDocumentLocked(info.doc_id, `pack:${row.id}`);
+        }
       }
       for (const { row } of docMaps) {
         removeLinksForPack(this.db, row.id);
@@ -714,6 +748,28 @@ export class PackManager {
       }
       pruneOrphanLinks(this.db);
     });
+    // Best-effort managed-dir removal AFTER the rows are gone: collect every
+    // failure and throw ONE error listing them, disclosing the retry
+    // semantics (the registry rows are already deleted, so a retry reports
+    // nothing installed; the next install of the same pack clears residue).
+    const failedDirs: string[] = [];
+    for (const { row } of docMaps) {
+      if (row.install_path !== null) {
+        try {
+          fs.rmSync(row.install_path, { recursive: true, force: true });
+        } catch (error) {
+          failedDirs.push(
+            `${row.install_path} (${error instanceof Error ? error.message : String(error)})`,
+          );
+        }
+      }
+    }
+    if (failedDirs.length > 0) {
+      throw new PackManagerError(
+        `removed ${rows.length} pack row(s) but failed to delete managed dir(s): ${failedDirs.join('; ')}; ` +
+          'a retry reports nothing installed and the next install of the same pack heals the residue',
+      );
+    }
     return rows.length;
   }
 
@@ -833,11 +889,13 @@ export class PackManager {
       assertSafeDocPath(manifest.index.path);
     }
 
-    // AC4: a pack that carries a prebuilt index block must match the store's
-    // schema version — a mismatch is an explicit refusal, never silent.
-    if (manifest.index !== undefined && manifest.index.schema_version !== this.store.schemaVersion) {
+    // AC4: a pack that carries a prebuilt index block must match the ARTIFACT
+    // index format version — a mismatch is an explicit refusal, never silent.
+    // #278: the gate compares against ARTIFACT_INDEX_SCHEMA_VERSION, not the
+    // live store's schemaVersion (store v4 / artifact v3 — see the constant).
+    if (manifest.index !== undefined && manifest.index.schema_version !== ARTIFACT_INDEX_SCHEMA_VERSION) {
       throw new PackManagerError(
-        `pack index schema_version ${manifest.index.schema_version} does not match store schema_version ${this.store.schemaVersion}; refusing install`,
+        `pack index schema_version ${manifest.index.schema_version} does not match the pack artifact index schema version ${ARTIFACT_INDEX_SCHEMA_VERSION}; refusing install`,
       );
     }
 
@@ -913,6 +971,8 @@ export class PackManager {
       }
       for (let index = 0; index < pieces.length; index += 1) {
         const chunkText = normalizeText(pieces[index] ?? '');
+        // docId carries the doc SHA (chunk-id derivation input); the write
+        // path binds chunks.doc_id to the SELECTED store doc id (#278 PC2-5).
         chunks.push({
           chunkId: chunkIdFor(docSha, index, chunkText),
           docId: docSha,
@@ -961,7 +1021,10 @@ export class PackManager {
 
   /** Doc map for an installed row, derived from its retained managed manifest
    * (the sha values are the install-validated ones; the managed dir is
-   * app-owned). Prebuilt wholesale rows (install_path NULL) have none. */
+   * app-owned). Prebuilt wholesale rows (install_path NULL) have none.
+   * #278 (PC2-5): doc_id is the STORE row id resolved by content sha (id and
+   * sha are equal in stores written by this code; a migrated v3 store can
+   * carry id != sha rows, and claim/delete writes key on the store id). */
   private docsMapForRow(row: PacksRow): Record<string, { doc_sha256: string; doc_id: string }> {
     if (row.install_path === null) return {};
     const manifestPath = path.join(row.install_path, 'pack.json');
@@ -978,7 +1041,10 @@ export class PackManager {
       const manifest = JSON.parse(raw.toString('utf8')) as PackManifest;
       const docs: Record<string, { doc_sha256: string; doc_id: string }> = {};
       for (const entry of manifest.docs) {
-        docs[entry.path] = { doc_sha256: entry.sha256, doc_id: entry.sha256 };
+        const stored = this.stmt('SELECT id FROM docs WHERE sha256 = ?').get(entry.sha256) as
+          | { id: string }
+          | undefined;
+        docs[entry.path] = { doc_sha256: entry.sha256, doc_id: stored?.id ?? entry.sha256 };
       }
       return docs;
     } catch {
@@ -989,18 +1055,63 @@ export class PackManager {
     }
   }
 
-  /** Delete a doc's live content: chunks + embeddings + fts + links + the docs
-   * row (chunk cascade mirrors ingest/pipeline.ts:353-369; the docs row is
-   * re-created on reactivation). Returns false when nothing was live (the C2
-   * delete_document contract: deactivation proceeds and logs). */
-  private deleteDocumentLocked(docId: string): boolean {
+  /**
+   * #278 (PC3-4, fail closed): while meta.doc_claims_reconciled is 'pending'
+   * at least one ACTIVE pack's manifest was unreadable at the last
+   * reconciliation pass, so docsMapForRow-derived claim maps cannot vouch
+   * for what a destructive verb would delete. Refuse, naming the unreadable
+   * manifest(s) and the resolution (restore/read the manifest and restart so
+   * migration re-attempts reconciliation).
+   */
+  private assertClaimsReconciled(): void {
+    const row = this.stmt("SELECT value FROM meta WHERE key = 'doc_claims_reconciled'").get() as
+      | { value: string }
+      | undefined;
+    if (row === undefined || row.value !== 'pending') return;
+    const unreadable: string[] = [];
+    for (const packRow of this.readPackRows()) {
+      if (packRow.active !== 1 || packRow.install_path === null) continue;
+      const manifestPath = path.join(packRow.install_path, 'pack.json');
+      let readable = true;
+      try {
+        JSON.parse(fs.readFileSync(manifestPath).toString('utf8')) as PackManifest;
+      } catch {
+        readable = false;
+      }
+      if (!readable) unreadable.push(`${packRow.id}@${packRow.version}: ${manifestPath}`);
+    }
+    throw new PackManagerError(
+      'pack claims reconciliation is pending: an active pack manifest was unreadable at migration ' +
+        `(${unreadable.length > 0 ? unreadable.join('; ') : 'no unreadable active manifest found since the marker was set'}); ` +
+        'restore the manifest and restart so migration reconciles claims, then retry remove/supersede/rollback/install',
+    );
+  }
+
+  /** Release `claimant`'s claim on a doc and delete its live content only
+   * when NO other claimant remains (#278): chunks + embeddings + fts + links
+   * + the docs row (chunk cascade mirrors ingest/pipeline.ts; the docs row is
+   * re-created on reactivation). Outcomes: 'deleted' (content removed),
+   * 'kept-for-claimant' (another claimant holds the doc — content untouched),
+   * 'nothing-live' (the C2 delete_document contract: deactivation proceeds
+   * and logs). The claim row is deleted FIRST so a kept doc immediately
+   * reflects the reduced claimant set even though its content rows are
+   * untouched. */
+  private deleteDocumentLocked(
+    docId: string,
+    claimant: string,
+  ): 'deleted' | 'kept-for-claimant' | 'nothing-live' {
+    this.stmt('DELETE FROM doc_claims WHERE doc_id = ? AND claimant = ?').run(docId, claimant);
+    const remaining = this.stmt('SELECT COUNT(*) AS n FROM doc_claims WHERE doc_id = ?').get(docId) as
+      | { n: number }
+      | undefined;
+    if ((remaining?.n ?? 0) > 0) return 'kept-for-claimant';
     const chunkIds = (
       this.stmt('SELECT id FROM chunks WHERE doc_id = ?').all(docId) as Array<{ id: string }>
     ).map((r) => r.id);
     const docsRow = this.stmt('SELECT id FROM docs WHERE id = ?').get(docId) as
       | { id: string }
       | undefined;
-    if (chunkIds.length === 0 && docsRow === undefined) return false;
+    if (chunkIds.length === 0 && docsRow === undefined) return 'nothing-live';
     for (const chunkId of chunkIds) {
       this.stmt('DELETE FROM embeddings WHERE chunk_id = ?').run(chunkId);
       this.stmt('DELETE FROM chunks_fts WHERE chunk_id = ?').run(chunkId);
@@ -1008,35 +1119,62 @@ export class PackManager {
     }
     this.stmt('DELETE FROM chunks WHERE doc_id = ?').run(docId);
     this.stmt('DELETE FROM docs WHERE id = ?').run(docId);
-    return true;
+    // Residue-safe: no claim may outlive its doc (the DDL is FK-free by
+    // design; this delete is the ordering guarantee).
+    this.stmt('DELETE FROM doc_claims WHERE doc_id = ?').run(docId);
+    return 'deleted';
+  }
+
+  /**
+   * Docs rows FIRST: chunks.doc_id references docs(id). Foreign keys are OFF
+   * by default (SQLite's default; better-sqlite3 issues no pragma) — except
+   * on a connection that has run the v2->v3 migration ladder, which leaves
+   * them ON (store/migrate.ts). Inserting docs before their chunks is what
+   * keeps those connections legal and every other connection orphan-free; do
+   * not reorder it. #278: after each INSERT OR IGNORE the row's STORE id is
+   * selected by content sha (PC2-5 — id equals the sha in stores written by
+   * this code, but a migrated v3 store can carry id != sha rows, and claims
+   * and chunk rows key on the store id), and the installing pack CLAIMS the
+   * doc (a doc another pack or the user already claimed gains a second claim
+   * row; content is shared, not replaced). Returns sha -> store doc id.
+   */
+  private insertDocsAndClaimLocked(manifest: PackManifest): Map<string, string> {
+    const storeDocIdBySha = new Map<string, string>();
+    for (const entry of manifest.docs) {
+      this.stmt(
+        'INSERT OR IGNORE INTO docs (id, source_class, path, sha256, title, published_at, pack_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      ).run(entry.sha256, manifest.source_class, entry.path, entry.sha256, entry.title, manifest.published_at ?? null, manifest.id);
+      const stored = this.stmt('SELECT id FROM docs WHERE sha256 = ?').get(entry.sha256) as
+        | { id: string }
+        | undefined;
+      const storeDocId = stored?.id ?? entry.sha256;
+      this.stmt('INSERT OR IGNORE INTO doc_claims (doc_id, claimant) VALUES (?, ?)').run(
+        storeDocId,
+        `pack:${manifest.id}`,
+      );
+      storeDocIdBySha.set(entry.sha256, storeDocId);
+    }
+    return storeDocIdBySha;
   }
 
   /** Write (or rewrite) a version's live chunk rows. Identity is content-hash,
    * so identical content elsewhere in the store is intentionally REPLACED by
    * the same rows (the single live copy C2's replace mode produces). fts5 has
    * no uniqueness on chunk_id, so leftovers are deleted before insert instead
-   * of relying on any upsert. */
-  private writeLiveChunksLocked(manifest: PackManifest, chunks: ChunkPayload[], vectors: number[][]): void {
-    // Docs rows FIRST: chunks.doc_id references docs(id). Foreign keys are
-    // OFF by default (SQLite's default; better-sqlite3 issues no pragma) —
-    // except on a connection that has run the v2->v3 migration ladder, which
-    // leaves them ON (store/migrate.ts). Inserting docs before their chunks
-    // is what keeps those connections legal and every other connection
-    // orphan-free; do not reorder it.
-    for (const entry of manifest.docs) {
-      this.stmt(
-        'INSERT OR IGNORE INTO docs (id, source_class, path, sha256, title, published_at, pack_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      ).run(entry.sha256, manifest.source_class, entry.path, entry.sha256, entry.title, manifest.published_at ?? null, manifest.id);
-    }
+   * of relying on any upsert. Chunk payloads carry the doc SHA (chunk ids are
+   * sha-derived); chunks.doc_id binds to the SELECTED store doc id. */
+  private writeLiveChunksLocked(manifest: PackManifest, chunks: ChunkPayload[], vectors: number[][]): Map<string, string> {
+    const storeDocIdBySha = this.insertDocsAndClaimLocked(manifest);
     for (let i = 0; i < chunks.length; i += 1) {
       const chunk = chunks[i]!;
+      const docId = storeDocIdBySha.get(chunk.docId) ?? chunk.docId;
       this.stmt('DELETE FROM embeddings WHERE chunk_id = ?').run(chunk.chunkId);
       this.stmt('DELETE FROM chunks_fts WHERE chunk_id = ?').run(chunk.chunkId);
       this.stmt('DELETE FROM links WHERE chunk_id = ?').run(chunk.chunkId);
       this.stmt('DELETE FROM chunks WHERE id = ?').run(chunk.chunkId);
       this.stmt('INSERT INTO chunks (id, doc_id, chunk_index, text, content_hash) VALUES (?, ?, ?, ?, ?)').run(
         chunk.chunkId,
-        chunk.docId,
+        docId,
         chunk.chunkIndex,
         chunk.text,
         chunk.contentHash,
@@ -1048,38 +1186,37 @@ export class PackManager {
       this.stmt('INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)').run(chunk.chunkId, chunk.text);
     }
     this.stmt("UPDATE meta SET value = ? WHERE key = 'embedding_model_id'").run(this.embedder.modelId);
+    return storeDocIdBySha;
   }
 
   /** Issue #73: dispatch between the classic rebuild write and the wholesale
    * prebuilt-index import. Kept as one call site so the install and
-   * activation transactions cannot drift apart. */
+   * activation transactions cannot drift apart. Returns sha -> store doc id
+   * so callers (link recomputation) key on the store id. */
   private writeLiveOrImportedChunksLocked(
     manifest: PackManifest,
     chunks: ChunkPayload[],
     vectors: number[][],
     imported: ImportedPrebuilt | null,
-  ): void {
+  ): Map<string, string> {
     if (imported === null) {
-      this.writeLiveChunksLocked(manifest, chunks, vectors);
-      return;
+      return this.writeLiveChunksLocked(manifest, chunks, vectors);
     }
     // Docs rows FIRST (chunks.doc_id references docs(id); foreign keys are
     // OFF by default except on a connection that ran the v2->v3 ladder —
     // store/migrate.ts — so this ordering is load-bearing in both worlds).
-    for (const entry of manifest.docs) {
-      this.stmt(
-        'INSERT OR IGNORE INTO docs (id, source_class, path, sha256, title, published_at, pack_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      ).run(entry.sha256, manifest.source_class, entry.path, entry.sha256, entry.title, manifest.published_at ?? null, manifest.id);
-    }
+    // Claims + store-id selection as in the rebuild path (#278, PC2-5).
+    const storeDocIdBySha = this.insertDocsAndClaimLocked(manifest);
     for (let i = 0; i < imported.chunks.length; i += 1) {
       const chunk = imported.chunks[i]!;
+      const docId = storeDocIdBySha.get(chunk.docId) ?? chunk.docId;
       this.stmt('DELETE FROM embeddings WHERE chunk_id = ?').run(chunk.chunkId);
       this.stmt('DELETE FROM chunks_fts WHERE chunk_id = ?').run(chunk.chunkId);
       this.stmt('DELETE FROM links WHERE chunk_id = ?').run(chunk.chunkId);
       this.stmt('DELETE FROM chunks WHERE id = ?').run(chunk.chunkId);
       this.stmt('INSERT INTO chunks (id, doc_id, chunk_index, text, content_hash) VALUES (?, ?, ?, ?, ?)').run(
         chunk.chunkId,
-        chunk.docId,
+        docId,
         chunk.chunkIndex,
         chunk.text,
         chunk.contentHash,
@@ -1100,6 +1237,7 @@ export class PackManager {
     // Stamp the model the SHIPPED index was built with (never this.embedder's):
     // meta must describe where the stored vectors came from.
     this.stmt("UPDATE meta SET value = ? WHERE key = 'embedding_model_id'").run(imported.modelId);
+    return storeDocIdBySha;
   }
 
   /** Issue #73 / PRR-120-F6: resolve a pack's shipped index path with
@@ -1300,18 +1438,22 @@ export class PackManager {
     }
   }
 
-  /** Deactivate inside a transaction: delete the version's live chunks; the
-   * packs row and managed files stay (C2 _deactivate contract). */
+  /** Deactivate inside a transaction: release this pack's claims and delete
+   * the version's live chunks when no other claimant holds them; the packs
+   * row and managed files stay (C2 _deactivate contract, #278 claimant-aware:
+   * a doc another pack or the user still claims keeps its content). */
   private deactivateLocked(row: PacksRow): void {
     for (const info of Object.values(this.docsMapForRow(row))) {
-      if (!this.deleteDocumentLocked(info.doc_id)) {
-        // Single-user semantics: deactivate proceeds; the orphan is absorbed
-        // by the next reactivation of this version (content-hash ids make
-        // re-ingest byte-identical).
-        console.warn(
-          `[pack-manager] ${row.id}@${row.version}: no live chunks for doc ${info.doc_id}; row deactivated`,
-        );
-      }
+      const outcome = this.deleteDocumentLocked(info.doc_id, `pack:${row.id}`);
+      if (outcome === 'deleted') continue;
+      // Deactivate proceeds: the content is either kept for another claimant
+      // (#278) or nothing was live — the next reactivation of this version
+      // re-ingests byte-identical rows (content-hash ids).
+      console.warn(
+        outcome === 'kept-for-claimant'
+          ? `[pack-manager] ${row.id}@${row.version}: content kept for another claimant for doc ${info.doc_id}; row deactivated`
+          : `[pack-manager] ${row.id}@${row.version}: no live chunks for doc ${info.doc_id}; row deactivated`,
+      );
     }
   }
 
@@ -1348,11 +1490,17 @@ export class PackManager {
     vectors: number[][];
     imported: ImportedPrebuilt | null;
   }): void {
-    this.writeLiveOrImportedChunksLocked(activation.manifest, activation.chunks, activation.vectors, activation.imported);
+    const storeDocIdBySha = this.writeLiveOrImportedChunksLocked(
+      activation.manifest,
+      activation.chunks,
+      activation.vectors,
+      activation.imported,
+    );
     // Recompute only for the rebuild path: a shipped prebuilt index carries
-    // authoritative links that the import already restored (issue #73).
+    // authoritative links that the import already restored (issue #73). The
+    // recompute keys on the resolved store doc ids (#278 PC2-5).
     if (activation.imported === null) {
-      recomputeLinksForDocs(this.db, activation.manifest.docs.map((entry) => entry.sha256));
+      recomputeLinksForDocs(this.db, [...storeDocIdBySha.values()]);
     }
   }
 

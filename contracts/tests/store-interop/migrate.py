@@ -7,14 +7,20 @@ was the initial schema. v2 (D4/#80) finalizes the links table (adds
 pack_id/rank/computed_at); the v1 table was a write-free reserved shape, so
 the 1->2 step drops and recreates it losslessly. v3 (C3/#70) makes the packs
 table per-version — PK (id, version) with active/install_path — and drops the
-inert docs.pack_id FK by re-creating docs with the v3 DDL. The DDL mirrors
+inert docs.pack_id FK by re-creating docs with the v3 DDL. v4 (#278) adds
+the doc_claims table, backfills one claim per docs row from docs.pack_id,
+and reconciles additional pack claims from every ACTIVE pack's retained
+manifest (pack.json at the stored absolute install_path), stamping
+meta.doc_claims_reconciled 'pending' while any active manifest is unreadable
+and re-attempting the pass on every migrate() entry. The DDL mirrors
 contracts/store.schema.sql and the Node ladder in
 desktop/main/backend/store/migrate.ts — the store-interop suite proves the
 two runtimes agree.
 
 Self-test CLI (consumed by the c3-schema-migration test): `python migrate.py
---selftest` builds a v2-shaped store in a temp dir, migrates it to v3, and
-asserts the v3 packs shape and row mapping; exits 0 on agreement.
+--selftest` builds a v2-shaped store in a temp dir, migrates it to v4, and
+asserts the v3 packs shape/row mapping plus the v4 claims backfill; exits 0
+on agreement.
 """
 
 import json
@@ -23,7 +29,7 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 # Shape mirror of contracts/store.schema.sql's links definition (v2).
 _LINKS_V2_DDL = """
@@ -63,6 +69,15 @@ CREATE TABLE docs_v3 (
     title        TEXT,
     published_at TEXT,
     pack_id      TEXT
+)
+"""
+
+# Shape mirror of contracts/store.schema.sql's doc_claims definition (v4).
+_DOC_CLAIMS_V4_DDL = """
+CREATE TABLE doc_claims (
+    doc_id     TEXT NOT NULL,
+    claimant   TEXT NOT NULL,
+    PRIMARY KEY (doc_id, claimant)
 )
 """
 
@@ -138,6 +153,95 @@ def _migrate_v2_to_v3_inner(conn: sqlite3.Connection) -> None:
         conn.execute("UPDATE meta SET value = '3' WHERE key = 'schema_version'")
 
 
+def _read_pack_manifest_or_none(install_path: str):
+    """Read an installed pack's retained pack.json from its stored absolute
+    install_path (the Node twin never recomputes the path either). Returns
+    None when the manifest is missing, unparseable, or malformed."""
+    try:
+        raw = (Path(install_path) / "pack.json").read_text(encoding="utf-8")
+        parsed = json.loads(raw)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("docs"), list):
+        return None
+    return parsed
+
+
+def _reconcile_doc_claims_locked(conn: sqlite3.Connection) -> bool:
+    """Reconcile pack claims from every ACTIVE pack's retained manifest: for
+    each listed doc sha, resolve docs.id by content hash and INSERT OR IGNORE
+    the (doc_id, 'pack:<id>') claim. Inactive versions and NULL-install_path
+    rows (packtool wholesale rows with no managed folder) contribute nothing.
+    Returns True when any active manifest was unreadable (pending marker)."""
+    pending = False
+    rows = conn.execute(
+        "SELECT id, version, install_path FROM packs WHERE active = 1"
+    ).fetchall()
+    for pack_id, _version, install_path in rows:
+        if not isinstance(install_path, str) or not install_path:
+            continue
+        manifest = _read_pack_manifest_or_none(install_path)
+        if manifest is None:
+            pending = True
+            continue
+        claimant = f"pack:{pack_id}"
+        for entry in manifest["docs"]:
+            if not isinstance(entry, dict):
+                continue
+            sha = entry.get("sha256")
+            if not isinstance(sha, str):
+                continue
+            doc = conn.execute(
+                "SELECT id FROM docs WHERE sha256 = ?", (sha,)
+            ).fetchone()
+            if doc is None:
+                doc = conn.execute(
+                    "SELECT id FROM docs WHERE sha256 = ?", (sha.lower(),)
+                ).fetchone()
+            if doc is not None:
+                conn.execute(
+                    "INSERT OR IGNORE INTO doc_claims (doc_id, claimant)"
+                    " VALUES (?, ?)",
+                    (doc[0], claimant),
+                )
+    return pending
+
+
+def _stamp_reconciled(conn: sqlite3.Connection, pending: bool) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES"
+        " ('doc_claims_reconciled', ?)",
+        ("pending" if pending else "done",),
+    )
+
+
+def _reconcile_doc_claims(conn: sqlite3.Connection) -> None:
+    """Reconciliation re-attempt for stores already at v4: runs on EVERY
+    migrate() entry so a store that migrated while an active manifest was
+    unreadable heals on the next open. Idempotent."""
+    with conn:
+        _stamp_reconciled(conn, _reconcile_doc_claims_locked(conn))
+
+
+def _migrate_v3_to_v4(conn: sqlite3.Connection) -> None:
+    """v3 -> v4 (#278): create doc_claims, backfill one claim per docs row
+    from its recorded owner, then reconcile pack claims from every ACTIVE
+    pack's retained manifest inside the same transaction and stamp the
+    marker. Row mapping mirrors desktop/main/backend/store/migrate.ts."""
+    with conn:
+        conn.execute(_DOC_CLAIMS_V4_DDL)
+        conn.execute(
+            "INSERT OR IGNORE INTO doc_claims (doc_id, claimant)"
+            " SELECT id, 'pack:' || pack_id FROM docs WHERE pack_id IS NOT NULL"
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO doc_claims (doc_id, claimant)"
+            " SELECT id, 'user' FROM docs WHERE pack_id IS NULL"
+        )
+        _stamp_reconciled(conn, _reconcile_doc_claims_locked(conn))
+        conn.execute("UPDATE meta SET value = '4' WHERE key = 'schema_version'")
+
+
 def migrate(conn: sqlite3.Connection) -> int:
     """Bring the store to CURRENT_SCHEMA_VERSION. Returns the final version.
 
@@ -160,11 +264,17 @@ def migrate(conn: sqlite3.Connection) -> int:
             conn.execute("UPDATE meta SET value = '2' WHERE key = 'schema_version'")
     if version < 3:
         _migrate_v2_to_v3(conn)
+    if version < 4:
+        _migrate_v3_to_v4(conn)
+    else:
+        # Stores already at v4 re-attempt the manifest reconciliation on
+        # every migrate() entry (heals a pending store).
+        _reconcile_doc_claims(conn)
     return _read_schema_version(conn)
 
 
 def _selftest() -> int:
-    """Build a v2-shaped store, migrate to v3, assert shape + row mapping."""
+    """Build a v2-shaped store, migrate to v4, assert shape + row mapping."""
     # SCHEMA-BUMP-CONTRACT parity (issue #100 items 3/4): this runtime's
     # CURRENT_SCHEMA_VERSION must equal the meta.schema_version seed in the
     # authoritative schema file — otherwise cross-runtime readers break. The
@@ -229,11 +339,14 @@ def _selftest() -> int:
                 INSERT INTO packs (id, name, version, published_at, source_class, supersedes)
                 VALUES ('p1', 'Pack One', '1.0.0', NULL, 'bundled', NULL),
                        ('p2', 'Pack Two', '2.0.0', NULL, 'training', 'p1');
+                INSERT INTO docs (id, source_class, path, sha256, title, published_at, pack_id)
+                VALUES ('packaged-doc', 'bundled', 'docs/p.json', 'aaa111', 'P', NULL, 'p1'),
+                       ('user-doc', 'general', 'notes.txt', 'bbb222', 'U', NULL, NULL);
                 """
             )
             conn.commit()
             final = migrate(conn)
-            assert final == 3, f"expected final version 3, got {final}"
+            assert final == 4, f"expected final version 4, got {final}"
             cols = [
                 row[1] for row in conn.execute("PRAGMA table_info(packs)").fetchall()
             ]
@@ -272,8 +385,26 @@ def _selftest() -> int:
                 "pack_id",
             ], f"unexpected docs columns: {doc_cols}"
             version = _read_schema_version(conn)
-            assert version == 3, version
-            print("selftest OK: v2 -> v3 ladder agrees with the Node mirror")
+            assert version == 4, version
+            # v4 claims backfill: every docs row carries exactly the claim its
+            # recorded owner implies ('pack:<id>' / 'user'); doc_claims keys on
+            # docs.id (PC-3), not the sha. The active packs have NULL
+            # install_path (v2 rows map to install_path=NULL), so the manifest
+            # reconciliation pass is vacuously complete -> 'done'.
+            claim_cols = [
+                row[1]
+                for row in conn.execute("PRAGMA table_info(doc_claims)").fetchall()
+            ]
+            assert claim_cols == ["doc_id", "claimant"], claim_cols
+            claims = conn.execute(
+                "SELECT doc_id, claimant FROM doc_claims ORDER BY claimant"
+            ).fetchall()
+            assert claims == [("packaged-doc", "pack:p1"), ("user-doc", "user")], claims
+            reconciled = conn.execute(
+                "SELECT value FROM meta WHERE key = 'doc_claims_reconciled'"
+            ).fetchone()
+            assert reconciled == ("done",), reconciled
+            print("selftest OK: v2 -> v4 ladder agrees with the Node mirror")
             return 0
         finally:
             conn.close()

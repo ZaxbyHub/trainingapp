@@ -168,7 +168,7 @@ describe('b6 C4: legacy store migration', () => {
     expect(fs.existsSync(legacy)).toBe(false);
     const reopened = openStore({ dbPath: target, dims: 8, repoRoot: REPO_ROOT });
     try {
-      expect(reopened.schemaVersion).toBe(3);
+      expect(reopened.schemaVersion).toBe(4);
     } finally {
       reopened.close();
     }

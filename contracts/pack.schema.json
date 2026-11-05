@@ -66,7 +66,7 @@
       "additionalProperties": false,
       "properties": {
         "path": { "type": "string", "minLength": 1, "description": "Relative path to a prebuilt index.sqlite (packtool output, see C6)." },
-        "schema_version": { "type": "integer", "minimum": 1, "description": "Must match contracts/store.schema.sql SCHEMA_VERSION (B5) or the pack is refused (C8)." },
+        "schema_version": { "type": "integer", "minimum": 1, "description": "Must match the pack ARTIFACT index schema version (STORE_SCHEMA_VERSION in packtool/build/pack-json.ts, currently 3) or the pack is refused (C8). This is NOT the desktop store's meta.schema_version (contracts/store.schema.sql), which is independent and currently 4." },
         "sqlite_vec_version": { "type": "string", "minLength": 1 }
       }
     },

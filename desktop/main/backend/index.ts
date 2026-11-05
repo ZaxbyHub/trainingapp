@@ -53,6 +53,7 @@ import {
 } from './retrieval/reranker.js';
 import {
   createPressureMonitor,
+  envOverrideInForce,
   resolveConcurrencyConfig,
   resolveMemoryConfig,
   resolveWorkerPoolConfig,
@@ -768,6 +769,25 @@ export class NodeBackendHost implements BackendHost {
       pressureSustainedMs: memoryConfig.pressureSustainedMs,
       recoverySustainedMs: memoryConfig.recoverySustainedMs,
     });
+    // Issue #280 (C4): the pressure threshold live-follows an accepted
+    // inference.profileThresholdGb settings change (B4's inference knob and
+    // B8's memory knob are the SAME threshold by construction — the budget.ts
+    // cross-reference). The env override stays authoritative (b8-wiring env
+    // precedence): when TRAININGAPP_MEMORY_PRESSURE_THRESHOLD_GB pins the
+    // threshold, the settings knob never moves the monitor. The value has
+    // already passed the engine's positive-number gate by the time this
+    // runs; setThreshold re-validates regardless.
+    const followThresholdSetting = (patch: Record<string, unknown>): void => {
+      const value = patch['inference.profileThresholdGb'];
+      if (typeof value !== 'number' || !Number.isFinite(value)) return;
+      // Env precedence, judged the way the monitor judges it: a
+      // defined-but-junk TRAININGAPP_MEMORY_PRESSURE_THRESHOLD_GB is treated
+      // by resolveMemoryConfig as UNSET (positiveInt junk tolerance), so it
+      // must not freeze the settings-follow either (#280 review PRR-003) —
+      // only an override actually in force pins the boundary.
+      if (envOverrideInForce(env.TRAININGAPP_MEMORY_PRESSURE_THRESHOLD_GB)) return;
+      this.monitor?.setThreshold(value);
+    };
     if (poolConfig.rerankerWorkerPoolSize > 1 || poolConfig.embeddingWorkerPoolSize > 1) {
       // Honest-config policy: the parser reports values as configured; the
       // CONSUMPTION site rejects >1 because onnxruntime-node aborts the whole
@@ -843,6 +863,12 @@ export class NodeBackendHost implements BackendHost {
             `[trainingapp-backend] persisted settings snapshot rejected by the engine (${applied.detail}); booting with defaults`,
           );
           storedPatch = {};
+        } else {
+          // The boot replay is a settings application too: the pressure
+          // monitor follows the persisted inference.profileThresholdGb the
+          // same way it follows a live PUT, or the thresholds drift apart
+          // until the next PUT (implementation-review IR delta).
+          followThresholdSetting(storedPatch);
         }
       }
       persistSettings = (patch, removeKeys = []) => {
@@ -912,6 +938,9 @@ export class NodeBackendHost implements BackendHost {
           : {}),
         ...(persistSettings !== undefined ? { settings: () => persistSettings?.(patch) } : {}),
       });
+      // Issue #280 (C4): first-run wizard parity — the wizard's apply runs
+      // through the same live-follow seam a PUT /settings does.
+      if (result.ok) followThresholdSetting(patch);
       return result;
     };
     const server = createBackendServer({
@@ -962,6 +991,9 @@ export class NodeBackendHost implements BackendHost {
       packs: () => (this.packManager === null ? null : createPackSurface(this.packManager)),
       persistSettings,
       persistExternal,
+      // Issue #280 (C4): PUT /settings (patch and reset alike) reports the
+      // accepted patch to the live-follow seam after the commit.
+      onSettingsApplied: followThresholdSetting,
     });
     try {
       const port = await listenOnRandomPort(server);

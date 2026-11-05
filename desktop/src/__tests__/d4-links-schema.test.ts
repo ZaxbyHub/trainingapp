@@ -58,12 +58,12 @@ async function loadStoreModule() {
   return import('../../main/backend/store/sqlite-store.js');
 }
 
-describe('d4 SCHEMA (issue #80): links columns and schema_version 3', () => {
-  itReal('links carries chunk_id, slide_id, pack_id, score, rank, computed_at and the seed is version 3', async () => {
+describe('d4 SCHEMA (issue #80): links columns and the current schema_version seed', () => {
+  itReal('links carries chunk_id, slide_id, pack_id, score, rank, computed_at and the seed is current', async () => {
     const { openStore } = await loadStoreModule();
     const store = openStore({ dbPath: makeTempDbPath(), dims: 8, repoRoot: REPO_ROOT });
     try {
-      console.log('[D4SCHEMA] asserting links schema carries pack_id/rank/computed_at and schema_version 3');
+      console.log('[D4SCHEMA] asserting links schema carries pack_id/rank/computed_at and the current schema_version seed');
 
       const columns = (
         store.db.prepare('PRAGMA table_info(links)').all() as Array<{
@@ -87,11 +87,12 @@ describe('d4 SCHEMA (issue #80): links columns and schema_version 3', () => {
         .map((col) => col.name);
       expect(pkColumns).toEqual(['chunk_id', 'slide_id']);
 
-      // SCHEMA-BUMP-CONTRACT: the seed version moved 1 -> 2 -> 3 (C3/#70).
+      // SCHEMA-BUMP-CONTRACT: the seed version moved 1 -> 2 -> 3 (C3/#70)
+      // -> 4 (doc_claims, #278); the assertion tracks the current seed.
       const version = store.db
         .prepare("SELECT value FROM meta WHERE key = 'schema_version'")
         .get() as { value: string };
-      expect(version.value).toBe('3');
+      expect(version.value).toBe('4');
     } finally {
       store.close();
     }

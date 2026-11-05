@@ -47,6 +47,21 @@ function positiveInt(raw: string | undefined, fallback: number): number {
   return Number.isFinite(value) && value > 0 && value <= MAX_TIMER_MS ? value : fallback;
 }
 
+/**
+ * True only when the env override would ACTUALLY take effect under the same
+ * junk-tolerance rules positiveInt applies (defined, digits-only, parses to a
+ * positive integer within the clamp). A defined-but-junk value (empty, non-
+ * numeric, zero, out of clamp) is treated by resolveMemoryConfig as UNSET —
+ * the settings-follow seam must therefore treat it as unset too, or an
+ * operator's malformed env var would silently freeze the threshold while the
+ * monitor runs on the default (#280 review PRR-003).
+ */
+export function envOverrideInForce(raw: string | undefined): boolean {
+  if (raw === undefined || raw === '' || !/^\d+$/.test(raw)) return false;
+  const value = Number.parseInt(raw, 10);
+  return Number.isFinite(value) && value > 0 && value <= MAX_TIMER_MS;
+}
+
 export function resolveMemoryConfig(env: Record<string, string | undefined> = process.env): MemoryBudgetConfig {
   return {
     telemetryIntervalMs: positiveInt(env.TRAININGAPP_MEMORY_TELEMETRY_INTERVAL_MS, 5000),
@@ -86,6 +101,22 @@ export interface PressureMonitor {
   observe(freeBytes: number, atMs?: number): void;
   evaluate(atMs?: number): PressureStatus;
   /**
+   * Issue #280 (C4): move the pressure threshold at runtime (the host wires
+   * an accepted inference.profileThresholdGb settings change through this —
+   * there is no separate memory.* settings key; the only other threshold
+   * source is the TRAININGAPP_MEMORY_PRESSURE_THRESHOLD_GB env override).
+   * Re-bases thresholdBytes only; the
+   * sustained-window and recovery semantics are untouched. The in-flight
+   * pressure streak is RETAINED across a move (an evaluate() that fires
+   * before the next observe() judges elapsed time against the streak, which
+   * may have started under the previous boundary — the next observe()
+   * re-tests the new boundary). A non-positive or non-finite value is
+   * ignored — the same junk-tolerance resolveMemoryConfig applies to the
+   * construction default, and the settings seam's own positive-number gate
+   * makes it unreachable from accepted patches anyway.
+   */
+  setThreshold(gb: number): void;
+  /**
    * Host acknowledgement after it clears a latched downgrade override (the
    * monitor's only upgrade path is the host's; PRR-F1). Clears the downgrade
    * latch and recovery state so the NEXT downgrade requires a NEW sustained
@@ -107,7 +138,8 @@ export interface PressureMonitor {
  */
 export function createPressureMonitor(options: PressureMonitorOptions = {}): PressureMonitor {
   const defaults = resolveMemoryConfig();
-  const thresholdBytes = (options.pressureThresholdGb ?? defaults.pressureThresholdGb) * GIB;
+  // Issue #280 (C4): mutable — setThreshold re-bases this at runtime.
+  let thresholdBytes = (options.pressureThresholdGb ?? defaults.pressureThresholdGb) * GIB;
   const pressureSustainedMs = options.pressureSustainedMs ?? defaults.pressureSustainedMs;
   const recoverySustainedMs = options.recoverySustainedMs ?? pressureSustainedMs;
   const nowMs = options.nowMs ?? Date.now;
@@ -153,6 +185,10 @@ export function createPressureMonitor(options: PressureMonitorOptions = {}): Pre
       recoveryEligibleLatch = false;
       pressureStreakStartMs = null;
       recoveryStreakStartMs = null;
+    },
+    setThreshold(gb) {
+      if (typeof gb !== 'number' || !Number.isFinite(gb) || gb <= 0) return;
+      thresholdBytes = gb * GIB;
     },
   };
 }

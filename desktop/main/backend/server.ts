@@ -99,6 +99,16 @@ export interface BackendServerOptions {
    * external.* keys. The API key is never part of the snapshot.
    */
   persistExternal?: (snapshot: Record<string, unknown>) => void;
+  /**
+   * Issue #280 (C4): post-commit settings observer, invoked after
+   * commitSettingsChange returns ok on PUT /settings — for both a patch and
+   * an accepted reset — with the ORIGINAL request patch object as received
+   * (the reset directive keeps its `{reset: [...]}` shape). Runs BEFORE the
+   * response is sent, matching the side-effect-then-response order the
+   * persistence sinks already follow inside commitSettingsChange. Optional:
+   * hosts without live-following settings keep working unwired.
+   */
+  onSettingsApplied?: (patch: Record<string, unknown>) => void;
 }
 
 // The 16 contract operations (contracts/api.openapi.yaml). Unknown paths get
@@ -975,6 +985,9 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
                 else validationError(res, resetResult.errors ?? [resetResult.detail], cors);
                 return;
               }
+              // Issue #280 (C4): the observer sees the reset-shaped payload
+              // (the original request object) after the commit succeeded.
+              opts.onSettingsApplied?.(patch);
               sendJson(res, 200, engine.responseSettings(), cors);
               return;
             }
@@ -1008,6 +1021,10 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
               else validationError(res, result.errors ?? [result.detail], cors);
               return;
             }
+            // Issue #280 (C4): post-commit observer — the ORIGINAL patch as
+            // received (same side-effect-then-response order the persistence
+            // sinks follow inside commitSettingsChange).
+            opts.onSettingsApplied?.(patch);
             sendJson(res, 200, engine.responseSettings(), cors);
             return;
           }

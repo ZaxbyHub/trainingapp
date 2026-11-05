@@ -50,6 +50,9 @@ const MIGRATE_PY_PATH = path.join(REPO_ROOT, 'contracts', 'tests', 'store-intero
  */
 const DDL_SHA_BY_VERSION: Record<number, string> = {
   3: '745dc3c54a3c661dc6a9573a26d5f72f6d4b1f5c6814672d14c68f3e85296497',
+  // v4 (#278): doc_claims added after links; seed 3 -> 4 with both ladders
+  // extended in the same commit (#100).
+  4: 'c9561472d6951c067bff25a04373131721dd16e5499c5b38e671e2575b3d1427',
 };
 
 function schemaText(): string {

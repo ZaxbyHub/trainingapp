@@ -134,6 +134,11 @@ document and the baked-key trust anchor would carry over.
   FeedVersionEntry.signature? optional is a diff-level convenience only - the JSON Schema
   requires the signature block.
   follow-up.
+- Pack id + version substitution residual (closed, #278): the install leg goes through the
+  loopback pack route, so the artifact that LANDS could in principle be a different pack or
+  version than the candidate; closed by applyPackUpdate's post-install identity check
+  (`installed.packId`/`installed.version` versus the candidate — a mismatch returns
+  `applied: false` naming both identities, removal of the substituted pack left to the caller).
 - The desktop update checker is the app's first public-internet outbound call; its hardening set
   (https-only on every redirect hop, credentials omitted, explicit timeouts, size caps, no
   identifying payload) is pinned in `desktop/main/update-checker.ts` and surfaced in

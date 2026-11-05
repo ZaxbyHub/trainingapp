@@ -84,7 +84,11 @@ describe('settings-wiring-honesty: per-query rerank flag on the real retrieval s
       expect(scored).toBe(0);
       // Fused RRF-scale scores, never the reranker's sigmoid.
       for (const row of off) expect(row.similarity).toBeLessThan(0.95);
-      expect(surface.floorActive).toBe(true);
+      // Issue #280 (C3): this harness wires a reranker but NO relevance
+      // floor (production always passes resolveRetrievalConfig's record).
+      // With no positive floor configured the surface honestly reports
+      // floorActive false - no floor decision was made to claim.
+      expect(surface.floorActive).toBe(false);
 
       const on = await surface.search('swhzebra', 2);
       expect(scored).toBe(1);

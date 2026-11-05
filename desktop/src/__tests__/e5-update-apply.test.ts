@@ -69,12 +69,16 @@ describe('e5 apply composition + baked key guardrail (issue #88)', () => {
     };
     const candidate: PackUpdateCandidate = { ...CANDIDATE, sizeBytes: artifact.byteLength };
     const downloadArtifact = vi.fn(async () => artifact);
-    const installPack = vi.fn(async () => ({ version: '2.0.0' }));
+    const installPack = vi.fn(async () => ({ packId: 'bundled-min', version: '2.0.0' }));
     const result = await applyPackUpdate(candidate, entry, { downloadArtifact, installPack }, keys);
     expect(result.applied).toBe(true);
     expect(result.version).toBe('2.0.0');
     expect(downloadArtifact).toHaveBeenCalledWith(candidate.downloadUrl, artifact.byteLength);
     expect(installPack).toHaveBeenCalledTimes(1);
+    // #278: the installer returns the installed identity; matching identities
+    // keep the applied result (no reason).
+    expect(installPack).toHaveBeenCalledWith(artifact, 'bundled-min-2.0.0.zip');
+    expect(result.reason).toBeUndefined();
   });
 
   it('refuses a mutated artifact and never reaches the installer', async () => {
@@ -95,7 +99,7 @@ describe('e5 apply composition + baked key guardrail (issue #88)', () => {
     };
     const mutated = new Uint8Array(artifact);
     mutated[0] = (mutated[0] ?? 0) ^ 0xff;
-    const installPack = vi.fn(async () => ({ version: '2.0.0' }));
+    const installPack = vi.fn(async () => ({ packId: 'bundled-min', version: '2.0.0' }));
     const result = await applyPackUpdate(
       CANDIDATE,
       entry,
@@ -109,7 +113,7 @@ describe('e5 apply composition + baked key guardrail (issue #88)', () => {
 
   it('refuses when the artifact length differs from the feed-declared size', async () => {
     const { keys } = makeTrusted();
-    const installPack = vi.fn(async () => ({ version: '2.0.0' }));
+    const installPack = vi.fn(async () => ({ packId: 'bundled-min', version: '2.0.0' }));
     const result = await applyPackUpdate(
       CANDIDATE,
       {

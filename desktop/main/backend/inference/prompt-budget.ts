@@ -115,6 +115,89 @@ export function estimateTokens(text: string): number {
 }
 
 /**
+ * Issue #280 (C1): token-cap a conversation history by ESTIMATED tokens
+ * instead of the raw character count the Latin-average capHistoryTokens
+ * measures with. CJK text is where the two diverge: BPE tokenizers encode
+ * Han/Hiragana/Katakana/Hangul at ~1.4-2 chars/token, so an 8,192-CHAR
+ * budget holds ~2,048 Latin tokens but up to ~8,192 CJK tokens — four times
+ * what MAX_HISTORY_BUDGET_TOKENS reserves — and the char-capped history then
+ * overflows the window reservation it was budgeted for.
+ *
+ * CJK-free histories (one CJK_RANGE scan over the newline-joined text)
+ * delegate to capHistoryTokens(turns, tokenBudget * CHARS_PER_TOKEN): the
+ * 4-chars/token average is the exact model for that class, and the delegated
+ * call returns the identical kept array (re-anchor and lone-turn truncation
+ * included), so Latin behavior is byte-identical to the pre-#280 cap.
+ *
+ * When ANY CJK character is present, turns are measured with
+ * estimateTokens — drop oldest WHOLE turns until BOTH (a) the per-turn sum
+ * of estimateTokens(turn.content) AND (b) estimateTokens of the
+ * newline-JOINED kept contents are within tokenBudget. Both bounds are
+ * needed: per-turn ceil rounding under-counts the joined text (a history can
+ * pass (a) while its single joined estimate — what the window reservation
+ * actually charges — exceeds the budget), and (b) alone would admit a
+ * history whose individual turns overflow when only the joiner is charged
+ * once. Then the same re-anchor user-first rule as the character cap, and a
+ * lone surviving over-budget turn is tail-truncated on a token-aware,
+ * surrogate-safe boundary (the cut start never splits a surrogate pair; the
+ * truncated turn's direct estimate is within the budget by construction —
+ * the estimate is monotonically non-decreasing as the kept suffix grows, so
+ * the longest fitting suffix is exact).
+ */
+export function capHistoryByEstimatedTokens<T extends HistoryTurn>(history: T[], tokenBudget: number): T[] {
+  const joinedText = history.map((turn) => String(turn.content ?? '')).join('\n');
+  if (!CJK_RANGE.test(joinedText)) {
+    return capHistoryTokens(history, tokenBudget * CHARS_PER_TOKEN);
+  }
+  const contentOf = (turn: T): string => String(turn.content ?? '');
+  const perTurnSum = (turns: T[]): number => turns.reduce((total, turn) => total + estimateTokens(contentOf(turn)), 0);
+  const joinedEstimate = (turns: T[]): number => estimateTokens(turns.map(contentOf).join('\n'));
+  if (history.length === 0 || (perTurnSum(history) <= tokenBudget && joinedEstimate(history) <= tokenBudget)) {
+    return history;
+  }
+  // Drop oldest whole turns until BOTH bounds fit (keep >= 1).
+  let kept = history.slice();
+  while (kept.length > 1 && (perTurnSum(kept) > tokenBudget || joinedEstimate(kept) > tokenBudget)) {
+    kept = kept.slice(1);
+  }
+  // Re-anchor user-first AFTER the drop loop (same rule as the character cap:
+  // a leading assistant turn is orphaned context; keep->=1 wins over the
+  // re-anchor drop).
+  while (kept.length > 1 && kept[0]!.role !== 'user') {
+    kept = kept.slice(1);
+  }
+  // A single over-budget survivor is tail-truncated to the longest suffix
+  // whose direct estimate fits. The walk grows the suffix one UTF-16 unit at
+  // a time from the end (estimateTokens is monotone in that growth, so the
+  // first exceed marks the exact boundary). Surrogate safety: the CUT START
+  // is the split hazard — a cut landing on a LOW surrogate would open the
+  // kept text with its orphaned half, so it is skipped, and a trailing
+  // unpaired HIGH surrogate is defensively stripped.
+  const lone = kept.length === 1 ? kept[0]! : null;
+  if (lone !== null && estimateTokens(contentOf(lone)) > tokenBudget) {
+    const content = contentOf(lone);
+    let len = 0;
+    let cjk = 0;
+    let cutStart = content.length;
+    for (let i = content.length - 1; i >= 0; i -= 1) {
+      len += 1;
+      if (CJK_RANGE.test(content[i]!)) cjk += 1;
+      if (cjk + Math.ceil((len - cjk) / CHARS_PER_TOKEN) > tokenBudget) break;
+      cutStart = i;
+    }
+    let truncated = cutStart > 0 ? content.slice(cutStart) : '';
+    if (truncated.length > 0) {
+      const first = truncated.charCodeAt(0);
+      if (first >= 0xdc00 && first <= 0xdfff) truncated = truncated.slice(1);
+      const last = truncated.charCodeAt(truncated.length - 1);
+      if (last >= 0xd800 && last <= 0xdbff) truncated = truncated.slice(0, -1);
+    }
+    kept = [{ ...lone, content: truncated } as T];
+  }
+  return kept;
+}
+
+/**
  * The grounded-context char budget: what remains of the context window after
  * reserving the answer budget, the safety margin, and estimates for every
  * other prompt channel (system prompt, grounded instruction, question, and

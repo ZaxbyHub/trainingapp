@@ -353,24 +353,39 @@ function markCompleted(epochGoal: number, profile: string): void {
 export type ClearAllResult = { cleared: boolean } | { deferred: true };
 
 /**
+ * Optional all-or-nothing clear hook (issue #279, plan B1/PC-4/PC2-2):
+ * `beforeClear` runs AFTER the exclusive session-active lock is acquired
+ * and BEFORE the pending-record write + persisted clear — inside the locked
+ * section, so an in-tab reset (the session-clear handlers) can never run
+ * for a clear that ends up deferred. On deferral it runs ZERO times.
+ */
+export interface ClearAllConversationsOptions {
+  beforeClear?(): void | Promise<void>;
+}
+
+/**
  * The full clear protocol (R5-6/R6-4), LOCKS-FIRST (review F4 — the same
  * order the boot replay uses): arbitrate the workstation via the EXCLUSIVE
- * session-active lock FIRST; a busy or active colleague defers the clear
- * WITHOUT writing anything — a deferred clear must be invisible to other
- * tabs, because the pending record's localStorage write IS the cross-tab
- * storage event that resets them (an un-arbitrated write would cancel a
- * colleague's in-flight stream and wipe their in-memory state for a clear
- * that never ran). Only after acquisition: write the pending record, then
- * under the origin-wide write lock run ONE epoch transaction — bump the
- * epoch to the goal (only when the db is still behind it — idempotent) and
- * empty the conversations table — then resolve the record to completed.
- * Crash windows are unchanged in substance: a crash before the pending
- * write leaves nothing persisted (nothing cleared, nothing to replay); a
- * crash between the pending write and the transaction replays harmlessly
- * at boot (R7-2's currentEpoch >= goal → mark completed arm).
+ * session-active lock FIRST — truly first: neither the beforeClear hook
+ * (#279 B1) nor any other effect runs before the arbitration, so a busy or
+ * active colleague defers the clear WITHOUT writing anything and WITHOUT
+ * invoking beforeClear — a deferred clear must be invisible to other tabs,
+ * because the pending record's localStorage write IS the cross-tab storage
+ * event that resets them (an un-arbitrated write would cancel a colleague's
+ * in-flight stream and wipe their in-memory state for a clear that never
+ * ran). Only after acquisition: run beforeClear (awaited, still inside the
+ * exclusive section), write the pending record, then under the origin-wide
+ * write lock run ONE epoch transaction — bump the epoch to the goal (only
+ * when the db is still behind it — idempotent) and empty the conversations
+ * table — then resolve the record to completed. Crash windows are unchanged
+ * in substance: a crash before the pending write leaves nothing persisted
+ * (nothing cleared, nothing to replay); a crash between the pending write
+ * and the transaction replays harmlessly at boot (R7-2's currentEpoch >=
+ * goal → mark completed arm).
  */
 export async function clearAllConversationsInDb(
   profile: string = getProfilePrefix(),
+  options?: ClearAllConversationsOptions,
 ): Promise<ClearAllResult> {
   // PRR-103 (PR #264 review): resolve the destructive target BY NAME from
   // the PASSED prefix — never the module-bound `db` singleton. The singleton
@@ -384,13 +399,18 @@ export async function clearAllConversationsInDb(
   const targetName = conversationsDbNameFor(profile);
   const target = targetName === db.name ? db : openProfileDb(profile);
   const targetIsSingleton = target === db;
-  // LOCKS FIRST: a deferred clear persists NOTHING (review F4).
+  // LOCKS FIRST: a deferred clear persists NOTHING (review F4) and never
+  // invokes beforeClear (#279 B1 — the hook runs only inside the exclusive
+  // section, so a deferred clear is a true no-op for this tab too).
   const exclusive = await tryAcquireSessionActiveExclusive();
   if (!exclusive.acquired) {
     if (!targetIsSingleton) target.close();
     return { deferred: true };
   }
   try {
+    // #279 B1: the in-tab reset runs AFTER acquisition and BEFORE the
+    // pending-record write — the all-or-nothing seam.
+    await options?.beforeClear?.();
     const epochGoal = (await readEpochOf(target)) + 1;
     writeClearRecord({ pending: { epochGoal, profile }, completed: readClearRecord().completed });
     await withConversationWriteLock(async () => {
