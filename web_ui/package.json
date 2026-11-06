@@ -30,7 +30,7 @@
     "@fontsource/inter": "^5.2.8",
     "@huggingface/transformers": "^3.0.0",
     "@wllama/wllama": "^3.5.1",
-    "@wllama/wllama-compat": "^3.5.1",
+    "@wllama/wllama-compat": "^3.8.1",
     "dexie": "^4.4.4",
     "edgevec": "^0.6.0",
     "flexsearch": "^0.8.0",
