@@ -1139,6 +1139,11 @@ def test_shared_doc_citation_reattributes_to_surviving_claim(workspace):
     assert not hit.source.startswith("pack-b/")
     assert hit.pack_id == "pack-a"
     assert hit.pack_version == "1.0.0"
+    # The deduped sources return is a separate channel: it must carry the
+    # corrected display sources too (a stale-sources regression previously
+    # survived a full fix round on this missing assertion).
+    assert sources, "no sources returned"
+    assert not any(s.startswith("pack-b/") for s in sources), sources
 
 
 def test_shared_doc_citation_reattributes_vector_only_path(workspace):
@@ -1164,6 +1169,8 @@ def test_shared_doc_citation_reattributes_vector_only_path(workspace):
         assert hit.source.startswith("pack-a/"), (window, hit.source)
         assert hit.pack_id == "pack-a"
         assert hit.pack_version == "1.0.0"
+        assert sources, (window, "no sources returned")
+        assert not any(s.startswith("pack-b/") for s in sources), (window, sources)
 
 
 def test_claims_helper_tolerates_malformed_registry_rows(workspace):

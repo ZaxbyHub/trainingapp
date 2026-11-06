@@ -1889,7 +1889,6 @@ class VectorStore:
                             },
                         )
                     vo_pack_fields.append(attrs)
-                sources = list(dict.fromkeys(c.source for c in expanded))
 
             # Build result chunks
             while len(vo_pack_fields) < len(context_parts):
