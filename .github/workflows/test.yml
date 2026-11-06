@@ -81,7 +81,7 @@ jobs:
     timeout-minutes: 180
     strategy:
       # A failing leg must not cancel the others: in a long suite, fail-fast
-      # destroys two legs of diagnostics (and their --durations output) while
+      # destroys the other leg of diagnostics (and its --durations output) while
       # still billing the runner hours.
       fail-fast: false
       matrix:
