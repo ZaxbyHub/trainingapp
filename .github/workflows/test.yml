@@ -88,7 +88,7 @@ jobs:
         python-version: ['3.11', '3.12']
         include:
           # Coverage on one leg only (~1.2x overhead measured on that leg);
-          # the other two legs run without the tracer.
+          # the other leg runs without the tracer.
           - python-version: '3.11'
             with-cov: true
 
@@ -254,4 +254,4 @@ jobs:
 
   # The Python conformance suite moved to .github/workflows/conformance.yml
   # (issue #87): path-scoped via the conformance bucket and required for
-  # merge, independent of the 3-leg matrix.
+  # merge, independent of the 2-leg matrix.
