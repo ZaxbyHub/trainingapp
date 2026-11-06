@@ -1687,6 +1687,9 @@ class VectorStore:
                         "pack_version": winner.get("version"),
                         "pack_published_at": winner.get("published_at"),
                     }
+                # The deduped display list must carry the corrected sources
+                # too (retrieval consumers rebuild from it or from chunks).
+                sources = list(dict.fromkeys(per_chunk_sources))
 
                 # Build result chunks for structured return
                 while len(per_chunk_doc_ids) < len(context_parts):
@@ -1862,6 +1865,7 @@ class VectorStore:
                     corrected = corrected_by_doc.get(did)
                     if corrected:
                         per_chunk_sources[i] = corrected
+                sources = list(dict.fromkeys(per_chunk_sources))
                 # Neighbors inherit the cited entry's pack attribution by
                 # source (same doc => same owning pack), mirroring hybrid.
                 vo_pack_by_source = {

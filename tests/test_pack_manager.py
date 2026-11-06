@@ -1164,3 +1164,37 @@ def test_shared_doc_citation_reattributes_vector_only_path(workspace):
         assert hit.source.startswith("pack-a/"), (window, hit.source)
         assert hit.pack_id == "pack-a"
         assert hit.pack_version == "1.0.0"
+
+
+def test_claims_helper_tolerates_malformed_registry_rows(workspace):
+    """PRR-005 pin: a malformed registry row (docs null, non-dict doc info)
+    must not abort an unrelated pack's lifecycle verb (the route would
+    have answered 500 via the unguarded AttributeError)."""
+    pm = install_sibling_pair(workspace)
+    shared = shared_doc_id()
+    before = doc_chunk_ids(pm.store, shared)
+    assert before, "fixture failed to install the shared doc"
+
+    rows = pm._rows()
+    rows.append(
+        {
+            "pack_id": "ghost",
+            "version": "9.9.9",
+            "active": True,
+            "install_path": "nowhere",
+            "docs": None,
+        }
+    )
+    rows.append(
+        {
+            "pack_id": "ghost2",
+            "version": "9.9.9",
+            "active": True,
+            "install_path": "nowhere",
+            "docs": {"x": "not-a-dict"},
+        }
+    )
+    with patch.object(pm, "_rows", return_value=rows):
+        pm.remove("pack-a")
+
+    assert doc_chunk_ids(pm.store, shared) == before
