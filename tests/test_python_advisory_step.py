@@ -2,7 +2,7 @@
 audits the installed environment with pip-audit (pinned install + gate
 script, no continue-on-error, no -r resolution), Safety is gone from the
 security job, and .github/pip-audit-ignore.json entries are owner-named and
-unexpired (initial entry: CVE-2026-68770).
+unexpired; entries are PACKAGE-keyed accepted-risk windows (owner + expiry), not per-advisory ids.
 """
 from __future__ import annotations
 

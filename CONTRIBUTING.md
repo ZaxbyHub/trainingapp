@@ -146,7 +146,7 @@ This section covers work found during a PR review or a PR-feedback round that th
 Enforced by the required `dependency-audit` context (`.github/workflows/security.yml`
 → `scripts/audit_gate.py` against `.github/audit-allowlist.json`) and the
 `python-conformance` pip-audit step (`.github/workflows/conformance.yml`
-→ `scripts/pip_audit_gate.py` against `.github/pip-audit-ignore.json`); the
+→ `scripts/pip_audit_gate.py` against `.github/pip-audit-ignore.json` — that job is bucket-scoped, so the Python scan runs only when the diff matches the conformance bucket (Python-surface PRs and matching master pushes), not on unrelated changes: issue #277 AC5 accepted that scope explicitly; the JavaScript graphs are covered on EVERY PR by the unfiltered `dependency-audit` context); the
 guardrail files under `tests/` are rostered in the required `security` job's
 `Audit guards` step (issue #277):
 
