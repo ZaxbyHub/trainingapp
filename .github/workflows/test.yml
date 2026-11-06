@@ -133,7 +133,7 @@ jobs:
 
       - name: Upload coverage
         if: matrix.with-cov == true
-        uses: codecov/codecov-action@cb6530fbecd68d5f1ee7a3dcd113450ea8d5d6d4 # v5.1.2
+        uses: codecov/codecov-action@1e68e06f1dbfde0e4cefc87efeba9e4643565303 # v5.1.2
         with:
           files: ./coverage.xml
           fail_ci_if_error: false
