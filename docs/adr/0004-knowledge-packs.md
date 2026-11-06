@@ -176,13 +176,19 @@ PackManager implementations (C2 Python, C3 Node):
   installed pack's `id` with a HIGHER semver version is an upgrade; the prior
   active version's changed docs are delete-before-reingested (content-hash
   identity; docs whose sha256 is unchanged at the same manifest path keep
-  their chunks).
+  their chunks — and since issue #287, 2026-11-05, deletion is claimant-aware:
+  a changed or dropped doc whose content hash another installed row still
+  claims keeps its chunks for that claimant).
 - **Downgrade and equal-version installs are refused** by `install`:
   downgrades belong to `rollback`, and a same-version reinstall belongs to
   `remove` + `install`.
 - **Cross-id `supersedes` entries are honored:** an entry naming an INSTALLED
   foreign `id@version` deactivates that version and deletes its chunks from
-  the live collection; its managed files are retained (rollback-able). The
+  the live collection unless another installed row still claims the same
+  content-hash doc id, in which case the chunks are retained for that
+  claimant (issue #287, 2026-11-05; the same claimant-aware exception applies
+  to install's delete-before-reingest and to `remove`); its managed files are
+  retained (rollback-able). The
   issue #69 acceptance prose names a foreign id `a@1.0.0` which is
   schema-invalid (id pattern requires 3+ chars); the frozen schema pattern
   outvotes the prose — tests pin the equivalent schema-valid

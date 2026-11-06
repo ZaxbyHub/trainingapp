@@ -577,11 +577,14 @@ paths:
       tags: [packs]
       summary: Remove an installed pack version (or all versions) (C7, issue #74)
       description: >
-        Deletes the pack's documents, chunks and registry row(s) — the
+        Deletes the pack's managed files and registry row(s) — the
         irreversible removal of the C2/C3 lifecycle. With `version` the
         removal targets that installed version; without it every installed
         version of the pack is removed. `removed` counts the registry rows
-        deleted.
+        deleted. Documents whose content hash another installed pack or
+        version still claims survive in the store for that claimant
+        (claimant-aware lifetime, issue #287): removal deletes a document's
+        chunks only when no surviving row lists the same content hash.
       operationId: removePack
       requestBody:
         required: true

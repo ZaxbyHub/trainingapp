@@ -25,9 +25,10 @@ semantics"; recorded in the ADR's C2 policy section):
 - same ``id``, equal version -> refused (remove first); lower -> refused
   (use ``rollback``);
 - ``supersedes`` entries naming an INSTALLED foreign ``id@version`` are
-  honored: that version is deactivated and its chunks deleted (its files are
-  retained per ADR-0004); entries naming nothing installed are recorded and
-  warn.
+  honored: that version is deactivated and its chunks deleted unless another
+  installed row still claims the same content-hash doc id, in which case the
+  chunks are retained for that claimant (issue #287; its files are retained
+  per ADR-0004); entries naming nothing installed are recorded and warn.
 
 File layout: ``install(pack_path)`` treats ``pack_path`` as the SOURCE only.
 The pack tree is copied into the managed per-version directory
@@ -398,6 +399,16 @@ class PackManager:
                         for info in (row.get("docs") or {}).values()
                         if info.get("doc_id")
                     ],
+                    # Issue #287 review: manifest-relative paths per claimed
+                    # doc, so the retrieval layer can re-attribute a retained
+                    # chunk's display source to the surviving claimant instead
+                    # of the removed last writer (additive key; prior
+                    # consumers read only pack_id/version/published_at).
+                    "doc_paths": {
+                        info["doc_id"]: path
+                        for path, info in (row.get("docs") or {}).items()
+                        if isinstance(info, dict) and info.get("doc_id")
+                    },
                 }
             )
         return claims
@@ -569,6 +580,36 @@ class PackManager:
             for entry in manifest["docs"]
         }
 
+    def _claims_from_other_rows(
+        self, rows: List[Dict[str, Any]], acting_rows: List[Dict[str, Any]]
+    ) -> Dict[str, str]:
+        """Doc ids claimed by any registry row outside the acted-on rows.
+
+        Content-hash ids make a doc listed by two installed rows a single
+        store entry, so deleting it for one verb would silently drop it for
+        the sibling pack/version too (issue #287). Claims derive from the
+        registry rows' own per-pack docs maps -- no separate claim store --
+        so an inactive version row (retained managed dir, reactivatable
+        byte-identically) still counts as a claimant, while the rows the
+        verb is acting on never protect their own docs from the verb. The
+        value names the first claiming row (`pack@version`) so a claim-skip
+        log line can say who keeps the document.
+        """
+        acting_ids = {id(r) for r in acting_rows}
+        claims: Dict[str, str] = {}
+        for other in rows:
+            if id(other) in acting_ids:
+                continue
+            # Defensive form matches the sibling registry reader
+            # (active_pack_claims): a malformed row must not abort a
+            # lifecycle verb for an unrelated pack.
+            for info in (other.get("docs") or {}).values():
+                doc_id = info.get("doc_id") if isinstance(info, dict) else None
+                if not doc_id or not other.get("pack_id") or not other.get("version"):
+                    continue
+                claims.setdefault(doc_id, f"{other['pack_id']}@{other['version']}")
+        return claims
+
     # ------------------------------------------------------------------ #
     # state transitions
     # ------------------------------------------------------------------ #
@@ -576,7 +617,17 @@ class PackManager:
     def _deactivate(self, rows: List[Dict[str, Any]], row: Dict[str, Any]) -> List[str]:
         """Delete a version's chunks from the live collection; files retained."""
         removed: List[str] = []
+        claims = self._claims_from_other_rows(rows, [row])
         for info in row.get("docs", {}).values():
+            if info["doc_id"] in claims:
+                logger.info(
+                    "pack %s@%s: doc %s retained: claimed by %s",
+                    row["pack_id"],
+                    row["version"],
+                    info["doc_id"],
+                    claims[info["doc_id"]],
+                )
+                continue
             if self.store.delete_document(info["doc_id"]):
                 removed.append(info["doc_id"])
             else:
@@ -706,10 +757,21 @@ class PackManager:
             # manifest no longer carries. Content-identical docs keep their
             # chunks (same ids as the incoming insert; replace mode dedupes).
             replaced_doc_ids: List[str] = []
+            claims = self._claims_from_other_rows(rows, outgoing)
             for row in outgoing:
                 for path, info in row.get("docs", {}).items():
                     incoming = new_docs.get(path)
                     if incoming is None or incoming["doc_sha256"] != info["doc_sha256"]:
+                        if info["doc_id"] in claims:
+                            logger.info(
+                                "pack %s@%s: doc %s retained on upgrade: claimed"
+                                " by %s",
+                                row["pack_id"],
+                                row["version"],
+                                info["doc_id"],
+                                claims[info["doc_id"]],
+                            )
+                            continue
                         if self.store.delete_document(info["doc_id"]):
                             replaced_doc_ids.append(info["doc_id"])
 
@@ -820,6 +882,7 @@ class PackManager:
                     f"nothing installed matches {pack_id}"
                     + (f"@{version}" if version else "")
                 )
+            claims = self._claims_from_other_rows(rows, victims)
             for row in victims:
                 install_path = Path(row["install_path"])
                 if install_path.exists():
@@ -830,6 +893,15 @@ class PackManager:
                             f"failed to delete managed dir {install_path}: {error}"
                         ) from error
                 for info in row.get("docs", {}).values():
+                    if info["doc_id"] in claims:
+                        logger.info(
+                            "pack %s@%s: doc %s retained on removal: claimed by %s",
+                            row["pack_id"],
+                            row["version"],
+                            info["doc_id"],
+                            claims[info["doc_id"]],
+                        )
+                        continue
                     self.store.delete_document(info["doc_id"])
             remaining = [r for r in rows if r not in victims]
             self._save_rows(remaining)

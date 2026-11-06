@@ -743,3 +743,465 @@ def test_unknown_on_conflict_value_raises(workspace):
     store.add_chunks_with_embeddings(payload)
     with pytest.raises(ValueError, match="Unknown on_conflict"):
         store.add_chunks_with_embeddings(payload, on_conflict="bogus")
+
+
+# ------------------------------------------------------------------ #
+# #287 — claimant-aware document lifetime (shared-doc survival)
+# ------------------------------------------------------------------ #
+
+
+SHARED_DOC_OBJ = {
+    "title": "Shared",
+    "text": "Shared knowledge pack document byte-identical across two packs.",
+}
+
+A_ONLY_OBJ = {"title": "A only", "text": "Pack A specific document content."}
+B_ONLY_OBJ = {"title": "B only", "text": "Pack B specific document content."}
+
+
+def build_multi_doc_pack(root, name, pack_id, version, docs):
+    """Write a minimal valid pack dir; manifest carries each doc's sha256."""
+    pack = root / name
+    pack.mkdir(parents=True, exist_ok=True)
+    manifest_docs = []
+    for rel_path, obj in sorted(docs.items()):
+        p = pack / rel_path
+        p.parent.mkdir(parents=True, exist_ok=True)
+        raw = json.dumps(obj, indent=2).encode("utf-8")
+        p.write_bytes(raw)
+        manifest_docs.append(
+            {
+                "path": rel_path,
+                "sha256": doc_id_from_bytes(raw),
+                "title": obj["title"],
+                "mime": "application/json",
+            }
+        )
+    manifest = {
+        "id": pack_id,
+        "name": name,
+        "version": version,
+        "published_at": "2026-11-04T00:00:00Z",
+        "source_class": "user",
+        "embedding": {"model_id": "bge-small-en-v1.5", "dims": 384, "normalize": True},
+        "chunking": {"strategy": "fixed-words", "size": 256, "overlap": 100},
+        "docs": manifest_docs,
+    }
+    (pack / "pack.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return pack
+
+
+def shared_doc_id():
+    raw = json.dumps(SHARED_DOC_OBJ, indent=2).encode("utf-8")
+    return doc_id_from_bytes(raw)
+
+
+def doc_chunk_ids(store, doc_id):
+    got = store.collection.get(where={"doc_id": doc_id})
+    return set(got["ids"])
+
+
+def install_sibling_pair(workspace):
+    """pack-a@1.0.0 + pack-b@1.0.0, both listing the byte-identical doc."""
+    pm = make_manager(workspace)
+    src_a = build_multi_doc_pack(
+        workspace,
+        "src-a",
+        "pack-a",
+        "1.0.0",
+        {"docs/shared.json": SHARED_DOC_OBJ, "docs/a-only.json": A_ONLY_OBJ},
+    )
+    src_b = build_multi_doc_pack(
+        workspace,
+        "src-b",
+        "pack-b",
+        "1.0.0",
+        {"docs/shared.json": SHARED_DOC_OBJ, "docs/b-only.json": B_ONLY_OBJ},
+    )
+    pm.install(src_a)
+    pm.install(src_b)
+    return pm
+
+
+def test_shared_doc_survival_keeps_claim_on_remove(workspace):
+    pm = install_sibling_pair(workspace)
+    shared = shared_doc_id()
+    before = doc_chunk_ids(pm.store, shared)
+    assert before, "fixture failed to install the shared doc"
+
+    pm.remove("pack-a")
+
+    # storage-presence control: the shared doc's chunks survive
+    assert doc_chunk_ids(pm.store, shared) == before
+    # real retrievability: a genuine search() call returns the shared text
+    hits = pm.store.search("Shared knowledge", n_results=10)
+    assert any("byte-identical across two packs" in doc for doc, _, _ in hits)
+    # sibling claim kept: pack-b's row still lists the shared doc, and is active
+    row_b = next(r for r in pm.list_installed() if r.pack_id == "pack-b")
+    assert row_b.active is True
+    assert row_b.docs["docs/shared.json"]["doc_id"] == shared
+    # unshared deletion preserved: pack-a's unique doc did NOT survive
+    a_only_sha = doc_id_from_bytes(json.dumps(A_ONLY_OBJ, indent=2).encode("utf-8"))
+    assert doc_chunk_ids(pm.store, a_only_sha) == set()
+
+
+def test_shared_doc_survival_keeps_claim_on_upgrade_dropping_doc(workspace):
+    pm = install_sibling_pair(workspace)
+    shared = shared_doc_id()
+    before = doc_chunk_ids(pm.store, shared)
+    assert before, "fixture failed to install the shared doc"
+    upgraded = build_multi_doc_pack(
+        workspace, "src-a2", "pack-a", "2.0.0", {"docs/a-only.json": A_ONLY_OBJ}
+    )
+    pm.install(upgraded)
+
+    assert doc_chunk_ids(pm.store, shared) == before
+    row_b = next(r for r in pm.list_installed() if r.pack_id == "pack-b")
+    assert row_b.active is True
+
+
+def test_shared_doc_survival_keeps_claim_on_direct_supersede_without_it(workspace):
+    ws = workspace
+    src_a1 = build_multi_doc_pack(
+        ws, "src-a1", "pack-a", "1.0.0", {"docs/a-only.json": A_ONLY_OBJ}
+    )
+    src_a2 = build_multi_doc_pack(
+        ws,
+        "src-a2",
+        "pack-a",
+        "2.0.0",
+        {"docs/shared.json": SHARED_DOC_OBJ, "docs/a-only.json": A_ONLY_OBJ},
+    )
+    pm = make_manager(ws)
+    pm.install(src_a1)
+    pm.install(src_a2)
+    pm.install(
+        build_multi_doc_pack(
+            ws, "src-b", "pack-b", "1.0.0", {"docs/shared.json": SHARED_DOC_OBJ}
+        )
+    )
+    shared = shared_doc_id()
+
+    pm.supersede("pack-a", "2.0.0", "1.0.0")
+
+    assert doc_chunk_ids(pm.store, shared), "claimant-aware supersede lost the doc"
+    row_b = next(r for r in pm.list_installed() if r.pack_id == "pack-b")
+    assert row_b.active is True
+
+
+def test_shared_doc_survival_keeps_claim_on_rollback_without_it(workspace):
+    ws = workspace
+    src_a1 = build_multi_doc_pack(
+        ws, "src-a1", "pack-a", "1.0.0", {"docs/a-only.json": A_ONLY_OBJ}
+    )
+    src_a2 = build_multi_doc_pack(
+        ws,
+        "src-a2",
+        "pack-a",
+        "2.0.0",
+        {"docs/shared.json": SHARED_DOC_OBJ, "docs/a-only.json": A_ONLY_OBJ},
+    )
+    pm = make_manager(ws)
+    pm.install(src_a1)
+    pm.install(src_a2)
+    pm.install(
+        build_multi_doc_pack(
+            ws, "src-b", "pack-b", "1.0.0", {"docs/shared.json": SHARED_DOC_OBJ}
+        )
+    )
+    shared = shared_doc_id()
+
+    pm.rollback("pack-a", "1.0.0")
+
+    assert doc_chunk_ids(pm.store, shared), "claimant-aware rollback lost the doc"
+    row_b = next(r for r in pm.list_installed() if r.pack_id == "pack-b")
+    assert row_b.active is True
+
+
+def test_shared_doc_survival_other_version_claim_keeps_doc_until_whole_pack_removed(
+    workspace,
+):
+    # M5 discriminator: the surviving claim is an INACTIVE sibling version row.
+    ws = workspace
+    docs_with = {"docs/shared.json": SHARED_DOC_OBJ}
+    pm = make_manager(ws)
+    pm.install(build_multi_doc_pack(ws, "src-a1", "pack-a", "1.0.0", docs_with))
+    pm.install(build_multi_doc_pack(ws, "src-a2", "pack-a", "2.0.0", docs_with))
+    pm.rollback("pack-a", "1.0.0")
+    shared = shared_doc_id()
+    before = doc_chunk_ids(pm.store, shared)
+    assert before, "fixture failed to install the shared doc"
+    rows = {r.version: r for r in pm.list_installed()}
+    assert rows["1.0.0"].active is True
+    assert rows["2.0.0"].active is False
+    assert doc_chunk_ids(pm.store, shared) == before
+
+    # version-scoped removal must not delete what the inactive row claims
+    pm.remove("pack-a", "1.0.0")
+    assert doc_chunk_ids(pm.store, shared) == before
+
+    # whole-pack removal excludes victim rows as claimants: cleanup still works
+    pm.remove("pack-a")
+    assert doc_chunk_ids(pm.store, shared) == set()
+
+
+def test_shared_doc_survival_controls_unshared_docs_still_deleted(workspace):
+    # Falsifiability half: with NO sibling claim every verb still deletes, so
+    # the guard cannot pass by never deleting (M4 over-broad). Each sub-leg
+    # gets its own subdirectory: make_manager pins one store db + registry
+    # per directory, so sharing a workspace would cross-contaminate rows.
+    ctl = workspace / "controls"
+    ctl.mkdir()
+    pm = install_sibling_pair(ctl / "remove")
+    a_only_sha = doc_id_from_bytes(json.dumps(A_ONLY_OBJ, indent=2).encode("utf-8"))
+    pm.remove("pack-a")
+    assert doc_chunk_ids(pm.store, a_only_sha) == set()
+
+    # upgrade: changed content at the same path deletes the old doc
+    old_obj = {"title": "V1", "text": "Versioned A fixture document v1 body."}
+    new_obj = {"title": "V2", "text": "Versioned A fixture document v2 body."}
+    up = ctl / "upgrade"
+    up.mkdir()
+    pm2 = make_manager(up)
+    pm2.install(
+        build_multi_doc_pack(up, "src-v1", "pack-v", "1.0.0", {"docs/v.json": old_obj})
+    )
+    old_sha = doc_id_from_bytes(json.dumps(old_obj, indent=2).encode("utf-8"))
+    pm2.install(
+        build_multi_doc_pack(up, "src-v2", "pack-v", "2.0.0", {"docs/v.json": new_obj})
+    )
+    assert doc_chunk_ids(pm2.store, old_sha) == set()
+
+    # direct supersede control: target without the doc, no sibling -> deleted
+    sup = ctl / "supersede"
+    sup.mkdir()
+    shared = shared_doc_id()
+    pm3 = make_manager(sup)
+    pm3.install(
+        build_multi_doc_pack(
+            sup, "src-a1", "pack-a", "1.0.0", {"docs/a.json": A_ONLY_OBJ}
+        )
+    )
+    pm3.install(
+        build_multi_doc_pack(
+            sup, "src-a2", "pack-a", "2.0.0", {"docs/shared.json": SHARED_DOC_OBJ}
+        )
+    )
+    pm3.supersede("pack-a", "2.0.0", "1.0.0")
+    assert doc_chunk_ids(pm3.store, shared) == set()
+
+    # rollback control: target without the doc, no sibling -> deleted
+    rb = ctl / "rollback"
+    rb.mkdir()
+    pm4 = make_manager(rb)
+    pm4.install(
+        build_multi_doc_pack(
+            rb, "src-b1", "pack-b", "1.0.0", {"docs/b.json": B_ONLY_OBJ}
+        )
+    )
+    pm4.install(
+        build_multi_doc_pack(
+            rb, "src-b2", "pack-b", "2.0.0", {"docs/shared.json": SHARED_DOC_OBJ}
+        )
+    )
+    pm4.rollback("pack-b", "1.0.0")
+    assert doc_chunk_ids(pm4.store, shared) == set()
+
+
+# ------------------------------------------------------------------ #
+# #287 — route-level shared-doc survival (AC2)
+# ------------------------------------------------------------------ #
+
+
+def route_client(monkeypatch, pm):
+    """TestClient for the pack routes that is hermetic against test-order
+    auth pollution: test_auth.py reloads auth/api_server with ENABLE_AUTH
+    enabled and leaves the reimported module cached, so the routes' auth
+    dependency is overridden explicitly (the tests/test_api_endpoints.py
+    pattern) instead of relying on the ambient auth state."""
+    from fastapi.testclient import TestClient
+
+    import api_server
+    from auth import authenticate
+
+    monkeypatch.setitem(
+        api_server.app.dependency_overrides,
+        authenticate,
+        lambda: {"authenticated": True, "method": "test"},
+    )
+    monkeypatch.setattr(api_server, "pack_manager", pm)
+    return TestClient(api_server.app)
+
+
+def test_shared_doc_route_remove_keeps_shared_doc(workspace, monkeypatch):
+    pm = install_sibling_pair(workspace)
+    shared = shared_doc_id()
+    before = doc_chunk_ids(pm.store, shared)
+    assert before, "fixture failed to install the shared doc"
+    test_client = route_client(monkeypatch, pm)
+
+    response = test_client.post("/packs/remove", json={"pack_id": "pack-a"})
+
+    assert response.status_code == 200
+    assert response.json() == {"removed": 1}
+    assert doc_chunk_ids(pm.store, shared) == before
+    listed = test_client.get("/packs").json()["packs"]
+    assert not any(p["pack_id"] == "pack-a" for p in listed)
+    row_b = next(p for p in listed if p["pack_id"] == "pack-b")
+    assert row_b["active"] is True
+
+
+def test_shared_doc_route_rollback_keeps_shared_doc(workspace, monkeypatch):
+    ws = workspace
+    src_a1 = build_multi_doc_pack(
+        ws, "src-a1", "pack-a", "1.0.0", {"docs/a-only.json": A_ONLY_OBJ}
+    )
+    src_a2 = build_multi_doc_pack(
+        ws,
+        "src-a2",
+        "pack-a",
+        "2.0.0",
+        {"docs/shared.json": SHARED_DOC_OBJ, "docs/a-only.json": A_ONLY_OBJ},
+    )
+    pm = make_manager(ws)
+    pm.install(src_a1)
+    pm.install(src_a2)
+    pm.install(
+        build_multi_doc_pack(
+            ws, "src-b", "pack-b", "1.0.0", {"docs/shared.json": SHARED_DOC_OBJ}
+        )
+    )
+    shared = shared_doc_id()
+    before = doc_chunk_ids(pm.store, shared)
+    assert before, "fixture failed to install the shared doc"
+    test_client = route_client(monkeypatch, pm)
+
+    response = test_client.post(
+        "/packs/rollback", json={"pack_id": "pack-a", "to_version": "1.0.0"}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert doc_chunk_ids(pm.store, shared) == before
+    rows = {r.version: r for r in pm.list_installed() if r.pack_id == "pack-a"}
+    assert rows["1.0.0"].active is True
+    assert rows["2.0.0"].active is False
+
+
+def test_shared_doc_route_remove_still_deletes_unshared_doc(workspace, monkeypatch):
+    pm = make_manager(workspace)
+    pm.install(
+        build_multi_doc_pack(
+            workspace, "src-solo", "pack-solo", "1.0.0", {"docs/only.json": A_ONLY_OBJ}
+        )
+    )
+    only_sha = doc_id_from_bytes(json.dumps(A_ONLY_OBJ, indent=2).encode("utf-8"))
+    test_client = route_client(monkeypatch, pm)
+
+    response = test_client.post("/packs/remove", json={"pack_id": "pack-solo"})
+
+    assert response.status_code == 200
+    assert response.json() == {"removed": 1}
+    assert doc_chunk_ids(pm.store, only_sha) == set()
+
+
+# ------------------------------------------------------------------ #
+# #287 review round - claim-true citation re-attribution (PRR-004)
+# ------------------------------------------------------------------ #
+
+
+def test_shared_doc_citation_reattributes_to_surviving_claim(workspace):
+    """After the chunk metadata's LAST WRITER is removed, retrieval must
+    name the SURVIVING claimant in the citation source and pack fields,
+    not the removed pack's stale last-writer metadata (PRR-004).
+
+    install_sibling_pair installs pack-a then pack-b, so the store chunk
+    rows carry pack-b's metadata (same content-hash chunk ids, replace
+    mode); removing pack-b exercises the stale-writer shape.
+    """
+    pm = install_sibling_pair(workspace)
+    pm.store.pack_status_provider = pm.active_pack_claims
+    shared = shared_doc_id()
+    before = doc_chunk_ids(pm.store, shared)
+    assert before, "fixture failed to install the shared doc"
+
+    pm.remove("pack-b")
+    assert doc_chunk_ids(pm.store, shared) == before
+
+    context, sources, chunks = pm.store.get_context(
+        "Shared knowledge pack document",
+        n_results=5,
+        hybrid_search=True,
+        retrieval_window=1,
+    )
+    hit = next(c for c in chunks if c.doc_id == shared)
+    assert hit.source.startswith("pack-a/"), hit.source
+    assert not hit.source.startswith("pack-b/")
+    assert hit.pack_id == "pack-a"
+    assert hit.pack_version == "1.0.0"
+    # The deduped sources return is a separate channel: it must carry the
+    # corrected display sources too (a stale-sources regression previously
+    # survived a full fix round on this missing assertion).
+    assert sources, "no sources returned"
+    assert not any(s.startswith("pack-b/") for s in sources), sources
+
+
+def test_shared_doc_citation_reattributes_vector_only_path(workspace):
+    """The vector-only branch (hybrid_search=False) must re-attribute the
+    stale last-writer source too (reviewer round follow-up question)."""
+    pm = install_sibling_pair(workspace)
+    pm.store.pack_status_provider = pm.active_pack_claims
+    shared = shared_doc_id()
+    before = doc_chunk_ids(pm.store, shared)
+    assert before, "fixture failed to install the shared doc"
+
+    pm.remove("pack-b")
+    assert doc_chunk_ids(pm.store, shared) == before
+
+    for window in (0, 1):
+        context, sources, chunks = pm.store.get_context(
+            "Shared knowledge pack document",
+            n_results=5,
+            hybrid_search=False,
+            retrieval_window=window,
+        )
+        hit = next(c for c in chunks if c.doc_id == shared)
+        assert hit.source.startswith("pack-a/"), (window, hit.source)
+        assert hit.pack_id == "pack-a"
+        assert hit.pack_version == "1.0.0"
+        assert sources, (window, "no sources returned")
+        assert not any(s.startswith("pack-b/") for s in sources), (window, sources)
+
+
+def test_claims_helper_tolerates_malformed_registry_rows(workspace):
+    """PRR-005 pin: a malformed registry row (docs null, non-dict doc info)
+    must not abort an unrelated pack's lifecycle verb (the route would
+    have answered 500 via the unguarded AttributeError)."""
+    pm = install_sibling_pair(workspace)
+    shared = shared_doc_id()
+    before = doc_chunk_ids(pm.store, shared)
+    assert before, "fixture failed to install the shared doc"
+
+    rows = pm._rows()
+    rows.append(
+        {
+            "pack_id": "ghost",
+            "version": "9.9.9",
+            "active": True,
+            "install_path": "nowhere",
+            "docs": None,
+        }
+    )
+    rows.append(
+        {
+            "pack_id": "ghost2",
+            "version": "9.9.9",
+            "active": True,
+            "install_path": "nowhere",
+            "docs": {"x": "not-a-dict"},
+        }
+    )
+    with patch.object(pm, "_rows", return_value=rows):
+        pm.remove("pack-a")
+
+    assert doc_chunk_ids(pm.store, shared) == before
