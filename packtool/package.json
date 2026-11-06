@@ -15,7 +15,7 @@
     "packtool": "./dist/cli.js"
   },
   "dependencies": {
-    "@huggingface/transformers": "^3.8.1",
+    "@huggingface/transformers": "^4.3.2",
     "better-sqlite3": "13.0.3",
     "jszip": "^3.10.2",
     "mammoth": "^1.12.3",
