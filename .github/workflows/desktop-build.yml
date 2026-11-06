@@ -8,6 +8,7 @@ on:
       - 'web_ui/**'
       - 'contracts/**'
       - 'packtool/**'
+      - 'vendor/**'
       - '.github/workflows/desktop-build.yml'
   pull_request:
     paths:
@@ -15,6 +16,7 @@ on:
       - 'web_ui/**'
       - 'contracts/**'
       - 'packtool/**'
+      - 'vendor/**'
       - '.github/workflows/desktop-build.yml'
 
 # AC22 (issue #182): least-privilege token for the whole workflow — the

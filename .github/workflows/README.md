@@ -17,6 +17,8 @@ PR feedback time must match diff size, and every PR that touches a contract or a
 
 A ruleset on `refs/heads/master` requires exactly these contexts for every actor — `bypass_actors: []`, a pull-request rule at `required_approving_review_count: 0`, non-strict — so a pending or failed required check blocks the merge for the maintainer without `--admin` (the classic branch protection is neutralized to match; created via the sequenced, explicitly authorized closeout steps on issue #277 AC6). Contexts are bare job `name:` strings (check runs carry no workflow prefix):
 
+**Recovery path** (issue #277 AC6/AC7): when a required context is red for a cause outside the PR — a runner outage, a registry outage during the `dependency-audit` steps (npm exits 1 for an unreachable registry; the gate classifies by payload and fails closed after two retries, so an outage shows as a red context, not a false pass), or a known flake class (e.g. #135) — the maintainer temporarily disables the ruleset, merges, re-enables it, and logs the event on issue #277. The same log covers any `--admin` use while the ruleset is disabled.
+
 ```text
 web-ui (typecheck + build + test + packaging)
 web-ui e2e (browser-mode pack gate, Playwright)
