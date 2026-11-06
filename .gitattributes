@@ -44,3 +44,7 @@ scripts/*.mts text eol=lf
 # out with the same line endings on every machine. LF everywhere.
 desktop/main/backend/packs/pack-archive-rules.ts text eol=lf
 web_ui/src/lib/packs/pack-archive-rules.ts text eol=lf
+
+# Vendored SheetJS tarball (issue #276 AC1): the three lockfiles pin its
+# sha512 as the xlsx integrity, so the bytes must never be eol-converted.
+vendor/sheetjs/*.tgz binary

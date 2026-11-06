@@ -17,7 +17,7 @@
     "mammoth": "^1.12.2",
     "pdfjs-dist": "^4.10.38",
     "sqlite-vec": "0.1.9",
-    "xlsx": "^0.18.5"
+    "xlsx": "file:../vendor/sheetjs/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",

@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+- **Dependency currency and Electron hardening (issue #276)**:
+  - **Vendored SheetJS 0.20.3**: `xlsx` now resolves in web_ui, desktop and packtool to the
+    committed official SheetJS CDN tarball `vendor/sheetjs/xlsx-0.20.3.tgz` (Apache-2.0;
+    provenance and sha512 in `vendor/README.md` and `docs/licenses.md`) through
+    `"xlsx": "file:../vendor/sheetjs/xlsx-0.20.3.tgz"`, clearing GHSA-4r6h-8v6p-xvw6 and
+    GHSA-5pgg-2g8v-p4x9 (both HIGH, no npm-registry fix). The tarball is marked `binary` in
+    `.gitattributes`, and `tests/test_vendored_xlsx.py` pins each lockfile's xlsx version,
+    vendor `resolved` path and `integrity` to the tarball's own sha512.
+
 - **Claimant-aware pack document lifetime in the Python runtime (issue #287)**: the Python
   PackManager's lifecycle verbs (`remove`, public `supersede`, `rollback`, and install's
   delete-before-reingest) now consult the registry rows' per-pack docs maps before
