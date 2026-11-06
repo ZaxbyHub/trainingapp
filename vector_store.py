@@ -1751,6 +1751,10 @@ class VectorStore:
                 }
                 for _doc, meta, _sim in filtered
             ]
+            # Claim-true display sources (issue #287 review): None keeps the
+            # row's own source; a surviving claimant with a doc-path mapping
+            # re-attributes the display source away from a removed writer.
+            vo_claim_sources: List[Optional[str]] = [None] * len(filtered)
             if vo_snapshot is not None:
                 screened = []
                 seen_ids = set()
@@ -1776,6 +1780,11 @@ class VectorStore:
                                 "pack_version": winner.get("version"),
                                 "pack_published_at": winner.get("published_at"),
                             }
+                            claimed_path = (winner.get("doc_paths") or {}).get(doc_id)
+                            if claimed_path:
+                                vo_claim_sources[
+                                    entry_index
+                                ] = f"{winner['pack_id']}/{claimed_path}"
                         chunk_id = self._derived_chunk_id(
                             doc_id, meta.get("chunk_index", 0), doc
                         )
@@ -1783,9 +1792,12 @@ class VectorStore:
                             if chunk_id in seen_ids:
                                 continue  # cross-pack duplicate: keep first
                             seen_ids.add(chunk_id)
-                    screened.append((doc, meta, sim, entry_pack))
-                filtered = [(doc, meta, sim) for doc, meta, sim, _entry in screened]
-                vo_pack_fields = [entry for *_, entry in screened]
+                    screened.append(
+                        (doc, meta, sim, entry_pack, vo_claim_sources[entry_index])
+                    )
+                filtered = [t[0:3] for t in screened]
+                vo_pack_fields = [t[3] for t in screened]
+                vo_claim_sources = [t[4] for t in screened]
 
             if not filtered:
                 return "", [], []
@@ -1802,14 +1814,15 @@ class VectorStore:
                 source = meta.get("source", "Unknown")
                 chunk_idx = meta.get("chunk_index", i)
                 page = meta.get("page")
+                display_source = vo_claim_sources[i] or source
                 context_parts.append(doc)
-                per_chunk_sources.append(source)
+                per_chunk_sources.append(display_source)
                 per_chunk_pages.append(page)
                 per_chunk_indices.append(chunk_idx)
                 per_chunk_doc_ids.append(meta.get("doc_id"))
                 per_chunk_source_paths.append(meta.get("source_path"))
-                if source not in sources:
-                    sources.append(source)
+                if display_source not in sources:
+                    sources.append(display_source)
 
             # Expand with neighbors if window > 0
             if retrieval_window > 0:
@@ -1837,6 +1850,18 @@ class VectorStore:
                 per_chunk_source_paths = [
                     getattr(c, "source_path", None) for c in expanded
                 ]
+                # Re-apply claim-true display sources after neighbor fetch:
+                # expansion restores each chunk's raw store source (the fetch
+                # key), so the doc-keyed correction must land afterwards.
+                corrected_by_doc = {
+                    meta.get("doc_id"): vo_claim_sources[i]
+                    for i, (_doc, meta, _sim) in enumerate(filtered)
+                    if vo_claim_sources[i]
+                }
+                for i, did in enumerate(per_chunk_doc_ids):
+                    corrected = corrected_by_doc.get(did)
+                    if corrected:
+                        per_chunk_sources[i] = corrected
                 # Neighbors inherit the cited entry's pack attribution by
                 # source (same doc => same owning pack), mirroring hybrid.
                 vo_pack_by_source = {

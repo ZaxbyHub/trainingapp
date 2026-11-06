@@ -1139,3 +1139,28 @@ def test_shared_doc_citation_reattributes_to_surviving_claim(workspace):
     assert not hit.source.startswith("pack-b/")
     assert hit.pack_id == "pack-a"
     assert hit.pack_version == "1.0.0"
+
+
+def test_shared_doc_citation_reattributes_vector_only_path(workspace):
+    """The vector-only branch (hybrid_search=False) must re-attribute the
+    stale last-writer source too (reviewer round follow-up question)."""
+    pm = install_sibling_pair(workspace)
+    pm.store.pack_status_provider = pm.active_pack_claims
+    shared = shared_doc_id()
+    before = doc_chunk_ids(pm.store, shared)
+    assert before, "fixture failed to install the shared doc"
+
+    pm.remove("pack-b")
+    assert doc_chunk_ids(pm.store, shared) == before
+
+    for window in (0, 1):
+        context, sources, chunks = pm.store.get_context(
+            "Shared knowledge pack document",
+            n_results=5,
+            hybrid_search=False,
+            retrieval_window=window,
+        )
+        hit = next(c for c in chunks if c.doc_id == shared)
+        assert hit.source.startswith("pack-a/"), (window, hit.source)
+        assert hit.pack_id == "pack-a"
+        assert hit.pack_version == "1.0.0"
