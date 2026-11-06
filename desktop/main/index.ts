@@ -14,7 +14,7 @@ import { activateDiagnosticsLogging, attachRendererCapture } from './logging.js'
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, session, shell, utilityProcess } from 'electron';
 import { createSafeStorageSecretStore } from './security/secret-store.js';
 import { registerPermissionHandlers } from './security/permissions.js';
 import { registerAppProtocol, registerAppSchemePrivileges } from './protocol.js';
@@ -28,7 +28,15 @@ import {
 } from './backend/index.js';
 import { CONTEXT_SIZE } from './backend/inference/llama-engine.js';
 import { autoSelectProfile, resolveFreeRamBytes } from './first-run/ram-gate.js';
-import { activeGpuVerdict, gpuVerdictGate, readGpuProbeVerdict } from './backend/inference/gpu-probe.js';
+import {
+  activeGpuVerdict,
+  GPU_PROBE_SMOKE_ENV,
+  gpuVerdictGate,
+  readGpuProbeVerdict,
+  runGpuProbeSmokeLeg,
+  setGpuProbeForkFn,
+  type GpuProbeChildProcess,
+} from './backend/inference/gpu-probe.js';
 import {
   containedJoin,
   manifestGroupBytes,
@@ -217,6 +225,24 @@ export function bootstrap(): void {
     // check handlers on the default session, registered FIRST so they are in
     // place before any BrowserWindow (and so before any renderer) exists.
     registerPermissionHandlers(session.defaultSession);
+    // GPU probe launcher (issue #276 G3b): the probe child runs as an Electron
+    // utilityProcess. The packaged runAsNode fuse disables the old
+    // ELECTRON_RUN_AS_NODE spawn, and gpu-probe.ts stays electron-free, so the
+    // electron-aware entry registers the launcher (utilityProcess.fork is only
+    // callable after ready). stdout is discarded (the report rides parentPort);
+    // stderr is piped for the failure detail.
+    setGpuProbeForkFn((modulePath, args) =>
+      utilityProcess.fork(modulePath, args, {
+        stdio: ['ignore', 'ignore', 'pipe'],
+        serviceName: 'TrainingApp GPU probe',
+      }) as unknown as GpuProbeChildProcess,
+    );
+    // Packaged-smoke evidence leg (issue #276 G3b; opt-in env, see
+    // desktop/scripts/packaged-smoke.mjs step 8): one device-only probe through
+    // the utilityProcess launcher, its report + exit recorded under userData.
+    if (process.env[GPU_PROBE_SMOKE_ENV] === '1') {
+      void runGpuProbeSmokeLeg(app.getPath('userData'));
+    }
     // Transport security (issue #60, B2): resolve config, mint the per-launch
     // token (main-process memory only), serve it to the renderer ONLY through
     // this IPC handler, and construct the loopback gate that B3's backend

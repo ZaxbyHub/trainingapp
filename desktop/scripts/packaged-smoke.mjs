@@ -14,6 +14,11 @@
 //   6. relaunch fresh (same store) → getFirstRunStatus().needed === false
 //   7. (issue #248 AC1) <userData>/logs/main.log exists with BOTH the main
 //      boot entry and the forwarded renderer startup entry (default logging)
+//   8. (issue #276 G3b) the GPU probe's utilityProcess child ran inside the
+//      packaged app (fuses active, runAsNode off): a device-only probe posted a
+//      REAL structured report over parentPort and its exit was observed —
+//      distinguished from the parent's no-report / process-error / timeout
+//      fallback, which also yields a CPU verdict
 //
 // Two drivers over the SAME ladder run bodies:
 //   - playwright (DEFAULT, local): windowed _electron.launch + firstWindow.
@@ -444,6 +449,55 @@ export async function closeCdpSession(opts) {
   }
 }
 
+// ---- GPU probe evidence (issue #276 G3b) ------------------------------------
+
+/** The record the packaged main process writes when TRAININGAPP_SMOKE_GPU_PROBE=1
+ *  (desktop/main/backend/inference/gpu-probe.ts runGpuProbeSmokeLeg). */
+export const GPU_PROBE_SMOKE_RECORD = 'gpu-probe-smoke.json';
+
+/** The parent's own fallback reasons: a verdict carrying one of these was NOT
+ *  produced from a child report, whatever the transport fields say. */
+const GPU_PROBE_FALLBACK_MARKERS = [
+  'did not return a readable report',
+  'process error',
+  'could not be started',
+  'timed out',
+  'no utility-process launcher',
+  'did not complete cleanly',
+  'more output than the probe contract allows',
+];
+
+/**
+ * Judge the smoke record: PASS only when the utility child delivered a
+ * structured report object over parentPort ({ok: boolean, backend: string}),
+ * exited with code 0, and the verdict is not one of the parent's fallbacks.
+ * A GPU-less runner passes too (its child reports ok:false and exits 0) —
+ * the leg proves the transport, not the hardware.
+ */
+export function evaluateGpuProbeSmokeRecord(record) {
+  if (record === null || typeof record !== 'object') return { ok: false, detail: 'no record' };
+  if (typeof record.error === 'string') return { ok: false, detail: `leg threw: ${record.error}` };
+  const transport = record.transport;
+  if (transport === null || typeof transport !== 'object') return { ok: false, detail: 'record has no transport section' };
+  const report = transport.report;
+  const reportShaped =
+    transport.reportReceived === true &&
+    report !== null &&
+    typeof report === 'object' &&
+    typeof report.ok === 'boolean' &&
+    typeof report.backend === 'string';
+  const exitedClean = transport.exited === true && transport.exitCode === 0;
+  const reason = typeof record.verdict?.reason === 'string' ? record.verdict.reason : '';
+  const fallback = GPU_PROBE_FALLBACK_MARKERS.find((marker) => reason.includes(marker));
+  const detail =
+    `reportReceived=${String(transport.reportReceived)} exited=${String(transport.exited)} exitCode=${String(transport.exitCode)} ` +
+    `report=${JSON.stringify(report ?? null).slice(0, 160)} verdict=${JSON.stringify(record.verdict ?? null).slice(0, 200)}`;
+  if (!reportShaped) return { ok: false, detail: `no structured child report (${detail})` };
+  if (!exitedClean) return { ok: false, detail: `child exit not observed as code 0 (${detail})` };
+  if (fallback !== undefined) return { ok: false, detail: `verdict is the parent fallback '${fallback}' (${detail})` };
+  return { ok: true, detail };
+}
+
 // ---- app environment -------------------------------------------------------
 
 const appEnv = (storePath, packsDir) => ({
@@ -455,6 +509,9 @@ const appEnv = (storePath, packsDir) => ({
   TRAININGAPP_DESKTOP_EMBEDDER: 'hash',
   TRAININGAPP_DESKTOP_STORE_PATH: storePath,
   TRAININGAPP_DESKTOP_PACKS_DIR: packsDir,
+  // issue #276 G3b: run one device-only GPU probe through the utilityProcess
+  // launcher and record its report + exit under userData (smoke step 8).
+  TRAININGAPP_SMOKE_GPU_PROBE: '1',
 });
 
 // ---- drivers ---------------------------------------------------------------
@@ -975,6 +1032,29 @@ export async function main(argv, env, io) {
     }
     check(7, 'diagnostics log holds the main boot AND forwarded renderer startup entries', diagOk, diagDetail);
 
+    // 8 (issue #276 G3b): the GPU probe child is an Electron utilityProcess
+    //    now that the runAsNode fuse is off. The main process (opt-in env set
+    //    in appEnv) runs one device-only probe and records the transport
+    //    observation; the leg passes only on a REAL parentPort report plus an
+    //    observed exit 0 — never on the parent's CPU fallback (probe failures
+    //    intentionally fall back to CPU, so a silent no-op must fail here).
+    //    Polled: the probe runs in the background after ready.
+    const gpuRecordPath = path.join(userDataDir, GPU_PROBE_SMOKE_RECORD);
+    let gpuRecord = null;
+    const gpuDeadline = Date.now() + 150_000;
+    while (Date.now() < gpuDeadline) {
+      try {
+        gpuRecord = JSON.parse(fs.readFileSync(gpuRecordPath, 'utf8'));
+        break;
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+      }
+    }
+    const gpuJudged = gpuRecord === null
+      ? { ok: false, detail: `no ${GPU_PROBE_SMOKE_RECORD} within 150s` }
+      : evaluateGpuProbeSmokeRecord(gpuRecord);
+    check(8, 'GPU probe utilityProcess child posted a structured report and exited 0', gpuJudged.ok, gpuJudged.detail);
+
     await session.close();
 
     // 6. relaunch fresh on the SAME store: the wizard must stay completed.
@@ -1022,7 +1102,7 @@ export async function main(argv, env, io) {
     final(1, `SMOKE: FAIL - packaged first-run ladder failed at: ${state.failures.join('; ')}`);
     return;
   }
-  final(0, 'SMOKE: PASS - packaged first-run ladder complete (manifest clean, tools available, packs active, wizard completed+persisted, /packs 200)');
+  final(0, 'SMOKE: PASS - packaged first-run ladder complete (manifest clean, tools available, packs active, wizard completed+persisted, /packs 200, gpu-probe utility child reported)');
 }
 
 // Entry guard: importing this module runs nothing (the contract spec imports

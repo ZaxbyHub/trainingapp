@@ -211,33 +211,34 @@ function rigEnv(): { TRAININGAPP_RETRIEVAL_RERANK: string; TRAININGAPP_DESKTOP_E
   return { TRAININGAPP_RETRIEVAL_RERANK: 'false', TRAININGAPP_DESKTOP_EMBEDDER: 'hash' };
 }
 
-/** A spawn stand-in whose child answers a canned report on stdout. */
-function fakeSpawn(reply?: string, exitCode = 0) {
-  const calls: Array<{ file: string; args: string[] }> = [];
-  const spawnFn = ((file: string, args: string[], _opts: unknown) => {
-    calls.push({ file, args });
+/** A launcher stand-in whose utility child posts canned IPC messages (issue
+ *  #276: the parentPort report contract). `reply` may be one message or a
+ *  list (sent in order); a non-object message is not a report. */
+function fakeFork(reply?: unknown, exitCode = 0) {
+  const calls: Array<{ modulePath: string; args: string[] }> = [];
+  const forkFn = ((modulePath: string, args: string[]) => {
+    calls.push({ modulePath, args });
     const child = new EventEmitter() as EventEmitter & {
-      stdout: EventEmitter | null;
       stderr: EventEmitter | null;
       kill: (signal?: string) => boolean;
       killed: boolean;
     };
-    child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
     child.killed = false;
-    child.kill = (signal?: string) => {
+    child.kill = () => {
       child.killed = true;
-      // An external kill: the child dies by signal (resolution R-B).
-      queueMicrotask(() => child.emit('close', null, signal ?? 'SIGTERM'));
+      // A utility process reports only an exit code, never a signal.
+      queueMicrotask(() => child.emit('exit', 1));
       return true;
     };
     setImmediate(() => {
-      if (reply !== undefined) child.stdout?.emit('data', Buffer.from(reply));
-      child.emit('close', exitCode, null);
+      const messages = Array.isArray(reply) ? reply : reply === undefined ? [] : [reply];
+      for (const message of messages) child.emit('message', message);
+      child.emit('exit', exitCode);
     });
     return child;
-  }) as unknown as NonNullable<GpuProbeRunOptions['spawnFn']>;
-  return { calls, spawnFn };
+  }) as unknown as NonNullable<GpuProbeRunOptions['forkFn']>;
+  return { calls, forkFn };
 }
 
 async function until(cond: () => boolean, timeoutMs: number, what = 'condition'): Promise<void> {
@@ -668,76 +669,70 @@ describe('verdict-freshness (AC4: stale readers, the device-query parser, boot a
   }
 
   it('REAL runGpuDeviceQuery parser: every report shape disposes to device | unknown', async () => {
-    const deviceReport = JSON.stringify({ ok: true, device: 'Arc Pro B50', backend: 'vulkan' });
-    await expect(realDeviceQuery({ spawnFn: fakeSpawn(deviceReport).spawnFn })).resolves.toEqual({
+    const deviceReport = { ok: true, device: 'Arc Pro B50', backend: 'vulkan' };
+    await expect(realDeviceQuery({ forkFn: fakeFork(deviceReport).forkFn })).resolves.toEqual({
       status: 'device',
       device: 'Arc Pro B50',
     });
     // ok:false -> unknown (fail-open is the HOST's decision, not the parser's).
-    await expect(realDeviceQuery({ spawnFn: fakeSpawn(JSON.stringify({ ok: false, reason: 'nope' })).spawnFn })).resolves.toEqual({ status: 'unknown' });
+    await expect(realDeviceQuery({ forkFn: fakeFork({ ok: false, reason: 'nope' }).forkFn })).resolves.toEqual({ status: 'unknown' });
     // empty device -> unknown
-    await expect(realDeviceQuery({ spawnFn: fakeSpawn(JSON.stringify({ ok: true, device: '', backend: 'vulkan' })).spawnFn })).resolves.toEqual({ status: 'unknown' });
+    await expect(realDeviceQuery({ forkFn: fakeFork({ ok: true, device: '', backend: 'vulkan' }).forkFn })).resolves.toEqual({ status: 'unknown' });
     // non-vulkan backend -> unknown
     await expect(
-      realDeviceQuery({ spawnFn: fakeSpawn(JSON.stringify({ ok: true, device: 'd', backend: 'cpu' })).spawnFn }),
+      realDeviceQuery({ forkFn: fakeFork({ ok: true, device: 'd', backend: 'cpu' }).forkFn }),
     ).resolves.toEqual({ status: 'unknown' });
-    // malformed stdout -> unknown
-    await expect(realDeviceQuery({ spawnFn: fakeSpawn('not json at all').spawnFn })).resolves.toEqual({ status: 'unknown' });
-    // native log noise before the report: the LAST non-empty line is the report
+    // a non-object message is not a report -> unknown (the no-report fallback)
+    await expect(realDeviceQuery({ forkFn: fakeFork('not a report object').forkFn })).resolves.toEqual({ status: 'unknown' });
+    // no message at all, clean exit -> unknown (the no-report fallback)
+    await expect(realDeviceQuery({ forkFn: fakeFork(undefined).forkFn })).resolves.toEqual({ status: 'unknown' });
+    // stray non-object message before the report: the report object still wins
     await expect(
-      realDeviceQuery({ spawnFn: fakeSpawn(`native noise\n${deviceReport}`).spawnFn }),
+      realDeviceQuery({ forkFn: fakeFork(['native noise', deviceReport]).forkFn }),
     ).resolves.toEqual({ status: 'device', device: 'Arc Pro B50' });
     // non-zero exit -> unknown
-    await expect(realDeviceQuery({ spawnFn: fakeSpawn(deviceReport, 134).spawnFn })).resolves.toEqual({ status: 'unknown' });
-    // spawn error -> unknown, never a throw
-    const throwingSpawn = (() => {
+    await expect(realDeviceQuery({ forkFn: fakeFork(deviceReport, 134).forkFn })).resolves.toEqual({ status: 'unknown' });
+    // launch error -> unknown, never a throw
+    const throwingFork = (() => {
       throw new Error('ENOENT');
-    }) as unknown as NonNullable<GpuProbeRunOptions['spawnFn']>;
-    await expect(realDeviceQuery({ spawnFn: throwingSpawn })).resolves.toEqual({ status: 'unknown' });
+    }) as unknown as NonNullable<GpuProbeRunOptions['forkFn']>;
+    await expect(realDeviceQuery({ forkFn: throwingFork })).resolves.toEqual({ status: 'unknown' });
     // deadline -> unknown (real timers, real escalation path)
-    const hangSpawn = (() => {
+    const hangFork = (() => {
       const child = new EventEmitter() as EventEmitter & {
-        stdout: EventEmitter | null;
         stderr: EventEmitter | null;
         kill: () => boolean;
       };
-      child.stdout = new EventEmitter();
       child.stderr = new EventEmitter();
       child.kill = () => true;
       return child;
-    }) as unknown as NonNullable<GpuProbeRunOptions['spawnFn']>;
-    await expect(realDeviceQuery({ spawnFn: hangSpawn, timeoutMs: 60 })).resolves.toEqual({ status: 'unknown' });
+    }) as unknown as NonNullable<GpuProbeRunOptions['forkFn']>;
+    await expect(realDeviceQuery({ forkFn: hangFork, timeoutMs: 60 })).resolves.toEqual({ status: 'unknown' });
   }, 20_000);
 
   it('REAL runGpuDeviceQuery parser: a host-killed child resolves CANCELLED (resolution R-B)', async () => {
-    let captured: { kill: (signal?: string) => boolean } | null = null;
-    const spawnFn = (() => {
-      const child = new EventEmitter() as EventEmitter & {
-        stdout: EventEmitter | null;
-        stderr: EventEmitter | null;
-        kill: (signal?: string) => boolean;
-        killed: boolean;
-      };
-      child.stdout = new EventEmitter();
-      child.stderr = new EventEmitter();
-      child.killed = false;
-      child.kill = (signal?: string) => {
-        child.killed = true;
-        queueMicrotask(() => child.emit('close', null, signal ?? 'SIGTERM'));
-        return true;
-      };
-      captured = child;
+    let captured: { kill: (signal?: NodeJS.Signals) => unknown } | null = null;
+    // The child dies with a plain exit code (a utility process reports no
+    // signal): the cancelled disposition must rest on the kill having gone
+    // through the onChild handle, not on signal metadata.
+    const { forkFn } = fakeFork(undefined, 0);
+    const hangingFork = ((modulePath: string, args: string[]) => {
+      const child = (forkFn as unknown as (m: string, a: string[]) => EventEmitter)(modulePath, args);
+      // Swallow the canned clean exit: this child only dies when killed.
+      const emit = child.emit.bind(child);
+      child.emit = ((event: string, ...rest: unknown[]) =>
+        event === 'exit' && !(child as unknown as { killed: boolean }).killed ? false : emit(event, ...rest)) as typeof child.emit;
       return child;
-    }) as unknown as NonNullable<GpuProbeRunOptions['spawnFn']>;
+    }) as unknown as NonNullable<GpuProbeRunOptions['forkFn']>;
     const pending = realDeviceQuery({
-      spawnFn,
+      forkFn: hangingFork,
       timeoutMs: 60_000,
       onChild: (c) => {
-        captured = c as { kill: (signal?: string) => boolean };
+        captured = c;
       },
     });
     await until(() => captured !== null, 2000, 'child registration');
-    (captured as unknown as { kill: (s?: string) => boolean }).kill('SIGTERM');
+    (captured as unknown as { kill: (s?: string) => unknown }).kill('SIGTERM');
     await expect(pending, 'host-kill must resolve the DISTINCT cancelled disposition, never fail-open').resolves.toEqual({
       status: 'cancelled',
     });

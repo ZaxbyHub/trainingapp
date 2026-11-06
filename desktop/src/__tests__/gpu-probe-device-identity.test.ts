@@ -21,12 +21,13 @@
 //       adoptGpuVerdict -> writeGpuProbeVerdict).
 //   INJECTED (all through production options/fields, never by replacing the
 //       logic under test):
-//     - `spawnFn` — the production GpuProbeRunOptions seam documented as
-//       "Injectable spawn, so tests never fork a real process" (t155 idiom).
-//       The fake child emits exactly one JSON stdout line and exits 0, which
-//       is the whole child contract the parent parses.
+//     - `forkFn` — the production GpuProbeRunOptions launcher seam
+//       ("Injectable launcher, so tests never fork a real process"; issue
+//       #276 replaced the old spawnFn). The fake utility child posts exactly
+//       one report object over IPC and exits 0, which is the whole child
+//       contract the parent parses.
 //     - `probeRun` (host instance field) — a wrapper that DELEGATES to the
-//       REAL runGpuProbe, adding only spawnFn + a spawn counter; the host's
+//       REAL runGpuProbe, adding only forkFn + a launch counter; the host's
 //       registration/abandonment/pruning logic all runs.
 //     - `deviceQueryRun` (host instance field) — answers the current-adapter
 //       question for boot 2 (the gpu-admission-recovery R-D precedent).
@@ -63,7 +64,7 @@ const GB = 1024 ** 3;
  *  llama.cpp #28648 mis-decode defence), and the child-reported adapter must
  *  still survive into the CPU verdict. An EMPTY sample is genuinely non-sane
  *  (probeOutputIsSane rejects it) — each row re-guards the fixture. */
-const NON_SANE_REPORT = JSON.stringify({ ok: true, backend: 'vulkan', device: 'gpu-x', sample: '' });
+const NON_SANE_REPORT = { ok: true, backend: 'vulkan', device: 'gpu-x', sample: '' };
 
 /**
  * RIG ISOLATION (PRR-001): rerank OFF + the deterministic HASH embedder — the
@@ -74,17 +75,16 @@ function rigEnv(): { TRAININGAPP_RETRIEVAL_RERANK: string; TRAININGAPP_DESKTOP_E
   return { TRAININGAPP_RETRIEVAL_RERANK: 'false', TRAININGAPP_DESKTOP_EMBEDDER: 'hash' };
 }
 
-/** A spawn stand-in (the production `spawnFn` seam) whose child answers the
- *  probe contract: exactly one JSON line on stdout, then a clean exit 0. */
-function fakeSpawnReply(reply: string): NonNullable<GpuProbeRunOptions['spawnFn']> {
-  return ((_file: string, _args: string[], _opts: unknown) => {
+/** A launcher stand-in (the production `forkFn` seam) whose utility child
+ *  answers the probe contract: exactly one report object over IPC, then a
+ *  clean exit 0. */
+function fakeForkReply(reply: Record<string, unknown>): NonNullable<GpuProbeRunOptions['forkFn']> {
+  return ((_modulePath: string, _args: string[]) => {
     const child = new EventEmitter() as EventEmitter & {
-      stdout: EventEmitter | null;
       stderr: EventEmitter | null;
       kill: (signal?: string) => boolean;
       killed: boolean;
     };
-    child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
     child.killed = false;
     child.kill = () => {
@@ -92,11 +92,11 @@ function fakeSpawnReply(reply: string): NonNullable<GpuProbeRunOptions['spawnFn'
       return true;
     };
     setImmediate(() => {
-      child.stdout?.emit('data', Buffer.from(reply));
-      child.emit('close', 0, null);
+      child.emit('message', reply);
+      child.emit('exit', 0);
     });
     return child;
-  }) as unknown as NonNullable<GpuProbeRunOptions['spawnFn']>;
+  }) as unknown as NonNullable<GpuProbeRunOptions['forkFn']>;
 }
 
 function stageModels(): { quality: string; fast: string; dir: string } {
@@ -142,9 +142,9 @@ describe('issue #251: the adapter identity survives probe failure and boot admis
     const sample = '';
     expect(probeOutputIsSane(sample), 'fixture guard: the sample must be genuinely non-sane').toBe(false);
     // The REAL parent full-probe path with a fake child (the production
-    // spawnFn seam): the child says ok/vulkan, the parent's own sanity check
+    // forkFn seam): the child says ok/vulkan, the parent's own sanity check
     // rejects the sample, and the child-reported device must survive.
-    const verdict = await runGpuProbe({ spawnFn: fakeSpawnReply(NON_SANE_REPORT) });
+    const verdict = await runGpuProbe({ forkFn: fakeForkReply(NON_SANE_REPORT) });
     expect(verdict.backend).toBe('cpu');
     expect(verdict.ok).toBe(false);
     expect(verdict.reason, 'the non-sane-sample rejection branch is the one taken').toContain('unusable output');
@@ -154,8 +154,8 @@ describe('issue #251: the adapter identity survives probe failure and boot admis
   it('persist-device: parent keeps the child-reported adapter on an unexpected backend (gpu-probe.ts)', async () => {
     const sample = 'OK';
     expect(probeOutputIsSane(sample), 'fixture guard: the sample itself must be sane (backend is the rejector)').toBe(true);
-    const report = JSON.stringify({ ok: true, backend: 'cpu', device: 'gpu-x', sample });
-    const verdict = await runGpuProbe({ spawnFn: fakeSpawnReply(report) });
+    const report = { ok: true, backend: 'cpu', device: 'gpu-x', sample };
+    const verdict = await runGpuProbe({ forkFn: fakeForkReply(report) });
     expect(verdict.backend).toBe('cpu');
     expect(verdict.ok).toBe(false);
     expect(verdict.reason, 'the unexpected-backend rejection branch is the one taken').toContain('unexpected backend');
@@ -270,7 +270,7 @@ describe('issue #251: the adapter identity survives probe failure and boot admis
   it('converge: a device-bearing CPU verdict persists on boot 1 and boot 2 adopts without a full probe', async () => {
     // Real vs injected for this row (details in the file header): the boot
     // chain, the parent probe parse, and the sidecar write/read are REAL; the
-    // child PROCESS is the production spawnFn seam, the boot-2 adapter answer
+    // child PROCESS is the production forkFn seam, the boot-2 adapter answer
     // comes from the production deviceQueryRun field, and warmup constructs a
     // fake backend through the production llamaFactory option.
     const profileDir = tempDir('gpu-identity-converge-');
@@ -284,7 +284,7 @@ describe('issue #251: the adapter identity survives probe failure and boot admis
       // startGpuProbe (the boot 2 device-only query goes through
       // deviceQueryRun instead, counted separately).
       counts.fullProbes += 1;
-      return runGpuProbe({ ...probeOpts, spawnFn: fakeSpawnReply(NON_SANE_REPORT) });
+      return runGpuProbe({ ...probeOpts, forkFn: fakeForkReply(NON_SANE_REPORT) });
     };
     const deviceQueryRunStub = (): Promise<GpuDeviceQueryResult> => {
       counts.deviceQueries += 1;

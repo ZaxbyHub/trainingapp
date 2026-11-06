@@ -7,6 +7,9 @@
 //
 // Plan-critic Round 1 (CRITICAL): every frozen probe check injects an explicit
 // `command`, so the PRODUCTION default spawn was never executed by any check.
+// (Issue #276 G3b: the launcher seam is now `forkFn` + `modulePath` - the child
+// is an Electron utilityProcess in the app, a node fork under vitest - and the
+// child reports over IPC instead of stdout.)
 // A packaged app that could not spawn its probe would silently always fall back
 // to CPU while all fourteen checks stayed green. `default spawn` below is the
 // test that closes that hole.
@@ -14,14 +17,17 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   GPU_PROBE_SIDECAR,
   terminateProbeChild,
   activeGpuVerdict,
   gpuProbeChildPath,
+  nodeForkGpuProbe,
   probeOutputIsSane,
+  resolveGpuProbeForkFn,
+  setGpuProbeForkFn,
   readGpuProbeVerdict,
   runGpuProbe,
   setActiveGpuVerdict,
@@ -32,18 +38,17 @@ import { LlamaEngine, type LlamaEngineBackend } from '../../main/backend/inferen
 
 const GB = 1024 ** 3;
 
-/** A spawn stand-in that records how it was called and can be made to answer. */
-function fakeSpawn(reply?: Record<string, unknown>, exitCode = 0) {
-  const calls: Array<{ file: string; args: string[]; env: NodeJS.ProcessEnv | undefined }> = [];
-  const spawnFn = ((file: string, args: string[], opts: { env?: NodeJS.ProcessEnv }) => {
-    calls.push({ file, args, env: opts?.env });
+/** A launcher stand-in (the production `forkFn` seam) that records how it was
+ *  called; its utility-style child posts `reply` over IPC and exits. */
+function fakeFork(reply?: Record<string, unknown>, exitCode = 0) {
+  const calls: Array<{ modulePath: string; args: string[] }> = [];
+  const forkFn = ((modulePath: string, args: string[]) => {
+    calls.push({ modulePath, args });
     const child = new EventEmitter() as EventEmitter & {
-      stdout: EventEmitter | null;
       stderr: EventEmitter | null;
       kill: (signal?: string) => boolean;
       killed: boolean;
     };
-    child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
     child.killed = false;
     child.kill = () => {
@@ -51,13 +56,28 @@ function fakeSpawn(reply?: Record<string, unknown>, exitCode = 0) {
       return true;
     };
     setImmediate(() => {
-      if (reply !== undefined) child.stdout?.emit('data', Buffer.from(JSON.stringify(reply)));
-      child.emit('close', exitCode, null);
+      if (reply !== undefined) child.emit('message', reply);
+      child.emit('exit', exitCode);
     });
     return child;
-  }) as unknown as NonNullable<GpuProbeRunOptions['spawnFn']>;
-  return { calls, spawnFn };
+  }) as unknown as NonNullable<GpuProbeRunOptions['forkFn']>;
+  return { calls, forkFn };
 }
+
+/** Real child scripts for the node-fork legs: they answer over IPC
+ *  (process.send) exactly like the compiled probe child does. */
+const scriptDir = fs.mkdtempSync(path.join(os.tmpdir(), 't155-children-'));
+afterAll(() => {
+  fs.rmSync(scriptDir, { recursive: true, force: true });
+});
+function childScript(name: string, source: string): string {
+  const file = path.join(scriptDir, name);
+  fs.writeFileSync(file, source);
+  return file;
+}
+const HANG_CHILD = 'setTimeout(() => {}, 60000);\n';
+const reportChild = (report: Record<string, unknown>): string =>
+  `process.send(${JSON.stringify(report)}, () => process.exit(0));\n`;
 
 function stageModels(): { quality: string; fast: string; dir: string } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 't155-perm-'));
@@ -76,27 +96,58 @@ afterEach(() => {
 });
 
 describe('issue #155: the PRODUCTION probe spawn (what the frozen checks never execute)', () => {
-  it('the default command is this process executable plus the compiled child module', () => {
-    // The frozen checks always inject `command`, so nothing else proves the
-    // packaged-app default. In a packaged Electron app the only Node runtime
-    // present is the Electron binary: hardcoding `node` passes in dev and
-    // fails in production.
-    const { calls, spawnFn } = fakeSpawn({ ok: true, backend: 'vulkan', device: 'd', sample: 'OK' });
-    return runGpuProbe({ spawnFn, args: ['/models/fast.gguf'] }).then(() => {
+  it('the default child module is the compiled probe child, and the model path is handed to it', () => {
+    // The frozen checks always inject the child, so nothing else proves the
+    // packaged-app default: the launcher receives gpuProbeChildPath() (the
+    // compiled sibling, inside app.asar when packaged) plus the model path.
+    const { calls, forkFn } = fakeFork({ ok: true, backend: 'vulkan', device: 'd', sample: 'OK' });
+    return runGpuProbe({ forkFn, args: ['/models/fast.gguf'] }).then(() => {
       expect(calls).toHaveLength(1);
-      expect(calls[0]?.file).toBe(process.execPath);
-      const childPath = gpuProbeChildPath();
-      expect(calls[0]?.args[0]).toBe(childPath);
+      expect(calls[0]?.modulePath).toBe(gpuProbeChildPath());
       // The model path is handed to the child, which loads the FAST profile's
       // GGUF rather than the 2.6 GB quality one.
-      expect(calls[0]?.args).toContain('/models/fast.gguf');
+      expect(calls[0]?.args).toEqual(['/models/fast.gguf']);
     });
   });
 
-  it('the child env carries ELECTRON_RUN_AS_NODE, without which the child is a browser process', async () => {
-    const { calls, spawnFn } = fakeSpawn({ ok: false, backend: 'cpu', reason: 'no device' });
-    await runGpuProbe({ spawnFn });
-    expect(calls[0]?.env?.ELECTRON_RUN_AS_NODE).toBe('1');
+  it('issue #276: inside Electron an unregistered launcher REFUSES (CPU verdict) - never an ELECTRON_RUN_AS_NODE spawn', async () => {
+    // Fuse semantics emulated: with runAsNode off, the Electron binary ignores
+    // ELECTRON_RUN_AS_NODE, so inside Electron the ONLY valid launcher is the
+    // registered utilityProcess one. Emulate an Electron runtime and prove the
+    // probe neither forks nor falls back.
+    setGpuProbeForkFn(null);
+    expect(resolveGpuProbeForkFn(true), 'Electron + nothing registered -> no launcher').toBeNull();
+    expect(resolveGpuProbeForkFn(false), 'plain node -> the node fork launcher').toBe(nodeForkGpuProbe);
+    Object.defineProperty(process.versions, 'electron', { value: '44.10.2', configurable: true });
+    try {
+      const verdict = await runGpuProbe({ modulePath: childScript('never-run.mjs', reportChild({ ok: true })) });
+      expect(verdict.backend).toBe('cpu');
+      expect(verdict.ok).toBe(false);
+      expect(verdict.reason).toContain('no utility-process launcher');
+    } finally {
+      delete (process.versions as Record<string, string | undefined>).electron;
+    }
+  });
+
+  it('issue #276: the REGISTERED launcher is the default, and its child report becomes the verdict', async () => {
+    const { calls, forkFn } = fakeFork({ ok: true, backend: 'vulkan', device: 'Arc Pro B50', sample: 'OK' });
+    setGpuProbeForkFn(forkFn);
+    try {
+      expect(resolveGpuProbeForkFn(true)).toBe(forkFn);
+      const verdict = await runGpuProbe({ args: ['/models/fast.gguf'] });
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.modulePath).toBe(gpuProbeChildPath());
+      expect(verdict).toMatchObject({ backend: 'vulkan', ok: true, device: 'Arc Pro B50' });
+    } finally {
+      setGpuProbeForkFn(null);
+    }
+  });
+
+  it('issue #276: only the IPC report counts - a clean exit with no report is the no-report fallback', async () => {
+    const { forkFn } = fakeFork(undefined, 0);
+    const verdict = await runGpuProbe({ forkFn });
+    expect(verdict.backend).toBe('cpu');
+    expect(verdict.reason).toBe('GPU probe did not return a readable report.');
   });
 
   it('the resolved child module path exists next to the compiled probe module', () => {
@@ -125,15 +176,14 @@ describe('issue #155: the PRODUCTION probe spawn (what the frozen checks never e
   });
 
   it('a probe child that never answers is terminated and resolves to CPU, never a throw', async () => {
-    // The hang case: no close event ever arrives.
-    const spawnFn = (() => {
-      const child = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; kill: () => boolean };
-      child.stdout = new EventEmitter();
+    // The hang case: no exit event ever arrives.
+    const forkFn = (() => {
+      const child = new EventEmitter() as EventEmitter & { stderr: EventEmitter; kill: () => boolean };
       child.stderr = new EventEmitter();
       child.kill = () => true;
       return child;
-    }) as unknown as NonNullable<GpuProbeRunOptions['spawnFn']>;
-    const verdict = await runGpuProbe({ spawnFn, timeoutMs: 60 });
+    }) as unknown as NonNullable<GpuProbeRunOptions['forkFn']>;
+    const verdict = await runGpuProbe({ forkFn, timeoutMs: 60 });
     expect(verdict.backend).toBe('cpu');
     expect(verdict.ok).toBe(false);
     expect(verdict.reason).not.toBe('');
@@ -142,8 +192,8 @@ describe('issue #155: the PRODUCTION probe spawn (what the frozen checks never e
 
 describe('issue #155: the probe judges output, and never trusts the child', () => {
   it('a child claiming success with garbage output is rejected by the PARENT', async () => {
-    const { spawnFn } = fakeSpawn({ ok: true, backend: 'vulkan', device: 'd', sample: ' \u0001\u0002\u0003 zz' });
-    const verdict = await runGpuProbe({ spawnFn });
+    const { forkFn } = fakeFork({ ok: true, backend: 'vulkan', device: 'd', sample: ' \u0001\u0002\u0003 zz' });
+    const verdict = await runGpuProbe({ forkFn });
     expect(verdict.ok).toBe(false);
     expect(verdict.backend).toBe('cpu');
     expect(verdict.reason).not.toBe('');
@@ -159,8 +209,8 @@ describe('issue #155: the probe judges output, and never trusts the child', () =
   });
 
   it('a child that never exits cleanly is reported with its exit state', async () => {
-    const { spawnFn } = fakeSpawn(undefined, 134);
-    const verdict = await runGpuProbe({ spawnFn });
+    const { forkFn } = fakeFork(undefined, 134);
+    const verdict = await runGpuProbe({ forkFn });
     expect(verdict.backend).toBe('cpu');
     expect(verdict.reason).toContain('134');
   });
@@ -396,9 +446,9 @@ describe('issue #155 Phase 4.5: the production seams the frozen checks never exe
       const slow = path.join(dir, 'slow.mjs');
       fs.writeFileSync(
         slow,
-        `setTimeout(() => { process.stdout.write(JSON.stringify({ ok: true, backend: 'vulkan', device: 'd', sample: 'OK' })); process.exit(0); }, 4000);\n`,
+        `setTimeout(() => { process.send({ ok: true, backend: 'vulkan', device: 'd', sample: 'OK' }, () => process.exit(0)); }, 4000);\n`,
       );
-      const verdict = await runGpuProbe({ command: [process.execPath, slow] });
+      const verdict = await runGpuProbe({ modulePath: slow });
       expect(verdict.ok, 'a probe that answers after ~4 s must succeed, not be SIGKILLed at 2 s').toBe(true);
       expect(verdict.backend).toBe('vulkan');
     } finally {
@@ -411,7 +461,7 @@ describe('issue #155 Phase 4.5: the production seams the frozen checks never exe
     try {
       const hang = path.join(dir, 'hang.mjs');
       fs.writeFileSync(hang, `setTimeout(() => {}, 60000);\n`);
-      const verdict = await runGpuProbe({ command: [process.execPath, hang], timeoutMs: 700 });
+      const verdict = await runGpuProbe({ modulePath: hang, timeoutMs: 700 });
       expect(verdict.ok).toBe(false);
       expect(verdict.backend).toBe('cpu');
       expect(verdict.reason).toContain('timed out');
@@ -430,7 +480,7 @@ describe('issue #155 Phase 4.5: the production seams the frozen checks never exe
       fs.writeFileSync(hang, `setTimeout(() => {}, 60000);\n`);
       let seen: { kill: (signal?: NodeJS.Signals) => unknown } | null = null;
       const promise = runGpuProbe({
-        command: [process.execPath, hang],
+        modulePath: hang,
         timeoutMs: 900,
         onChild: (child) => {
           seen = child;
@@ -450,7 +500,7 @@ describe('issue #155 Phase 4.5: the production seams the frozen checks never exe
       fs.writeFileSync(hang, `setTimeout(() => {}, 60000);\n`);
       let pid = 0;
       const promise = runGpuProbe({
-        command: [process.execPath, hang],
+        modulePath: hang,
         timeoutMs: 600,
         onChild: (child) => {
           pid = child.pid ?? 0;
@@ -657,7 +707,7 @@ describe('issue #155 Round 2: the fixes that had no guard now have one', () => {
         onChild?: (c: { kill: (s?: NodeJS.Signals) => unknown }) => void;
         onSettled?: () => void;
         timeoutMs?: number;
-      }) => runGpuProbe({ ...opts, command: [process.execPath, '-e', 'setTimeout(()=>{},60000)'] });
+      }) => runGpuProbe({ ...opts, modulePath: childScript('hang.mjs', HANG_CHILD) });
       const inFlight = h.startGpuProbe();
       const stopped = h.stop();
       await Promise.allSettled([inFlight, stopped]);
@@ -740,7 +790,7 @@ describe('issue #155 Round 2: the fixes that had no guard now have one', () => {
         onChild?: (c: { kill: (s?: NodeJS.Signals) => unknown }) => void;
         onSettled?: () => void;
         timeoutMs?: number;
-      }) => runGpuProbe({ ...opts, command: [process.execPath, '-e', 'process.stdout.write(JSON.stringify({ok:true,backend:"vulkan",sample:"OK"}))'] });
+      }) => runGpuProbe({ ...opts, modulePath: childScript('report.mjs', reportChild({ ok: true, backend: 'vulkan', sample: 'OK' })) });
       await h.startGpuProbe();
       await h.startGpuProbe();
       expect(
@@ -870,7 +920,7 @@ describe('issue #155 scenarios: the timeline, not the diff', () => {
       (host as unknown as { probeRun: unknown }).probeRun = (opts: {
         onChild?: (c: { kill: (s?: NodeJS.Signals) => unknown }) => void;
         onSettled?: () => void;
-      }) => runGpuProbe({ ...opts, command: [process.execPath, '-e', 'setTimeout(()=>{},60000)'] });
+      }) => runGpuProbe({ ...opts, modulePath: childScript('hang.mjs', HANG_CHILD) });
       const both = Promise.allSettled([h.startGpuProbe(), h.startGpuProbe()]);
       await new Promise((r) => setTimeout(r, 120));
       await h.stop();
@@ -920,8 +970,8 @@ describe('issue #155: the real probe, end to end', () => {
   // it explicitly when the source sibling is absent.
   const defaultChild = gpuProbeChildPath();
   const compiledChild = path.join(__dirname, '..', '..', 'dist', 'main', 'backend', 'inference', 'gpu-probe-child.js');
-  const command = fs.existsSync(defaultChild) ? undefined : [process.execPath, compiledChild];
-  const hasChild = command === undefined || fs.existsSync(command[1] as string);
+  const modulePath = fs.existsSync(defaultChild) ? undefined : compiledChild;
+  const hasChild = modulePath === undefined || fs.existsSync(modulePath);
   it.skipIf(!hasRealModel || !hasChild)('reports a real ADAPTER identity, not the backend name', async () => {
     if (!hasRealModel) {
       throw new Error(`unreachable: skipIf should have skipped - no staged model at ${REAL_FAST_MODEL}`);
@@ -929,7 +979,7 @@ describe('issue #155: the real probe, end to end', () => {
     if (!hasChild) {
       throw new Error('unreachable: skipIf should have skipped - no compiled gpu-probe-child.js');
     }
-    const verdict = await runGpuProbe({ command, args: [REAL_FAST_MODEL], timeoutMs: 120_000 });
+    const verdict = await runGpuProbe({ modulePath, args: [REAL_FAST_MODEL], timeoutMs: 120_000 });
     if (!verdict.ok) {
       // No usable GPU here. That is a legitimate outcome, not a failure - but it
       // must not be the string "vulkan", which is the bug this pins.
@@ -1115,7 +1165,7 @@ describe('issue #155 review: the probe child contract, without a GPU or weights'
   it.skipIf(!hasChild)('a missing probe model exits 0 with exactly one JSON verdict line', async () => {
     const missing = path.join(os.tmpdir(), 't155-no-such-model.gguf');
     const verdict = await runGpuProbe({
-      command: [process.execPath, compiledChild],
+      modulePath: compiledChild,
       args: [missing],
       timeoutMs: 30_000,
     });
@@ -1126,23 +1176,25 @@ describe('issue #155 review: the probe child contract, without a GPU or weights'
     expect(verdict.device, 'a failed probe must not invent a device identity').toBeNull();
   }, 60_000);
 
-  it.skipIf(!hasChild)('the child writes exactly ONE json line, and the parent parses it whole', async () => {
+  it.skipIf(!hasChild)('the child posts exactly ONE report object over IPC and exits 0', async () => {
+    // Issue #276 (G3b): the report rides the IPC channel (process.send under a
+    // node fork, process.parentPort.postMessage in an Electron utility
+    // process) - stdout is no longer part of the contract.
     const missing = path.join(os.tmpdir(), 't155-no-such-model-2.gguf');
-    const child = (await import('node:child_process')).spawn(process.execPath, [compiledChild, missing], {
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-      stdio: ['ignore', 'pipe', 'pipe'],
+    const child = (await import('node:child_process')).fork(compiledChild, [missing], {
+      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+      execArgv: [],
     });
-    let stdout = '';
-    child.stdout?.on('data', (c: Buffer) => {
-      stdout += c.toString('utf8');
+    const messages: unknown[] = [];
+    child.on('message', (m: unknown) => {
+      messages.push(m);
     });
     const code: number = await new Promise((resolve) => {
       child.on('close', (c) => resolve(c ?? -1));
     });
     expect(code, 'every failure shape must exit 0 so the parent reads the reason').toBe(0);
-    const lines = stdout.split('\n').filter((l) => l.trim() !== '');
-    expect(lines, 'the child must emit exactly one line, not a bare JSON blob the parser has to guess at').toHaveLength(1);
-    const parsed = JSON.parse(lines[0] as string) as Record<string, unknown>;
+    expect(messages, 'the child must post exactly one report').toHaveLength(1);
+    const parsed = messages[0] as Record<string, unknown>;
     expect(typeof parsed.ok).toBe('boolean');
     expect(parsed.backend).toBe('cpu');
     expect(typeof parsed.reason).toBe('string');
