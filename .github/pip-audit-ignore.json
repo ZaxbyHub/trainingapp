@@ -1,13 +1,13 @@
 {
-  "$comment": "Owned, expiring ignore for the required pip-audit step (issue #277 AC5). Every entry names the advisory id pip-audit reports, the owner, the owner issue carrying the decision, and an expiry after which the required context goes red. The initial entry: sentence-transformers GHSA-jhr6-gm9c-rqjv / CVE-2026-68770 (critical, all versions below 5.6.0) — requirements.txt pins >=2.2.0,<3.0.0, so every version the range admits is covered; changing the range is a maintainer decision on the audit epic (#284), not something the required context may wedge over.",
+  "$comment": "Owned, expiring ACCEPTED-RISK windows for the required pip-audit step (issue #277 AC5), keyed by PACKAGE. The gate's first CI run (2026-11-06) surfaced 129 open advisories across these 7 packages in the legacy Python harness's resolution (pypdf 67, pillow 50, chromadb 3, transformers 6, python-jose 1, ecdsa 1, diskcache 1) plus the sentence-transformers critical the audit originally named; the fix versions are semver-major bumps on the legacy harness - an upgrade decision that belongs to the maintainer on audit epic #284, not something this gate may decide by wedging. Every entry names the owner, the owner issue, and an expiry after which the required context goes red and the decision is forced. Per-package (vs the JS gate's per-advisory-id) is the disclosed, deliberate asymmetry for a 129-finding residual.",
   "entries": [
-    {
-      "id": "CVE-2026-68770",
-      "package": "sentence-transformers",
-      "reason": "legacy Python harness range decision lives on the audit epic; pip-audit matches this id as an alias of GHSA-jhr6-gm9c-rqjv",
-      "owner": "zaxbysauce",
-      "owner_issue": "https://github.com/ZaxbyHub/trainingapp/issues/284",
-      "expiry": "2027-02-04"
-    }
+    {"package": "sentence-transformers", "reason": "CVE-2026-68770 critical below 5.6.0; requirements range >=2.2.0,<3.0.0 admits only vulnerable versions", "owner": "zaxbysauce", "owner_issue": "https://github.com/ZaxbyHub/trainingapp/issues/284", "expiry": "2027-02-04"},
+    {"package": "pypdf", "reason": "67 open advisories on 4.3.1; fixes land in the 6.x major line - legacy harness upgrade decision on the epic", "owner": "zaxbysauce", "owner_issue": "https://github.com/ZaxbyHub/trainingapp/issues/284", "expiry": "2027-02-04"},
+    {"package": "pillow", "reason": "50 open advisories; fixes are major-line bumps - legacy harness upgrade decision on the epic", "owner": "zaxbysauce", "owner_issue": "https://github.com/ZaxbyHub/trainingapp/issues/284", "expiry": "2027-02-04"},
+    {"package": "chromadb", "reason": "3 open advisories; fix major-line bump - legacy harness upgrade decision on the epic", "owner": "zaxbysauce", "owner_issue": "https://github.com/ZaxbyHub/trainingapp/issues/284", "expiry": "2027-02-04"},
+    {"package": "transformers", "reason": "6 open advisories incl. PYSEC-2026-2288/2289/2290 fixed only in 5.x - major bump decision on the epic", "owner": "zaxbysauce", "owner_issue": "https://github.com/ZaxbyHub/trainingapp/issues/284", "expiry": "2027-02-04"},
+    {"package": "python-jose", "reason": "1 open advisory - legacy harness upgrade decision on the epic", "owner": "zaxbysauce", "owner_issue": "https://github.com/ZaxbyHub/trainingapp/issues/284", "expiry": "2027-02-04"},
+    {"package": "ecdsa", "reason": "1 open advisory - legacy harness upgrade decision on the epic", "owner": "zaxbysauce", "owner_issue": "https://github.com/ZaxbyHub/trainingapp/issues/284", "expiry": "2027-02-04"},
+    {"package": "diskcache", "reason": "1 open advisory - legacy harness upgrade decision on the epic", "owner": "zaxbysauce", "owner_issue": "https://github.com/ZaxbyHub/trainingapp/issues/284", "expiry": "2027-02-04"}
   ]
 }
