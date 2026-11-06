@@ -29,7 +29,7 @@ pydantic-settings>=2.0.0,<3.0.0  # Pydantic v2 settings management
 python-multipart>=0.0.18  # FastAPI form data parsing
 
 # GUI
-customtkinter>=5.2.0,<6.0.0
+customtkinter>=6.0.0,<7.0.0
 pillow>=10.0.0,<11.0.0
 
 # Testing
