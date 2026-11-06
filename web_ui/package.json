@@ -2,6 +2,10 @@
   "name": "doc-qa-web-ui",
   "private": true,
   "version": "0.1.0",
+
+  "engines": {
+    "node": ">=24.0.0 <25.0.0"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -31,15 +35,15 @@
     "edgevec": "^0.6.0",
     "flexsearch": "^0.8.0",
     "jszip": "^3.10.1",
-    "mammoth": "^1.8.0",
-    "pdfjs-dist": "^4.4.168",
+    "mammoth": "^1.12.3",
+    "pdfjs-dist": "^4.10.38",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^9.1.0",
     "remark-gfm": "^4.0.1",
     "remark-parse": "11.0.0",
     "unified": "11.0.5",
-    "xlsx": "^0.18.5"
+    "xlsx": "file:../vendor/sheetjs/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",

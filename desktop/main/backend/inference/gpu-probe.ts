@@ -14,7 +14,19 @@
 //
 // This module must stay electron-free (desktop/main/backend/types.ts:1-12 states
 // the rule for its neighbours): nothing here imports electron.
-import { spawn } from 'node:child_process';
+//
+// Issue #276 (G3b): the child no longer runs as the Electron binary under
+// ELECTRON_RUN_AS_NODE=1 — the packaged app ships with the runAsNode fuse off
+// (desktop/electron-builder.yml), which makes the binary ignore that variable.
+// Inside Electron the child is an Electron utilityProcess (a real separate OS
+// process, so the driver-abort isolation above still holds); the electron-aware
+// entry (desktop/main/index.ts) registers that launcher with
+// setGpuProbeForkFn(), keeping this module free of any electron import. Under
+// plain node (the headless dev server, vitest) the launcher is Node's own
+// child_process.fork. Either way the child reports over its IPC channel
+// (process.parentPort.postMessage / process.send) — never stdout — and the
+// parent consumes the 'message' + 'exit' events.
+import { fork } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
@@ -261,28 +273,93 @@ export function gpuProbeChildPath(): string {
   return path.join(path.dirname(fileURLToPath(import.meta.url)), 'gpu-probe-child.js');
 }
 
+/**
+ * The child handle the probe drives — the surface Electron's UtilityProcess and
+ * Node's forked ChildProcess share: an IPC 'message' per report, an 'exit' with
+ * the exit code (Node adds a signal; a utility process never does), an 'error'
+ * for launch/fatal failures, kill(), and an optional piped stderr for the
+ * failure detail. Electron's kill() takes no signal; passing one is harmless.
+ */
+export interface GpuProbeChildProcess {
+  on(event: 'message', listener: (message: unknown) => void): unknown;
+  on(event: 'exit', listener: (code: number | null, signal?: NodeJS.Signals | null) => void): unknown;
+  on(event: 'error', listener: (...args: unknown[]) => void): unknown;
+  kill(signal?: NodeJS.Signals): boolean;
+  readonly stderr?: NodeJS.ReadableStream | null;
+  readonly pid?: number | undefined;
+}
+
+/** Launch the probe child module with argv `args`. */
+export type GpuProbeForkFn = (modulePath: string, args: string[]) => GpuProbeChildProcess;
+
+/** The handle handed to `onChild`: kill-able by the caller (the host's stop()). */
+export interface GpuProbeChildHandle {
+  kill: (signal?: NodeJS.Signals) => unknown;
+  readonly pid?: number | undefined;
+}
+
+/**
+ * Plain-node launcher: child_process.fork with an IPC channel (the child
+ * answers with process.send). Used only OUTSIDE Electron — inside Electron,
+ * fork() would re-launch the Electron binary with ELECTRON_RUN_AS_NODE, which
+ * the packaged runAsNode fuse refuses. stdout is discarded (native logging can
+ * never corrupt the report: the report rides IPC); stderr is piped for the
+ * failure detail. execArgv is cleared so a host's loader flags never leak in.
+ */
+export const nodeForkGpuProbe: GpuProbeForkFn = (modulePath, args) =>
+  fork(modulePath, args, {
+    stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+    execArgv: [],
+  }) as unknown as GpuProbeChildProcess;
+
+let registeredForkFn: GpuProbeForkFn | null = null;
+
+/**
+ * Register the launcher used when a probe passes no `forkFn`. The electron-aware
+ * entry registers an Electron utilityProcess launcher at app ready; null
+ * restores the unregistered default.
+ */
+export function setGpuProbeForkFn(forkFn: GpuProbeForkFn | null): void {
+  registeredForkFn = forkFn;
+}
+
+/**
+ * The launcher a probe without an explicit `forkFn` uses: the registered one,
+ * else Node's fork when NOT inside Electron, else null — inside Electron with
+ * no registered utilityProcess launcher the probe refuses (CPU verdict) rather
+ * than fall back to an ELECTRON_RUN_AS_NODE spawn the fuse disables.
+ */
+export function resolveGpuProbeForkFn(
+  insideElectron: boolean = typeof process.versions.electron === 'string',
+): GpuProbeForkFn | null {
+  if (registeredForkFn !== null) return registeredForkFn;
+  return insideElectron ? null : nodeForkGpuProbe;
+}
+
 export interface GpuProbeRunOptions {
   /**
-   * The child command to spawn. Defaults to the PRODUCTION spawn: the current
-   * executable with ELECTRON_RUN_AS_NODE=1, because in a packaged app the only
-   * Node runtime present is the Electron binary - `node` is not shipped, so
-   * hardcoding it passes in dev and fails in production. Override only in
-   * tests. argv = [execPath, childPath, ...extraArgs].
+   * The child module to launch. Defaults to the compiled gpu-probe-child.js
+   * beside this module (gpuProbeChildPath). Override only in tests.
    */
-  command?: string[];
-  /** Extra argv appended after the child script path (the model path). */
+  modulePath?: string;
+  /** Extra argv handed to the child (the model path, or --device-only). */
   args?: string[];
-  /** Deadline; on expiry the child is SIGTERMed then SIGKILLed. */
+  /** Deadline; on expiry the child is killed (then killed again after a grace). */
   timeoutMs?: number;
-  /** Injectable spawn, so tests never fork a real process. */
-  spawnFn?: typeof spawn;
   /**
-   * Called with the live child as soon as it is spawned, so the CALLER can
+   * Injectable launcher, so tests never fork a real process. Defaults to
+   * resolveGpuProbeForkFn(): the registered utilityProcess launcher inside
+   * Electron, Node's fork under plain node.
+   */
+  forkFn?: GpuProbeForkFn;
+  /**
+   * Called with the live child as soon as it is launched, so the CALLER can
    * guarantee no probe outlives it (the host kills it in `stop()`). Without
    * this the child handle lives only inside this promise's closure and a
-   * shutdown cannot reach it.
+   * shutdown cannot reach it. A kill through this handle is recorded as an
+   * EXTERNAL kill (see runGpuProbeCore).
    */
-  onChild?: (child: { kill: (signal?: NodeJS.Signals) => unknown }) => void;
+  onChild?: (child: GpuProbeChildHandle) => void;
   /** Called once the probe has settled. Lets a caller drop per-probe state
    * (the host uses it to clear its shutdown-abandoned flag). */
   onSettled?: () => void;
@@ -306,52 +383,84 @@ interface ProbeChildReport {
 }
 
 /**
- * Run the probe out of process and resolve a verdict. NEVER throws and never
- * rejects: every failure mode - spawn error, timeout, non-zero exit, signal
- * death, unparseable stdout - resolves to a CPU verdict carrying a reason. The
- * caller (the host) therefore has exactly one code path to handle.
- *
- * Core contract (issue #246 AC4): in deviceOnly mode an EXTERNAL signal death
- * resolves `null` (mapped to 'cancelled' by runGpuDeviceQuery) — the internal
- * deadline always resolves its own timeout verdict before any close event can
- * arrive, so an unsettled signal close is provably someone else's kill.
+ * What the transport observed, independent of the verdict: whether the child
+ * delivered a structured report over IPC, and whether/how it exited. The
+ * packaged smoke (issue #276) asserts on this to tell a REAL child report from
+ * the parent's no-report / process-error fallback, which also yields a CPU
+ * verdict.
  */
-async function runGpuProbeCore(opts: GpuProbeRunOptions = {}): Promise<GpuProbeVerdict | null> {
-  const command = opts.command ?? [process.execPath, gpuProbeChildPath()];
-  const spawnFn = opts.spawnFn ?? spawn;
+export interface GpuProbeTransport {
+  reportReceived: boolean;
+  report: Record<string, unknown> | null;
+  exited: boolean;
+  exitCode: number | null;
+}
+
+/** Report size ceiling (serialized chars) — the old stdout cap, kept. */
+const MAX_REPORT_CHARS = 1_000_000;
+/**
+ * IPC message and exit notifications travel separate channels, so a clean
+ * exit can be observed a moment before the child's last message is
+ * dispatched. A clean exit with no report yet waits this long for it before
+ * concluding the child never reported.
+ */
+const EXIT_REPORT_GRACE_MS = 500;
+
+function describeProcessError(args: unknown[]): string {
+  const [first, second] = args;
+  if (first instanceof Error) return first.message;
+  // Electron utilityProcess 'error': (type, location, report).
+  const type = typeof first === 'string' ? first : String(first);
+  return typeof second === 'string' && second !== '' ? `${type} at ${second}` : type;
+}
+
+/**
+ * Run the probe out of process and resolve a verdict. NEVER throws and never
+ * rejects: every failure mode - launch error, timeout, non-zero exit, external
+ * kill, no or unparseable report - resolves to a CPU verdict carrying a
+ * reason. The caller (the host) therefore has exactly one code path to handle.
+ *
+ * Core contract (issue #246 AC4): in deviceOnly mode an EXTERNAL kill resolves
+ * `null` (mapped to 'cancelled' by runGpuDeviceQuery). External = a kill
+ * through the handle given to `onChild` (the host's stop()), or an OS signal
+ * death the internal deadline did not cause; the internal deadline always
+ * resolves its own timeout verdict before any exit event can arrive.
+ */
+async function runGpuProbeCore(
+  opts: GpuProbeRunOptions = {},
+): Promise<{ verdict: GpuProbeVerdict | null; transport: GpuProbeTransport }> {
+  const modulePath = opts.modulePath ?? gpuProbeChildPath();
+  const forkFn = opts.forkFn ?? resolveGpuProbeForkFn();
   const timeoutMs = opts.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
+  const transport: GpuProbeTransport = { reportReceived: false, report: null, exited: false, exitCode: null };
 
-  return await new Promise<GpuProbeVerdict | null>((resolve) => {
+  const verdict = await new Promise<GpuProbeVerdict | null>((resolve) => {
     let settled = false;
-    let stdout = '';
-    const decoder = new StringDecoder('utf8');
     let stderr = '';
-    const decoder2 = new StringDecoder('utf8');
-    let child: ReturnType<typeof spawn>;
+    const decoder = new StringDecoder('utf8');
+    let child: GpuProbeChildProcess;
+    let killRequested = false;
+    let exitGrace: NodeJS.Timeout | undefined;
 
-    const finish = (verdict: GpuProbeVerdict | null): void => {
+    const finish = (result: GpuProbeVerdict | null): void => {
       if (settled) return;
       settled = true;
       clearTimeout(deadline);
+      if (exitGrace !== undefined) clearTimeout(exitGrace);
       // Clear the escalation ONLY when we did not just arm it. The deadline
       // callback arms `escalate` and then calls finish() in the same tick, so an
-      // unconditional clear cancelled it ~0 ms after arming it and SIGKILL could
-      // never fire - dead code behind a comment claiming sidecar-manager parity.
+      // unconditional clear cancelled it ~0 ms after arming it and the second
+      // kill could never fire.
       if (escalate !== undefined && !armed) clearTimeout(escalate);
       opts.onSettled?.();
-      resolve(verdict);
+      resolve(result);
     };
 
-    // The SIGKILL escalation is armed ONLY when the deadline fires, never at
-    // t=0. Arming it up front capped the EFFECTIVE timeout at KILL_GRACE_MS
-    // (2 s) while the documented default is DEFAULT_PROBE_TIMEOUT_MS (60 s):
-    // any child still loading its GGUF past 2 s was killed and reported as a
-    // failed device.
-    //
-    // Ordering note: unlike sidecar-manager.ts:244-249, this resolves the
-    // promise from inside the deadline callback, so `finish` must NOT clear the
-    // timer it just armed - otherwise SIGKILL is unreachable. `armed` records
-    // which case we are in.
+    // The escalation is armed ONLY when the deadline fires, never at t=0.
+    // Arming it up front capped the EFFECTIVE timeout at KILL_GRACE_MS (2 s)
+    // while the documented default is DEFAULT_PROBE_TIMEOUT_MS (60 s).
+    // `finish` must NOT clear the timer the deadline just armed; `armed`
+    // records which case we are in.
     let escalate: NodeJS.Timeout | undefined;
     let armed = false;
     const deadline = setTimeout(() => {
@@ -373,80 +482,91 @@ async function runGpuProbeCore(opts: GpuProbeRunOptions = {}): Promise<GpuProbeV
     }, timeoutMs);
     deadline.unref?.();
 
+    if (forkFn === null) {
+      finish(
+        cpuVerdict(
+          'GPU probe has no utility-process launcher registered in this Electron process (the ELECTRON_RUN_AS_NODE spawn is disabled by the runAsNode fuse).',
+        ),
+      );
+      return;
+    }
+    if (typeof modulePath !== 'string' || modulePath === '') {
+      finish(cpuVerdict('GPU probe was given no child module to run.'));
+      return;
+    }
     try {
-      const executable = command[0];
-      if (typeof executable !== 'string' || executable === '') {
-        finish(cpuVerdict('GPU probe was given no executable to run.'));
-        return;
-      }
-      child = spawnFn(executable, [...command.slice(1), ...(opts.args ?? [])], {
-        // ELECTRON_RUN_AS_NODE is what makes the Electron binary execute the
-        // script as Node instead of starting a browser process.
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-        stdio: ['ignore', 'pipe', 'pipe'],
-        windowsHide: true,
-      });
+      child = forkFn(modulePath, [...(opts.args ?? [])]);
     } catch (err) {
       finish(cpuVerdict(`GPU probe could not be started: ${err instanceof Error ? err.message : String(err)}`));
       return;
     }
 
-    // Hand the live child to the caller before any listener can fire, so a
-    // shutdown racing this spawn still has something to kill.
-    opts.onChild?.(child);
+    // Hand the caller a kill-able handle before any listener can fire, so a
+    // shutdown racing this launch still has something to kill. A kill through
+    // it is recorded as external (the host's stop()).
+    const handle: GpuProbeChildHandle = {
+      kill: (signal?: NodeJS.Signals) => {
+        killRequested = true;
+        return child.kill(signal);
+      },
+      get pid() {
+        return child.pid;
+      },
+    };
+    opts.onChild?.(handle);
 
-    child.stdout?.on('data', (chunk: Buffer) => {
-      // StringDecoder: a driver-reported adapter name is load-bearing across
-      // processes (persisted, then compared byte-for-byte at the next boot's
-      // admission flight), so a multi-byte sequence split at a chunk boundary
-      // must not decode to U+FFFD in one child and not the other.
-      stdout += decoder.write(chunk);
-      if (stdout.length > 1_000_000) {
+    child.on('message', (message: unknown) => {
+      if (settled) return;
+      let size = Number.POSITIVE_INFINITY;
+      try {
+        size = JSON.stringify(message)?.length ?? 0;
+      } catch {
+        // unserializable: treated as oversize below
+      }
+      if (size > MAX_REPORT_CHARS) {
         try {
           child.kill('SIGKILL');
         } catch {
           // already gone
         }
         finish(cpuVerdict('GPU probe produced more output than the probe contract allows.'));
+        return;
+      }
+      // The child contract is ONE report object; if a child ever sends more,
+      // the last object wins (the old last-stdout-line rule).
+      if (typeof message === 'object' && message !== null && !Array.isArray(message)) {
+        transport.reportReceived = true;
+        transport.report = message as Record<string, unknown>;
       }
     });
     child.stderr?.on('data', (chunk: Buffer) => {
-      stderr += decoder2.write(chunk);
+      // StringDecoder: never split a multi-byte sequence at a chunk boundary.
+      stderr += decoder.write(chunk);
       if (stderr.length > 64_000) stderr = stderr.slice(0, 64_000);
-    });
-    child.on('error', (err: Error) => {
-      finish(cpuVerdict(`GPU probe process error: ${err.message}`));
-    });
-    // An unhandled 'error' on a stream throws in the embedding process. Attach
-    // a listener so a mid-transfer stream failure becomes a CPU verdict.
-    child.stdout?.on('error', (err: Error) => {
-      finish(cpuVerdict(`GPU probe output stream error: ${err.message}`));
     });
     child.stderr?.on('error', () => {
       // stderr is diagnostic only; never let its failure decide the verdict.
     });
-    child.on('close', (code: number | null, signal: string | null) => {
-      // Issue #246 (AC4): a signal death reaching an UNSETTLED device-only
-      // query is an external kill (our own deadline settles first) — the
-      // host's stop(), not a machine property. Full probes keep the historic
-      // cpu-verdict classification for signal deaths.
-      if (signal !== null && opts.deviceOnly === true) {
+    child.on('error', (...args: unknown[]) => {
+      finish(cpuVerdict(`GPU probe process error: ${describeProcessError(args)}`));
+    });
+
+    const evaluate = (code: number | null, signal: NodeJS.Signals | null): void => {
+      // Issue #246 (AC4): an external kill reaching an UNSETTLED device-only
+      // query is the host's stop(), not a machine property. Full probes keep
+      // the cpu-verdict classification.
+      if ((killRequested || signal !== null) && opts.deviceOnly === true) {
         finish(null);
         return;
       }
       if (code !== 0) {
-        const how = signal !== null ? `signal ${signal}` : `exit code ${code}`;
+        const how = signal !== null ? `signal ${signal}` : killRequested ? `terminated, exit code ${code}` : `exit code ${code}`;
         const detail = stderr.trim().split('\n').slice(-1)[0] ?? '';
         finish(cpuVerdict(`GPU probe did not complete cleanly (${how})${detail === '' ? '' : `: ${detail}`}`));
         return;
       }
-      let report: ProbeChildReport;
-      try {
-        // The child contract is exactly one JSON object on stdout; take the
-        // last non-empty line so incidental native logging cannot break it.
-        const lines = stdout.split('\n').filter((line) => line.trim() !== '');
-        report = JSON.parse(lines[lines.length - 1] ?? '') as ProbeChildReport;
-      } catch {
+      const report = transport.report as ProbeChildReport | null;
+      if (report === null) {
         finish(cpuVerdict('GPU probe did not return a readable report.'));
         return;
       }
@@ -495,8 +615,24 @@ async function runGpuProbeCore(opts: GpuProbeRunOptions = {}): Promise<GpuProbeV
           ? { measured: report.measured }
           : {}),
       });
+    };
+
+    child.on('exit', (code: number | null, signal?: NodeJS.Signals | null) => {
+      transport.exited = true;
+      transport.exitCode = typeof code === 'number' ? code : null;
+      if (settled) return;
+      const sig = signal ?? null;
+      // A clean exit can be observed before the child's report is dispatched
+      // (separate IPC channel); give the report a bounded moment to land.
+      if (code === 0 && sig === null && !killRequested && transport.report === null) {
+        exitGrace = setTimeout(() => evaluate(code, sig), EXIT_REPORT_GRACE_MS);
+        exitGrace.unref?.();
+        return;
+      }
+      evaluate(code, sig);
     });
   });
+  return { verdict, transport };
 }
 
 /**
@@ -505,7 +641,7 @@ async function runGpuProbeCore(opts: GpuProbeRunOptions = {}): Promise<GpuProbeV
  * host has exactly one code path to handle.
  */
 export async function runGpuProbe(opts: GpuProbeRunOptions = {}): Promise<GpuProbeVerdict> {
-  const verdict = await runGpuProbeCore(opts);
+  const { verdict } = await runGpuProbeCore(opts);
   // null is producible only in deviceOnly mode (an external kill), which no
   // full-probe caller sets.
   return verdict ?? cpuVerdict('GPU probe was terminated before it could report.');
@@ -513,7 +649,7 @@ export async function runGpuProbe(opts: GpuProbeRunOptions = {}): Promise<GpuPro
 
 /** Terminate an in-flight probe child. Exported so host shutdown can guarantee
  *  no probe outlives the backend host (sidecar-manager.ts:245-252 shape). */
-export function terminateProbeChild(child: { kill: (signal?: NodeJS.Signals) => unknown } | null): void {
+export function terminateProbeChild(child: GpuProbeChildHandle | null): void {
   if (child === null) return;
   try {
     child.kill('SIGTERM');
@@ -526,7 +662,7 @@ export function terminateProbeChild(child: { kill: (signal?: NodeJS.Signals) => 
  * Issue #246 (AC4): the result of a boot-time device-only query.
  *  - 'device': the child named the current Vulkan adapter.
  *  - 'unknown': every failure shape (ok:false, empty device list, non-vulkan
- *    backend, malformed stdout, spawn error, timeout) — callers fail OPEN
+ *    backend, missing/malformed report, launch error, timeout) — callers fail OPEN
  *    (adopt the stored verdict) because the comparison only rejects on
  *    positive evidence of mismatch.
  *  - 'cancelled': OUR OWN shutdown killed the query (the runGpuProbe
@@ -545,19 +681,19 @@ export interface GpuDeviceRunOptions extends GpuProbeRunOptions {
  * right now. Never throws; see GpuDeviceQueryResult for the outcomes.
  *
  * Cancelled has two provable shapes: the caller's abandoned-children set
- * contains the settled child (the host's stop() kill), or the child died BY
- * SIGNAL while the query was still unsettled — an external kill, because the
- * internal deadline resolves timeout-unknown itself before any close event
- * can arrive.
+ * contains the settled child (the host's stop() kill), or the child was killed
+ * externally while the query was still unsettled (a kill through the onChild
+ * handle, or an OS signal death) — never the internal deadline, which resolves
+ * timeout-unknown itself before any exit event can arrive.
  */
 export async function runGpuDeviceQuery(opts: GpuDeviceRunOptions = {}): Promise<GpuDeviceQueryResult> {
-  let child: { kill: (signal?: NodeJS.Signals) => unknown } | null = null;
+  let child: GpuProbeChildHandle | null = null;
   // 4.5-review PRR-003: abandonment must be captured INSIDE onSettled, BEFORE
   // delegating — the caller's own onSettled prunes the child from its set
   // (index.ts), so a post-await has() read the pruned set and could never be
   // true (the check was dead; 'cancelled' rested solely on signal death).
   let settledChildWasAbandoned = false;
-  const verdict = await runGpuProbeCore({
+  const { verdict } = await runGpuProbeCore({
     ...opts,
     deviceOnly: true,
     args: ['--device-only'],
@@ -576,4 +712,55 @@ export async function runGpuDeviceQuery(opts: GpuDeviceRunOptions = {}): Promise
     return { status: 'device', device: verdict.device };
   }
   return { status: 'unknown' };
+}
+
+/**
+ * The probe plus what its transport observed (see GpuProbeTransport). Same
+ * never-throws contract as runGpuProbe; `verdict` is null only for an external
+ * kill of a device-only run.
+ */
+export async function runGpuProbeDiagnostic(
+  opts: GpuProbeRunOptions = {},
+): Promise<{ verdict: GpuProbeVerdict | null; transport: GpuProbeTransport }> {
+  return runGpuProbeCore(opts);
+}
+
+/** The packaged-smoke evidence file (issue #276), written beside the sidecars. */
+export const GPU_PROBE_SMOKE_RECORD = 'gpu-probe-smoke.json';
+/** Opt-in env switch for the smoke leg; nothing runs unless it is exactly '1'. */
+export const GPU_PROBE_SMOKE_ENV = 'TRAININGAPP_SMOKE_GPU_PROBE';
+
+/**
+ * Issue #276 (G3b) packaged-smoke leg: run ONE device-only probe through the
+ * production launcher (the utilityProcess registered by the electron-aware
+ * entry) and persist the verdict AND the transport observation to
+ * `<dir>/gpu-probe-smoke.json`, so desktop/scripts/packaged-smoke.mjs can
+ * assert a REAL structured child report plus an observed child exit in the
+ * packaged app with its fuses active. Device-only needs no GPU and no model:
+ * on a GPU-less runner the child still reports ({ok:false, ...}) and exits 0.
+ * Opt-in via TRAININGAPP_SMOKE_GPU_PROBE=1 only; never throws.
+ */
+export async function runGpuProbeSmokeLeg(dir: string, opts: GpuProbeRunOptions = {}): Promise<void> {
+  const startedAt = new Date().toISOString();
+  let record: Record<string, unknown>;
+  try {
+    const { verdict, transport } = await runGpuProbeCore({
+      timeoutMs: 120_000,
+      ...opts,
+      deviceOnly: true,
+      args: ['--device-only'],
+    });
+    record = { v: 1, startedAt, finishedAt: new Date().toISOString(), verdict, transport };
+  } catch (err) {
+    record = { v: 1, startedAt, finishedAt: new Date().toISOString(), error: err instanceof Error ? err.message : String(err) };
+  }
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const target = path.join(dir, GPU_PROBE_SMOKE_RECORD);
+    const tmp = `${target}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(record));
+    fs.renameSync(tmp, target);
+  } catch {
+    // Evidence only: a write failure surfaces as a missing record in the smoke.
+  }
 }

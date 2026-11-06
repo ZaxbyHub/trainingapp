@@ -163,45 +163,44 @@ describe('#156 gpu-probe verdict: the optional `measured` field', () => {
   });
 });
 
-/** A spawn stand-in (the t155 fakeSpawn pattern) answering one JSON report. */
-function fakeSpawn(reply: Record<string, unknown>) {
-  const spawnFn = ((_file: string, _args: string[], _opts: { env?: NodeJS.ProcessEnv }) => {
+/** A launcher stand-in (the t155 fakeFork pattern) whose child posts one
+ *  report over IPC (issue #276: the utilityProcess parentPort contract). */
+function fakeFork(reply: Record<string, unknown>) {
+  const forkFn = ((_modulePath: string, _args: string[]) => {
     const child = new EventEmitter() as EventEmitter & {
-      stdout: EventEmitter | null;
       stderr: EventEmitter | null;
       kill: (signal?: string) => boolean;
     };
-    child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
     child.kill = () => true;
     setImmediate(() => {
-      child.stdout?.emit('data', Buffer.from(JSON.stringify(reply)));
-      child.emit('close', 0, null);
+      child.emit('message', reply);
+      child.emit('exit', 0);
     });
     return child;
-  }) as unknown as NonNullable<GpuProbeRunOptions['spawnFn']>;
-  return { spawnFn };
+  }) as unknown as NonNullable<GpuProbeRunOptions['forkFn']>;
+  return { forkFn };
 }
 
 describe('#156 gpu-probe run: the child-measured tok/s rides the verdict', () => {
   it('a successful child report carrying measured surfaces it on the verdict', async () => {
-    const { spawnFn } = fakeSpawn({ ok: true, backend: 'vulkan', device: 'd', sample: 'OK', measured: 38.4 });
-    const verdict = await runGpuProbe({ spawnFn });
+    const { forkFn } = fakeFork({ ok: true, backend: 'vulkan', device: 'd', sample: 'OK', measured: 38.4 });
+    const verdict = await runGpuProbe({ forkFn });
     expect(verdict.ok).toBe(true);
     expect(verdict.backend).toBe('vulkan');
     expect(verdict.measured).toBe(38.4);
   });
 
   it('a report without measured resolves a valid verdict with no measured', async () => {
-    const { spawnFn } = fakeSpawn({ ok: true, backend: 'vulkan', device: 'd', sample: 'OK' });
-    const verdict = await runGpuProbe({ spawnFn });
+    const { forkFn } = fakeFork({ ok: true, backend: 'vulkan', device: 'd', sample: 'OK' });
+    const verdict = await runGpuProbe({ forkFn });
     expect(verdict.ok).toBe(true);
     expect(verdict.measured).toBeUndefined();
   });
 
   it('a garbage (non-number) child measured is dropped, not adopted', async () => {
-    const { spawnFn } = fakeSpawn({ ok: true, backend: 'vulkan', device: 'd', sample: 'OK', measured: 'lots' });
-    const verdict = await runGpuProbe({ spawnFn });
+    const { forkFn } = fakeFork({ ok: true, backend: 'vulkan', device: 'd', sample: 'OK', measured: 'lots' });
+    const verdict = await runGpuProbe({ forkFn });
     expect(verdict.ok).toBe(true);
     expect(verdict.measured).toBeUndefined();
   });

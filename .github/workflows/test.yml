@@ -81,14 +81,14 @@ jobs:
     timeout-minutes: 180
     strategy:
       # A failing leg must not cancel the others: in a long suite, fail-fast
-      # destroys two legs of diagnostics (and their --durations output) while
+      # destroys the other leg of diagnostics (and its --durations output) while
       # still billing the runner hours.
       fail-fast: false
       matrix:
-        python-version: ['3.10', '3.11', '3.12']
+        python-version: ['3.11', '3.12']
         include:
           # Coverage on one leg only (~1.2x overhead measured on that leg);
-          # the other two legs run without the tracer.
+          # the other leg runs without the tracer.
           - python-version: '3.11'
             with-cov: true
 
@@ -254,4 +254,4 @@ jobs:
 
   # The Python conformance suite moved to .github/workflows/conformance.yml
   # (issue #87): path-scoped via the conformance bucket and required for
-  # merge, independent of the 3-leg matrix.
+  # merge, independent of the 2-leg matrix.

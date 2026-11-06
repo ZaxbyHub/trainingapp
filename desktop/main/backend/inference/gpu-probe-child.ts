@@ -1,10 +1,14 @@
 // Issue #155: the out-of-process half of the GPU capability probe.
 //
-// Runs as a child of the backend host (ELECTRON_RUN_AS_NODE=1) so that a Vulkan
-// driver fault - which aborts rather than throws - cannot take the app with it.
-// The contract with the parent is exactly ONE JSON object on stdout, followed by
-// exit 0. Anything else is interpreted by the parent as "no usable GPU", which
-// is the safe direction.
+// Runs as a separate OS process so that a Vulkan driver fault - which aborts
+// rather than throws - cannot take the app with it. Issue #276 (G3b): inside
+// Electron it is a utilityProcess (the packaged runAsNode fuse disables the old
+// ELECTRON_RUN_AS_NODE spawn); under plain node it is a child_process.fork
+// child. The contract with the parent is exactly ONE report object posted over
+// the IPC channel (process.parentPort.postMessage in a utility process,
+// process.send in a forked node child), followed by exit 0. Anything else is
+// interpreted by the parent as "no usable GPU", which is the safe direction.
+// stdout is NOT part of the contract (native logging there is harmless).
 //
 // It loads the model handed to it on argv (the host passes the FAST profile's
 // GGUF): the probe validates the BACKEND, the backend behaves identically for
@@ -64,12 +68,36 @@ export function probeContextOptions(): { threads: number; contextSize: number; i
   return { threads: 2, contextSize: PROBE_CONTEXT_SIZE, ignoreMemorySafetyChecks: true };
 }
 
-function emit(report: Record<string, unknown>): void {
-  process.stdout.write(JSON.stringify(report));
+/** The utility-process parent port (Electron), when this is a utility process. */
+function parentPort(): { postMessage(message: unknown): void } | null {
+  const port = (process as unknown as { parentPort?: { postMessage(message: unknown): void } | null }).parentPort;
+  return port !== undefined && port !== null && typeof port.postMessage === 'function' ? port : null;
 }
 
-function fail(reason: string, device: string | null = null): void {
-  emit({ ok: false, backend: 'cpu', reason, device });
+/**
+ * Deliver the ONE report over the IPC channel and resolve once it is handed
+ * off: parentPort.postMessage writes synchronously into the Mojo pipe; Node's
+ * process.send is asynchronous, so its callback gates the caller's exit. With
+ * no IPC channel at all (a manual run) the report goes to stdout for a human.
+ */
+function emit(report: Record<string, unknown>): Promise<void> {
+  const port = parentPort();
+  if (port !== null) {
+    port.postMessage(report);
+    return Promise.resolve();
+  }
+  if (typeof process.send === 'function') {
+    return new Promise((resolve) => {
+      process.send?.(report, undefined, undefined, () => resolve());
+    });
+  }
+  process.stdout.write(`${JSON.stringify(report)}
+`);
+  return Promise.resolve();
+}
+
+async function fail(reason: string, device: string | null = null): Promise<void> {
+  await emit({ ok: false, backend: 'cpu', reason, device });
   process.exit(0);
 }
 
@@ -110,20 +138,46 @@ async function runDeviceOnly(llama: Nlc.Llama): Promise<void> {
     // A device name is a nicety; never let it fail the query.
     device = null;
   }
-  emit({ ok: true, backend: 'vulkan', device });
+  await emit({ ok: true, backend: 'vulkan', device });
   await llama.dispose().catch(() => {});
 }
 
+/**
+ * The argv handed to this child by the parent. A forked node child sees
+ * [execPath, thisScript, ...args]; an Electron utility process may or may not
+ * carry the module path in argv, so the arguments are taken after this
+ * script's own entry when present, else after argv[0].
+ */
+function childArgs(): string[] {
+  let self: string;
+  try {
+    self = path.resolve(fileURLToPath(import.meta.url)).toLowerCase();
+  } catch {
+    return process.argv.slice(1);
+  }
+  const idx = process.argv.findIndex((arg, i) => {
+    if (i === 0) return false;
+    try {
+      return path.resolve(arg).toLowerCase() === self;
+    } catch {
+      return false;
+    }
+  });
+  return idx >= 0 ? process.argv.slice(idx + 1) : process.argv.slice(1);
+}
+
 async function main(): Promise<void> {
-  const deviceOnly = process.argv[2] === '--device-only';
-  const modelPath = deviceOnly ? undefined : process.argv[2];
+  const args = childArgs();
+  const deviceOnly = args.includes('--device-only');
+  // The model path is the probe's only positional argument (the last one).
+  const modelPath = deviceOnly ? undefined : args[args.length - 1];
   if (!deviceOnly) {
     if (typeof modelPath !== 'string' || modelPath === '') {
-      fail('GPU probe received no model path.');
+      await fail('GPU probe received no model path.');
       return;
     }
     if (!fs.existsSync(modelPath)) {
-      fail(`GPU probe: the probe model is not staged at ${modelPath}.`);
+      await fail(`GPU probe: the probe model is not staged at ${modelPath}.`);
       return;
     }
   }
@@ -133,7 +187,7 @@ async function main(): Promise<void> {
     const nlc = await import('node-llama-cpp');
     llama = await nlc.getLlama(PROBE_LLAMA_OPTIONS);
   } catch (err) {
-    fail(`GPU probe: no usable GPU backend (${err instanceof Error ? err.message : String(err)}).`);
+    await fail(`GPU probe: no usable GPU backend (${err instanceof Error ? err.message : String(err)}).`);
     return;
   }
 
@@ -150,13 +204,13 @@ async function main(): Promise<void> {
   const selected = llama.gpu;
   if (selected !== 'vulkan') {
     await llama.dispose().catch(() => {});
-    fail(`GPU probe: this host selected "${String(selected)}" rather than a usable Vulkan device.`, probeAdapterDevice);
+    await fail(`GPU probe: this host selected "${String(selected)}" rather than a usable Vulkan device.`, probeAdapterDevice);
     return;
   }
 
   if (deviceOnly) {
     await runDeviceOnly(llama);
-    return;
+    process.exit(0);
   }
 
   let model: Nlc.LlamaModel | undefined;
@@ -171,7 +225,7 @@ async function main(): Promise<void> {
     await context?.dispose().catch(() => {});
     await model?.dispose().catch(() => {});
     await llama.dispose().catch(() => {});
-    fail(`GPU probe: the GPU could not load the probe model (${err instanceof Error ? err.message : String(err)}).`, probeAdapterDevice);
+    await fail(`GPU probe: the GPU could not load the probe model (${err instanceof Error ? err.message : String(err)}).`, probeAdapterDevice);
     return;
   }
 
@@ -211,7 +265,7 @@ async function main(): Promise<void> {
     // reuses the single capture taken right after `getLlama` — no second,
     // potentially inconsistent lookup.
     const device = probeAdapterDevice;
-    emit({
+    await emit({
       ok: true,
       backend: 'vulkan',
       device,
@@ -228,15 +282,22 @@ async function main(): Promise<void> {
   await model.dispose().catch(() => {});
   await llama.dispose().catch(() => {});
   if (generationFailure !== null) {
-    fail(`GPU probe: the GPU failed to generate (${generationFailure}).`, probeAdapterDevice);
+    await fail(`GPU probe: the GPU failed to generate (${generationFailure}).`, probeAdapterDevice);
+    return;
   }
+  // The report is already handed off; exit explicitly so a native handle left
+  // behind by the library (or an open IPC channel) can never keep the child
+  // alive until the parent's deadline.
+  process.exit(0);
 }
 
 // Self-run ONLY as the process entry (issue #246: importing this module from a
-// spec must be side-effect-free). argv[1] is this script under
-// ELECTRON_RUN_AS_NODE; resolve both sides through real paths so a junctioned
-// or differently-cased checkout still matches.
+// spec must be side-effect-free). Two entry shapes: an Electron utility process
+// (process.parentPort is present only there, issue #276) or a forked node child
+// (argv[1] is this script; resolve both sides through real paths so a
+// junctioned or differently-cased checkout still matches).
 function isProcessEntry(): boolean {
+  if (parentPort() !== null) return true;
   const entry = process.argv[1];
   if (typeof entry !== 'string' || entry === '') return false;
   try {
@@ -247,9 +308,9 @@ function isProcessEntry(): boolean {
 }
 
 if (isProcessEntry()) {
-  void main().catch((err: unknown) => {
+  void main().catch(async (err: unknown) => {
     // Issue #251 (AC5): a crash after `getLlama` carries the captured adapter
     // identity; before it, the capture is still null (device-less).
-    fail(`GPU probe crashed: ${err instanceof Error ? err.message : String(err)}`, probeAdapterDevice);
+    await fail(`GPU probe crashed: ${err instanceof Error ? err.message : String(err)}`, probeAdapterDevice);
   });
 }

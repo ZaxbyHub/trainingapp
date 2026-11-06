@@ -18,7 +18,8 @@ tag invalidates the affected section — re-review is required and tracked as a 
 issue, never silently assumed.
 
 The application code itself is MIT (see `LICENSE` at the repository root); this file
-covers the models and bundled content only.
+covers the models, bundled content, and vendored third-party code (see the final
+section) only.
 
 ## LLM — Quality profile (per ADR-0002, amended by #156)
 
@@ -123,3 +124,22 @@ Storyline publish — operator-local and git-excluded, like the model weights. T
 repository asserts no redistribution right over the course content; distributing an
 installer that carries it is the operator's responsibility under the source material's
 own terms (the same posture as `opmed-initial` above).
+
+## Vendored third-party code
+
+### SheetJS `xlsx` 0.20.3 (issue #276)
+
+- **Artifact:** `vendor/sheetjs/xlsx-0.20.3.tgz` (2,409,319 bytes), consumed by
+  `web_ui`, `desktop` and `packtool` through `"xlsx": "file:../vendor/sheetjs/xlsx-0.20.3.tgz"`;
+  the desktop installer ships it inside the packaged app.
+- **Provenance:** the official SheetJS CDN tarball
+  <https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz> (SheetJS publishes 0.19 and later
+  only there; the npm registry stops at the advisory-affected 0.18.5). SHA-512 hex
+  `a0b0eade3c3b01c2ea2961f60210a9553665f267fa5f661178ff8d7a1d12254cd5fc1759623b61f78b46e6da22301d4f3eb62dc4e09f6a850292fb6e1fedc024`;
+  fetch and verify commands live in `vendor/README.md`.
+- **License type:** Apache-2.0 (SheetJS Community Edition; `package/LICENSE` in the
+  tarball).
+- **Required notices:** standard Apache-2.0 Section 4 set — license copy (shipped inside
+  the package), retention of attribution notices, change statements (none: the tarball
+  is committed unmodified).
+- **Restrictions:** none beyond the standard Apache-2.0 grant.

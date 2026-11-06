@@ -2,7 +2,8 @@
 // desktop/vitest.config.ts aliases the bare specifier 'electron' to this file,
 // so neither the specs nor the production seams under test need the real
 // Electron binary. The stub mirrors the small surface the seams are allowed to
-// touch: app, BrowserWindow, protocol, contextBridge, ipcRenderer, ipcMain,
+// touch: app, BrowserWindow, protocol, contextBridge, ipcRenderer, ipcMain, session,
+// utilityProcess,
 // shell.
 //
 // Test-driving notes:
@@ -20,6 +21,14 @@
 //   what channel got registered and rewire it.
 // - `BrowserWindow.setWindowOpenHandler` is a vi.fn capturing the handler so
 //   navigation-lockdown specs can invoke it and check the deny decision.
+// - `session.defaultSession.setPermissionRequestHandler` /
+//   `setPermissionCheckHandler` are vi.fn recorders (issue #276 AC4): the
+//   b2-permission-handlers spec extracts the registered handlers from their
+//   mock calls and invokes them per permission.
+// - `utilityProcess.fork` (issue #276 G3b) is a vi.fn returning a
+//   FakeUtilityProcess (an EventEmitter with kill/pid/stderr/postMessage);
+//   specs drive it with `child.emit('message', report)` / `emit('exit', 0)`.
+//   The default child posts nothing and exits 1 — override per spec.
 // - Call `__resetElectronStub()` from beforeEach in every spec.
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
@@ -148,6 +157,52 @@ export const dialog = {
   ),
 };
 
+// issue #276 AC4: the default session's permission-handler surface. The
+// recorders keep every registered handler in mock.calls; production code
+// registers each exactly once per bootstrap.
+export const session = {
+  defaultSession: {
+    setPermissionRequestHandler: vi.fn(),
+    setPermissionCheckHandler: vi.fn(),
+  },
+};
+
+// issue #276 G3b: Electron utilityProcess stand-in for the GPU probe launcher.
+export class FakeUtilityProcess extends EventEmitter {
+  readonly modulePath: string;
+  readonly args: string[];
+  readonly options: Record<string, unknown> | undefined;
+  pid: number | undefined = 4242;
+  stdout: EventEmitter | null = null;
+  stderr: EventEmitter | null = new EventEmitter();
+  killed = false;
+  kill = vi.fn((): boolean => {
+    this.killed = true;
+    return true;
+  });
+  postMessage = vi.fn();
+  constructor(modulePath: string, args: string[] = [], options?: Record<string, unknown>) {
+    super();
+    this.modulePath = modulePath;
+    this.args = args;
+    this.options = options;
+  }
+}
+
+/** Default fork: a child that posts nothing and exits 1 on the next tick (a
+ *  module that failed to load) — so a bootstrap-driven probe in an unrelated
+ *  spec settles to its CPU fallback promptly instead of hanging to its
+ *  deadline. Specs that drive the probe override the implementation. */
+function defaultFork(modulePath: string, args?: string[], options?: Record<string, unknown>): FakeUtilityProcess {
+  const child = new FakeUtilityProcess(modulePath, args ?? [], options);
+  setImmediate(() => child.emit('exit', 1));
+  return child;
+}
+
+export const utilityProcess = {
+  fork: vi.fn(defaultFork),
+};
+
 /** universal-provider-settings-overhaul: no OS encryption in tests (keys stay session-only). */
 export const safeStorage = {
   isEncryptionAvailable: vi.fn(() => false),
@@ -193,6 +248,10 @@ export function __resetElectronStub(): void {
   ipcMain.on.mockClear();
   ipcMain.once.mockClear();
   ipcMain.removeHandler.mockClear();
+  utilityProcess.fork.mockReset();
+  utilityProcess.fork.mockImplementation(defaultFork);
+  session.defaultSession.setPermissionRequestHandler.mockReset();
+  session.defaultSession.setPermissionCheckHandler.mockReset();
   dialog.showErrorBox.mockClear();
   dialog.showSaveDialog.mockClear();
   dialog.showSaveDialog.mockReturnValue(Promise.resolve({ canceled: true }));

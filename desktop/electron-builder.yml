@@ -57,6 +57,16 @@ nsis:
   # Keep false until a deliberate uninstall-data policy exists (#84): true
   # would silently wipe %APPDATA%/TrainingApp on uninstall.
   deleteAppDataOnUninstall: false
+# issue #276 AC5: Electron fuses flipped at package time. runAsNode off stops
+# the packaged binary honouring ELECTRON_RUN_AS_NODE (the GPU probe runs as a
+# utilityProcess instead, issue #276 G3b); the two Node-exposure fuses stop
+# --inspect-style CLI flags and NODE_OPTIONS from reaching the main process.
+# onlyLoadAppFromAsar / enableEmbeddedAsarIntegrityValidation wait for a signed
+# installer (Workstream H).
+electronFuses:
+  runAsNode: false
+  enableNodeCliInspectArguments: false
+  enableNodeOptionsEnvironmentVariable: false
 npmRebuild: false
 compression: normal
 # Native addons and wasm/worker assets cannot load from inside the asar

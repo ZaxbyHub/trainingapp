@@ -1,0 +1,45 @@
+{
+  "$comment": "Owned, expiring allowlist for the dependency-audit gate (issue #277 AC1). Every entry names the advisory id, the affected package, an owner, the owner issue carrying the upgrade decision, and an expiry after which the required context goes red — the expiries force the decisions. Entries exist ONLY for the three semver-major families the frontier audit left fixable no other way: sharp (inherited by @huggingface/transformers 3.x — the only fix is transformers 4.x, epic #284 E8(b)), tinypool (inherited by vitest 3.x — the only fix is vitest 5). simple-git/argv-parser cleared at the G workstream's non-major refresh and are NOT allowlisted.",
+  "entries": [
+    {
+      "id": "GHSA-f88m-g3jw-g9cj",
+      "package": "sharp",
+      "reason": "libvips inheritance; the only fix is @huggingface/transformers 4.x (semver-major)",
+      "owner": "zaxbysauce",
+      "owner_issue": "https://github.com/ZaxbyHub/trainingapp/issues/284",
+      "expiry": "2027-02-04"
+    },
+    {
+      "id": "GHSA-rgj7-g3m4-5g8c",
+      "package": "sharp",
+      "reason": "libvips inheritance; the only fix is @huggingface/transformers 4.x (semver-major)",
+      "owner": "zaxbysauce",
+      "owner_issue": "https://github.com/ZaxbyHub/trainingapp/issues/284",
+      "expiry": "2027-02-04"
+    },
+    {
+      "id": "GHSA-wq5f-xc86-pv6w",
+      "package": "sharp",
+      "reason": "libvips inheritance; the only fix is @huggingface/transformers 4.x (semver-major)",
+      "owner": "zaxbysauce",
+      "owner_issue": "https://github.com/ZaxbyHub/trainingapp/issues/284",
+      "expiry": "2027-02-04"
+    },
+    {
+      "id": "GHSA-5gmw-xhrv-c9v3",
+      "package": "tinypool",
+      "reason": "the only fix is vitest 5.x (semver-major); devDependency in all three packages",
+      "owner": "zaxbysauce",
+      "owner_issue": "https://github.com/ZaxbyHub/trainingapp/issues/284",
+      "expiry": "2027-02-04"
+    },
+    {
+      "id": "GHSA-85c8-ppgw-ccpr",
+      "package": "tinypool",
+      "reason": "the only fix is vitest 5.x (semver-major); devDependency in all three packages",
+      "owner": "zaxbysauce",
+      "owner_issue": "https://github.com/ZaxbyHub/trainingapp/issues/284",
+      "expiry": "2027-02-04"
+    }
+  ]
+}

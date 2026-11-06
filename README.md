@@ -193,9 +193,9 @@ The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, 
 | TXT/MD | `txt-extractor.ts` | Native text processing |
 
 #### Dependencies Added
-- `pdfjs-dist` ^4.4.168
-- `mammoth` ^1.8.0
-- `xlsx` ^0.18.5
+- `pdfjs-dist` ^4.10.38
+- `mammoth` ^1.12.3
+- `xlsx` file:../vendor/sheetjs/xlsx-0.20.3.tgz (vendored official tarball — the npm registry publishes no fixed line)
 - `jszip` ^3.10.1
 
 ### Settings (Phase 6)

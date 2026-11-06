@@ -1,0 +1,30 @@
+# Dependabot version + security updates (issue #277 AC2).
+# npm graphs: the three shipped packages (web_ui, desktop, packtool).
+# pip: the root requirements.txt. Actions: workflow action pins.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /web_ui
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: npm
+    directory: /desktop
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: npm
+    directory: /packtool
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

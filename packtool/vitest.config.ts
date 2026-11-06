@@ -27,5 +27,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include,
+    // SheetJS ESM file I/O needs XLSX.set_fs(fs) (issue #276; see the file).
+    setupFiles: ['./vitest.setup.ts'],
   },
 });

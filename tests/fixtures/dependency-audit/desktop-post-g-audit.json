@@ -1,0 +1,248 @@
+{
+ "metadata": {
+  "dependencies": {
+   "dev": 332,
+   "optional": 124,
+   "peer": 13,
+   "peerOptional": 0,
+   "prod": 207,
+   "total": 603
+  },
+  "vulnerabilities": {
+   "critical": 2,
+   "high": 2,
+   "info": 0,
+   "low": 0,
+   "moderate": 7,
+   "total": 11
+  }
+ },
+ "vulnerabilities": {
+  "@huggingface/transformers": {
+   "effects": [],
+   "fixAvailable": {
+    "isSemVerMajor": true,
+    "name": "@huggingface/transformers",
+    "version": "4.3.2"
+   },
+   "isDirect": true,
+   "name": "@huggingface/transformers",
+   "nodes": [
+    "node_modules/@huggingface/transformers"
+   ],
+   "range": "<=4.2.0",
+   "severity": "high",
+   "via": [
+    "sharp"
+   ]
+  },
+  "@vitest/mocker": {
+   "effects": [
+    "vitest"
+   ],
+   "fixAvailable": {
+    "isSemVerMajor": true,
+    "name": "vitest",
+    "version": "5.1.0"
+   },
+   "isDirect": false,
+   "name": "@vitest/mocker",
+   "nodes": [
+    "node_modules/@vitest/mocker"
+   ],
+   "range": "<=4.1.11",
+   "severity": "moderate",
+   "via": [
+    {
+     "cvss": {
+      "score": 5.9,
+      "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N"
+     },
+     "cwe": [
+      "CWE-22"
+     ],
+     "dependency": "@vitest/mocker",
+     "name": "@vitest/mocker",
+     "range": ">=2.1.0 <4.1.11",
+     "severity": "moderate",
+     "source": 1193684,
+     "title": "Vitest: Path Traversal / Arbitrary File Read via @vitest/mocker Redirect Mock",
+     "url": "https://github.com/advisories/GHSA-82fw-gwwq-j7x9"
+    },
+    {
+     "cvss": {
+      "score": 4.7,
+      "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:C/C:L/I:L/A:N"
+     },
+     "cwe": [
+      "CWE-94",
+      "CWE-116",
+      "CWE-306"
+     ],
+     "dependency": "@vitest/mocker",
+     "name": "@vitest/mocker",
+     "range": ">=2.1.0-beta.7 <4.1.12",
+     "severity": "moderate",
+     "source": 1242767,
+     "title": "Vitest: Code injection via unauthenticated manual mock registration",
+     "url": "https://github.com/advisories/GHSA-qxg6-89mg-rqv8"
+    }
+   ]
+  },
+  "sharp": {
+   "effects": [
+    "@huggingface/transformers"
+   ],
+   "fixAvailable": {
+    "isSemVerMajor": true,
+    "name": "@huggingface/transformers",
+    "version": "4.3.2"
+   },
+   "isDirect": false,
+   "name": "sharp",
+   "nodes": [
+    "node_modules/sharp"
+   ],
+   "range": "<=0.35.5-rc.1",
+   "severity": "high",
+   "via": [
+    {
+     "cvss": {
+      "score": 0,
+      "vectorString": null
+     },
+     "cwe": [
+      "CWE-1395"
+     ],
+     "dependency": "sharp",
+     "name": "sharp",
+     "range": "<0.35.0",
+     "severity": "high",
+     "source": 1124066,
+     "title": "sharp inherited vulnerabilities in libvips: CVE-2026-33327, CVE-2026-33328, CVE-2026-35590, CVE-2026-35591",
+     "url": "https://github.com/advisories/GHSA-f88m-g3jw-g9cj"
+    },
+    {
+     "cvss": {
+      "score": 0,
+      "vectorString": null
+     },
+     "cwe": [
+      "CWE-122"
+     ],
+     "dependency": "sharp",
+     "name": "sharp",
+     "range": "<0.35.4",
+     "severity": "high",
+     "source": 1193725,
+     "title": "sharp: Vulnerabilities in libheif: GHSA-g89c-p67h-r497 and GHSA-2jg2-4ch7-h545",
+     "url": "https://github.com/advisories/GHSA-rgj7-g3m4-5g8c"
+    },
+    {
+     "cvss": {
+      "score": 0,
+      "vectorString": null
+     },
+     "cwe": [
+      "CWE-416",
+      "CWE-1395"
+     ],
+     "dependency": "sharp",
+     "name": "sharp",
+     "range": "<0.35.5",
+     "severity": "high",
+     "source": 1241331,
+     "title": "sharp : Vulnerability in librsvg dependency CVE-2026-96889",
+     "url": "https://github.com/advisories/GHSA-wq5f-xc86-pv6w"
+    }
+   ]
+  },
+  "tinypool": {
+   "effects": [
+    "vitest"
+   ],
+   "fixAvailable": {
+    "isSemVerMajor": true,
+    "name": "vitest",
+    "version": "5.1.0"
+   },
+   "isDirect": false,
+   "name": "tinypool",
+   "nodes": [
+    "node_modules/tinypool"
+   ],
+   "range": "<=2.1.1",
+   "severity": "critical",
+   "via": [
+    {
+     "cvss": {
+      "score": 0,
+      "vectorString": null
+     },
+     "cwe": [
+      "CWE-1321"
+     ],
+     "dependency": "tinypool",
+     "name": "tinypool",
+     "range": "<=2.1.0",
+     "severity": "critical",
+     "source": 1241260,
+     "title": "Tinypool: Prototype Pollution gadget in worker options leads to Remote Code Execution",
+     "url": "https://github.com/advisories/GHSA-5gmw-xhrv-c9v3"
+    },
+    {
+     "cvss": {
+      "score": 0,
+      "vectorString": null
+     },
+     "cwe": [
+      "CWE-94",
+      "CWE-1321"
+     ],
+     "dependency": "tinypool",
+     "name": "tinypool",
+     "range": "<2.1.2",
+     "severity": "critical",
+     "source": 1241261,
+     "title": "Tinypool: Prototype Pollution Gadget to RCE in run() options",
+     "url": "https://github.com/advisories/GHSA-85c8-ppgw-ccpr"
+    }
+   ]
+  },
+  "vitest": {
+   "effects": [],
+   "fixAvailable": {
+    "isSemVerMajor": true,
+    "name": "vitest",
+    "version": "5.1.0"
+   },
+   "isDirect": true,
+   "name": "vitest",
+   "nodes": [
+    "node_modules/vitest"
+   ],
+   "range": "0.0.95 - 4.1.10",
+   "severity": "critical",
+   "via": [
+    "@vitest/mocker",
+    {
+     "cvss": {
+      "score": 5.9,
+      "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N"
+     },
+     "cwe": [
+      "CWE-22"
+     ],
+     "dependency": "vitest",
+     "name": "vitest",
+     "range": ">=2.1.0 <4.1.11",
+     "severity": "moderate",
+     "source": 1193683,
+     "title": "Vitest: Path Traversal / Arbitrary File Read via @vitest/mocker Redirect Mock",
+     "url": "https://github.com/advisories/GHSA-82fw-gwwq-j7x9"
+    },
+    "tinypool"
+   ]
+  }
+ }
+}

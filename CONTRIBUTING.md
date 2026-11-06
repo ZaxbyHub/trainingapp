@@ -141,6 +141,37 @@ This section covers work found during a PR review or a PR-feedback round that th
 - **CI is path-scoped with fail-open buckets** — a new top-level tree runs everything on first touch.
 - A `NEW-SURFACE` argv naming a spec absent at base fails with vitest's `No test files found` or pytest's file-not-found — write the real signature verbatim in `expect`.
 
+## Dependency currency policy
+
+Enforced by the required `dependency-audit` context (`.github/workflows/security.yml`
+→ `scripts/audit_gate.py` against `.github/audit-allowlist.json`) and the
+`python-conformance` pip-audit step (`.github/workflows/conformance.yml`
+→ `scripts/pip_audit_gate.py` against `.github/pip-audit-ignore.json` — that job is bucket-scoped, so the Python scan runs only when the diff matches the conformance bucket (Python-surface PRs and matching master pushes), not on unrelated changes: issue #277 AC5 accepted that scope explicitly; the JavaScript graphs are covered on EVERY PR by the unfiltered `dependency-audit` context); the
+guardrail files under `tests/` are rostered in the required `security` job's
+`Audit guards` step (issue #277):
+
+- **Supported Electron majors**: the desktop `electron` spec stays on the
+  current supported major at or past its newest patch line (issue #276 moved
+  the floor to 44.9.1); an Electron bump must keep `b2-security-config` and
+  the desktop unit suite green and the packaged smoke's GPU-probe leg (step 8)
+  reporting a real child report.
+- **One-week patch-or-allowlist rule for HIGH advisories**: a new HIGH or
+  CRITICAL advisory in any shipped JavaScript graph (web_ui, desktop,
+  packtool) is cleared within one week by a non-major refresh, or carried by
+  an `.github/audit-allowlist.json` entry naming the advisory id, package,
+  owner, owner issue and an expiry of at most 90 days. Expired entries fail
+  the required context; the expiry is what forces the upgrade decision.
+- **One exact version per extractor twin**: `mammoth` and `pdfjs-dist` resolve
+  to identical versions in all three lockfiles — a pack built by packtool and
+  a desktop upload of the same file must extract the same text (ADR-0004
+  chunk ids derive from it). `tests/test_extractor_twins.py` fails on drift.
+- **SheetJS CDN check at release**: `xlsx` ships only as the committed
+  `vendor/sheetjs/*.tgz` tarball (the npm registry has no fixed version);
+  every release re-checks cdn.sheetjs.com for a newer 0.20.x and updates the
+  tarball + lockfile integrity together (`tests/test_vendored_xlsx.py`). The
+  Python manifest follows the same owned-expiring-ignore discipline for
+  advisories whose fix the maintainer has not yet accepted.
+
 ## Trace evidence and acceptance-check conventions
 
 Two conventions govern how this repository keeps issue-tracer evidence honest

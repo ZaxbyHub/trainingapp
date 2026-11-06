@@ -9,7 +9,9 @@ repos:
       - id: check-yaml
       - id: check-added-large-files
         args: ['--maxkb=1000']
-        exclude: '^desktop/e2e/fixtures/'
+        # issue #276: the vendored SheetJS tarball (2.3 MB) is committed on purpose;
+        # its lockfile integrity is pinned by tests/test_vendored_xlsx.py.
+        exclude: '^(desktop/e2e/fixtures/|vendor/sheetjs/[^/]+\.tgz$)'
 
   - repo: https://github.com/psf/black
     rev: 23.12.1

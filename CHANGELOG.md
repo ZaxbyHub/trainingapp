@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+- **Dependency currency and Electron hardening (issue #276)**:
+  - **Vendored SheetJS 0.20.3**: `xlsx` now resolves in web_ui, desktop and packtool to the
+    committed official SheetJS CDN tarball `vendor/sheetjs/xlsx-0.20.3.tgz` (Apache-2.0;
+    provenance and sha512 in `vendor/README.md` and `docs/licenses.md`) through
+    `"xlsx": "file:../vendor/sheetjs/xlsx-0.20.3.tgz"`, clearing GHSA-4r6h-8v6p-xvw6 and
+    GHSA-5pgg-2g8v-p4x9 (both HIGH, no npm-registry fix). The tarball is marked `binary` in
+    `.gitattributes`, and `tests/test_vendored_xlsx.py` pins each lockfile's xlsx version,
+    vendor `resolved` path and `integrity` to the tarball's own sha512.
+  - **Extractor twins on one version**: `mammoth` resolves to 1.12.3 and `pdfjs-dist` to
+    4.10.38 in web_ui, desktop and packtool (web_ui's specs move from `^1.8.0`/`^4.4.168`,
+    desktop's mammoth from 1.12.2), so pack-build and runtime extraction of the same file
+    cannot diverge; `tests/test_extractor_twins.py` fails on any cross-package drift.
+  - **Electron floor and non-major advisory refresh**: desktop `electron` moves to `^44.9.1`
+    (locked 44.10.2), clearing GHSA-jr5w-w6x2-84p9 (HIGH) and the four MEDIUM 44.x advisories;
+    `tests/test_dependency_currency.py` pins the lockfile at or past 44.9.1. `npm audit fix`
+    (no `--force`) in all three packages applies every non-major fix (tar, @xmldom/xmldom, vite,
+    vitest 3.2.7, postcss, nanoid, form-data, browserslist, source-map-js, undici,
+    brace-expansion, concurrently/shell-quote, electron-builder 26.18.1, and node-llama-cpp
+    3.22.3, whose simple-git 4 dependency clears the simple-git/argv-parser advisories). The
+    remaining HIGH/CRITICAL findings are the semver-major sharp (via @huggingface/transformers
+    3.x) and vitest/tinypool families in each package.
+  - **Renderer permission handlers and Electron fuses**: the desktop shell registers
+    deny-by-default `setPermissionRequestHandler` / `setPermissionCheckHandler` on
+    `session.defaultSession` before any window exists, allowing only
+    `clipboard-sanitized-write` (copy actions) and `persistent-storage`
+    (`navigator.storage.persist()`); `electron-builder.yml` declares `electronFuses` with
+    `runAsNode`, `enableNodeCliInspectArguments` and `enableNodeOptionsEnvironmentVariable`
+    off. Pinned by `b2-permission-handlers.test.ts` and `tests/test_electron_fuses.py`.
+
 - **Claimant-aware pack document lifetime in the Python runtime (issue #287)**: the Python
   PackManager's lifecycle verbs (`remove`, public `supersede`, `rollback`, and install's
   delete-before-reingest) now consult the registry rows' per-pack docs maps before
