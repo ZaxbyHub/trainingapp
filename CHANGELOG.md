@@ -10,6 +10,10 @@
     GHSA-5pgg-2g8v-p4x9 (both HIGH, no npm-registry fix). The tarball is marked `binary` in
     `.gitattributes`, and `tests/test_vendored_xlsx.py` pins each lockfile's xlsx version,
     vendor `resolved` path and `integrity` to the tarball's own sha512.
+  - **Extractor twins on one version**: `mammoth` resolves to 1.12.3 and `pdfjs-dist` to
+    4.10.38 in web_ui, desktop and packtool (web_ui's specs move from `^1.8.0`/`^4.4.168`,
+    desktop's mammoth from 1.12.2), so pack-build and runtime extraction of the same file
+    cannot diverge; `tests/test_extractor_twins.py` fails on any cross-package drift.
 
 - **Claimant-aware pack document lifetime in the Python runtime (issue #287)**: the Python
   PackManager's lifecycle verbs (`remove`, public `supersede`, `rollback`, and install's

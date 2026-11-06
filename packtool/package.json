@@ -14,7 +14,7 @@
     "@huggingface/transformers": "^3.8.1",
     "better-sqlite3": "13.0.3",
     "jszip": "^3.10.2",
-    "mammoth": "^1.12.2",
+    "mammoth": "^1.12.3",
     "pdfjs-dist": "^4.10.38",
     "sqlite-vec": "0.1.9",
     "xlsx": "file:../vendor/sheetjs/xlsx-0.20.3.tgz"
