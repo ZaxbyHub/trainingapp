@@ -153,6 +153,9 @@ _WEBUI = [
     "desktop/main/security/csp.ts",
     "desktop/main/protocol.ts",
     "desktop/main/backend/packs/pack-archive-rules.ts",
+    # issue #276 AC8: the vendored SheetJS tarball is parsed by the web-ui
+    # extractor; a vendor-only change must run the job that exercises xlsx
+    "vendor/**",
 ]
 
 _PACK = [
@@ -166,6 +169,9 @@ _PACK = [
     "tests/fixtures/storyline-mini/**",
     "tests/fixtures/storyline-mini-story-html-stub.html",
     ".github/workflows/conformance.yml",
+    # issue #276 AC8: packtool parses workbooks with the vendored SheetJS
+    # tarball; a vendor-only change must run the job that builds+verifies packs
+    "vendor/**",
 ]
 
 _EVAL = [

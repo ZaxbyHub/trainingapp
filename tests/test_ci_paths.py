@@ -188,6 +188,15 @@ def test_python_empty_diff_fails_open():
         # job, so a generator or corpus edit must trigger it
         ("webui", ["contracts/tests/gen-pack-signature-vectors.mjs"], True),
         ("webui", ["contracts/pack-signature-vectors.json"], True),
+        # issue #276 AC8: a vendored SheetJS tarball change must run the jobs
+        # that parse workbooks with it (web-ui extractor + packtool builds)
+        ("webui", ["vendor/sheetjs/xlsx-0.20.3.tgz"], True),
+        ("webui", ["vendor/README.md"], True),
+        ("pack", ["vendor/sheetjs/xlsx-0.20.3.tgz"], True),
+        ("pack", ["vendor/sheetjs/"], True),
+        # a tarball-only diff still keeps the python bucket fail-open (unknown
+        # path): tests/test_vendored_xlsx.py reads the tarball itself
+        ("python", ["vendor/sheetjs/xlsx-0.20.3.tgz"], True),
         ("conformance", ["contracts/api.openapi.yaml", "api_server.py"], True),
         ("conformance", ["contracts/tests/run_conformance.py"], True),
         ("conformance", ["web_ui/src/lib/x.ts"], False),
