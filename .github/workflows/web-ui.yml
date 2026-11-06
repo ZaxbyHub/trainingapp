@@ -253,7 +253,7 @@ jobs:
       # ever written.
       - name: Upload Playwright traces on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: web-ui-e2e-traces
           path: web_ui/test-results/
@@ -306,7 +306,7 @@ jobs:
 
       - name: Upload Playwright traces and diffs on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: web-ui-visual-baseline-diffs
           path: web_ui/test-results/
