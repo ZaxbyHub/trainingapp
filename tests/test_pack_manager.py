@@ -849,7 +849,7 @@ def test_shared_doc_survival_keeps_claim_on_upgrade_dropping_doc(workspace):
     pm = install_sibling_pair(workspace)
     shared = shared_doc_id()
     before = doc_chunk_ids(pm.store, shared)
-
+    assert before, "fixture failed to install the shared doc"
     upgraded = build_multi_doc_pack(
         workspace, "src-a2", "pack-a", "2.0.0", {"docs/a-only.json": A_ONLY_OBJ}
     )
@@ -930,7 +930,7 @@ def test_shared_doc_survival_other_version_claim_keeps_doc_until_whole_pack_remo
     pm.rollback("pack-a", "1.0.0")
     shared = shared_doc_id()
     before = doc_chunk_ids(pm.store, shared)
-
+    assert before, "fixture failed to install the shared doc"
     rows = {r.version: r for r in pm.list_installed()}
     assert rows["1.0.0"].active is True
     assert rows["2.0.0"].active is False
@@ -1037,6 +1037,7 @@ def test_shared_doc_route_remove_keeps_shared_doc(workspace, monkeypatch):
     pm = install_sibling_pair(workspace)
     shared = shared_doc_id()
     before = doc_chunk_ids(pm.store, shared)
+    assert before, "fixture failed to install the shared doc"
     test_client = route_client(monkeypatch, pm)
 
     response = test_client.post("/packs/remove", json={"pack_id": "pack-a"})
@@ -1072,6 +1073,7 @@ def test_shared_doc_route_rollback_keeps_shared_doc(workspace, monkeypatch):
     )
     shared = shared_doc_id()
     before = doc_chunk_ids(pm.store, shared)
+    assert before, "fixture failed to install the shared doc"
     test_client = route_client(monkeypatch, pm)
 
     response = test_client.post(
@@ -1101,3 +1103,39 @@ def test_shared_doc_route_remove_still_deletes_unshared_doc(workspace, monkeypat
     assert response.status_code == 200
     assert response.json() == {"removed": 1}
     assert doc_chunk_ids(pm.store, only_sha) == set()
+
+
+# ------------------------------------------------------------------ #
+# #287 review round - claim-true citation re-attribution (PRR-004)
+# ------------------------------------------------------------------ #
+
+
+def test_shared_doc_citation_reattributes_to_surviving_claim(workspace):
+    """After the chunk metadata's LAST WRITER is removed, retrieval must
+    name the SURVIVING claimant in the citation source and pack fields,
+    not the removed pack's stale last-writer metadata (PRR-004).
+
+    install_sibling_pair installs pack-a then pack-b, so the store chunk
+    rows carry pack-b's metadata (same content-hash chunk ids, replace
+    mode); removing pack-b exercises the stale-writer shape.
+    """
+    pm = install_sibling_pair(workspace)
+    pm.store.pack_status_provider = pm.active_pack_claims
+    shared = shared_doc_id()
+    before = doc_chunk_ids(pm.store, shared)
+    assert before, "fixture failed to install the shared doc"
+
+    pm.remove("pack-b")
+    assert doc_chunk_ids(pm.store, shared) == before
+
+    context, sources, chunks = pm.store.get_context(
+        "Shared knowledge pack document",
+        n_results=5,
+        hybrid_search=True,
+        retrieval_window=1,
+    )
+    hit = next(c for c in chunks if c.doc_id == shared)
+    assert hit.source.startswith("pack-a/"), hit.source
+    assert not hit.source.startswith("pack-b/")
+    assert hit.pack_id == "pack-a"
+    assert hit.pack_version == "1.0.0"

@@ -1657,6 +1657,37 @@ class VectorStore:
                         per_chunk_pack.append(attrs)
                     sources = list(dict.fromkeys(c.source for c in expanded))
 
+                # Claim-true display re-attribution (issue #287 review): the
+                # physical chunk rows keep the install-time LAST WRITER's
+                # source and pack fields; when a claimant set survives that
+                # writer, the display surface must name the surviving
+                # claimant. Keyed on doc_id so neighbors fetched by the raw
+                # (store) source string are corrected too, while the raw
+                # source stays the fetch key for neighbor expansion above.
+                winner_by_doc: Dict[str, Dict[str, Any]] = {}
+                for rank_key, claims in claims_by_chunk.items():
+                    if not claims:
+                        continue
+                    entry = resolved_by_key.get(rank_key)
+                    did = entry.get("doc_id") if entry else None
+                    winner = winning_claim(claims)
+                    if did and winner is not None:
+                        winner_by_doc.setdefault(did, winner)
+                for i, did in enumerate(per_chunk_doc_ids):
+                    if not did:
+                        continue
+                    winner = winner_by_doc.get(did)
+                    if winner is None:
+                        continue
+                    claimed_path = (winner.get("doc_paths") or {}).get(did)
+                    if claimed_path:
+                        per_chunk_sources[i] = f"{winner['pack_id']}/{claimed_path}"
+                    per_chunk_pack[i] = {
+                        "pack_id": winner["pack_id"],
+                        "pack_version": winner.get("version"),
+                        "pack_published_at": winner.get("published_at"),
+                    }
+
                 # Build result chunks for structured return
                 while len(per_chunk_doc_ids) < len(context_parts):
                     per_chunk_doc_ids.append(None)

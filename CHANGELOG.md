@@ -12,7 +12,14 @@
   search retrievability survive. Unshared documents still delete (every verb keeps its
   deletion semantics when no sibling claim exists), version-scoped removal keeps what an
   inactive sibling version row claims until whole-pack removal cleans up, and claim
-  skips are logged at info naming the surviving claimant (`pack@version`). Pinned by
+  skips are logged at info naming the surviving claimant (`pack@version`); when the
+  metadata's last writer is removed, hybrid retrieval re-attributes the retained
+  chunk's citation source and pack provenance to the surviving claimant via the
+  provider's per-claim doc-path map instead of surfacing the removed pack's stale
+  metadata; the helper derives claims defensively (a malformed registry row cannot
+  abort an unrelated pack's lifecycle verb); the frozen `/packs/remove` contract
+  description and ADR-0004's C2 policy section now state the claim-conditional
+  deletion; and every survival leg anchors its baseline non-empty. Pinned by
   the `shared_doc_survival` and
   `shared_doc_route` legs in `tests/test_pack_manager.py` (route legs drive
   `POST /packs/remove` and `POST /packs/rollback` through the TestClient no-lifespan

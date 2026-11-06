@@ -25,9 +25,10 @@ semantics"; recorded in the ADR's C2 policy section):
 - same ``id``, equal version -> refused (remove first); lower -> refused
   (use ``rollback``);
 - ``supersedes`` entries naming an INSTALLED foreign ``id@version`` are
-  honored: that version is deactivated and its chunks deleted (its files are
-  retained per ADR-0004); entries naming nothing installed are recorded and
-  warn.
+  honored: that version is deactivated and its chunks deleted unless another
+  installed row still claims the same content-hash doc id, in which case the
+  chunks are retained for that claimant (issue #287; its files are retained
+  per ADR-0004); entries naming nothing installed are recorded and warn.
 
 File layout: ``install(pack_path)`` treats ``pack_path`` as the SOURCE only.
 The pack tree is copied into the managed per-version directory
@@ -398,6 +399,16 @@ class PackManager:
                         for info in (row.get("docs") or {}).values()
                         if info.get("doc_id")
                     ],
+                    # Issue #287 review: manifest-relative paths per claimed
+                    # doc, so the retrieval layer can re-attribute a retained
+                    # chunk's display source to the surviving claimant instead
+                    # of the removed last writer (additive key; prior
+                    # consumers read only pack_id/version/published_at).
+                    "doc_paths": {
+                        info["doc_id"]: path
+                        for path, info in (row.get("docs") or {}).items()
+                        if isinstance(info, dict) and info.get("doc_id")
+                    },
                 }
             )
         return claims
@@ -589,10 +600,14 @@ class PackManager:
         for other in rows:
             if id(other) in acting_ids:
                 continue
-            for info in other.get("docs", {}).values():
-                claims.setdefault(
-                    info["doc_id"], f"{other['pack_id']}@{other['version']}"
-                )
+            # Defensive form matches the sibling registry reader
+            # (active_pack_claims): a malformed row must not abort a
+            # lifecycle verb for an unrelated pack.
+            for info in (other.get("docs") or {}).values():
+                doc_id = info.get("doc_id") if isinstance(info, dict) else None
+                if not doc_id or not other.get("pack_id") or not other.get("version"):
+                    continue
+                claims.setdefault(doc_id, f"{other['pack_id']}@{other['version']}")
         return claims
 
     # ------------------------------------------------------------------ #
