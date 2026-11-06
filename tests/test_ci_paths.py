@@ -542,6 +542,10 @@ def test_readme_required_contexts_resolve_to_unfiltered_jobs():
     assert section, "README.md: no '## Required checks' fenced list"
     contexts = [ln.strip() for ln in section.group(1).splitlines() if ln.strip()]
     assert contexts, "README.md: required-checks list is empty"
+    # issue #277 AC8: the advisory gate landed as a sixth required context
+    assert (
+        "dependency-audit" in contexts
+    ), "required-checks list lost dependency-audit (issue #277 AC1)"
     reporting = set()
     for name in UNFILTERED_WORKFLOWS:
         reporting |= _job_display_names(_load_workflow(name))
@@ -550,6 +554,44 @@ def test_readme_required_contexts_resolve_to_unfiltered_jobs():
             f"required context {context!r} matches no job name in the "
             f"unfiltered workflows {UNFILTERED_WORKFLOWS}"
         )
+
+
+# issue #276/#277 (epic #284 guard-binding rule): the new Python guards for
+# the dependency-currency contract and the advisory-gate scripts must run in
+# the UNBUCKETED required `security` job (a skipped required job counts as
+# passing — the bucket-scoped python-conformance job is not enough). This
+# pin is the roster: a guard deleted from the step silently unbinds it, and
+# this test goes red.
+_AUDIT_GUARD_ROSTER = [
+    "tests/test_vendored_xlsx.py",
+    "tests/test_dependency_currency.py",
+    "tests/test_extractor_twins.py",
+    "tests/test_electron_fuses.py",
+    "tests/test_dependency_audit_gate.py",
+    "tests/test_dependabot_config.py",
+    "tests/test_runtime_pins.py",
+    "tests/test_python_advisory_step.py",
+    "tests/test_ci_paths.py",
+]
+
+
+def test_security_job_audit_guards_step_rolls_the_guard_roster():
+    wf = _load_workflow("security.yml")
+    steps = wf["jobs"]["security"].get("steps", [])
+    guard_steps = [s for s in steps if "Audit guards" in str(s.get("name", ""))]
+    assert guard_steps, "security job lost its Audit guards step (epic #284)"
+    step = guard_steps[0]
+    assert not step.get("continue-on-error"), "Audit guards must be merge-blocking"
+    run = str(step.get("run", ""))
+    executable = "\n".join(
+        ln for ln in run.splitlines() if not ln.strip().startswith("#")
+    )
+    for guard in _AUDIT_GUARD_ROSTER:
+        assert guard in executable, f"Audit guards roster missing {guard}"
+    # the pins must be exact (==), the epic rule: no floating guard deps
+    assert re.search(
+        r"pip install pytest==[\d.]+ pyyaml==[\d.]+ packaging==[\d.]+", executable
+    )
 
 
 @pytest.mark.parametrize(

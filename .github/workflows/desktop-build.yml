@@ -48,7 +48,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 'lts/*'
+          node-version-file: .nvmrc
           cache: 'npm'
           cache-dependency-path: |
             web_ui/package-lock.json
@@ -173,7 +173,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 'lts/*'
+          node-version-file: .nvmrc
           cache: 'npm'
           cache-dependency-path: |
             web_ui/package-lock.json
@@ -220,7 +220,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 'lts/*'
+          node-version-file: .nvmrc
           cache: 'npm'
           cache-dependency-path: desktop/package-lock.json
 
@@ -262,7 +262,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 'lts/*'
+          node-version-file: .nvmrc
           cache: 'npm'
           cache-dependency-path: desktop/package-lock.json
 

@@ -1,0 +1,13 @@
+{
+  "$comment": "Owned, expiring ignore for the required pip-audit step (issue #277 AC5). Every entry names the advisory id pip-audit reports, the owner, the owner issue carrying the decision, and an expiry after which the required context goes red. The initial entry: sentence-transformers GHSA-jhr6-gm9c-rqjv / CVE-2026-68770 (critical, all versions below 5.6.0) — requirements.txt pins >=2.2.0,<3.0.0, so every version the range admits is covered; changing the range is a maintainer decision on the audit epic (#284), not something the required context may wedge over.",
+  "entries": [
+    {
+      "id": "CVE-2026-68770",
+      "package": "sentence-transformers",
+      "reason": "legacy Python harness range decision lives on the audit epic; pip-audit matches this id as an alias of GHSA-jhr6-gm9c-rqjv",
+      "owner": "zaxbysauce",
+      "owner_issue": "https://github.com/ZaxbyHub/trainingapp/issues/284",
+      "expiry": "2027-02-04"
+    }
+  ]
+}

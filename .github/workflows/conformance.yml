@@ -114,6 +114,20 @@ jobs:
           pip install pytest
           python -m pip check
 
+      # Issue #277 AC5: current-database advisory scan over the INSTALLED
+      # environment (the range-resolving `pip-audit -r` ran past 10 minutes
+      # on the reference host, and auditing what CI actually installed is the
+      # honest scan). Ignores come ONLY from .github/pip-audit-ignore.json —
+      # every entry owner-named with an expiry that fails the required
+      # context red once passed. Safety (whose bundled database could not
+      # see CVE-2026-68770) was removed from the security job by this
+      # workstream. No continue-on-error: a new Python advisory on this
+      # manifest must block.
+      - name: Python advisory audit (pip-audit, issue #277)
+        run: |
+          pip install pip-audit==2.10.1
+          python scripts/pip_audit_gate.py
+
       - name: "Check test collection completeness (issue #51 guardrail)"
         run: python scripts/check_test_collection.py
 
@@ -139,7 +153,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 'lts/*'
+          node-version-file: .nvmrc
           cache: 'npm'
           cache-dependency-path: packtool/package-lock.json
 
