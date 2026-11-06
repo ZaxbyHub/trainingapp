@@ -82,6 +82,14 @@ navigation policy — fails to load; that combination is production-only.
   Host gate, token check) that B3 (#61) MUST mount in front of its backend —
   see `docs/security/desktop.md` for the threat model and the binding B3
   integration contract.
+- Renderer permissions (issue #276): `session.defaultSession` carries
+  deny-by-default permission request and check handlers
+  (`desktop/main/security/permissions.ts`, registered before any window);
+  only `clipboard-sanitized-write` and `persistent-storage` are allowed
+  (`src/__tests__/b2-permission-handlers.test.ts`).
+- Electron fuses (issue #276): `electron-builder.yml` packages with
+  `runAsNode`, `enableNodeCliInspectArguments` and
+  `enableNodeOptionsEnvironmentVariable` off (`tests/test_electron_fuses.py`).
 - Invariant: every new transport-facing seam threads the security barrel
   (`desktop/main/security/index.ts`); the frozen B2 specs
   (`src/__tests__/b2-*.test.ts`) plus the B1 secure-defaults spec are the

@@ -14,8 +14,9 @@ import { activateDiagnosticsLogging, attachRendererCapture } from './logging.js'
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, session, shell } from 'electron';
 import { createSafeStorageSecretStore } from './security/secret-store.js';
+import { registerPermissionHandlers } from './security/permissions.js';
 import { registerAppProtocol, registerAppSchemePrivileges } from './protocol.js';
 import {
   createBackendHost,
@@ -212,6 +213,10 @@ export function bootstrap(): void {
   registerSecondInstanceHandler();
 
   app.whenReady().then(async () => {
+    // Renderer permission policy (issue #276 AC4): deny-by-default request +
+    // check handlers on the default session, registered FIRST so they are in
+    // place before any BrowserWindow (and so before any renderer) exists.
+    registerPermissionHandlers(session.defaultSession);
     // Transport security (issue #60, B2): resolve config, mint the per-launch
     // token (main-process memory only), serve it to the renderer ONLY through
     // this IPC handler, and construct the loopback gate that B3's backend

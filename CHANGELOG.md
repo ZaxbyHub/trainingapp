@@ -23,6 +23,13 @@
     3.22.3, whose simple-git 4 dependency clears the simple-git/argv-parser advisories). The
     remaining HIGH/CRITICAL findings are the semver-major sharp (via @huggingface/transformers
     3.x) and vitest/tinypool families in each package.
+  - **Renderer permission handlers and Electron fuses**: the desktop shell registers
+    deny-by-default `setPermissionRequestHandler` / `setPermissionCheckHandler` on
+    `session.defaultSession` before any window exists, allowing only
+    `clipboard-sanitized-write` (copy actions) and `persistent-storage`
+    (`navigator.storage.persist()`); `electron-builder.yml` declares `electronFuses` with
+    `runAsNode`, `enableNodeCliInspectArguments` and `enableNodeOptionsEnvironmentVariable`
+    off. Pinned by `b2-permission-handlers.test.ts` and `tests/test_electron_fuses.py`.
 
 - **Claimant-aware pack document lifetime in the Python runtime (issue #287)**: the Python
   PackManager's lifecycle verbs (`remove`, public `supersede`, `rollback`, and install's

@@ -2,7 +2,7 @@
 // desktop/vitest.config.ts aliases the bare specifier 'electron' to this file,
 // so neither the specs nor the production seams under test need the real
 // Electron binary. The stub mirrors the small surface the seams are allowed to
-// touch: app, BrowserWindow, protocol, contextBridge, ipcRenderer, ipcMain,
+// touch: app, BrowserWindow, protocol, contextBridge, ipcRenderer, ipcMain, session,
 // shell.
 //
 // Test-driving notes:
@@ -20,6 +20,10 @@
 //   what channel got registered and rewire it.
 // - `BrowserWindow.setWindowOpenHandler` is a vi.fn capturing the handler so
 //   navigation-lockdown specs can invoke it and check the deny decision.
+// - `session.defaultSession.setPermissionRequestHandler` /
+//   `setPermissionCheckHandler` are vi.fn recorders (issue #276 AC4): the
+//   b2-permission-handlers spec extracts the registered handlers from their
+//   mock calls and invokes them per permission.
 // - Call `__resetElectronStub()` from beforeEach in every spec.
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
@@ -148,6 +152,16 @@ export const dialog = {
   ),
 };
 
+// issue #276 AC4: the default session's permission-handler surface. The
+// recorders keep every registered handler in mock.calls; production code
+// registers each exactly once per bootstrap.
+export const session = {
+  defaultSession: {
+    setPermissionRequestHandler: vi.fn(),
+    setPermissionCheckHandler: vi.fn(),
+  },
+};
+
 /** universal-provider-settings-overhaul: no OS encryption in tests (keys stay session-only). */
 export const safeStorage = {
   isEncryptionAvailable: vi.fn(() => false),
@@ -193,6 +207,8 @@ export function __resetElectronStub(): void {
   ipcMain.on.mockClear();
   ipcMain.once.mockClear();
   ipcMain.removeHandler.mockClear();
+  session.defaultSession.setPermissionRequestHandler.mockReset();
+  session.defaultSession.setPermissionCheckHandler.mockReset();
   dialog.showErrorBox.mockClear();
   dialog.showSaveDialog.mockClear();
   dialog.showSaveDialog.mockReturnValue(Promise.resolve({ canceled: true }));
