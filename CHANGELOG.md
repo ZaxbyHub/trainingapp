@@ -14,6 +14,15 @@
     4.10.38 in web_ui, desktop and packtool (web_ui's specs move from `^1.8.0`/`^4.4.168`,
     desktop's mammoth from 1.12.2), so pack-build and runtime extraction of the same file
     cannot diverge; `tests/test_extractor_twins.py` fails on any cross-package drift.
+  - **Electron floor and non-major advisory refresh**: desktop `electron` moves to `^44.9.1`
+    (locked 44.10.2), clearing GHSA-jr5w-w6x2-84p9 (HIGH) and the four MEDIUM 44.x advisories;
+    `tests/test_dependency_currency.py` pins the lockfile at or past 44.9.1. `npm audit fix`
+    (no `--force`) in all three packages applies every non-major fix (tar, @xmldom/xmldom, vite,
+    vitest 3.2.7, postcss, nanoid, form-data, browserslist, source-map-js, undici,
+    brace-expansion, concurrently/shell-quote, electron-builder 26.18.1, and node-llama-cpp
+    3.22.3, whose simple-git 4 dependency clears the simple-git/argv-parser advisories). The
+    remaining HIGH/CRITICAL findings are the semver-major sharp (via @huggingface/transformers
+    3.x) and vitest/tinypool families in each package.
 
 - **Claimant-aware pack document lifetime in the Python runtime (issue #287)**: the Python
   PackManager's lifecycle verbs (`remove`, public `supersede`, `rollback`, and install's
