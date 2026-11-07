@@ -19,7 +19,7 @@
     "better-sqlite3": "13.0.3",
     "jszip": "^3.10.2",
     "mammoth": "^1.12.3",
-    "pdfjs-dist": "^6.5.438",
+    "pdfjs-dist": "^4.10.38",
     "sqlite-vec": "0.1.9",
     "xlsx": "file:../vendor/sheetjs/xlsx-0.20.3.tgz"
   },
