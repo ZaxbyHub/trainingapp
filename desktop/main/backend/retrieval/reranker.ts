@@ -185,7 +185,9 @@ export class WorkerReranker {
           job.reject(new Error(`unexpected rerank worker message: ${String((message as { kind?: unknown }).kind)}`));
         }
       });
-      worker.on('error', (err) => this.failAll(err));
+      worker.on('error', (err: unknown) => {
+        this.failAll(err instanceof Error ? err : new Error(String(err)));
+      });
       worker.on('exit', (code) => {
         // Orphan exit (worker died on its own while this.worker still points
         // at it) must settle pending jobs on ANY exit code — a clean exit with
