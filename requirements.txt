@@ -26,7 +26,7 @@ PyYAML>=6.0.3,<7.0  # contracts route-drift check in contracts/tests/run_conform
 python-jose[cryptography]>=3.4.0,<4.0.0  # JWT authentication
 cryptography>=42.0.0  # ed25519 pack-signature verification (C8); direct import in pack_extract.py
 pydantic-settings>=2.0.0,<3.0.0  # Pydantic v2 settings management
-python-multipart>=0.0.18  # FastAPI form data parsing
+python-multipart>=0.0.32  # FastAPI form data parsing
 
 # GUI
 customtkinter>=6.0.0,<7.0.0
