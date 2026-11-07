@@ -146,7 +146,7 @@ This section covers work found during a PR review or a PR-feedback round that th
 Enforced by the required `dependency-audit` context (`.github/workflows/security.yml`
 → `scripts/audit_gate.py` against `.github/audit-allowlist.json`) and the
 `python-conformance` pip-audit step (`.github/workflows/conformance.yml`
-→ `scripts/pip_audit_gate.py` against `.github/pip-audit-ignore.json` — that job is bucket-scoped, so the Python scan runs only when the diff matches the conformance bucket (Python-surface PRs and matching master pushes), not on unrelated changes: issue #277 AC5 accepted that scope explicitly; the JavaScript graphs are covered on EVERY PR by the unfiltered `dependency-audit` context); the
+→ `scripts/pip_audit_gate.py` against `.github/pip-audit-ignore.json` — on pull requests that job stays bucket-scoped to the conformance bucket, and it runs on EVERY push to `master` regardless of the diff (issue #319 AC3 — the advisory gate must never be skipped by a docs-only or web-only master push); the JavaScript graphs are covered on EVERY PR by the unfiltered `dependency-audit` context); the
 guardrail files under `tests/` are rostered in the required `security` job's
 `Audit guards` step (issue #277):
 
@@ -171,6 +171,44 @@ guardrail files under `tests/` are rostered in the required `security` job's
   tarball + lockfile integrity together (`tests/test_vendored_xlsx.py`). The
   Python manifest follows the same owned-expiring-ignore discipline for
   advisories whose fix the maintainer has not yet accepted.
+
+### Triaging Dependabot update PRs
+
+Standing policy, highest precedence first: T1 > T2 > T3 > PIN > T5 > T4. Every open
+`app/dependabot` PR is triaged by the first class below that matches, and each disposition
+names the contract it applies.
+
+- **T1, extractor-twin break (`mammoth`, `pdfjs-dist`) → close.** A single-sided bump moves
+  one package's copy of an extractor twin and breaks `tests/test_extractor_twins.py` (one
+  exact version per twin across the three lockfiles, because ADR-0004 chunk ids derive from
+  the extracted text). Close with a comment naming that contract. A paired bump of all three
+  lockfiles in one maintainer PR is the way to upgrade a twin.
+- **T2, Node runtime mismatch above the baseline (`@types/node`) → close.** A `@types/node`
+  major beyond the maintainer-established baseline would type-check against APIs that are
+  absent at runtime. `tests/test_runtime_pins.py` does not inspect `@types/node` today — this
+  rule is policy, not an existing test. The baseline is @types/node 26 (desktop and packtool),
+  established by maintainer merge on 2026-11-07 (PRs #302/#317): bumps to 26.x are compatible
+  and bumps above it close, with a comment naming the Node-pin contract (`.nvmrc` 24,
+  `engines.node` <25, Electron 44 bundles Node 24).
+- **T3, epic-#284 reserved majors (`@huggingface/transformers`, `vitest`) → stay open.** Label
+  `epic-284-decision` and comment linking epic #284 (its ASK 6 owns only these two advisory
+  families). An agent never merges these; the maintainer decides, and closing the transformers
+  PRs would re-open `.github/audit-allowlist.json` findings.
+- **PIN, action bump without a pins.json entry → close.** A GitHub-Actions action bump whose
+  new @sha is not recorded in `.github/workflows/pins.json` must add the pins.json entry in
+  the same PR; otherwise close with a comment naming the pin-record contract
+  (`.github/workflows/pins.json`, enforced by `acceptance-precision-contract.test.ts`).
+- **T5, any other semver-major with no owning epic decision — electron, typescript,
+  toolchain majors → stay open.** Class comment and label `deps:major-review`. No epic-#284
+  decision owns these (ASK 6 covers only the transformers and vitest families). The
+  maintainer decides each one.
+- **T4, contract-compatible minor/patch/digest → stay open.** Class comment and stay open
+  for normal review with the required checks; no agent merges or closes these, and the
+  maintainer decides.
+
+Recurrence: `.github/dependabot.yml` updates the three npm directories independently, so
+Dependabot recreates single-sided twin bumps after every close. Close-with-comment each time
+is the standing mechanism; an `ignore` rule cannot express "only if all three lockfiles move".
 
 ## Trace evidence and acceptance-check conventions
 

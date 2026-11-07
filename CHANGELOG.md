@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+- **Out-of-process workbook parsing (issue #319)**:
+  - **SheetJS leaves the main process**: desktop `.xlsx` uploads no longer run `XLSX.read`
+    inside Electron's privileged main process. The parse (and the zip-bomb cap) execute in a
+    dedicated child OS process — an Electron `utilityProcess` in the packaged app (launcher
+    registered beside the GPU probe's, `TrainingApp workbook parser`), a node fork outside it
+    — so a poisoned workbook can crash or hang only the child. `extractors.ts` keeps the
+    public `extractDocumentFromFile` surface (`maxZipBytes`, plus new `timeoutMs` and
+    `childPath` forwarding); the frozen `i289-xlsx-parse-isolation.test.ts` pins the
+    directory-wide no-xlsx-load invariant, the launcher seam, a real Electron
+    `utilityProcess` run (via `desktop/scripts/xlsx-electron-harness.mjs`), crash/kill
+    containment, and host-shutdown reaping (`stop()` → `terminateXlsxWorkers()`).
+  - **Byte-identical extraction parity**: the committed fixture
+    `contracts/fixtures/xlsx-parity/` (workbook + golden captured from the pre-migration
+    extractor) pins the desktop child's output AND packtool's `extractSourceDocs` to the same
+    bytes; the required `pack-fixture-build` job runs
+    `packtool/scripts/verify-xlsx-parity.mjs` on every packtool/contracts diff.
+  - **Dependabot triage policy**: CONTRIBUTING.md gains the standing six-class policy
+    (T1 twin-break → close; T2 Node-runtime mismatch above the `@types/node` 26 baseline →
+    close; T3 epic-#284 reserved majors {transformers, vitest} → `epic-284-decision`; PIN
+    action bump without a `pins.json` entry in the same PR → close; T5 other majors →
+    `deps:major-review`; T4 contract-compatible → stay open), pinned by
+    `tests/test_319_guards.py` in the required `security` job.
+  - **Advisory gate on every master push**: the `python-conformance` job (which carries the
+    pip-audit scan) runs on every push to `master` regardless of the diff bucket
+    (`github.event_name == 'push' ||` conformance bucket); pull requests keep bucket scoping.
+    Pinned by `tests/test_master_push_advisory_scan.py` (GitHub-semantics expression
+    evaluator, truth table, step-level `if` and master-trigger pins) and the sanctioned
+    `PUSH_ALWAYS_JOBS` override in `tests/test_ci_paths.py`.
 - **Dependency currency and Electron hardening (issue #276)**:
   - **Vendored SheetJS 0.20.3**: `xlsx` now resolves in web_ui, desktop and packtool to the
     committed official SheetJS CDN tarball `vendor/sheetjs/xlsx-0.20.3.tgz` (Apache-2.0;

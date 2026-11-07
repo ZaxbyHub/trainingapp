@@ -37,6 +37,7 @@ import {
   type GpuProbeVerdict,
   type GpuVerdictGate,
 } from './inference/gpu-probe.js';
+import { terminateXlsxWorkers } from './ingest/xlsx-worker.js';
 import { loadExternalSnapshot, replayExternalSnapshot, saveExternalSnapshot } from './external-store.js';
 import { OnnxEmbedder, resolveEmbedder, type EmbeddingSurface } from './ingest/embedder.js';
 import { resolveIngestConfig, resolveIngestLimits } from './ingest/config.js';
@@ -1279,6 +1280,10 @@ export class NodeBackendHost implements BackendHost {
       }
       this.probeChildren.clear();
     }
+    // issue #319: no workbook-parse child may outlive the backend host either.
+    // terminateXlsxWorkers kills every in-flight parse child and rejects its
+    // pending extraction, mirroring the probe-child rule above.
+    terminateXlsxWorkers();
     // B8 (issue #66) governance teardown FIRST: no sampler fires mid-shutdown,
     // the idle controller never fires after dispose, and queued (not yet
     // started) generations fail fast instead of running after close.

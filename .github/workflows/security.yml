@@ -122,7 +122,9 @@ jobs:
             tests/test_dependabot_config.py \
             tests/test_runtime_pins.py \
             tests/test_python_advisory_step.py \
-            tests/test_ci_paths.py -q
+            tests/test_ci_paths.py \
+            tests/test_master_push_advisory_scan.py \
+            tests/test_319_guards.py -q
 
       - name: Upload security report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

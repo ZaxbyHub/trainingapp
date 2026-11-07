@@ -48,3 +48,10 @@ web_ui/src/lib/packs/pack-archive-rules.ts text eol=lf
 # Vendored SheetJS tarball (issue #276 AC1): the three lockfiles pin its
 # sha512 as the xlsx integrity, so the bytes must never be eol-converted.
 vendor/sheetjs/*.tgz binary
+
+# Issue #319: the xlsx parity golden is the EXACT extractor output (LF line
+# breaks, no trailing newline); any EOL conversion breaks the byte-equality
+# pin on Windows checkouts (core.autocrlf=true on hosted runners).
+contracts/fixtures/xlsx-parity/parity.expected.txt -text
+tests/test_319_guards.py -text
+tests/test_master_push_advisory_scan.py -text

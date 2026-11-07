@@ -319,6 +319,12 @@ EXPECTED_WIRING = {
     },
 }
 
+# Issue #319 AC3: jobs whose condition runs them on EVERY push to master in
+# addition to their bucket on pull requests. Deliberately a closed set: the
+# polarity test pins each member to one exact condition string, and every
+# other single-bucket job keeps the no-`||` pin.
+PUSH_ALWAYS_JOBS = {("conformance.yml", "python-conformance")}
+
 # Explicit unbucketed class (issue #215 batch): jobs in the bucketed workflows
 # that deliberately carry NO bucket gate. Deliberately EMPTY today (review
 # PRR-035: this is an escape hatch awaiting a genuinely-unbucketed job, not a
@@ -429,6 +435,15 @@ def test_job_wiring_and_polarity(name):
             assert (
                 all(part in cond for part in ors) and "||" in cond
             ), f"{name}/{job_id}: expected OR of {bucket}"
+        elif (name, job_id) in PUSH_ALWAYS_JOBS:
+            # Issue #319 AC3: the sanctioned push-always override. The
+            # condition must equal EXACTLY this form, so the override cannot
+            # drift or spread to a job outside PUSH_ALWAYS_JOBS.
+            expected = (
+                f"!cancelled()&&(github.event_name=='push'"
+                f"||needs.changes.outputs.{bucket}!='false')"
+            )
+            assert cond == expected, f"{name}/{job_id}: expected exactly {expected}"
         else:
             expected = f"needs.changes.outputs.{bucket}!='false'"
             assert (
@@ -572,6 +587,8 @@ _AUDIT_GUARD_ROSTER = [
     "tests/test_runtime_pins.py",
     "tests/test_python_advisory_step.py",
     "tests/test_ci_paths.py",
+    "tests/test_master_push_advisory_scan.py",
+    "tests/test_319_guards.py",
 ]
 
 
