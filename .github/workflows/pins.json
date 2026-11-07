@@ -3,13 +3,8 @@
   "entries": [
     {
       "action": "actions/checkout",
-      "sha": "11bd71901bbe5b1630ceea73d27597364c9af683",
-      "versions": ["v4.2.2"]
-    },
-    {
-      "action": "actions/checkout",
-      "sha": "11d5960a326750d5838078e36cf38b85af677262",
-      "versions": ["v4"]
+      "sha": "3d3c42e5aac5ba805825da76410c181273ba90b1",
+      "versions": ["v7", "v7.0.1"]
     },
     {
       "action": "actions/setup-python",
