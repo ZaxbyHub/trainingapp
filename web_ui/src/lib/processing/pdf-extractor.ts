@@ -43,7 +43,6 @@ export async function extractPdfText(file: File): Promise<ExtractionResult> {
     const loadingTask = pdfjsLib.getDocument({
       data: arrayBuffer,
       useWorkerFetch: false,
-      isEvalSupported: false,
       useSystemFonts: true,
     });
 
@@ -137,7 +136,7 @@ export async function extractPdfText(file: File): Promise<ExtractionResult> {
     // (b) potentially undefined if parsing threw before assignment.
     if (pdf) {
       try {
-        pdf.destroy();
+        (pdf as unknown as { destroy?: () => void }).destroy?.();
       } catch {
         // Best-effort cleanup; ignore failures during teardown.
       }
