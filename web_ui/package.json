@@ -35,7 +35,7 @@
     "edgevec": "^0.6.0",
     "flexsearch": "^0.8.0",
     "jszip": "^3.10.1",
-    "mammoth": "^1.12.3",
+    "mammoth": "^1.13.0",
     "pdfjs-dist": "^4.10.38",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
