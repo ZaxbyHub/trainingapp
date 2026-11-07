@@ -33,7 +33,7 @@
     },
     {
       "action": "codecov/codecov-action",
-      "sha": "cb6530fbecd68d5f1ee7a3dcd113450ea8d5d6d4",
+      "sha": "1e68e06f1dbfde0e4cefc87efeba9e4643565303",
       "versions": ["v5.1.2"]
     },
     {
