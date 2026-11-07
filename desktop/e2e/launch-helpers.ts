@@ -74,11 +74,15 @@ export async function closeApp(app: ElectronApplication): Promise<void> {
   }
   await Promise.race([app.close().catch(() => undefined), new Promise((resolve) => setTimeout(resolve, 8_000))]);
   try {
-    if (child !== undefined && child.exitCode === null && child.signalCode === null && child.pid !== undefined) {
+    if (child !== undefined && child.pid !== undefined && isProcessAlive(child.pid)) {
       // Checked/liveness-guarded tree kill (issue #216 AC1): routes through
       // the shared wrapper — raw taskkill lives only in the two allowed sites (scripts/kill-guard.mjs and the shipped packaged-smoke.mjs).
+      // A relaunch can race a lingering child tree even when the top-level
+      // Electron process already reported exitCode/signalCode; this guard must
+      // treat any still-alive PID as live work to terminate before the next
+      // launch begins.
       killProcessTree(child.pid, {
-        isAlive: (pid) => pid === child.pid && child.exitCode === null && child.signalCode === null,
+        isAlive: (pid) => pid === child.pid && isProcessAlive(pid),
         log: (msg) => console.warn(`launch-helpers: ${msg}`),
       });
       await new Promise((resolve) => setTimeout(resolve, 3_000));
