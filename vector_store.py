@@ -542,9 +542,65 @@ class VectorStore:
         self._lock = threading.RLock()
         self._bm25_needs_rebuild = self.metadata.get("chunk_count", 0) > 0
 
+        self.metadata["chunk_count"] = self._safe_collection_count()
         logger.info("[OK] Vector store initialized at %s", self.db_path)
         logger.info("  Documents: %d", self.metadata.get("document_count", 0))
-        logger.info("  Chunks: %d", self.collection.count())
+        logger.info("  Chunks: %d", self.metadata["chunk_count"])
+
+    def _reset_corrupt_collection(self, exc: Exception) -> None:
+        """Recreate a stale or incompatible Chroma collection so startup keeps working."""
+        logger.warning(
+            "Chroma collection appears incompatible or stale; recreating it: %s",
+            exc,
+        )
+        try:
+            self.client.delete_collection(self.COLLECTION_NAME)
+        except Exception as delete_exc:
+            logger.warning(
+                "Could not delete stale Chroma collection %s: %s",
+                self.COLLECTION_NAME,
+                delete_exc,
+            )
+        self.collection = self.client.create_collection(
+            name=self.COLLECTION_NAME, metadata={"hnsw:space": "cosine"}
+        )
+        self.metadata = {"document_count": 0, "chunk_count": 0, "documents": {}}
+        self._save_metadata()
+
+    def _safe_collection_count(self) -> int:
+        """Count collection items while tolerating stale or incompatible Chroma state."""
+        try:
+            count = self.collection.count()
+            if not isinstance(count, int):
+                raise ValueError(f"count() returned non-int value: {count!r}")
+            return count
+        except Exception as exc:
+            fallback = (
+                self.metadata.get("chunk_count", 0) if hasattr(self, "metadata") else 0
+            )
+            try:
+                fallback = int(fallback)
+            except (TypeError, ValueError):
+                fallback = 0
+            if isinstance(
+                exc,
+                (KeyError, ValueError, RuntimeError, TypeError, AttributeError),
+            ):
+                try:
+                    self._reset_corrupt_collection(exc)
+                    return 0
+                except Exception as reset_exc:
+                    logger.warning(
+                        "Failed to recover from stale Chroma collection; using metadata fallback %s: %s",
+                        fallback,
+                        reset_exc,
+                    )
+            logger.warning(
+                "Chroma collection.count() failed; using metadata fallback %s: %s",
+                fallback,
+                exc,
+            )
+            return max(0, fallback)
 
     def _rebuild_bm25_if_needed(self):
         """Rebuild BM25 index lazily on first search if needed."""
