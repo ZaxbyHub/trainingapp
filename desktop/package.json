@@ -39,7 +39,7 @@
     "ajv-formats": "^3.0.1",
     "better-sqlite3": "13.0.3",
     "jszip": "^3.10.2",
-    "mammoth": "^1.12.3",
+    "mammoth": "^1.13.0",
     "node-llama-cpp": "^3.20.0",
     "pdfjs-dist": "^4.10.38",
     "sqlite-vec": "0.1.9",
