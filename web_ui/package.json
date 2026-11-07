@@ -2,7 +2,6 @@
   "name": "doc-qa-web-ui",
   "private": true,
   "version": "0.1.0",
-
   "engines": {
     "node": ">=24.0.0 <25.0.0"
   },
@@ -34,10 +33,10 @@
     "dexie": "^4.4.4",
     "edgevec": "^0.6.0",
     "flexsearch": "^0.8.0",
-    "jszip": "^3.10.1",
-    "mammoth": "^1.12.3",
-    "pdfjs-dist": "^6.5.438",
-    "react": "^18.3.1",
+"jszip": "^3.10.1",
+"mammoth": "^1.12.3",
+"pdfjs-dist": "^6.5.438",
+"react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^9.1.0",
     "remark-gfm": "^4.0.1",
@@ -58,7 +57,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "@webgpu/types": "^0.1.74",
     "jsdom": "^25.0.0",
-    "typescript": "^5.7.2",
+    "typescript": "^5.9.3",
     "vite": "^6.0.7",
     "vitest": "^3.0.0"
   }
