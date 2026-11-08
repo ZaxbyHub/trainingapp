@@ -321,6 +321,11 @@ export async function extractXlsxOutOfProcess(
     });
 
     child.on('error', (...args: unknown[]) => {
+      // A spawn failure emits error+close and NEVER exit (PRR-013 follow-up,
+      // fix-review r1): treat it as terminal for the live-set the same way
+      // the exit handler does, or the entry leaks until host stop.
+      exited = true;
+      liveChildren.delete(entry);
       const [first, second] = args;
       const type = typeof first === 'string' ? first : first instanceof Error ? first.message : String(first);
       const detail = typeof second === 'string' && second !== '' ? `${type} at ${second}` : type;
