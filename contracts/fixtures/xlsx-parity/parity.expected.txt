@@ -1,0 +1,8 @@
+Term,Meaning
+DCW,Data Call Workflow
+quote,"He said ""ok"", then left"
+naïve,"café, ü"
+
+Step,Value
+1,2.5
+2,  padded

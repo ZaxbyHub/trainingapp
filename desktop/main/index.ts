@@ -38,6 +38,10 @@ import {
   type GpuProbeChildProcess,
 } from './backend/inference/gpu-probe.js';
 import {
+  setXlsxWorkerForkFn,
+  type XlsxWorkerChild,
+} from './backend/ingest/xlsx-worker.js';
+import {
   containedJoin,
   manifestGroupBytes,
   type ManifestFailure,
@@ -236,6 +240,18 @@ export function bootstrap(): void {
         stdio: ['ignore', 'ignore', 'pipe'],
         serviceName: 'TrainingApp GPU probe',
       }) as unknown as GpuProbeChildProcess,
+    );
+    // Workbook parser launcher (issue #319 AC1): the untrusted-workbook parse
+    // runs as a utilityProcess child — same seam and packaging path as the
+    // GPU probe, so a poisoned workbook can only ever kill the child. Ingest
+    // cannot start before ready (the backend host boots after this block), so
+    // no real upload can hit the unregistered refusal. utilityProcess.kill()
+    // takes no signal and is forceful.
+    setXlsxWorkerForkFn((modulePath, args) =>
+      utilityProcess.fork(modulePath, args, {
+        stdio: ['ignore', 'ignore', 'pipe'],
+        serviceName: 'TrainingApp workbook parser',
+      }) as unknown as XlsxWorkerChild,
     );
     // Packaged-smoke evidence leg (issue #276 G3b; opt-in env, see
     // desktop/scripts/packaged-smoke.mjs step 8): one device-only probe through

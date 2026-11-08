@@ -81,7 +81,12 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 20
     needs: [changes]
-    if: ${{ !cancelled() && needs.changes.outputs.conformance != 'false' }}
+    # Issue #319 AC3: the pip-audit advisory gate must run on EVERY push to
+    # master regardless of the diff bucket (issue #277 AC5's stated visibility
+    # was only half-implemented); pull requests keep the conformance-bucket
+    # scoping. The push clause is pinned by tests/test_master_push_advisory_scan.py
+    # and the sanctioned wiring override in tests/test_ci_paths.py.
+    if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.outputs.conformance != 'false') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -161,6 +166,14 @@ jobs:
         run: |
           npm --prefix packtool ci --no-audit --no-fund
           npm --prefix packtool run build
+
+      # Issue #319 AC1: the desktop workbook child must extract byte-identically
+      # to packtool. The committed parity fixture + golden are the shared
+      # contract; this REQUIRED job re-proves the packtool side on every
+      # packtool/contracts diff (the desktop side is pinned by the frozen
+      # acceptance spec i289-xlsx-parse-isolation.test.ts T8).
+      - name: Verify xlsx extraction parity (issue #319)
+        run: node packtool/scripts/verify-xlsx-parity.mjs
 
       # Issue #73 (C6) leg, moved from desktop-build.yml: build-docs fixture
       # from the committed source docs. --embedder hash: CI checkouts carry

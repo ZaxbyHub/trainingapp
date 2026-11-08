@@ -76,6 +76,14 @@ export const FAMILY_ROSTER: string[] = [
   // contract schemas with the switch's domains. Accepted-but-undeclared API
   // surface is security-adjacent and has no other merge-blocking home.
   'settings-openapi-parity.test.ts',
+  // Issue #319 (review PRR-001, swarm-pr-review pr321-20261107): the frozen
+  // AC1 acceptance spec — the directory-wide no-xlsx-load pin over
+  // desktop/main, the launcher seam, containment and host-stop legs — is the
+  // only guard that a main-process XLSX.read cannot return. Its name escapes
+  // the convention census (non-convention naming) and its only CI home was
+  // the informational desktop-build suite; rostered per the i199/i230
+  // precedent (security-adjacent, no other merge-blocking home).
+  'i289-xlsx-parse-isolation.test.ts',
 ];
 
 /** Convention-matching specs owned by another CI context, with run-line evidence. */

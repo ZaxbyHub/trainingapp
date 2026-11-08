@@ -6,6 +6,9 @@
 // majors web_ui already ships (pdfjs-dist, mammoth, xlsx/SheetJS, jszip) so
 // extraction behavior stays in the family the repo has tested. Heavy
 // libraries load lazily per type — ingesting .txt never pulls pdf.js.
+// Issue #319: .xlsx no longer loads ANY library here — the workbook parse
+// and its zip-bomb cap run in the xlsx-worker child process, never in the
+// Electron main process.
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -114,23 +117,11 @@ async function extractDocxFile(filePath: string): Promise<ExtractionResultNode> 
 }
 
 // ---- .xlsx ------------------------------------------------------------------
-
-async function extractXlsxFile(filePath: string): Promise<ExtractionResultNode> {
-  const XLSX = (await import('xlsx')) as unknown as {
-    read(data: Buffer, opts: { type: 'buffer' }): {
-      SheetNames: string[];
-      Sheets: Record<string, unknown>;
-    };
-    utils: { sheet_to_csv(sheet: unknown): string };
-  };
-  const workbook = XLSX.read(fs.readFileSync(filePath), { type: 'buffer' });
-  const parts: string[] = [];
-  for (const name of workbook.SheetNames) {
-    const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[name]);
-    if (csv.trim().length > 0) parts.push(csv.trim());
-  }
-  return { text: parts.join('\n\n') };
-}
+// Issue #319 AC1: the workbook parse runs OUT OF PROCESS — extractors.ts must
+// not import `xlsx` at all (frozen directory-wide pin). The SheetJS parse and
+// the zip-bomb cap both execute inside the child (xlsx-worker-child.ts); this
+// module only delegates. textExtractorOpts carries the runner options through
+// extractDocumentFromFile's public surface.
 
 // ---- .pptx ------------------------------------------------------------------
 // PPTX is a zip of slide XMLs; each text run lives in an <a:t> element. The
@@ -174,17 +165,38 @@ async function extractPptxFile(filePath: string): Promise<ExtractionResultNode> 
   return { text: pages.map((p) => p.text).join('\n\n'), pages };
 }
 
+/** Runner options the .xlsx route forwards to the out-of-process worker. */
+interface XlsxRunnerOptions {
+  maxZipBytes?: number;
+  timeoutMs?: number;
+  childPath?: string;
+}
+
+async function extractXlsxViaWorker(filePath: string, runnerOpts: XlsxRunnerOptions = {}): Promise<ExtractionResultNode> {
+  const { extractXlsxOutOfProcess } = await import('./xlsx-worker.js');
+  const { text } = await extractXlsxOutOfProcess(filePath, {
+    ...(runnerOpts.maxZipBytes !== undefined ? { maxZipBytes: runnerOpts.maxZipBytes } : {}),
+    ...(runnerOpts.timeoutMs !== undefined ? { timeoutMs: runnerOpts.timeoutMs } : {}),
+    ...(runnerOpts.childPath !== undefined ? { childPath: runnerOpts.childPath } : {}),
+  });
+  return { text };
+}
+
 const EXTRACTORS: Record<string, (filePath: string) => Promise<ExtractionResultNode>> = {
   '.pdf': extractPdfFile,
   '.docx': extractDocxFile,
-  '.xlsx': extractXlsxFile,
   '.txt': extractTextFile,
   '.md': extractTextFile,
   '.pptx': extractPptxFile,
 };
 
-/** Zip containers whose declared decompressed size the cap guard sums. */
-const ZIP_EXTENSIONS: ReadonlySet<string> = new Set(['.docx', '.xlsx', '.pptx']);
+/**
+ * Zip containers whose declared decompressed size the PARENT-side cap guard
+ * sums. `.xlsx` is deliberately absent (issue #319 F4): its zip-bomb cap runs
+ * INSIDE the parse child, so the main process never reads untrusted workbook
+ * bytes at all.
+ */
+const ZIP_EXTENSIONS: ReadonlySet<string> = new Set(['.docx', '.pptx']);
 
 /**
  * Extraction-bomb defense: refuse zip-based documents whose entries DECLARE
@@ -211,13 +223,24 @@ async function assertZipWithinCap(filePath: string, capBytes: number): Promise<v
 /**
  * Extract text (and, when the format exposes it, per-page text) from a file.
  * Throws for unsupported extensions and for unreadable/corrupt sources —
- * the pipeline turns per-file errors into isolated failures.
+ * the pipeline turns per-file errors into isolated failures. For `.xlsx` the
+ * parse (and the zip-bomb cap) run out of process (issue #319): timeoutMs and
+ * childPath forward to the worker runner; maxZipBytes is forwarded to the
+ * child too. For every other format opts.maxZipBytes keeps its in-process
+ * central-directory guard for the zip containers that remain here.
  */
 export async function extractDocumentFromFile(
   filePath: string,
-  opts?: { maxZipBytes?: number },
+  opts?: { maxZipBytes?: number; timeoutMs?: number; childPath?: string },
 ): Promise<ExtractionResultNode> {
   const extension = extensionOf(filePath);
+  if (extension === '.xlsx') {
+    return extractXlsxViaWorker(filePath, {
+      ...(opts?.maxZipBytes !== undefined ? { maxZipBytes: opts.maxZipBytes } : {}),
+      ...(opts?.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
+      ...(opts?.childPath !== undefined ? { childPath: opts.childPath } : {}),
+    });
+  }
   const extractor = extension ? EXTRACTORS[extension] : undefined;
   if (!extractor) {
     throw new Error(`Unsupported file extension: ${extension || '(none)'}`);
