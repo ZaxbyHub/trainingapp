@@ -14,9 +14,12 @@
 //
 // Report protocol (exactly one report over IPC, then exit):
 //   { ok: true, text: string }  |  { ok: false, error: string }
-// Every failure error message carries the `xlsx worker: ` prefix — the parent
-// trusts that prefix as the child-origin marker (issue #319 T10b provenance
-// pin: an in-parent failure cannot produce it).
+// Every failure error message carries the `xlsx worker: ` prefix. The pin is
+// REPORT-derivation, not message uniqueness: a rejection whose text arrives in
+// a child REPORT ({ok:false, error}) is child-origin (the T10b provenance leg
+// pins exactly that — an in-parent cap check cannot produce it). Parent-origin
+// failures (launch refusal, no report, deadline) reuse the prefix for uniform
+// display and MUST NOT be cited as child-origin evidence.
 //
 // This module must stay electron-free (the backend/types.ts rule): nothing
 // here imports electron. Under vitest it is imported directly; its self-run

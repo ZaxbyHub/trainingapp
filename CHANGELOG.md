@@ -9,10 +9,12 @@
     registered beside the GPU probe's, `TrainingApp workbook parser`), a node fork outside it
     — so a poisoned workbook can crash or hang only the child. `extractors.ts` keeps the
     public `extractDocumentFromFile` surface (`maxZipBytes`, plus new `timeoutMs` and
-    `childPath` forwarding); the frozen `i289-xlsx-parse-isolation.test.ts` pins the
-    directory-wide no-xlsx-load invariant, the launcher seam, a real Electron
-    `utilityProcess` run (via `desktop/scripts/xlsx-electron-harness.mjs`), crash/kill
-    containment, and host-shutdown reaping (`stop()` → `terminateXlsxWorkers()`).
+    `childPath` forwarding); the frozen `i289-xlsx-parse-isolation.test.ts` (required `security` job)
+    pins the directory-wide no-xlsx-load invariant, the launcher seam (Electron
+    legs via the repo's electron stub), crash/kill containment, and host-shutdown
+    reaping (`stop()` → `terminateXlsxWorkers()`); the real-Electron transport run
+    is `desktop/scripts/xlsx-electron-harness.mjs` (dist child, outside app.asar —
+    the packaged-asar resolution is a disclosed residual).
   - **Byte-identical extraction parity**: the committed fixture
     `contracts/fixtures/xlsx-parity/` (workbook + golden captured from the pre-migration
     extractor) pins the desktop child's output AND packtool's `extractSourceDocs` to the same

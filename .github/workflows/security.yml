@@ -102,6 +102,7 @@ jobs:
           src/__tests__/diagnostics-console-composition.test.ts
           src/__tests__/diagnostics-acceptance-precision.test.ts
           src/__tests__/settings-openapi-parity.test.ts
+          src/__tests__/i289-xlsx-parse-isolation.test.ts
 
       # Issue #276/#277 (Workstreams G+D): the new Python guards for the
       # dependency-currency contract and the advisory-gate scripts run in the

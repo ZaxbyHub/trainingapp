@@ -120,12 +120,17 @@ export function xlsxWorkerChildPath(): string {
 }
 
 /** Live children, so host shutdown can terminate every in-flight parse. */
-const liveChildren = new Set<{ child: XlsxWorkerChild; reject: (err: Error) => void }>();
+const liveChildren = new Set<{
+  child: XlsxWorkerChild;
+  terminated: boolean;
+  reject: (err: Error) => void;
+}>();
 
 /** Kill every live parse child and reject its in-flight extraction. Wired
  *  into the backend host's stop() so no parse child outlives the host. */
 export function terminateXlsxWorkers(): void {
   for (const entry of liveChildren) {
+    entry.terminated = true;
     try {
       entry.child.kill();
     } catch {
@@ -170,7 +175,10 @@ export async function extractXlsxOutOfProcess(
   const childPath = opts.childPath ?? xlsxWorkerChildPath();
   const args = [path.resolve(filePath)];
   if (opts.maxZipBytes !== undefined) args.push(String(opts.maxZipBytes));
-  const timeoutMs = opts.timeoutMs ?? DEFAULT_XLSX_TIMEOUT_MS;
+  // PRR-005: a non-positive timeoutMs would leave the deadline unarmed and a
+  // hung child unwedgeable — clamp to the default instead of trusting it.
+  const requestedTimeoutMs = opts.timeoutMs ?? DEFAULT_XLSX_TIMEOUT_MS;
+  const timeoutMs = requestedTimeoutMs > 0 ? requestedTimeoutMs : DEFAULT_XLSX_TIMEOUT_MS;
 
   return new Promise<{ text: string }>((resolve, reject) => {
     let settled = false;
@@ -183,6 +191,7 @@ export async function extractXlsxOutOfProcess(
     let deadline: NodeJS.Timeout | undefined;
     let exited = false;
     let lastExit: number | null = null;
+    let lastSignal: NodeJS.Signals | null = null;
     // Kills are counted so the settle path never double-fires: the deadline
     // path issues its own kill + escalation kill (the escalation survives
     // settle, per the frozen kill-count pin), and every other settle path
@@ -203,15 +212,26 @@ export async function extractXlsxOutOfProcess(
       if (deadline !== undefined) clearTimeout(deadline);
       if (exitGrace !== undefined) clearTimeout(exitGrace);
       if (opts?.fromDeadline !== true && escalate !== undefined) clearTimeout(escalate);
-      liveChildren.delete(entry);
-      if (!exited && (opts?.fromDeadline !== true || killsIssued === 0)) {
+      // PRR-013: a child that has not exited yet STAYS in liveChildren so a
+      // concurrent terminateXlsxWorkers() can still reap it; the exit handler
+      // performs the removal once the OS process is gone.
+      if (exited) liveChildren.delete(entry);
+      // PRR-006: reap exactly once per settle — skip when a kill was already
+      // issued (deadline path) or when terminateXlsxWorkers() initiated the
+      // settle (its own kill already ran; a second call would escalate to
+      // SIGKILL and skip the SIGTERM grace).
+      if (!exited && killsIssued === 0 && !entry.terminated) {
         issueKill();
       }
       if (err !== null) reject(err);
       else resolve({ text: text ?? '' });
     };
 
-    const entry = { child: null as unknown as XlsxWorkerChild, reject: (err: Error): void => finish(err) };
+    const entry = {
+      child: null as unknown as XlsxWorkerChild,
+      terminated: false,
+      reject: (err: Error): void => finish(err),
+    };
     liveChildren.add(entry);
 
     const evaluate = (): void => {
@@ -229,8 +249,13 @@ export async function extractXlsxOutOfProcess(
         finish(new Error(reason.startsWith(XLSX_WORKER_ERROR_PREFIX) ? reason : `${XLSX_WORKER_ERROR_PREFIX}${reason}`));
         return;
       }
-      // No usable report.
-      const how = lastExit !== null && lastExit !== 0 ? `exit code ${lastExit}` : 'no report';
+      // No usable report. Name the death cause: a signal (OOM, external
+      // kill) is a different failure class from a clean protocol violation
+      // (PRR-014) — the gpu-probe runner reports signals the same way.
+      const how =
+        lastSignal !== null ? `signal ${lastSignal}`
+        : lastExit !== null && lastExit !== 0 ? `exit code ${lastExit}`
+        : 'no report';
       finish(new Error(`${XLSX_WORKER_ERROR_PREFIX}the workbook parser child did not complete cleanly (${how})${stderrTail()}`));
     };
 
@@ -274,7 +299,7 @@ export async function extractXlsxOutOfProcess(
         // unserializable: treated as oversize below
       }
       if (size > MAX_REPORT_CHARS) {
-        issueKill();
+        // PRR-006: finish() issues the single reap; no pre-kill here.
         finish(new Error(`${XLSX_WORKER_ERROR_PREFIX}the parser child produced more output than the report contract allows`));
         return;
       }
@@ -287,7 +312,9 @@ export async function extractXlsxOutOfProcess(
 
     child.stderr?.on('data', (chunk: Buffer) => {
       stderr += decoder.write(chunk);
-      if (stderr.length > 64_000) stderr = stderr.slice(0, 64_000);
+      // PRR-007: keep the TAIL — the crash reason is at the end of the
+      // stream, and stderrTail() reports the last line.
+      if (stderr.length > 64_000) stderr = stderr.slice(-64_000);
     });
     child.stderr?.on('error', () => {
       // stderr is diagnostic only; never let its failure decide the result.
@@ -303,8 +330,15 @@ export async function extractXlsxOutOfProcess(
     child.on('exit', (code: number | null, signal?: NodeJS.Signals | null) => {
       exited = true;
       lastExit = typeof code === 'number' ? code : null;
+      lastSignal = (signal ?? null);
+      liveChildren.delete(entry);
       if (settled) return;
-      if (code === 0 && (signal ?? null) === null && report === null) {
+      // PRR-004: the report and exit notifications travel separate channels
+      // and the child exits non-zero on every failure, so the grace must
+      // cover failure exits too — otherwise a failure report that lands
+      // after the exit event is discarded and the parent loses the child's
+      // actual diagnostic (e.g. the zip-cap reason).
+      if ((signal ?? null) === null && report === null) {
         exitGrace = setTimeout(evaluate, EXIT_REPORT_GRACE_MS);
         exitGrace.unref?.();
         return;

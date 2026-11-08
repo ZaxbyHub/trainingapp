@@ -188,8 +188,8 @@ names the contract it applies.
   absent at runtime. `tests/test_runtime_pins.py` does not inspect `@types/node` today — this
   rule is policy, not an existing test. The baseline is @types/node 26 (desktop and packtool),
   established by maintainer merge on 2026-11-07 (PRs #302/#317): bumps to 26.x are compatible
-  and bumps above it close, with a comment naming the Node-pin contract (`.nvmrc` 24,
-  `engines.node` <25, Electron 44 bundles Node 24).
+  and bumps above it close, with a comment naming the Node-pin contract (`.nvmrc` 24 and
+  `engines.node` <25 — the Node major the desktop's Electron line bundles).
 - **T3, epic-#284 reserved majors (`@huggingface/transformers`, `vitest`) → stay open.** Label
   `epic-284-decision` and comment linking epic #284 (its ASK 6 owns only these two advisory
   families). An agent never merges these; the maintainer decides, and closing the transformers
