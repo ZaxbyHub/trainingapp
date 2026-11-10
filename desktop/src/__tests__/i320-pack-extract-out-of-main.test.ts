@@ -751,7 +751,7 @@
 //   fixture    contracts/fixtures/pack-extract-parity/parity-pack.zip
 //              sha256 76cf0b2219b33e83b8de8479c67fc6a08186f91feb7adb9bc9c18ec6768681fc
 //   golden     contracts/fixtures/pack-extract-parity/golden.manifest.json
-//              sha256 bddbfa48f5a3e16f88999f39a5cc1ea8159d2840cf5221e7dccbc689ada49e59
+//              sha256 9aaabfeccfb54dc4a74498aa5b737d09a09feec13eb4e1a3f4c36b8778daf814
 //   commands (from the repo root):
 //     node .agents/issue-traces/320-269-parse-isolation-chat-integrity/repro/gen-pack-extract-fixture.mjs \
 //       contracts/fixtures/pack-extract-parity/parity-pack.zip
@@ -803,7 +803,7 @@ const PARITY_ZIP = path.join(PARITY_DIR, 'parity-pack.zip');
 const PARITY_GOLDEN = path.join(PARITY_DIR, 'golden.manifest.json');
 /** Provenance pins (see the header's golden block). */
 const FIXTURE_ZIP_SHA256 = '76cf0b2219b33e83b8de8479c67fc6a08186f91feb7adb9bc9c18ec6768681fc';
-const GOLDEN_SHA256 = 'bddbfa48f5a3e16f88999f39a5cc1ea8159d2840cf5221e7dccbc689ada49e59';
+const GOLDEN_SHA256 = '9aaabfeccfb54dc4a74498aa5b737d09a09feec13eb4e1a3f4c36b8778daf814';
 /** The report-derived / runner-fabricated rejection prefix. */
 const WORKER_PREFIX = /^pack worker:/;
 const SERVICE_NAME = 'TrainingApp pack extractor';

@@ -44,7 +44,7 @@ const PARITY_PDF = path.join(PARITY_DIR, 'parity.pdf');
 const PARITY_GOLDEN = path.join(PARITY_DIR, 'parity.expected.json');
 // Pinned at capture time (base 5d1f7338); see the trace's repro/ scripts.
 const PARITY_PDF_SHA256 = '1e372be8fd24bbbab1eb3601e32514688e4ef7f9adc9eb8008ead25ad1d475be';
-const PARITY_GOLDEN_SHA256 = 'ef359aa4e4cffb67c5ba188fdef5c84a58d260a65a5ed120250b6a2b53e85dce';
+const PARITY_GOLDEN_SHA256 = '04b33f43a720cc2017d915c28a615330d13fc6c501b01fb24b7ef9e151ca6dc4';
 
 interface Golden {
   text: string;
