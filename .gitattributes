@@ -57,7 +57,9 @@ tests/test_319_guards.py -text
 tests/test_master_push_advisory_scan.py -text
 # Issue #320 parity goldens: sha256-pinned JSON captured WITHOUT a trailing
 # newline (the recorded capture scripts' exact bytes). -text keeps git's EOL
-# machinery and the end-of-file-fixer hook away from them, so every platform's
-# checkout reproduces the pinned hashes (same pattern as xlsx-parity above).
+# machinery away; the byte-exactness hooks (trailing-whitespace,
+# end-of-file-fixer) are excluded for these dirs in .pre-commit-config.yaml -
+# the full xlsx-parity pattern (attribute + hook excludes) - so every
+# platform's checkout and every pre-commit run reproduces the pinned hashes.
 contracts/fixtures/pdf-parity/** -text
 contracts/fixtures/pack-extract-parity/** -text
