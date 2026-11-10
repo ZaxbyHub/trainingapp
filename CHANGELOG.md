@@ -53,7 +53,10 @@
   golden is `contracts/fixtures/pack-extract-parity/`. Extraction still precedes the opt-in
   Ed25519 check; that ordering is unchanged. Each in-flight upload now holds its compressed
   input and extracted output on disk, bounded by the unchanged 50 MB route cap and the
-  configured byte cap.
+  configured byte cap. Packaged app.asar loading of the pack child is a disclosed residual
+  (same class as #319's xlsx child): the real-Electron harness
+  `desktop/scripts/pack-electron-harness.mjs` runs the compiled child outside app.asar, and
+  the packaged smoke exercises pack directory installs, not the extract upload path.
 - **Out-of-process workbook parsing (issue #319)**:
   - **SheetJS leaves the main process**: desktop `.xlsx` uploads no longer run `XLSX.read`
     inside Electron's privileged main process. The parse (and the zip-bomb cap) execute in a

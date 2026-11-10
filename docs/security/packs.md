@@ -51,6 +51,13 @@ is bounded by the unchanged 50 MB upload route cap, and the output by the
 configured `maxUncompressedBytes` cap. That cost applies per concurrent
 upload.
 
+Packaged-asar residual (disclosed, same class as the #319 xlsx child): the
+pack child's asar resolution is unexercised in packaged builds — the
+real-Electron parity/kill evidence (`desktop/scripts/pack-electron-harness.mjs`)
+runs the compiled child outside app.asar, and jszip is pure JS and not
+asarUnpack-pinned. The packaged smoke exercises pack directory installs,
+not the extract upload path.
+
 ## Architecture invariants
 
 1. **Every install path passes the shared validation core.** The checks
