@@ -322,10 +322,13 @@ describe('useConversations against the clear protocol', () => {
     expect(result.current.hasMore).toBe(false);
     expect(result.current.currentConversationId).toBeUndefined();
     expect(conversationsOf(DB_NAME)).toHaveLength(0);
-    // The next save lands under the fresh epoch (post-reset state).
+    // The next save lands under the fresh epoch (post-reset state). #269
+    // (AC3): a save under a DEFINED id whose record is gone must not
+    // resurrect it — after newChat() the realistic first send passes
+    // undefined, which creates under the fresh epoch.
     await act(async () => {
       result.current.newChat();
-      await result.current.saveMessages('conv-900', [
+      await result.current.saveMessages(undefined, [
         { id: 'm1', role: 'user', content: 'fresh start', timestamp: 1 },
       ], 'wllama', 'test');
     });

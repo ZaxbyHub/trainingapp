@@ -147,6 +147,9 @@ describe('b6 supplementary (critic R2): per-file failure isolation', () => {
     60_000,
   );
 
+  // Issue #320: the .pdf parse now runs in the doc-worker child (a real node
+  // fork per document). Measured 0.89 s on a quiet dev box; 30 s explicit
+  // headroom for a loaded CI runner (the cold child start + pdfjs import).
   itReal('batch ingest: the corrupt file is reported per-result; its sibling succeeds', async () => {
     const root = makeTempDir('b6s-batch-');
     const { store, pipeline } = makePipeline(root, 8, new HashEmbedder({ dims: 8 }));
@@ -165,7 +168,7 @@ describe('b6 supplementary (critic R2): per-file failure isolation', () => {
     } finally {
       store.close();
     }
-  });
+  }, 30_000);
 });
 
 describe('b6 supplementary (critic R2): CJK end-to-end through the pipeline', () => {
@@ -201,6 +204,9 @@ describe('b6 supplementary (critic R2): CJK end-to-end through the pipeline', ()
 });
 
 describe('b6 supplementary (critic R2): Office extractor fixtures (real bytes)', () => {
+  // Issue #320: .docx/.pptx now parse in the doc-worker child (a real node
+  // fork). Measured 0.27 s (.docx) / 0.15 s (.pptx) on a quiet dev box; 30 s
+  // explicit headroom for a loaded CI runner.
   itReal('a minimal in-test .docx extracts its text run', async () => {
     const root = makeTempDir('b6s-docx-');
     const zip = new JSZip();
@@ -217,7 +223,7 @@ describe('b6 supplementary (critic R2): Office extractor fixtures (real bytes)',
     fs.writeFileSync(docxPath, await zip.generateAsync({ type: 'nodebuffer' }));
     const extracted = await extractDocumentFromFile(docxPath);
     expect(extracted.text).toContain('Hello DOCX fixture');
-  });
+  }, 30_000);
 
   // History: this fixture originally caught extractXlsxFile calling
   // workbook.utils.sheet_to_csv (SheetJS keeps `utils` on the module) —
@@ -244,7 +250,7 @@ describe('b6 supplementary (critic R2): Office extractor fixtures (real bytes)',
     fs.writeFileSync(pptxPath, await zip.generateAsync({ type: 'nodebuffer' }));
     const extracted = await extractDocumentFromFile(pptxPath);
     expect(extracted.text).toContain('B6 PPTX fixture text');
-  });
+  }, 30_000);
   // PDF extraction is covered end-to-end by the bench driver (and by the
   // corrupt-pdf isolation tests above), so no PDF fixture is built here.
 });

@@ -183,25 +183,36 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
             : 'Insufficient evidence in the knowledge base to answer this question.'}
         </div>
       ) : message.error ? (
-        // S6: structured error card. The error message is stored on the
-        // dedicated `error` field (NOT injected into content, which would be
-        // parsed as markdown and could linkify/mangle). The Try-again button
-        // only renders when onRegenerate is present (M4) — otherwise the card
-        // just reports the failure. Banner(danger) keeps role="alert".
-        <Banner
-          tone="danger"
-          title="Something went wrong while answering."
-          action={
-            onRegenerate ? (
-              <Button variant="secondary" size="sm" onClick={onRegenerate} aria-label="Try again">
-                <Icon name="rotate-ccw" size={16} />
-                Try again
-              </Button>
-            ) : undefined
-          }
-        >
-          <span className="chat-msg__error-detail">{message.error}</span>
-        </Banner>
+        <>
+          {/* #269 (AC9): keep the streamed partial visible — non-empty content
+              renders ABOVE the error banner (never inside it), so the answer
+              the user already watched stream in does not disappear behind the
+              error card. */}
+          {message.content !== '' && (
+            <div className="chat-msg__body">
+              <MarkdownRenderer content={message.content} isStreaming={message.isStreaming} />
+            </div>
+          )}
+          {/* S6: structured error card. The error message is stored on the
+              dedicated `error` field (NOT injected into content, which would be
+              parsed as markdown and could linkify/mangle). The Try-again button
+              only renders when onRegenerate is present (M4) — otherwise the card
+              just reports the failure. Banner(danger) keeps role="alert". */}
+          <Banner
+            tone="danger"
+            title="Something went wrong while answering."
+            action={
+              onRegenerate ? (
+                <Button variant="secondary" size="sm" onClick={onRegenerate} aria-label="Try again">
+                  <Icon name="rotate-ccw" size={16} />
+                  Try again
+                </Button>
+              ) : undefined
+            }
+          >
+            <span className="chat-msg__error-detail">{message.error}</span>
+          </Banner>
+        </>
       ) : (
         <>
           {/* A7: an empty assistant message (Stop before first token, or a
@@ -213,6 +224,20 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
               <MarkdownRenderer content={message.content} isStreaming={message.isStreaming} />
               {message.isStreaming && <span className="chat-msg__cursor" aria-hidden="true" />}
             </div>
+          )}
+          {/* #269 (AC6/AC12): interruption note for a SETTLED assistant
+              message — either an empty placeholder that never completed (a
+              mid-answer refresh persisted the empty placeholder) or a
+              checkpointed partial (interrupted:true). Lives outside the
+              .chat-msg__meta row and adds no Copy affordance; `stopped` wins
+              (its own note below). */}
+          {!message.isStreaming && !message.stopped && (message.content === '' || message.interrupted === true) && (
+            <div className="chat-msg__note">Response was interrupted. Use Regenerate to try again.</div>
+          )}
+          {/* #269 (AC7/AC8): the user stopped this answer — the note renders
+              under the content and wins over the interrupted note. */}
+          {!message.isStreaming && message.stopped && (
+            <div className="chat-msg__note">Response stopped</div>
           )}
           {/* F4: non-blocking indicator when only keyword search was available. */}
           {message.retrievalDegraded && (

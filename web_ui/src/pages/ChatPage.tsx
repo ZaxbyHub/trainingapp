@@ -37,6 +37,7 @@ import type { Citation } from '../lib/api/types';
 import { presetOptions } from '../lib/rag/rag-presets';
 import { downloadConversation } from '../lib/export/conversation-export';
 import { messagesForRegenerate } from '../lib/chat/message-ops';
+import { sequenceConversationSave } from '../lib/chat/save-sequencer';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { fetchModelStatus, isElectron, modelsAbsentForRealEngine, useDesktopSession } from '../lib/desktop-session';
 import { notifyDesktopModelsChanged } from '../lib/desktop-models-events';
@@ -57,6 +58,37 @@ function generateId(): string {
 }
 
 /**
+ * #269 (AC5): minimum wall-clock gap between partial-answer checkpoints,
+ * measured with Date.now() inside onToken. This is a TOKEN-driven throttle,
+ * never a free-running timer — a checkpoint only ever fires when a token
+ * actually arrives, so it can never race a terminal save on its own.
+ */
+export const CHECKPOINT_INTERVAL_MS = 2000;
+
+/**
+ * #269 (R2''/R3): sequencer key for a first-turn save whose owning
+ * conversation id does not exist yet. The stream adopts the real id only
+ * after the awaited create resolves, so no later save for that stream can be
+ * issued ahead of the create (they chain on the created id afterwards).
+ */
+const NEW_CONVERSATION_RESERVED_KEY = '\u0000new';
+
+/**
+ * #269 (R3): the single terminalization protocol's reason. Drives whether the
+ * finalized partial is persisted (switch / stop / engine-switch / unmount
+ * persist; the clear paths discard — their views are emptied by the caller)
+ * and whether the live view is replaced with the finalized thread.
+ */
+type TerminalReason =
+  | 'switch'
+  | 'stop'
+  | 'engine-switch'
+  | 'unmount'
+  | 'session-clear'
+  | 'messages-cleared'
+  | 'clear-chat';
+
+/**
  * D7 (issue #83): the injected pinned-slide text — a header line with the
  * "Section > Title" label (always contains the slide title) plus the resolved
  * on-screen text when the slide doc resolved in the store. Budgeted by the
@@ -73,14 +105,17 @@ export interface ChatPageProps {
   onMessagesChange: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
   /** Persist `messages` into the conversation identified by `conversationId`.
    *  The owning id is captured at send time (S1) so an in-flight stream can
-   *  never write to a conversation other than the one that produced it. */
+   *  never write to a conversation other than the one that produced it.
+   *  #269 (R2): may return a promise — ChatPage sequences every message save
+   *  per conversation and a save settles only when the persistence layer's
+   *  own promise settles. */
   onSaveConversation: (
     conversationId: string | undefined,
     messages: ChatMessage[],
     mode: 'server' | 'wllama',
     modelUsed: string,
     onCreate?: (newId: string) => void
-  ) => void;
+  ) => void | Promise<void>;
   /** The active conversation id (lifted state from useConversations). */
   currentConversationId: string | undefined;
   /** Set the active conversation id (also updates the ref mirror). Exposed so
@@ -248,11 +283,16 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     return () => clearInterval(id);
   }, [isModelLoading]);  const [clearConfirmState, setClearConfirmState] = useState<'idle' | 'confirming'>('idle');
   const tokenStreamManagerRef = useRef<TokenStreamManager | null>(null);
+  // #269 (R3): the ACTIVE stream's terminalizer (at most one stream at a time
+  // — handleSend blocks overlaps). Every stream-cancellation site (switch,
+  // Stop, engine switch, unmount, session clear, cleared messages, clear
+  // chat) cancels through terminalizeStream below, never an ad-hoc sequence.
+  const activeStreamRef = useRef<{
+    manager: TokenStreamManager;
+    terminalize: (reason: TerminalReason) => void;
+  } | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const clearTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Last sent turn text so Regenerate can re-run it. (Issue #156: images no
-  // longer ride turns — the browser LLM is text-only.)
-  const lastTurnRef = useRef<{ text: string } | null>(null);
   // Current input draft, mirrored from ChatInput so the Ctrl+Enter shortcut can
   // send it without ChatPage owning the textarea state.
   const draftRef = useRef('');
@@ -305,73 +345,45 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // effect's create runs). Parallels owningConversationIdRef. nulled when the
   // stream finalizes so stale data can't be re-persisted after completion.
   const owningMessagesRef = useRef<ChatMessage[] | null>(null);
-  const cancelActiveStream = useCallback(() => {
-    if (tokenStreamManagerRef.current) {
-      tokenStreamManagerRef.current.cancel();
-      tokenStreamManagerRef.current = null;
-    }
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
-    // S7: also interrupt the LLM engine directly. web-llm's `signal` field is
-    // inert at runtime (web-llm-service wires an abort→interruptGenerate
-    // listener as the real mechanism), so the AbortController above is not
-    // sufficient for WebGPU generation. WllamaService.interrupt aborts its real
-    // internal controller (harmless + desired). interrupt() is on the
-    // LLMService interface (types/llm.ts) and both services implement it.
-    try {
-      getLLMService(browserEngine).interrupt();
-    } catch (err) {
-      console.warn('[ChatPage] LLM interrupt failed during stream cancel', err);
-    }
-    setTurnStopped(true);
-    setIsLoading(false);
-  }, [browserEngine]);
+  // #269 (R3): ONE terminalization entry point for every stream-cancellation
+  // site. The per-stream protocol itself lives in runGeneration (it owns the
+  // stream's snapshot + finalized flag); this just dispatches to the ACTIVE
+  // stream, if any.
+  const terminalizeStream = useCallback((reason: TerminalReason) => {
+    const active = activeStreamRef.current;
+    if (!active) return;
+    active.terminalize(reason);
+  }, []);
 
   // Issue #34 item 6p (AC6, session-clear bus): register this page's clear
   // handler — isBusy while a generation streams (the inactivity auto-clear
-  // DEFERS instead of killing the turn), onClear cancels the in-flight
-  // stream and resets the local message state. Re-registered when isLoading
-  // flips so isBusy always reflects the live stream state. Cleanup
-  // unregisters on unmount.
+  // DEFERS instead of killing the turn), onClear terminalizes the in-flight
+  // stream (discarding its partial — the session is being cleared) and
+  // resets the local message state. Re-registered when isLoading flips so
+  // isBusy always reflects the live stream state. Cleanup unregisters on
+  // unmount.
   useEffect(() => registerClearHandler({
     isBusy: () => isLoading || tokenStreamManagerRef.current !== null || abortControllerRef.current !== null,
     onClear: () => {
-      cancelActiveStream();
+      terminalizeStream('session-clear');
       setMessages([]);
     },
-  }), [isLoading, cancelActiveStream, setMessages]);
+  }), [isLoading, terminalizeStream, setMessages]);
 
   useEffect(() => {
     if (prevConversationIdRef.current !== currentConversationId && tokenStreamManagerRef.current) {
-      // A conversation switch happened while a stream is active. Finalize the
-      // in-flight assistant message (S3: clear isStreaming so no blinking
-      // cursor), PERSIST the partial turn to the OWNING conversation id
-      // (PRR-001: previously this did not save, and cancel() never fires
-      // onDone/onError, so the partial answer was irrecoverably lost), then
-      // cancel the stream. The owning id is read from the ref (captured at
-      // send time) so the save targets the conversation that produced the
-      // turn, NOT the switched-to one. Mirrors handleCancel + the engine-
-      // switch effect.
-      const owningId = owningConversationIdRef.current;
-      // PRR-001: read the OWNING conversation's messages from the owning
-      // snapshot ref (captured at send time, updated per token) — NOT the live
-      // messagesRef, which a mid-stream switch has already reassigned to the
-      // switched-TO conversation's messages.
-      const owningMessages = owningMessagesRef.current ?? messagesRef.current;
-      const finalized = owningMessages.map((msg) =>
-        msg.isStreaming ? { ...msg, isStreaming: false } : msg
-      );
-      messagesRef.current = finalized;
-      setMessages(finalized);
-      onSaveConversation(owningId, finalized, conversationStorageTag(mode), browserEngine);
-      // Clear the owning snapshot so a later switch can't re-persist it.
-      owningMessagesRef.current = null;
-      cancelActiveStream();
+      // A conversation switch happened while a stream is active — including a
+      // switch to New Chat (A → undefined). #269 (R3): terminalize FIRST
+      // (cancel, whose flush routes the buffered tail through the guarded
+      // onToken into the OWNING snapshot), then persist the finalized partial
+      // to the OWNING conversation id (PRR-001: cancel() never fires
+      // onDone/onError, so this persist is the only way the partial survives).
+      // The switched-TO view is NEVER written (#269 AC1/AC2: base wrote the
+      // owning thread back into the live view here, polluting it).
+      terminalizeStream('switch');
     }
     prevConversationIdRef.current = currentConversationId;
-  }, [currentConversationId, cancelActiveStream, setMessages, onSaveConversation, mode, browserEngine]);
+  }, [currentConversationId, terminalizeStream]);
 
   const isBrowserMode = mode === 'browser-local';
   // The local browser model gates input only when it is the generator.
@@ -406,38 +418,16 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     const prev = prevEngineRef.current;
     prevEngineRef.current = browserEngine;
     if (mode === 'browser-local' && prev !== browserEngine) {
-      // S2/S3: finalize the in-flight assistant message and persist the
-      // partial turn before aborting, so an engine switch doesn't discard
-      // minutes of generation or leave a blinking cursor. PRR-001: read the
-      // OWNING conversation's id + messages from the send-time refs so an
-      // engine switch mid-stream persists the turn that was actually in flight
-      // (the live currentConversationId / messagesRef are the engine-switch
-      // view, which is correct here because an engine switch doesn't change the
-      // active conversation, but using the owning refs is consistent with the
-      // switch + unmount paths and resilient to ordering).
-      const owningId = owningConversationIdRef.current ?? currentConversationId;
-      const owningMessages = owningMessagesRef.current ?? messagesRef.current;
-      const finalized = owningMessages.map((msg) =>
-        msg.isStreaming ? { ...msg, isStreaming: false } : msg
-      );
-      if (owningMessages.some((m) => m.isStreaming)) {
-        messagesRef.current = finalized;
-        setMessages(finalized);
-        onSaveConversation(owningId, finalized, 'wllama', prev);
-        owningMessagesRef.current = null;
-      }
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-        abortControllerRef.current = null;
-      }
-      if (tokenStreamManagerRef.current) {
-        tokenStreamManagerRef.current.cancel();
-        tokenStreamManagerRef.current = null;
-      }
-      setTurnStopped(true);
-      setIsLoading(false);
+      // S2/S3 + PRR-006b: finalize the in-flight assistant message and
+      // persist the partial turn before aborting, so an engine switch doesn't
+      // discard minutes of generation or leave a blinking cursor. #269 (R3):
+      // through the single terminalization protocol — the terminal save
+      // targets the OWNING conversation (engine switches don't change the
+      // active conversation) and the view is replaced with the finalized
+      // thread when it still belongs to the owner.
+      terminalizeStream('engine-switch');
     }
-  }, [browserEngine, mode, currentConversationId, onSaveConversation, setMessages]);
+  }, [browserEngine, mode, terminalizeStream]);
 
   // Evaluate model readiness for the selected engine when entering browser-local
   // mode or switching engines. This drives `isModelReady` (and the input gate)
@@ -480,13 +470,12 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     });
   }, [browserEngine]);
 
-  // Cleanup on unmount — finalize + persist the in-flight turn (S2/S3) before
-  // releasing resources. Reads from refs (not closure state) so the latest
-  // values are used even though the effect has an empty dep array.
-  const persistOnUnmountRef = useRef<(messages: ChatMessage[], owningId: string | undefined) => void>(() => {});
-  persistOnUnmountRef.current = (messages, owningId) => {
-    onSaveConversation(owningId, messages, conversationStorageTag(mode), browserEngine);
-  };
+  // Cleanup on unmount — finalize + persist the in-flight turn (S2/S3 +
+  // PRR-006a) through the single terminalization protocol before releasing
+  // resources. #269 (R2''): the save goes through the MODULE-scope
+  // per-conversation sequencer, so it still orders correctly against a
+  // REMOUNTED ChatPage saving into the same conversation.
+  //
   // S2/S3 + PRR-001 unblock: dep array is `[]` so the cleanup fires ONLY on a
   // genuine unmount, NOT on every conversation switch. Previously the dep was
   // `[currentConversationId]`; because React runs pending effect DESTROYS
@@ -499,16 +488,14 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // dep is safe — no stale closure values.
   useEffect(() => {
     return () => {
-      // S2/S3: if a stream was in flight, finalize flags + persist so unmount
-      // (e.g. navigating away mid-generation) doesn't discard the turn or leave
-      // a blinking cursor persisted.
-      if (tokenStreamManagerRef.current !== null) {
-        const owningId = owningConversationIdRef.current;
-        const owningMessages = owningMessagesRef.current ?? messagesRef.current;
-        const finalized = owningMessages.map((msg) =>
-          msg.isStreaming ? { ...msg, isStreaming: false } : msg
-        );
-        persistOnUnmountRef.current(finalized, owningId);
+      // S2/S3: if a stream was in flight, terminalize it (cancel-flush into
+      // the owning snapshot, finalize, persist to the owning id) so unmount
+      // (e.g. navigating away mid-generation) doesn't discard the turn or
+      // leave a blinking cursor persisted.
+      const active = activeStreamRef.current;
+      if (active) {
+        active.terminalize('unmount');
+        active.manager.dispose();
       }
       if (clearTimeoutRef.current !== null) {
         clearTimeout(clearTimeoutRef.current);
@@ -516,10 +503,6 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
         abortControllerRef.current = null;
-      }
-      if (tokenStreamManagerRef.current !== null) {
-        tokenStreamManagerRef.current.dispose();
-        tokenStreamManagerRef.current = null;
       }
     };
   }, []);
@@ -546,32 +529,139 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     );
     tokenStreamManagerRef.current = streamManager;
 
-    // A local accumulator for the owning snapshot. onToken writes to BOTH the
-    // live messagesRef (for live UI updates of the active conversation) AND
-    // this snapshot (so onDone/onError persist the correct messages even if
-    // the user switched conversations mid-stream). PRR-001: the snapshot is
-    // ALSO mirrored onto owningMessagesRef so the switch / unmount / engine-
-    // switch effects can read the OWNING conversation's partial turn (the live
-    // messagesRef is clobbered by a mid-stream switch + the messagesRef-mirror
-    // passive effect before those effects' create runs).
+    // A local accumulator for the owning snapshot. onToken ALWAYS updates this
+    // snapshot (+ owningMessagesRef) and commits to the live view only when
+    // the view still belongs to the owner (#269 B2 — deriving from messagesRef
+    // let a mid-stream switch corrupt whichever conversation was on screen).
     let snapshot = owningMessages;
+    // #269 (R3): per-stream finalized flag — set by EVERY terminal path
+    // (onDone, onError, terminalize). Once set, checkpoints are refused both
+    // at issue time and at their sequenced turn.
+    let finalized = false;
+    // #269 (AC5): checkpoint throttle anchor (Date.now-based, so fake-timer
+    // tests drive it). Anchored at stream start so the first tokens inside
+    // the window never fire an early checkpoint.
+    let lastCheckpointAt = Date.now();
     owningMessagesRef.current = snapshot;
 
+    // #269 (R3): the single terminalization protocol for THIS stream. Order:
+    // (1) mark finalized (no further checkpoints); (2) cancel() FIRST — the
+    // buffered tail flushes through the GUARDED onToken into the OWNING
+    // snapshot (PRR-005: snapshot-before-cancel lost every buffered token),
+    // touching the view only when it still belongs to the owner; (3) read the
+    // owning snapshot (NO snapshot → no save; never fall back to messagesRef,
+    // which may belong to a different conversation by now); (4) finalize the
+    // thread (isStreaming stripped, interrupted cleared, stopped:true only
+    // for a user Stop); (5) persist through the module-scope per-conversation
+    // sequencer when the reason persists; (6) replace the view only for
+    // stop/engine-switch AND only when the view belongs to the owner;
+    // (7) null the stream refs.
+    const terminalize = (reason: TerminalReason) => {
+      if (finalized) return;
+      finalized = true;
+      streamManager.cancel();
+      if (tokenStreamManagerRef.current === streamManager) {
+        tokenStreamManagerRef.current = null;
+      }
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+      // S7: also interrupt the LLM engine directly. web-llm's `signal` field
+      // is inert at runtime (web-llm-service wires an abort→interruptGenerate
+      // listener as the real mechanism), so the AbortController above is not
+      // sufficient for WebGPU generation. WllamaService.interrupt aborts its
+      // real internal controller (harmless + desired).
+      try {
+        getLLMService(browserEngine).interrupt();
+      } catch (err) {
+        console.warn('[ChatPage] LLM interrupt failed during stream cancel', err);
+      }
+      // The unmount path never touches state (the component is going away).
+      if (reason !== 'unmount') {
+        setTurnStopped(true);
+        setIsLoading(false);
+      }
+      if (activeStreamRef.current && activeStreamRef.current.manager === streamManager) {
+        activeStreamRef.current = null;
+      }
+      const snapshotNow = owningMessagesRef.current;
+      if (snapshotNow === null) return; // no owning snapshot → nothing to persist
+      const owningId = owningConversationIdRef.current;
+      const finalizedThread = snapshotNow.map((msg) => {
+        if (!msg.isStreaming) return msg;
+        const { isStreaming: _isStreaming, interrupted: _interrupted, ...rest } = msg;
+        void _isStreaming;
+        void _interrupted;
+        // `stopped` marks a USER stop (#269 AC7) — the only reason that sets it.
+        return reason === 'stop' ? { ...rest, stopped: true } : rest;
+      });
+      const persist =
+        reason === 'switch' || reason === 'stop' || reason === 'engine-switch' || reason === 'unmount';
+      if (persist) {
+        sequenceConversationSave(owningId ?? NEW_CONVERSATION_RESERVED_KEY, () =>
+          onSaveConversation(owningId, finalizedThread, conversationStorageTag(mode), browserEngine)
+        ).catch((err) => {
+          console.error('[ChatPage] Terminal save failed', err);
+        });
+      }
+      if (
+        (reason === 'stop' || reason === 'engine-switch') &&
+        currentConversationIdRef.current === owningId
+      ) {
+        messagesRef.current = finalizedThread;
+        setMessages(finalizedThread);
+      }
+      // Clear the owning snapshot so a later switch/unmount can't re-persist it.
+      owningMessagesRef.current = null;
+    };
+    activeStreamRef.current = { manager: streamManager, terminalize };
+
+    // #269 (AC5): throttled partial-answer checkpoint. Fires inside onToken
+    // ONLY (never a free-running timer), at most once per
+    // CHECKPOINT_INTERVAL_MS of Date.now() time, saving the owning snapshot
+    // with the streaming assistant message marked interrupted:true. The task
+    // re-checks the finalized flag at its sequenced turn and drops if the
+    // stream terminalized meanwhile, so a queued checkpoint can never
+    // overtake (or land after) the terminal save.
+    const maybeCheckpoint = (thread: ChatMessage[]) => {
+      if (finalized) return;
+      if (tokenStreamManagerRef.current !== streamManager) return;
+      const owningId = owningConversationIdRef.current;
+      if (owningId === undefined) return; // no owning conversation to checkpoint into
+      const now = Date.now();
+      if (now - lastCheckpointAt < CHECKPOINT_INTERVAL_MS) return;
+      lastCheckpointAt = now;
+      const checkpointThread = thread.map((msg) =>
+        msg.isStreaming ? { ...msg, interrupted: true } : msg
+      );
+      sequenceConversationSave(owningId, () => {
+        if (finalized) return; // terminalized while queued — drop
+        return onSaveConversation(owningId, checkpointThread, conversationStorageTag(mode), browserEngine);
+      }).catch((err) => {
+        console.error('[ChatPage] Checkpoint save failed', err);
+      });
+    };
+
     // Wire token callback - append tokens to assistant message.
-    // Compute the next array from messagesRef (the always-current mirror),
-    // commit it to the ref synchronously, and set state with the value form
-    // (no updater function) so React never double-invokes a side-effect.
     streamManager.onToken((token) => {
-      const next = messagesRef.current.map((msg) =>
+      // #269 (B2): derive the next array from the closure OWNING snapshot —
+      // never the live messagesRef (a mid-stream switch reassigns it to the
+      // switched-TO conversation's messages). Always update the snapshot +
+      // its mirror; commit to the live view only when the view still belongs
+      // to the owning conversation (the same guard onDone/onError use).
+      const next = snapshot.map((msg) =>
         msg.id === assistantMessageId
           ? { ...msg, content: msg.content + token, timestamp: Date.now() }
           : msg
       );
-      messagesRef.current = next;
-      setMessages(next);
-      // Mirror into the snapshot so the final save reflects every token.
       snapshot = next;
       owningMessagesRef.current = snapshot;
+      if (currentConversationIdRef.current === owningConversationIdRef.current) {
+        messagesRef.current = next;
+        setMessages(next);
+      }
+      maybeCheckpoint(next);
     });
 
     // Wire done callback - finalize message with sources.
@@ -580,31 +670,37 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     // snapshot already reflects every streamed token here. Read from the
     // snapshot (NOT messagesRef) so a mid-stream switch cannot mis-target.
     streamManager.onDone((data) => {
-      const updated = snapshot.map((msg) =>
-        msg.id === assistantMessageId
-          ? {
-              ...msg,
-              isStreaming: false,
-              sources: data.sources,
-              // Structured citations (F7). Two surfaces: the Electron/SSE
-              // done event carries the contract's pack-attributed `citations`
-              // (C7, issue #74 — mapped via the citationsToRefs choke point so
-              // pack provenance cannot be dropped), while the browser-RAG
-              // surface carries retrieval `chunks` (mapped explicitly so the
-              // retrieval-only `score` field is not persisted into the
-              // message / Dexie, PRR-008). Either way the array stays in
-              // context order so pill [i+1] maps to entry i.
-              citations: citationsFromDone(data),
-              // C5 (issue #72): provenance from either surface (badge input).
-              grounding: data.grounding,
-              // D6 (issue #82): Learn-panel rows from either surface.
-              learn: data.learn,
-              abstain: data.abstain,
-              abstainReason: data.abstainReason,
-              retrievalDegraded: data.retrievalDegraded,
-            }
-          : msg
-      );
+      // #269: mark terminal (no further checkpoints), but still process the
+      // payload — a late done racing a cancel (registered before the cancel)
+      // keeps its base behavior: the owning view/save still land (C13 pins
+      // this), sequenced behind any earlier save for the conversation.
+      finalized = true;
+      const updated = snapshot.map((msg) => {
+        if (msg.id !== assistantMessageId) return msg;
+        const { isStreaming: _isStreaming, interrupted: _interrupted, ...rest } = msg;
+        void _isStreaming;
+        void _interrupted;
+        return {
+          ...rest,
+          // Structured citations (F7). Two surfaces: the Electron/SSE
+          // done event carries the contract's pack-attributed `citations`
+          // (C7, issue #74 — mapped via the citationsToRefs choke point so
+          // pack provenance cannot be dropped), while the browser-RAG
+          // surface carries retrieval `chunks` (mapped explicitly so the
+          // retrieval-only `score` field is not persisted into the
+          // message / Dexie, PRR-008). Either way the array stays in
+          // context order so pill [i+1] maps to entry i.
+          citations: citationsFromDone(data),
+          sources: data.sources,
+          // C5 (issue #72): provenance from either surface (badge input).
+          grounding: data.grounding,
+          // D6 (issue #82): Learn-panel rows from either surface.
+          learn: data.learn,
+          abstain: data.abstain,
+          abstainReason: data.abstainReason,
+          retrievalDegraded: data.retrievalDegraded,
+        };
+      });
       snapshot = updated;
       // PRR-001: keep the ref in sync, then null it once the turn is finalized
       // so a later switch/unmount/engine-switch can't re-persist a completed
@@ -624,19 +720,27 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         messagesRef.current = updated;
         setMessages(updated);
       }
-      // Save to Dexie — always to the OWNING id (S1).
-      onSaveConversation(liveOwningId, updated, conversationStorageTag(mode), browserEngine);
+      // Save to Dexie — always to the OWNING id (S1), sequenced per
+      // conversation (#269). The VIEW, the busy state and the stream refs are
+      // all released synchronously above/below, so Send and Regenerate stay
+      // usable while an earlier save for this conversation is still in flight.
+      sequenceConversationSave(liveOwningId ?? NEW_CONVERSATION_RESERVED_KEY, () =>
+        onSaveConversation(liveOwningId, updated, conversationStorageTag(mode), browserEngine)
+      ).catch((err) => {
+        console.error('[ChatPage] Completion save failed', err);
+      });
       if (tokenStreamManagerRef.current === streamManager) {
         setIsLoading(false);
         tokenStreamManagerRef.current = null;
         owningMessagesRef.current = null;
+        activeStreamRef.current = null;
         // PRR-102 (PR #264 review): release the busy signal's THIRD leg —
         // the stream's AbortController. It was never nulled on completion, so
         // the session-clear handler's isBusy stayed true forever after a
         // normal turn in the default browser mode (the controller is only set
         // on that path), which deadened AC6's auto-clear deferral exit, kept
         // the origin-wide session-active lock held and spun the 30 s re-arm
-        // poll indefinitely. cancelActiveStream nulls both refs on CANCEL;
+        // poll indefinitely. The terminalize path nulls both refs on CANCEL;
         // this is the completion counterpart. Safe inside the same-manager
         // guard: a newer stream (blocked from overlapping by handleSend)
         // would have replaced tokenStreamManagerRef first.
@@ -648,11 +752,16 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     // flushBuffer() inside TokenStreamManager.error(), so read from snapshot.
     // S6: set the structured `error` field instead of injecting into content.
     streamManager.onError((errorMessage) => {
-      const updated = snapshot.map((msg) =>
-        msg.id === assistantMessageId
-          ? { ...msg, error: errorMessage, isStreaming: false }
-          : msg
-      );
+      // #269: mark terminal (no further checkpoints); like onDone, a late
+      // error still finalizes + persists (base behavior).
+      finalized = true;
+      const updated = snapshot.map((msg) => {
+        if (msg.id !== assistantMessageId) return msg;
+        const { isStreaming: _isStreaming, interrupted: _interrupted, ...rest } = msg;
+        void _isStreaming;
+        void _interrupted;
+        return { ...rest, error: errorMessage };
+      });
       snapshot = updated;
       owningMessagesRef.current = snapshot;
       const liveOwningId = owningConversationIdRef.current;
@@ -661,12 +770,18 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         setMessages(updated);
       }
       // S2: persist the errored turn to the OWNING id so the partial answer +
-      // user question survive (the save layer strips isStreaming — S3).
-      onSaveConversation(liveOwningId, updated, conversationStorageTag(mode), browserEngine);
+      // user question survive (the save layer strips isStreaming — S3),
+      // sequenced per conversation (#269).
+      sequenceConversationSave(liveOwningId ?? NEW_CONVERSATION_RESERVED_KEY, () =>
+        onSaveConversation(liveOwningId, updated, conversationStorageTag(mode), browserEngine)
+      ).catch((err) => {
+        console.error('[ChatPage] Error save failed', err);
+      });
       if (tokenStreamManagerRef.current === streamManager) {
         setIsLoading(false);
         tokenStreamManagerRef.current = null;
         owningMessagesRef.current = null;
+        activeStreamRef.current = null;
         // PRR-102: the error path is a turn completion too — release the
         // AbortController leg of the busy signal (see onDone above).
         abortControllerRef.current = null;
@@ -910,9 +1025,6 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     // /ask would 503 — the informative overlay is shown instead.
     if (desktopModelBlocked) return;
 
-    // Capture the turn so Regenerate can re-run it.
-    lastTurnRef.current = { text };
-
     const userMessage: ChatMessage = {
       id: generateId(),
       role: 'user',
@@ -953,21 +1065,31 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     // (a microtask), so on a fast-complete first turn (warm model / zero-doc
     // abstain) onDone fired before onCreate resolved, read undefined, and
     // created a duplicate conversation. Awaiting the save guarantees ordering.
+    //
+    // #269 (R2''/R3): the save joins the MODULE-scope per-conversation
+    // sequencer (reserved key for a first-turn create), so it is ISSUED to
+    // the persistence layer only after every earlier save to this
+    // conversation settled — a held terminal save of an OLD stream can never
+    // be overtaken by (and then overwrite) the newer turn.
     owningConversationIdRef.current = currentConversationId;
     let resolvedOwningId = currentConversationId;
     try {
-      await onSaveConversation(
-        currentConversationId,
-        appended,
-        conversationStorageTag(mode),
-        browserEngine,
-        (newId) => {
-          // First-turn creation: adopt the new id as both the owning id (for
-          // this stream's saves, via the ref) and the active conversation.
-          if (currentConversationId === undefined) {
-            resolvedOwningId = newId;
-          }
-        }
+      await sequenceConversationSave(
+        currentConversationId ?? NEW_CONVERSATION_RESERVED_KEY,
+        () =>
+          onSaveConversation(
+            currentConversationId,
+            appended,
+            conversationStorageTag(mode),
+            browserEngine,
+            (newId) => {
+              // First-turn creation: adopt the new id as both the owning id (for
+              // this stream's saves, via the ref) and the active conversation.
+              if (currentConversationId === undefined) {
+                resolvedOwningId = newId;
+              }
+            }
+          )
       );
     } catch (err) {
       console.error('[ChatPage] Send-time persistence failed; streaming will proceed without a guaranteed owning id.', err);
@@ -985,13 +1107,19 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   }, [runGeneration, onSaveConversation, mode, browserEngine, currentConversationId, setCurrentConversationId, desktopModelBlocked]);
 
   // Re-run the most recent user turn, replacing the last assistant response.
+  // #269 (B3/AC4): the turn is DERIVED from the displayed thread (the last
+  // user message), never from a send-time ref — a ref survives conversation
+  // switches and would re-run A's question against B's thread. Also restores
+  // Try again on persisted failures after a reload.
   const handleRegenerate = useCallback(() => {
     if (tokenStreamManagerRef.current) return; // a stream is in flight
-    const last = lastTurnRef.current;
-    if (!last) return;
+    const thread = messagesRef.current;
+    const lastUser = [...thread].reverse().find((m) => m.role === 'user');
+    if (!lastUser) return; // no regenerable turn
+    if (thread[thread.length - 1]?.role !== 'assistant') return; // thread must end in an assistant reply
 
     const assistantMessageId = generateId();
-    const regenerated = messagesForRegenerate(messagesRef.current, {
+    const regenerated = messagesForRegenerate(thread, {
       id: assistantMessageId,
       role: 'assistant',
       content: '',
@@ -1005,47 +1133,44 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     // F1: regenerate re-uses the current conversation; set the owning ref so
     // runGeneration's saves target it.
     owningConversationIdRef.current = currentConversationId;
-    runGeneration(last.text, assistantMessageId, currentConversationId, regenerated);
-  }, [runGeneration, currentConversationId]);
+    runGeneration(lastUser.content, assistantMessageId, currentConversationId, regenerated);
+  }, [runGeneration, currentConversationId, setMessages]);
 
   const handleCancel = useCallback(() => {
-    // Capture owning id BEFORE cancel (it's from state, survives cancel).
-    const owningId = currentConversationId;
-
-    cancelActiveStream();
-
-    // PRR-005: read messagesRef.current AFTER cancelActiveStream so the
-    // cancel-flushed tail tokens (S4: cancel() flushes the buffer via onToken
-    // before clearing) are included. Previously the snapshot was captured
-    // before cancel, so finalized was derived from a stale array and the
-    // cancel-flushed tokens were lost from both UI and persistence.
-    const finalized = messagesRef.current.map((msg) =>
-      msg.isStreaming ? { ...msg, isStreaming: false } : msg
-    );
-    messagesRef.current = finalized;
-    setMessages(finalized);
-    onSaveConversation(owningId, finalized, conversationStorageTag(mode), browserEngine);
-    // PRR-001: the in-flight turn is finalized; clear the owning snapshot so a
-    // later switch/unmount/engine-switch can't re-persist it.
-    owningMessagesRef.current = null;
-  }, [cancelActiveStream, currentConversationId, onSaveConversation, mode, browserEngine]);
+    // #269 (R3): Stop goes through the single terminalization protocol — the
+    // cancel flush lands in the OWNING snapshot first (PRR-005: every
+    // buffered tail token survives), then the finalized turn (stopped:true,
+    // #269 AC7) persists to the owning id through the sequencer and replaces
+    // the view (which belongs to the owner by definition of Stop).
+    if (activeStreamRef.current) {
+      terminalizeStream('stop');
+    } else {
+      // No registered stream (e.g. Stop inside the send-time-save window):
+      // nothing to flush or persist — just release the busy state so the
+      // composer doesn't wedge.
+      setTurnStopped(true);
+      setIsLoading(false);
+    }
+  }, [terminalizeStream]);
 
   // If messages are cleared while a stream is in flight (e.g. the sidebar
   // "New Chat" button calls newChat() in App, which empties currentMessages
-  // without going through ChatPage), cancel the orphaned stream so its
+  // without going through ChatPage), terminalize the orphaned stream so its
   // callbacks don't fire against the cleared state and resources are released.
   // Only react to a non-empty → empty transition so this never cancels a
   // stream that was started while the view was already empty (e.g. the render
   // window between handleSend setting the stream ref and the messages prop
-  // updating).
+  // updating). #269 (R3): discards the partial (persist=false) — when the id
+  // changed too, the switch effect above already persisted it and nulled the
+  // stream before this can double-run.
   const prevMessagesLengthRef = useRef(messages.length);
   useEffect(() => {
     const prev = prevMessagesLengthRef.current;
     prevMessagesLengthRef.current = messages.length;
     if (prev > 0 && messages.length === 0 && tokenStreamManagerRef.current) {
-      cancelActiveStream();
+      terminalizeStream('messages-cleared');
     }
-  }, [messages.length, cancelActiveStream]);
+  }, [messages.length, terminalizeStream]);
 
   const handleClearClick = useCallback(() => {
     if (clearConfirmState === 'idle') {
@@ -1060,16 +1185,16 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         clearTimeout(clearTimeoutRef.current);
         clearTimeoutRef.current = null;
       }
-      // Cancel any in-flight stream so its callbacks don't fire against the
-      // cleared state and resources are released immediately.
-      cancelActiveStream();
+      // Terminalize any in-flight stream (discarding its partial — #269 R3)
+      // so its callbacks don't fire against the cleared state and resources
+      // are released immediately.
+      terminalizeStream('clear-chat');
       setMessages([]);
       messagesRef.current = [];
       onNewChat();
-      lastTurnRef.current = null; // no turn to regenerate after clearing
       setClearConfirmState('idle');
     }
-  }, [clearConfirmState, cancelActiveStream, onNewChat]);
+  }, [clearConfirmState, terminalizeStream, onNewChat]);
 
   // Keyboard shortcuts — ChatPage registers the chat-scoped set (send/clear-chat
   // plus its own Ctrl+, handling for the model-blocked overlay's Open Settings
@@ -1118,6 +1243,15 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // (not the typed prop) because React 18 has no `inert`; the gate Dialogs are
   // siblings of this wrapper, never inside it.
   const modelGateUp = desktopModelBlocked || isModelBlocked;
+  // #269 (B3): Regenerate is offered from the DISPLAYED thread — a user
+  // message exists, the thread ends in an assistant message, and nothing is
+  // streaming. Derived per render (no send-time ref), so the button follows
+  // whatever conversation is on screen.
+  const canRegenerate =
+    !isLoading &&
+    messages.length > 0 &&
+    messages[messages.length - 1].role === 'assistant' &&
+    messages.some((m) => m.role === 'user');
   // PRR-151-018: in an engine without native `inert` the attribute does nothing;
   // emulate its keyboard/AT effects there (no-op where inert is implemented).
   const gatedContentRef = useRef<HTMLDivElement>(null);
@@ -1204,7 +1338,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         messages={messages}
         isStreaming={isLoading}
         stopped={turnStopped}
-        onRegenerate={!isLoading && lastTurnRef.current ? handleRegenerate : undefined}
+        onRegenerate={canRegenerate ? handleRegenerate : undefined}
         onSuggestedPrompt={(prompt) => handleSend(prompt)}
         onNavigateToDocuments={onNavigateToDocuments}
         onOpenTraining={onOpenTraining}

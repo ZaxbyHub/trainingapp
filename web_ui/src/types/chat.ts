@@ -61,6 +61,14 @@ export interface ChatMessage {
   /** Structured error string when generation failed mid-stream (S6). Rendered
    *  as a styled error card instead of being injected into `content`. */
   error?: string;
+  /** #269 (AC7): the user stopped this answer (Stop). Persisted so a reloaded
+   *  conversation still renders the "Response stopped" note instead of
+   *  masquerading as a finished answer. Wins over `interrupted` when both. */
+  stopped?: boolean;
+  /** #269 (AC5/AC6): the answer was interrupted mid-stream (a checkpointed
+   *  partial); the bubble renders the interrupted note beside the partial
+   *  content. Cleared by the terminal save when the turn completes. */
+  interrupted?: boolean;
   timestamp: number;
   /** Transient UI flag — stripped before persistence (S3). Drives the
    *  streaming cursor; never persisted to IndexedDB. */

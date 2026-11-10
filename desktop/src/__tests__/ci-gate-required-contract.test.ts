@@ -17,11 +17,13 @@
 // frozen roster-exclusion-evidence-contract acceptance spec), and every
 // exclusion carries machine-verifiable owning-context evidence — the
 // workflow file must exist and its text must contain the pinned scalar.
-// The convention census at HEAD (this commit) matched 18 files = 10
+// The convention census at HEAD (this commit) matched 19 files = 10
 // rostered via the convention (the 6 original members plus
 // backend-env-repo-root-contract, i230-resolver-env-parity,
 // roster-exclusion-evidence-contract and frozen-recipe-replay-contract)
-// + 8 excluded; eight rostered specs are named OUTSIDE the convention and
+// + 9 excluded (the ninth being the #320 PDF-parity acceptance check,
+// desktop-build-owned like the sibling fixture pins); eight rostered
+// specs are named OUTSIDE the convention and
 // are therefore invisible to the census — backend-lifecycle-capture-once-
 // census, backend-memory-tick-lifecycle, i199-backend-surface-lifecycle,
 // reranker-generation-lifecycle, i230-host-stop-profile-reset and

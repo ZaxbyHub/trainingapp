@@ -38,6 +38,8 @@ import {
   type GpuVerdictGate,
 } from './inference/gpu-probe.js';
 import { terminateXlsxWorkers } from './ingest/xlsx-worker.js';
+import { terminatePackWorkers } from './packs/pack-worker.js';
+import { terminateDocWorkers } from './ingest/doc-worker.js';
 import { loadExternalSnapshot, replayExternalSnapshot, saveExternalSnapshot } from './external-store.js';
 import { OnnxEmbedder, resolveEmbedder, type EmbeddingSurface } from './ingest/embedder.js';
 import { resolveIngestConfig, resolveIngestLimits } from './ingest/config.js';
@@ -803,7 +805,7 @@ export class NodeBackendHost implements BackendHost {
     // Playwright-under-Electron renderer over vite preview) can widen the
     // guard's CORS allowlist via TRAININGAPP_DESKTOP_DEV_ORIGINS — the same
     // env resolveSecurityConfig() honors on the Electron side. The packaged
-    // baseline (app://*) is never dropped; appends only.
+    // baseline (the app:// scheme wildcard origin) is never dropped; appends only.
     const allowedOrigins = [...DEFAULT_ALLOWED_ORIGINS];
     const rawDevOrigins = env[DEV_ORIGINS_ENV];
     if (typeof rawDevOrigins === 'string' && rawDevOrigins.trim().length > 0) {
@@ -1284,6 +1286,10 @@ export class NodeBackendHost implements BackendHost {
     // terminateXlsxWorkers kills every in-flight parse child and rejects its
     // pending extraction, mirroring the probe-child rule above.
     terminateXlsxWorkers();
+    // issue #320 AC3: the same rule for pack-extraction children.
+    terminatePackWorkers();
+    // issue #320: the same rule for the document-parse (.docx/.pptx/.pdf) child.
+    terminateDocWorkers();
     // B8 (issue #66) governance teardown FIRST: no sampler fires mid-shutdown,
     // the idle controller never fires after dispose, and queued (not yet
     // started) generations fail fast instead of running after close.

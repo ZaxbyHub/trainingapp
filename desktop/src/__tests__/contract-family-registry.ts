@@ -151,4 +151,13 @@ export const ROSTER_EXCLUSIONS: RosterExclusionEntry[] = [
     reason: 'desktop-build-owned pin (pack fixtures)',
     runs_in: { workflow: 'desktop-build.yml', scalar: 'npm --prefix desktop test' },
   },
+  {
+    // Issue #320 AC2 frozen acceptance check (trace 320-269, check C2):
+    // a -parity-named issue-tracer spec must NOT join FAMILY_ROSTER (that
+    // would change what the required security job runs); it runs in the
+    // desktop-build full-suite step like the sibling fixture pins.
+    spec: 'i320-pdf-parity.test.ts',
+    reason: 'desktop-build-owned pin (#320 PDF extraction golden parity)',
+    runs_in: { workflow: 'desktop-build.yml', scalar: 'npm --prefix desktop test' },
+  },
 ];

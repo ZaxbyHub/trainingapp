@@ -441,6 +441,20 @@ export function useConversations() {
     const now = Date.now();
     // Preserve an existing conversation's title; only derive for new ones.
     const existing = conversationId ? await getConversation(conversationId) : undefined;
+
+    // #269 (claim 4 / AC3): a DEFINED id whose record no longer exists (the
+    // owning conversation was deleted mid-stream, then a finalize path saved
+    // under that id) must NOT resurrect it — the old `!conversationId ||
+    // !existing` create branch minted a fresh record and the deleted
+    // conversation reappeared. Return without writing and surface the drop
+    // via persistenceError, so a follow-up send into a deleted conversation
+    // is not silently lost. `conversationId === undefined` (a genuine first
+    // turn) still creates below.
+    if (conversationId !== undefined && !existing) {
+      setPersistenceError('Failed to save conversation');
+      return;
+    }
+
     const firstUserMsg = persisted.find(m => m.role === 'user');
     const title = existing?.title ?? (firstUserMsg
       ? firstUserMsg.content.slice(0, 50) + (firstUserMsg.content.length > 50 ? '...' : '')
@@ -448,7 +462,7 @@ export function useConversations() {
 
     try {
       const stateEpoch = await epochPromise;
-      if (!conversationId || !existing) {
+      if (conversationId === undefined) {
         // Create new conversation
         const newConv: Conversation = {
           id: (typeof crypto !== 'undefined' && crypto.randomUUID)

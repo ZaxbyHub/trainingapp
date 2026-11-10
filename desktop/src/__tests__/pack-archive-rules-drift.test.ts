@@ -19,9 +19,15 @@ describe('pack-archive-rules twin', () => {
   });
 
   it('the desktop extractor routes its guards through the shared rules', () => {
+    // Issue #320 AC3: the extraction pipeline moved into the isolated child
+    // (pack-extract-child.ts); pack-extract.ts keeps the S2/S3 helpers.
     const extractor = fs.readFileSync(path.join(repo, 'desktop', 'main', 'backend', 'packs', 'pack-extract.ts'), 'utf8');
-    for (const symbol of ['checkEntryName', 'parseCentralDirectory', 'sharedEnforceDeclaredLimits', 'notZipMessage', 'symlinkEntryMessage', 'missingManifestMessage']) {
+    for (const symbol of ['checkEntryName', 'parseCentralDirectory', 'sharedEnforceDeclaredLimits']) {
       expect(extractor, `pack-extract.ts must use ${symbol} from pack-archive-rules`).toContain(symbol);
+    }
+    const child = fs.readFileSync(path.join(repo, 'desktop', 'main', 'backend', 'packs', 'pack-extract-child.ts'), 'utf8');
+    for (const symbol of ['checkEntryName', 'parseCentralDirectory', 'enforceDeclaredLimits', 'notZipMessage', 'symlinkEntryMessage', 'missingManifestMessage', 'expandsBeyondCapMessage']) {
+      expect(child, `pack-extract-child.ts must use ${symbol} from pack-archive-rules`).toContain(symbol);
     }
   });
 });

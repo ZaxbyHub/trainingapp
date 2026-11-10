@@ -449,15 +449,19 @@ describe('#319 AC1: the xlsx parse runs in an isolated child, not the main proce
   });
 
   it('T10: the parent runs no zip-cap for .xlsx — the cap moved into the child', () => {
+    // AMENDED for issue #320 (supersession recorded on #320 before this edit:
+    // https://github.com/ZaxbyHub/trainingapp/issues/320#issuecomment-6760640631).
+    // The pre-#320 anti-vacuity pins (a parent ZIP_EXTENSIONS set still covering
+    // '.docx'/'.pptx', an assertZipWithinCap mention) are superseded: after
+    // #320 the parent caps NO format — the .docx/.pptx cap moved into the doc
+    // child exactly as the .xlsx cap moved into the xlsx child. The #319
+    // property (the parent never caps .xlsx) holds a fortiori.
     const source = stripComments(fs.readFileSync(EXTRACTORS_SOURCE, 'utf8'));
-    const match = /ZIP_EXTENSIONS[^=]*=\s*new Set\(\[([^\]]*)\]\)/.exec(source);
-    expect(match, 'extractors.ts lost its ZIP_EXTENSIONS set literal').not.toBeNull();
-    const setLiteral = match?.[1] ?? '';
-    expect(setLiteral, "the parent zip-cap set must not cover '.xlsx'").not.toContain("'.xlsx'");
-    // Anti-vacuity: the parent cap itself survives for the office containers.
-    expect(setLiteral).toContain("'.docx'");
-    expect(setLiteral).toContain("'.pptx'");
-    expect(source).toContain('assertZipWithinCap');
+    expect(source, 'no JSZip in the parent').not.toMatch(/JSZip|jszip/);
+    expect(source, 'no central-directory read in the parent').not.toContain('loadAsync');
+    expect(source, 'no declared-size summing in the parent').not.toContain('uncompressedSize');
+    expect(source, 'no parent-side ZIP_EXTENSIONS cap set').not.toMatch(/ZIP_EXTENSIONS/);
+    expect(source, 'no parent-side assertZipWithinCap').not.toMatch(/assertZipWithinCap/);
     // The .xlsx route still exists and still leaves through the public entry.
     expect(source).toContain("'.xlsx'");
     expect(source).toContain('extractDocumentFromFile');

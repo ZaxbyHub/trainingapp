@@ -388,6 +388,48 @@ describe('ChatMessageBubble', () => {
     });
   });
 
+  describe('Interrupted note (#269 AC6 / C4)', () => {
+    const INTERRUPTED_NOTE = 'Response was interrupted. Use Regenerate to try again.';
+
+    it('renders an interrupted note for a settled empty assistant message (C4)', () => {
+      // Issue #269 claim 6: a mid-answer refresh persists an empty assistant
+      // placeholder (no error, no abstain, not stopped). Base renders NOTHING
+      // for such a message — the note must make the interruption explicit.
+      const settled: ChatMessage = {
+        id: 'a-interrupted',
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now(),
+      };
+
+      const view = render(<ChatMessageBubble message={settled} />);
+
+      // The note itself (exact issue-default text).
+      const note = screen.getByText(INTERRUPTED_NOTE);
+      expect(note).toBeInTheDocument();
+
+      // The note must live OUTSIDE the .chat-msg__meta row...
+      expect(note.closest('.chat-msg__meta')).toBeNull();
+      // ...and must add no Copy affordance (PRE-1 keeps holding).
+      expect(screen.queryByRole('button', { name: /copy message/i })).toBeNull();
+      expect(screen.queryByRole('button', { name: /copy source/i })).toBeNull();
+
+      view.unmount();
+
+      // Precedence: `stopped` wins over the interrupted note.
+      const stopped: ChatMessage & { stopped?: boolean } = {
+        id: 'a-stopped-empty',
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now(),
+        stopped: true,
+      };
+      render(<ChatMessageBubble message={stopped} />);
+      expect(screen.queryByText(INTERRUPTED_NOTE)).toBeNull();
+      expect(screen.getByText(/Response stopped/)).toBeInTheDocument();
+    });
+  });
+
   describe('Timer Cleanup', () => {
     it('clears copy feedback timer on unmount', async () => {
       const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');

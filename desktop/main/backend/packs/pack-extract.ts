@@ -23,15 +23,20 @@
 //   S6  the manifest embedding-model pin, index stamps, and the opt-in
 //       ed25519 detached-signature gate (consumed by PackManager).
 //
+// Issue #320 AC3: the S2-S5 EXTRACTION pipeline (central-directory
+// pre-filter, name/symlink/containment guards, decompression, written-bytes
+// backstop) now runs in a child OS process — pack-extract-child.ts, launched
+// by the pack runner pack-worker.ts — so no untrusted archive byte is
+// decompressed in the privileged process. This module keeps the public
+// extractPackZip entry (a bridge to the runner), the config surface, and the
+// S2/S3 helpers PackManager and the frozen checks import.
+//
 // Python twin: pack_extract.py (api_server + pack_manager); packtool twin:
 // packtool/build/pack-json.ts. Desktop and packtool are separate npm packages
 // with no workspace root, so the sharing is behavioral parity pinned by the
 // frozen checks + the cross-backend suites (disclosed in the #75 PR body).
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { createPublicKey, verify as cryptoVerify } from 'node:crypto';
-import JSZip from 'jszip';
 import { PackManagerError } from '../store/pack-manager.js';
 import {
   DEFAULT_PACKS_MAX_COMPRESSION_RATIO as SHARED_MAX_COMPRESSION_RATIO,
@@ -39,16 +44,13 @@ import {
   DEFAULT_PACKS_MAX_UNCOMPRESSED_BYTES as SHARED_MAX_UNCOMPRESSED_BYTES,
   checkEntryName,
   enforceDeclaredLimits as sharedEnforceDeclaredLimits,
-  expandsBeyondCapMessage,
   isSymlinkMode,
   isZipFilename as sharedIsZipFilename,
-  missingManifestMessage,
-  notZipMessage,
   parseCentralDirectory,
-  symlinkEntryMessage,
   type CentralDirectoryEntry as SharedCentralDirectoryEntry,
   type PackSecurityLimits as SharedPackSecurityLimits,
 } from './pack-archive-rules.js';
+import { extractPackZipOutOfProcess } from './pack-worker.js';
 
 /** Refusal factory for the shared rules: every refusal is a PackManagerError. */
 const packError = (message: string): Error => new PackManagerError(message);
@@ -447,7 +449,8 @@ export function verifyPackSignature(
 }
 
 // --------------------------------------------------------------------- //
-// the hardened extractor
+// the hardened extractor — a BRIDGE to the isolated extraction child
+// (issue #320 AC3)
 // --------------------------------------------------------------------- //
 
 /**
@@ -457,109 +460,20 @@ export function verifyPackSignature(
  *
  * Limits are optional: the two-argument form resolves them from the
  * TRAININGAPP_PACKS_* env seam (config overrides flow through the host).
+ *
+ * Issue #320 AC3: the untrusted archive is NEVER decompressed in this
+ * process. This function only resolves the limits and delegates to the pack
+ * runner (pack-worker.ts), which stages the bytes in a parent-owned per-call
+ * workspace, extracts them in a child OS process (pack-extract-child.ts —
+ * the S2-S5 pipeline moved there message for message), adopts the child's
+ * output into a fresh pack-install-* directory, and removes the workspace on
+ * every path. A child refusal comes back as the same PackManagerError class,
+ * name and message as before the migration.
  */
 export async function extractPackZip(
   zip: Uint8Array,
   filename: string,
   limits?: Partial<PackSecurityLimits>,
 ): Promise<string> {
-  if (!isZipFilename(filename)) {
-    throw new PackManagerError(notZipMessage(filename));
-  }
-  const resolvedLimits = resolvePackLimits(process.env, limits);
-
-  // S3 first: the declared-metadata pre-filter over the raw central
-  // directory — entry count, declared sizes, declared ratio — plus S2 name
-  // validation and S4 symlink refusal on the AUTHORITATIVE raw names (JSZip
-  // normalizes hostile names like '../x' away on load; the raw bytes never
-  // lie). All of this runs before any decompression.
-  const raw = Buffer.from(zip);
-  const declared = parseZip32CentralDirectory(raw, filename);
-  enforceDeclaredLimits(declared, resolvedLimits, filename);
-  for (const entry of declared) {
-    safeEntryName(entry.name);
-    if (entry.isSymlink) {
-      throw new PackManagerError(symlinkEntryMessage(filename, entry.name));
-    }
-  }
-
-  let loaded: JSZip;
-  try {
-    loaded = await JSZip.loadAsync(zip);
-  } catch (error) {
-    throw new PackManagerError(
-      `${filename}: not a readable zip archive: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-
-  const entries = Object.values(loaded.files);
-  if (entries.length > resolvedLimits.maxEntries) {
-    throw new PackManagerError(
-      `${filename}: archive has ${entries.length} entries, over the ${resolvedLimits.maxEntries} entry cap`,
-    );
-  }
-
-  // Safest-first ordering (mirrors api_server.py _extract_pack_zip): validate
-  // every entry path (S2/S4 on the decompressor's own view) before the
-  // manifest-presence check, so a hostile archive is refused on its path
-  // shape regardless of what it packs.
-  for (const entry of entries) {
-    try {
-      safeEntryName(entry.name);
-    } catch (error) {
-      throw new PackManagerError(
-        `${filename}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    // G3: unix symlink modes are refused outright.
-    const { unixPermissions } = entry as {
-      unixPermissions?: number | string;
-    };
-    if (isSymlinkEntry(unixPermissions)) {
-      throw new PackManagerError(symlinkEntryMessage(filename, entry.name));
-    }
-  }
-
-  // G1: the C1 manifest-presence check; the manager's schema validation runs
-  // next on the extracted folder.
-  const manifest = entries.find(
-    (entry) => !entry.dir && (entry.name === 'pack.json' || entry.name === './pack.json'),
-  );
-  if (manifest === undefined) {
-    throw new PackManagerError(missingManifestMessage(filename));
-  }
-
-  let totalUncompressed = 0;
-  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pack-install-'));
-  try {
-    for (const entry of entries) {
-      if (entry.dir) continue;
-      // Resolved-path containment BEFORE any bytes are written (S2): the name
-      // survived safeEntryName twice, but the write target is checked against
-      // the extraction root, not the name's shape.
-      const target = path.join(outDir, ...entry.name.split('/'));
-      if (!ensureContained(outDir, target)) {
-        throw new PackManagerError(
-          `${filename}: unsafe archive entry path ${JSON.stringify(entry.name)} escapes the extraction root`,
-        );
-      }
-      const data = await entry.async('nodebuffer');
-      // S5: the unspoofable backstop — declared metadata lies, written bytes
-      // do not. (Residual: JSZip allocates one full entry during
-      // decompression; documented in docs/security/packs.md.)
-      totalUncompressed += data.length;
-      if (totalUncompressed > resolvedLimits.maxUncompressedBytes) {
-        throw new PackManagerError(expandsBeyondCapMessage(filename, resolvedLimits.maxUncompressedBytes));
-      }
-      fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.writeFileSync(target, data);
-    }
-  } catch (error) {
-    fs.rmSync(outDir, { recursive: true, force: true });
-    if (error instanceof PackManagerError) throw error;
-    throw new PackManagerError(
-      `${filename}: extraction failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  return outDir;
+  return extractPackZipOutOfProcess(zip, filename, resolvePackLimits(process.env, limits));
 }
