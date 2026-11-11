@@ -5516,7 +5516,7 @@ function resolveBarePackageTarget(fromRel: string, specifier: string, mainDir: s
  * details are relative to the DESKTOP directory (mainDir's parent).
  */
 function src10ClassifyPackageSite(site: LoadSite, pkg: string, mainDir: string): Src10Classification {
-  const relToDesktopDir = (p: string | null): string => (p === null ? '' : path.relative(path.resolve(mainDir, '..'), p).split(path.sep).join('/'));
+  const relToDesktopDir = (p: string | null): string => (p === null ? '' : path.relative(path.dirname(mainDir), p).split(path.sep).join('/'));
   const res = resolveBarePackageTarget(site.file, site.specifier, mainDir, site.form);
   if (res.via === 'not-found') return { cls: 'package-unresolved', detail: pkg };
   if (res.via === 'node-path') return { cls: 'package-root-node-path', detail: relToDesktopDir(res.rootReal ?? res.root) };
@@ -5563,7 +5563,7 @@ interface Src10PackageResolutionRow {
 
 /** SRC-10' anti-vacuity: the resolved-package table over a load-site inventory (every package-named site, sorted). */
 function src10PackageResolutionsOfSites(sites: LoadSite[], mainDir: string): Src10PackageResolutionRow[] {
-  const relToDesktopDir = (p: string | null): string => (p === null ? '' : path.relative(path.resolve(mainDir, '..'), p).split(path.sep).join('/'));
+  const relToDesktopDir = (p: string | null): string => (p === null ? '' : path.relative(path.dirname(mainDir), p).split(path.sep).join('/'));
   const out: Src10PackageResolutionRow[] = [];
   for (const site of sites) {
     if (site.specifier === COMPUTED) continue;
@@ -5722,11 +5722,11 @@ function src10ElectronAsNodeExecutable(): string | null {
   // path.txt containing the dist-relative binary name ('electron.exe' on
   // win32, 'electron' elsewhere); before install there is no path.txt and
   // the caller sees an honest null (the parity leg then skips by reason).
-  const electronPkg = path.resolve(MAIN_DIR, '..', 'node_modules', 'electron');
+  const electronPkg = path.resolve(path.dirname(MAIN_DIR), 'node_modules', 'electron');
   const pathTxt = path.join(electronPkg, 'path.txt');
   if (fs.existsSync(pathTxt)) {
     const rel = fs.readFileSync(pathTxt, 'utf8').trim();
-    const p = path.join(electronPkg, rel);
+    const p = path.join(electronPkg, 'dist', rel);
     return fs.existsSync(p) ? p : null;
   }
   const p = path.join(electronPkg, 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron');
@@ -5915,7 +5915,7 @@ interface Src10NodeResolutionRow {
 
 /** The per-site resolution table (the round-14 evidence the S1 legs print and pin). */
 function src10NodeResolutionRowsOfSites(sites: LoadSite[]): Src10NodeResolutionRow[] {
-  const desktop = path.resolve(MAIN_DIR, '..');
+  const desktop = path.dirname(MAIN_DIR);
   const rel = (p: string): string => (p === '' ? '' : path.relative(desktop, p).split(path.sep).join('/'));
   const cache = src10NodeResolutionsOfSites(sites);
   const out: Src10NodeResolutionRow[] = [];
@@ -5987,7 +5987,7 @@ function src10NodeFindingsOfTree(tree: ReadonlyMap<string, string>, mainDir: str
  * finding-2/3 layouts are exactly emulator-green, Node-red.
  */
 function src10NodeClassifySite(site: LoadSite, node: Src10NodeResolution, mainDir: string = MAIN_DIR): Src10Classification {
-  const relToDesktopDir = (p: string): string => path.relative(path.resolve(mainDir, '..'), p).split(path.sep).join('/');
+  const relToDesktopDir = (p: string): string => path.relative(path.dirname(mainDir), p).split(path.sep).join('/');
   if (!isLocalLoadSpecifier(site.specifier) && src10SpecifierHasInnerNodeModules(site.specifier)) {
     return { cls: 'package-inner-node-modules', detail: site.specifier };
   }
@@ -7653,7 +7653,7 @@ describe('#320 AC1 S1/S2: no docx/pptx/pdf parser and no zip cap remain in the m
 
     // Probes 1b/1c — the same external wrapper by ABSOLUTE (drive) and file:
     // URL specifiers (round-9 Required Revision 1's remaining forms).
-    const wrapperAbs = path.resolve(MAIN_DIR, '..', 'shared', 'workbook-parser.js').split(path.sep).join('/');
+    const wrapperAbs = path.resolve(path.dirname(MAIN_DIR), 'shared', 'workbook-parser.js').split(path.sep).join('/');
     const wrapperUrl = pathToFileURL(wrapperAbs).href;
     for (const [label, specifier] of [
       ['absolute (drive) form', wrapperAbs],
@@ -7997,7 +7997,7 @@ describe('#320 AC1 S1/S2: no docx/pptx/pdf parser and no zip cap remain in the m
     const dirMain = path.join(probeRoot, 'directory-main', 'main');
     writeIf(path.join(dirMain, 'probe.cjs'), "const wrapper = require('./container');\nmodule.exports = { parse: wrapper.parseWorkbook };\n");
     writeIf(path.join(dirMain, 'container', 'package.json'), JSON.stringify({ main: '../../shared/workbook-parser.cjs' }));
-    writeIf(path.join(dirMain, '..', 'shared', 'workbook-parser.cjs'), "const XLSX = require('xlsx');\nexports.resolvedXlsx = require.resolve('xlsx');\nexports.parseWorkbook = (p) => XLSX.read(require('fs').readFileSync(p), { type: 'buffer' });\n");
+    writeIf(path.join(path.dirname(dirMain), 'shared', 'workbook-parser.cjs'), "const XLSX = require('xlsx');\nexports.resolvedXlsx = require.resolve('xlsx');\nexports.parseWorkbook = (p) => XLSX.read(require('fs').readFileSync(p), { type: 'buffer' });\n");
     const dirTree = walkProbeMain(dirMain);
     expect([...dirTree.keys()], 'the walk lists only the probe file (the container holds a manifest, not sources)').toEqual(['probe.cjs']);
     expect(src7Of(dirTree, dirMain), 'round-10 probe 1 -> SRC-7\' directory-main escape (the executed wrapper is OUTSIDE main)').toEqual([
@@ -8183,7 +8183,7 @@ describe('#320 AC1 S1/S2: no docx/pptx/pdf parser and no zip cap remain in the m
       fs.mkdirSync(path.dirname(p), { recursive: true });
       fs.writeFileSync(p, text);
     };
-    const nativeAddon = path.resolve(MAIN_DIR, '..', 'node_modules', 'better-sqlite3', 'prebuilds', 'win32-x64.node');
+    const nativeAddon = path.resolve(path.dirname(MAIN_DIR), 'node_modules', 'better-sqlite3', 'prebuilds', 'win32-x64.node');
     const nativeBytes = fs.existsSync(nativeAddon) ? fs.readFileSync(nativeAddon) : Buffer.from('<native-binary>');
 
     // Probe 1 (the critic's VERBATIM geometry): require('./workbook-parser')
@@ -8338,7 +8338,7 @@ describe('#320 AC1 S1/S2: no docx/pptx/pdf parser and no zip cap remain in the m
     // proof ran on exactly that geometry.
     const fmt10 = (tree: ReadonlyMap<string, string>, mainDir: string): string[] =>
       src10FindingsOfTree(tree, mainDir).map((f) => `${f.file} ${f.form} ${f.kind} ${f.detail}`);
-    const probeRoot = fs.mkdtempSync(path.join(path.resolve(MAIN_DIR, '..'), '.i320-src10p-'));
+    const probeRoot = fs.mkdtempSync(path.join(path.dirname(path.resolve(MAIN_DIR)), '.i320-src10p-'));
     tempDirs.push(probeRoot);
     // AMENDED (round 13): keys relative to the PROBE main (treeOfFiles keys relative to MAIN_DIR, which made every probe key '../...' — a latent defect these never-at-base rows could not reveal).
     const walkProbeMain = (mainDir: string): Map<string, string> =>
@@ -8347,7 +8347,7 @@ describe('#320 AC1 S1/S2: no docx/pptx/pdf parser and no zip cap remain in the m
       fs.mkdirSync(path.dirname(p), { recursive: true });
       fs.writeFileSync(p, text);
     };
-    const nativeAddon = path.resolve(MAIN_DIR, '..', 'node_modules', 'better-sqlite3', 'prebuilds', 'win32-x64.node');
+    const nativeAddon = path.resolve(path.dirname(MAIN_DIR), 'node_modules', 'better-sqlite3', 'prebuilds', 'win32-x64.node');
     const nativeBytes = fs.existsSync(nativeAddon) ? fs.readFileSync(nativeAddon) : Buffer.from('<native-binary>');
     /** The critic's extensionless canonical-xlsx wrapper, VERBATIM (parserWrapper of repro/critic-round12-probes.mjs). */
     const parserWrapper = () => [
@@ -8558,7 +8558,7 @@ describe('#320 AC1 S1/S2: no docx/pptx/pdf parser and no zip cap remain in the m
       fs.mkdirSync(path.dirname(p), { recursive: true });
       fs.writeFileSync(p, text);
     };
-    const canonicalNative = path.resolve(MAIN_DIR, '..', 'node_modules', 'better-sqlite3', 'prebuilds', 'win32-x64.node');
+    const canonicalNative = path.resolve(path.dirname(MAIN_DIR), 'node_modules', 'better-sqlite3', 'prebuilds', 'win32-x64.node');
     const nativeBytes = fs.existsSync(canonicalNative) ? fs.readFileSync(canonicalNative) : Buffer.from('<native-binary>');
     /** Seed a probe node_modules with a real manifest at <root>/node_modules/<name>. */
     const seedManifest = (root: string, name: string, manifest: Record<string, unknown>): string => {
@@ -8570,8 +8570,8 @@ describe('#320 AC1 S1/S2: no docx/pptx/pdf parser and no zip cap remain in the m
     /** The critic's extensionless canonical-xlsx wrapper (repro/critic-round13-resolution.mjs parserWrapper). */
     const parserWrapper = () => [
       "const fs = require('fs');",
-      `const XLSX = require(${JSON.stringify(path.resolve(MAIN_DIR, '..', 'node_modules', 'xlsx'))});`,
-      `exports.resolvedXlsx = require.resolve(${JSON.stringify(path.resolve(MAIN_DIR, '..', 'node_modules', 'xlsx'))});`,
+      `const XLSX = require(${JSON.stringify(path.resolve(path.dirname(MAIN_DIR), 'node_modules', 'xlsx'))});`,
+      `exports.resolvedXlsx = require.resolve(${JSON.stringify(path.resolve(path.dirname(MAIN_DIR), 'node_modules', 'xlsx'))});`,
       'exports.parseWorkbook = function parseWorkbook(filePath) {',
       "  const book = XLSX.read(fs.readFileSync(filePath), { type: 'buffer' });",
       '  const sheet = book.Sheets[book.SheetNames[0]];',
@@ -8737,7 +8737,7 @@ describe('#320 AC1 S1/S2: no docx/pptx/pdf parser and no zip cap remain in the m
     const fmt10n = (tree: ReadonlyMap<string, string>, mainDir: string): string[] =>
       src10NodeFindingsOfTree(tree, mainDir).map((f) => `${f.file} ${f.form} ${f.kind} ${f.detail}`);
     const fold = (p: string): string => src10FoldPath(p);
-    const canonicalXlsx = path.resolve(MAIN_DIR, '..', 'node_modules', 'xlsx');
+    const canonicalXlsx = path.resolve(path.dirname(MAIN_DIR), 'node_modules', 'xlsx');
     /** The critic's extensionless canonical-xlsx wrapper (critic-round14-probes.mjs parserWrapper). */
     const parserWrapper = (): string => [
       "const fs = require('fs');",
@@ -8898,7 +8898,7 @@ describe('#320 AC1 S1/S2: no docx/pptx/pdf parser and no zip cap remain in the m
     {
       const files = listTsFiles(MAIN_DIR);
       expect([...new Set(files.map((f) => path.extname(f).toLowerCase()))], 'base fact: desktop/main source files are all .ts (no .cts/.mts/.cjs/.mjs), so (z8) changes no base mode label').toEqual(['.ts']);
-      const desktopManifest = JSON.parse(fs.readFileSync(path.resolve(MAIN_DIR, '..', 'package.json'), 'utf8')) as { type?: unknown };
+      const desktopManifest = JSON.parse(fs.readFileSync(path.resolve(path.dirname(MAIN_DIR), 'package.json'), 'utf8')) as { type?: unknown };
       expect(desktopManifest.type, 'the governing manifest for desktop/main .ts files is desktop/package.json "type": "module"').toBe('module');
       expect(src10SourceFormatOf(path.join(MAIN_DIR, 'index.ts')), 'the real main tree emits ESM').toBe('module');
       const sites = loadSitesOf(files);
@@ -9447,7 +9447,7 @@ describe('#320 AC1 S1/S2: no docx/pptx/pdf parser and no zip cap remain in the m
     for (const name of ['sqlite-vec', '@huggingface/transformers']) {
       modeProbe.push({ mode: 'require', importer: parent, specifier: name }, { mode: 'import', importer: parent, specifier: name });
     }
-    const desktopRel = (p: string | null): string => (p === null ? '' : path.relative(path.resolve(MAIN_DIR, '..'), p).split(path.sep).join('/'));
+    const desktopRel = (p: string | null): string => (p === null ? '' : path.relative(path.dirname(MAIN_DIR), p).split(path.sep).join('/'));
     const nodeModes = src10RunResolverRequests(null, modeProbe).rows.map((r) => desktopRel(r.resolved));
     const electronModes = electronExe === null ? nodeModes : src10RunResolverRequests(electronExe, modeProbe).rows.map((r) => desktopRel(r.resolved));
     console.log(`SRC10-MODE-SPLIT ${JSON.stringify(modeProbe.map((p, i) => `${p.specifier} ${p.mode} -> node=${nodeModes[i]} electron=${electronModes[i]}`))}`);
@@ -9528,13 +9528,13 @@ describe('#320 AC1 S1/S2: no docx/pptx/pdf parser and no zip cap remain in the m
     // inside the tree can shadow a package name from the walk-up), and no
     // NODE_PATH in repo config (neither package.json nor any .npmrc).
     expect(fs.existsSync(path.join(MAIN_DIR, 'node_modules')), 'base fact: NO node_modules directory under desktop/main').toBe(false);
-    const repoRoot = path.resolve(MAIN_DIR, '..', '..');
-    const manifests = [path.resolve(MAIN_DIR, '..', 'package.json'), path.join(repoRoot, 'package.json')].filter((p) => fs.existsSync(p));
+    const repoRoot = path.dirname(path.dirname(MAIN_DIR));
+    const manifests = [path.resolve(path.dirname(MAIN_DIR), 'package.json'), path.join(repoRoot, 'package.json')].filter((p) => fs.existsSync(p));
     expect(manifests.length, 'anti-vacuity: the desktop manifest exists').toBeGreaterThan(0);
     for (const manifestPath of manifests) {
       expect(fs.readFileSync(manifestPath, 'utf8').includes('NODE_PATH'), `base fact: no NODE_PATH in ${path.relative(repoRoot, manifestPath).split(path.sep).join('/')}`).toBe(false);
     }
-    for (const npmrcPath of [path.join(repoRoot, '.npmrc'), path.resolve(MAIN_DIR, '..', '.npmrc')]) {
+    for (const npmrcPath of [path.join(repoRoot, '.npmrc'), path.join(path.dirname(MAIN_DIR), '.npmrc')]) {
       if (fs.existsSync(npmrcPath)) {
         expect(fs.readFileSync(npmrcPath, 'utf8').includes('NODE_PATH'), 'base fact: no NODE_PATH in .npmrc').toBe(false);
       }
@@ -9553,7 +9553,7 @@ describe('#320 AC1 S1/S2: no docx/pptx/pdf parser and no zip cap remain in the m
     // Base-fact pins: the self-reference constant names the real desktop
     // package, which carries NO exports (so a self-reference cannot resolve
     // at base) and NO imports (SRC-8's pin, repeated for the route).
-    const desktopPackage = JSON.parse(fs.readFileSync(path.resolve(MAIN_DIR, '..', 'package.json'), 'utf8')) as Record<string, unknown>;
+    const desktopPackage = JSON.parse(fs.readFileSync(path.resolve(path.dirname(MAIN_DIR), 'package.json'), 'utf8')) as Record<string, unknown>;
     expect(desktopPackage.name, 'SRC10_SELF_REFERENCE_PACKAGE names the real desktop package').toBe(SRC10_SELF_REFERENCE_PACKAGE);
     expect(Object.keys(desktopPackage), 'desktop/package.json defines no exports field').not.toContain('exports');
     // The graphify tool cache (desktop/main/graphify-out/cache/stat-index.json,
@@ -9579,7 +9579,7 @@ describe('#320 AC1 S1/S2: no docx/pptx/pdf parser and no zip cap remain in the m
     expect(src8FindingsOfSites(loadSitesOf(files)), "load specifiers beginning '#' (package.json imports aliases; EMPTY allowed set)").toEqual([]);
     // The alias map itself must not exist: desktop/package.json has NO
     // `imports` field (direct assertion).
-    const desktopPackage = JSON.parse(fs.readFileSync(path.resolve(MAIN_DIR, '..', 'package.json'), 'utf8')) as Record<string, unknown>;
+    const desktopPackage = JSON.parse(fs.readFileSync(path.resolve(path.dirname(MAIN_DIR), 'package.json'), 'utf8')) as Record<string, unknown>;
     expect(desktopPackage.name, 'anti-vacuity: this is the desktop package manifest').toBeTypeOf('string');
     expect(Object.keys(desktopPackage), 'desktop/package.json must not define an imports field').not.toContain('imports');
   });

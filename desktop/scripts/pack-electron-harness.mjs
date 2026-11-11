@@ -73,16 +73,22 @@ function say(line) {
   process.stdout.write(`${line}\n`);
 }
 
+// Module-scope so finish()'s cleanup actually reaches them (PRR-008, review
+// round 2: they were const locals inside run(), so the finish() reap below
+// was dead code — the watchdog/uncaught paths reaped nothing).
+let worker;
+let tmp;
 let finished = false;
 function finish(code, failReason) {
   if (finished) return;
   finished = true;
   if (failReason !== undefined) say(`HARNESS-FAIL:${failReason}`);
   // PRR-008 (review round 1): watchdog/uncaught paths bypass run()'s finally,
-  // so reap live children and the temp dir here too (best-effort).
+  // so reap live children and the temp dir here too (best-effort; both are
+  // undefined until run() assigns them, which is fine on this failure path).
   try {
-    if (typeof worker !== 'undefined' && worker?.terminatePackWorkers) worker.terminatePackWorkers();
-    if (typeof tmp !== 'undefined' && tmp) fs.rmSync(tmp, { recursive: true, force: true });
+    if (worker?.terminatePackWorkers) worker.terminatePackWorkers();
+    if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
   } catch { /* best-effort */ }
   app.exit(code);
 }
@@ -142,7 +148,7 @@ async function run() {
   if (process.env.ELECTRON_RUN_AS_NODE) throw new Error('ELECTRON_RUN_AS_NODE is set: this must run as an Electron main process');
   if (typeof process.versions.electron !== 'string') throw new Error('not running under Electron');
 
-  const worker = await importDist(path.join('packs', 'pack-worker.js'));
+  worker = await importDist(path.join('packs', 'pack-worker.js'));
   const zipInstall = await importDist(path.join('packs', 'zip-install.js'));
   const packManager = await importDist(path.join('store', 'pack-manager.js'));
   for (const name of [
@@ -165,7 +171,7 @@ async function run() {
   const parityBytes = new Uint8Array(fs.readFileSync(PARITY_ZIP));
   const golden = JSON.parse(fs.readFileSync(PARITY_GOLDEN, 'utf8'));
 
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pack electron harness '));
+  tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pack electron harness '));
   try {
     // Inside Electron with nothing registered the runner must REFUSE — never
     // decompress in-process.

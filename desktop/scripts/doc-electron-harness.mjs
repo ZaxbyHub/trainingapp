@@ -109,17 +109,22 @@ function say(line) {
   process.stdout.write(`${line}\n`);
 }
 
+// Module-scope so finish()'s cleanup actually reaches them (PRR-008, review
+// round 2: they were const locals inside run(), so the finish() reap below
+// was dead code — the watchdog/uncaught paths reaped nothing).
+let worker;
+let tmp;
 let finished = false;
 function finish(code, failReason) {
   if (finished) return;
   finished = true;
   if (failReason !== undefined) say(`HARNESS-FAIL:${failReason}`);
   // PRR-008 (review round 1): watchdog/uncaught paths bypass run()'s finally,
-  // so reap live children and the temp dir here too (best-effort; the vars
-  // are undeclared before run() starts, which is fine on this failure path).
+  // so reap live children and the temp dir here too (best-effort; both are
+  // undefined until run() assigns them, which is fine on this failure path).
   try {
-    if (typeof worker !== 'undefined' && worker?.terminateDocWorkers) worker.terminateDocWorkers();
-    if (typeof tmp !== 'undefined' && tmp) fs.rmSync(tmp, { recursive: true, force: true });
+    if (worker?.terminateDocWorkers) worker.terminateDocWorkers();
+    if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
   } catch { /* best-effort */ }
   app.exit(code);
 }
@@ -161,7 +166,7 @@ async function run() {
   if (process.env.ELECTRON_RUN_AS_NODE) throw new Error('ELECTRON_RUN_AS_NODE is set: this must run as an Electron main process');
   if (typeof process.versions.electron !== 'string') throw new Error('not running under Electron');
 
-  const worker = await importDist('doc-worker.js');
+  worker = await importDist('doc-worker.js');
   const extractors = await importDist('extractors.js');
   for (const name of ['setDocWorkerForkFn', 'resolveDocWorkerForkFn', 'extractDocOutOfProcess', 'terminateDocWorkers', 'docWorkerChildPath']) {
     if (typeof worker[name] !== 'function') throw new Error(`doc-worker.js does not export ${name}`);
@@ -171,7 +176,7 @@ async function run() {
     throw new Error(`the default child is not the compiled sibling: ${worker.docWorkerChildPath()}`);
   }
 
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'doc electron harness '));
+  tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'doc electron harness '));
   try {
     // Inside Electron with nothing registered the runner must REFUSE — never
     // parse in-process.

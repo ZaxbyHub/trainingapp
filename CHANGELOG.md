@@ -2,8 +2,6 @@
 
 ## [Unreleased]
 
-## [Unreleased]
-
 - **Chat conversation integrity (issue #269)**:
   - **Mid-stream conversation switches no longer corrupt the switched-to
     conversation**: every ChatPage save (send, Regenerate, checkpoints,
