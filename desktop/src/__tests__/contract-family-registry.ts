@@ -170,4 +170,12 @@ export const ROSTER_EXCLUSIONS: RosterExclusionEntry[] = [
     reason: 'desktop-build-owned pin (#320 PDF extraction golden parity)',
     runs_in: { workflow: 'desktop-build.yml', scalar: 'npm --prefix desktop test' },
   },
+  {
+    // Issue #282 F-AC6 supplementary loud-failure legs (impl-review r1): the
+    // setup contract mocks node:fs, so it must never run beside real
+    // packtool-building specs; it rides the desktop-build full suite.
+    spec: 'f6-global-setup-contract.test.ts',
+    reason: 'desktop-build-owned pin (#282 F6 globalSetup loud-failure shapes)',
+    runs_in: { workflow: 'desktop-build.yml', scalar: 'npm --prefix desktop test' },
+  },
 ];
