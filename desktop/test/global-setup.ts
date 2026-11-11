@@ -32,7 +32,15 @@ export default function globalSetup(): void {
       'PRECONDITION_MISSING packtool/node_modules/typescript — run `npm --prefix packtool ci` once',
     );
   }
-  // Deterministic in any worktree: remove the stale artifact, then rebuild.
+  // Deterministic for the frozen C13 leg: that driver removes packtool/dist
+  // BEFORE vitest starts, so a missing cli.js here always rebuilds. When the
+  // artifact already exists we keep it: an rm+rebuild while the parallel
+  // worker pool spins up raced file locks on Windows (freshly emitted dist
+  // files transiently ENOENT for `node dist/cli.js` spawns mid-suite) and a
+  // stale-but-complete artifact is equally valid for the suite.
+  if (fs.existsSync(path.join(PACKTOOL_DIST, 'cli.js'))) {
+    return;
+  }
   fs.rmSync(PACKTOOL_DIST, { recursive: true, force: true });
   const run = spawnSync(process.execPath, [TSC_BIN, '-p', path.join(PACKTOOL_DIR, 'tsconfig.json')], {
     cwd: PACKTOOL_DIR,
