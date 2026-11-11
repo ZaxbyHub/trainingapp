@@ -109,7 +109,7 @@ describe('c3 E-AC7: the v5 re-index migration (issue #281)', () => {
         chunk_id: string;
         text: string;
       }>;
-      expect(ftsRows.map((r) => r.text)).toEqual(['firstline efficacy', 'hemoglobin low protocol']);
+      expect(ftsRows.map((r) => r.text)).toEqual(['firstline efficacy', 'hemoglobin flow protocol']);
       // Identity tables byte-identical to the pre-migration snapshot.
       expect(sdb.prepare('SELECT id, text, content_hash FROM chunks ORDER BY rowid').all()).toEqual(preChunks);
       expect(sdb.prepare('SELECT * FROM docs ORDER BY id').all()).toEqual(preDocs);
