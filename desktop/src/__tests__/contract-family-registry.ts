@@ -84,6 +84,16 @@ export const FAMILY_ROSTER: string[] = [
   // the informational desktop-build suite; rostered per the i199/i230
   // precedent (security-adjacent, no other merge-blocking home).
   'i289-xlsx-parse-isolation.test.ts',
+  // Issue #320 (review PRR-002, swarm-pr-review pr322-20261111): the frozen
+  // AC1/AC3 acceptance specs are the only guard that mammoth/jszip/pdfjs-dist
+  // parses and pack zip extraction cannot return to the Electron main
+  // process (the i289 T10 supersession moved the .docx/.pptx cap pin HERE
+  // from the rostered i289 spec). Their names escape the convention census
+  // (non-convention naming) and their only CI home was the informational
+  // desktop-build suite; rostered per the i289/i199/i230 precedent
+  // (security-adjacent, no other merge-blocking home).
+  'i320-doc-parsers-out-of-main.test.ts',
+  'i320-pack-extract-out-of-main.test.ts',
 ];
 
 /** Convention-matching specs owned by another CI context, with run-line evidence. */
@@ -149,6 +159,15 @@ export const ROSTER_EXCLUSIONS: RosterExclusionEntry[] = [
   {
     spec: 'c3-pack-parity.test.ts',
     reason: 'desktop-build-owned pin (pack fixtures)',
+    runs_in: { workflow: 'desktop-build.yml', scalar: 'npm --prefix desktop test' },
+  },
+  {
+    // Issue #320 AC2 frozen acceptance check (trace 320-269, check C2):
+    // a -parity-named issue-tracer spec must NOT join FAMILY_ROSTER (that
+    // would change what the required security job runs); it runs in the
+    // desktop-build full-suite step like the sibling fixture pins.
+    spec: 'i320-pdf-parity.test.ts',
+    reason: 'desktop-build-owned pin (#320 PDF extraction golden parity)',
     runs_in: { workflow: 'desktop-build.yml', scalar: 'npm --prefix desktop test' },
   },
 ];

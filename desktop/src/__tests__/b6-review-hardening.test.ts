@@ -186,6 +186,9 @@ describe('b6 review hardening (PR #101 feedback round)', () => {
     }
   });
 
+  // Issue #320: the zip-content cap is now enforced INSIDE the doc-worker
+  // child (a real node fork), so this test spawns a child. Measured 0.45 s on
+  // a quiet dev box; 30 s explicit headroom for a loaded CI runner.
   itReal('zip-content cap refuses an office doc whose entries declare more than the cap (PRR-005)', async () => {
     const root = makeTempDir('b6-hd-zipcap-');
     const storePath = path.join(root, 'store.sqlite');
@@ -205,7 +208,7 @@ describe('b6 review hardening (PR #101 feedback round)', () => {
     } finally {
       store.close();
     }
-  });
+  }, 30_000);
 
   itReal('missing-file-part 400 carries its contract detail in the body (PRR-013)', async () => {
     const root = makeTempDir('b6-hd-http-');

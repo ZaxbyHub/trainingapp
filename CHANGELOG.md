@@ -2,6 +2,83 @@
 
 ## [Unreleased]
 
+- **Chat conversation integrity (issue #269)**:
+  - **Mid-stream conversation switches no longer corrupt the switched-to
+    conversation**: every ChatPage save (send, Regenerate, checkpoints,
+    completion/error, Stop, switch, engine switch, unmount) flows through a
+    module-scope per-conversation save sequencer
+    (`web_ui/src/lib/chat/save-sequencer.ts`), and one terminalization
+    protocol owns every stream-cancel path — Stop, New Chat, conversation
+    switch, engine switch, unmount, session clear and clear-chat.
+  - **Answers cut off by Stop or an interrupted checkpoint are marked**:
+    persisted messages carry `stopped`/`interrupted` markers that render as
+    "Response stopped" and "Response was interrupted. Use Regenerate to try
+    again." notes; partial streamed content now renders above error banners
+    instead of disappearing.
+  - **Regenerate always re-runs the question on screen** (derived from the
+    displayed thread, no cross-conversation leak), and a deleted conversation
+    is no longer resurrected by a late save — the persistence error is
+    surfaced instead.
+
+- **Out-of-process document parsing (issue #320 AC1/AC2)**:
+  - **mammoth, JSZip and pdfjs-dist leave the main process**: desktop `.docx`, `.pptx` and
+    `.pdf` uploads are parsed in a dedicated child OS process — runner
+    `desktop/main/backend/ingest/doc-worker.ts`, child `doc-worker-child.ts` — exactly like
+    the #319 workbook parser: an Electron `utilityProcess` in the app (new service
+    `TrainingApp document parser`, registered in `app.whenReady()` beside the workbook
+    parser), a node fork outside Electron, and a refusal (never an in-process fallback)
+    inside Electron with no launcher registered. The `.docx`/`.pptx` zip-bomb cap moved into
+    the child too; `extractors.ts` now loads no parser library, runs no parent-side zip cap
+    for any format, and forwards `maxZipBytes` (zip containers only — `.pdf` never gets a
+    cap), `timeoutMs` and `childPath` to the runner. The runner validates the child report
+    (string `text`; `pages` entries need a finite `pageNumber` and string `text`), settles
+    on exit, kills at the deadline (+ escalation after 2 s), and `NodeBackendHost.stop()`
+    calls `terminateDocWorkers()`.
+  - **Byte-identical output**: the parse functions moved verbatim, so `{ text, pages }` is
+    unchanged; `contracts/fixtures/pdf-parity/` (fixture + golden captured from the
+    pre-migration extractor) pins the `.pdf` result (`i320-pdf-parity.test.ts`). In an
+    Electron utility process `process.type` is `'utility'`, which pdfjs-dist classifies as a
+    browser; the child presents the Node classification pdfjs saw in the main process for
+    the duration of the parse, so the pre-migration code path (and output) is kept.
+  - **Evidence**: frozen spec `i320-doc-parsers-out-of-main.test.ts` and the real-Electron
+    harness `desktop/scripts/doc-electron-harness.mjs` (PDF/docx/pptx parity, crash and
+    hang containment, child PIDs distinct from the main PID; dist child, outside app.asar —
+    packaged-asar resolution is a disclosed residual, as for #319).
+  - **i289 T10 superseded**: the #319 spec's T10 anti-vacuity pins (a parent `ZIP_EXTENSIONS`
+    set covering `.docx`/`.pptx` and an `assertZipWithinCap` mention) described the pre-#320
+    state; T10 now forbids every parent-side zip cap while keeping `.xlsx` routed through
+    `extractDocumentFromFile` (T7/T10b child-cap coverage unchanged). Recorded on #320 before
+    the edit.
+- **Out-of-process pack extraction (issue #320 AC3)**: desktop pack-zip uploads
+  (`POST /packs/install`) no longer decompress untrusted archive bytes in Electron's main
+  process. The public `extractPackZip` (three parameters, unchanged export surface) now
+  bridges to the new runner `backend/packs/pack-worker.ts`, which stages the bytes in a
+  parent-owned `mkdtemp` workspace and launches `backend/packs/pack-extract-child.ts` as a
+  `utilityProcess` child (`TrainingApp pack extractor`, registered at app ready; node fork
+  outside Electron; refusal inside Electron with no launcher). The child receives
+  `[absZipPath, absOutDir, filename, limitsJson]` and runs the moved pipeline: the ZIP32
+  pre-filter, name/symlink refusal, JSZip, containment and the written-bytes backstop. It
+  imports only Node built-ins, `jszip` and `./pack-archive-rules.ts`. The runner adopts the
+  output into a fresh `pack-install-*` dir only when the report names exactly the out dir it
+  passed. It removes the workspace on every path, settles on exit, and enforces a 120 s
+  deadline with kill escalation and a 16 MiB report cap. `NodeBackendHost.stop()` calls
+  `terminatePackWorkers()`. Refusals keep the same `PackManagerError` class, name and exact
+  messages: `c8-pack-security` (13) and `browser-pack-extract-parity` (27) run unchanged.
+  Report codes are diagnostic-only. `desktop/tsconfig.json` gains `allowImportingTsExtensions`
+  and `rewriteRelativeImportExtensions` so the child's explicit `.ts` import loads in the
+  `node <file.ts>` source fallback and compiles to `.js`. The frozen spec is
+  `desktop/src/__tests__/i320-pack-extract-out-of-main.test.ts`, and the base-captured
+  golden is `contracts/fixtures/pack-extract-parity/`. Extraction still precedes the opt-in
+  Ed25519 check; that ordering is unchanged. Each in-flight upload now holds its compressed
+  input and extracted output on disk, bounded by the unchanged 50 MB route cap and the
+  configured byte cap. Packaged app.asar loading of the pack child is a disclosed residual
+  (same class as #319's xlsx child): the real-Electron harness
+  `desktop/scripts/pack-electron-harness.mjs` runs the compiled child outside app.asar, and
+  the packaged smoke exercises pack directory installs, not the extract upload path.
+  - **Frozen-spec retargets recorded**: `pack-twin-parity.test.ts` and
+    `pack-archive-rules-drift.test.ts` now read the extraction flow from
+    `pack-extract-child.ts` (the ordering pin is unchanged); `c8-pack-security`
+    (13) and `browser-pack-extract-parity` (27) run unchanged.
 - **Out-of-process workbook parsing (issue #319)**:
   - **SheetJS leaves the main process**: desktop `.xlsx` uploads no longer run `XLSX.read`
     inside Electron's privileged main process. The parse (and the zip-bomb cap) execute in a

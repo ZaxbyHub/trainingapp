@@ -87,6 +87,9 @@ function findRepoRoot(dir: string): string {
 const REPO_ROOT = findRepoRoot(path.dirname(fileURLToPath(import.meta.url)));
 const ZIP_SAFETY_SRC = path.join(REPO_ROOT, 'packtool', 'build', 'zip-safety.ts');
 const PACK_EXTRACT_SRC = path.join(REPO_ROOT, 'desktop', 'main', 'backend', 'packs', 'pack-extract.ts');
+// Issue #320 AC3: the extraction FLOW (and so its safest-first ordering) moved
+// into the isolated extraction child; pack-extract.ts keeps the gates/config.
+const PACK_EXTRACT_CHILD_SRC = path.join(REPO_ROOT, 'desktop', 'main', 'backend', 'packs', 'pack-extract-child.ts');
 const PACK_JSON_SRC = path.join(REPO_ROOT, 'packtool', 'build', 'pack-json.ts');
 const PY_EXTRACT_SRC = path.join(REPO_ROOT, 'pack_extract.py');
 const API_SERVER_SRC = path.join(REPO_ROOT, 'api_server.py');
@@ -255,7 +258,7 @@ describe('pack twin parity (issue #213)', () => {
     // the TypeScript slice, whose comments are `//` and `/* */`).
     const stripHash = (t: string): string =>
       t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(\/\/|#)[^\n]*/g, '');
-    const rawJs = fs.readFileSync(PACK_EXTRACT_SRC, 'utf8');
+    const rawJs = fs.readFileSync(PACK_EXTRACT_CHILD_SRC, 'utf8');
     const jsIdx = rawJs.indexOf('// Safest-first ordering');
     expect(jsIdx, 'js: safest-first flow must exist').toBeGreaterThan(-1);
     const js = stripHash(rawJs.slice(jsIdx));

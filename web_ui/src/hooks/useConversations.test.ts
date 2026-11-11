@@ -836,6 +836,59 @@ describe('useConversations', () => {
       expect(onCreate).not.toHaveBeenCalled();
       expect(mockUpdateConversation).toHaveBeenCalled();
     });
+
+    it('saveMessages with a deleted owning id does not resurrect the conversation (C2)', async () => {
+      // Issue #269 AC3 (claim 4): a stream's owning conversation was deleted
+      // mid-stream, then its finalize path saves under that (now missing) id.
+      // Base takes the create branch for `!conversationId || !existing` and
+      // mints a fresh uuid — the deleted conversation reappears.
+      const messages: ChatMessage[] = [
+        { id: 'msg-1', role: 'user', content: 'Hello', timestamp: Date.now() },
+        { id: 'msg-2', role: 'assistant', content: 'Partial answer', timestamp: Date.now() },
+      ];
+      mockListConversations.mockResolvedValue([]);
+      // The owning record no longer exists. AMENDED: mockReset first —
+      // vi.clearAllMocks() in beforeEach does NOT purge leaked
+      // mockResolvedValueOnce queue entries from earlier tests in this file
+      // (measured: getConversation('deleted-conv') resolved a stale
+      // 'existing-conv' fixture), which made this save silently take the
+      // UPDATE branch instead of exercising "record missing".
+      mockGetConversation.mockReset();
+      mockGetConversation.mockResolvedValue(undefined);
+
+      const { result } = renderHook(() => useConversations());
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      await act(async () => {
+        await result.current.saveMessages('deleted-conv', messages, 'server', 'test-model');
+      });
+
+      // A defined-but-missing id must NOT create (no resurrection under a new
+      // id) and has nothing to update.
+      expect(
+        mockCreateConversation,
+        'a save under a deleted owning id must not create a conversation'
+      ).not.toHaveBeenCalled();
+      expect(mockUpdateConversation).not.toHaveBeenCalled();
+      // AMENDED (critic required revision 4): the dropped save is surfaced, so
+      // a follow-up send into a deleted conversation is not silently lost.
+      expect(
+        result.current.persistenceError,
+        'a save under a deleted owning id must set persistenceError'
+      ).not.toBeNull();
+
+      // Sibling contract (first turn): conversationId === undefined still creates.
+      await act(async () => {
+        await result.current.saveMessages(undefined, messages, 'server', 'test-model');
+      });
+      expect(mockCreateConversation).toHaveBeenCalledTimes(1);
+      expect(
+        result.current.persistenceError,
+        'the undefined-id (first-turn) create path must leave persistenceError null'
+      ).toBeNull();
+    });
   });
 
   describe('setCurrentConversationId', () => {

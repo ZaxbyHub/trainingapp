@@ -92,6 +92,14 @@ jobs:
       - name: Compile the desktop main process
         run: npm --prefix desktop run compile
 
+      # PRR-001 (PR #322 review): electron@45.2.1 has no postinstall - the
+      # dist binary lazy-downloads on the first require('electron'). Without
+      # this step the C1 cross-runtime parity leg would skip on every fresh
+      # runner. Requiring the wrapper triggers the lazy install.
+      - name: Materialize the electron binary for the parity leg
+        working-directory: desktop
+        run: node -e "require('electron'); console.log('electron binary materialized')"
+
       - name: Acceptance tests (vitest, stubbed electron)
         run: npm --prefix desktop test
 

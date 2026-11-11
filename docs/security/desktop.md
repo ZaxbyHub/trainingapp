@@ -217,6 +217,46 @@ the contract above as follows:
   URL. The token still travels via `desktopApi.getAuthToken()` and is sent
   under the configured token header, not `Authorization: Bearer`.
 
+## Untrusted document parsing (issues #319, #320)
+
+- **Threat:** a poisoned or hostile uploaded document (parser exploit, crash,
+  infinite loop, zip bomb) runs its parse inside the privileged Electron main
+  process, which holds the store, the launch token and the filesystem.
+- **Mitigation: parsers run in child OS processes.** No document parser
+  library loads in the main process. Each format is parsed by a dedicated
+  child, launched through the same registered-launcher seam as the GPU probe
+  (an Electron `utilityProcess` in the app, registered in `app.whenReady()` in
+  `desktop/main/index.ts`; a node fork outside Electron; inside Electron with
+  no launcher registered the runner REFUSES, never falling back in-process):
+  - `.xlsx` (#319): runner `desktop/main/backend/ingest/xlsx-worker.ts`, child
+    `xlsx-worker-child.ts` (SheetJS), service name `TrainingApp workbook parser`;
+  - `.docx` / `.pptx` / `.pdf` (#320): runner
+    `desktop/main/backend/ingest/doc-worker.ts`, child `doc-worker-child.ts`
+    (mammoth, JSZip, pdfjs-dist), service name `TrainingApp document parser`.
+  Each zip container's zip-bomb cap (the declared central-directory sum) is
+  enforced INSIDE its child; `extractors.ts` reads no untrusted document byte
+  and runs no parent-side cap. Only `.txt` / `.md` are still read in-process.
+- **Containment.** One report per child over IPC (validated before adoption:
+  the doc runner requires a string `text` and, when present, `pages` entries
+  with a finite numeric `pageNumber` and string `text`); the runner settles on
+  child exit, kills a child at its deadline and once more after a 2 s grace,
+  caps the report at 16 MiB, and `NodeBackendHost.stop()` kills every live
+  parse child (`terminateXlsxWorkers()` / `terminateDocWorkers()`). Every
+  rejection carries the `xlsx worker:` / `doc worker:` prefix.
+- **Evidence.** Frozen specs `desktop/src/__tests__/i289-xlsx-parse-isolation.test.ts`
+  and `i320-doc-parsers-out-of-main.test.ts` (static load / launch-surface
+  invariants over all of `desktop/main`, plus the behavioural seam legs), the
+  byte-identical extraction goldens under `contracts/fixtures/xlsx-parity/`
+  and `contracts/fixtures/pdf-parity/`, and the real-Electron transport
+  harnesses `desktop/scripts/xlsx-electron-harness.mjs` /
+  `doc-electron-harness.mjs` (parity, crash and hang containment, child PIDs
+  distinct from the main PID).
+- **Residuals.** The static guard's threat model (careless reintroduction by
+  contributors, not a hostile committer) and its disclosed residuals are
+  recorded in the `i320-doc-parsers-out-of-main.test.ts` header. The harnesses
+  run the compiled children outside `app.asar`; packaged-asar resolution is not
+  exercised by them.
+
 ## Known limits (explicit, not silent)
 
 - Rate limiting beyond origin+token and TLS are out of scope for B2 per the

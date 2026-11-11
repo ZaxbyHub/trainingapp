@@ -1284,3 +1284,166 @@ describe('ChatPage PRR-006b: engine switch mid-stream PERSISTS the finalized par
     ).toBeFalsy();
   });
 });
+
+// ============================================================================
+// Issue #269 AC1 (C1): the switched-TO conversation's view AND record stay
+// intact across a mid-stream switch.
+//
+// PRR-001 above pins only the SAVE side of the switch effect (A's partial is
+// persisted, B is never written). It never reads `view.messages` after the
+// switch — which is exactly how the base defect survived: the same effect ALSO
+// writes the OWNING conversation's finalized thread into the live view
+// (`messagesRef.current = finalized; setMessages(finalized)`, ChatPage.tsx
+// switch effect), so after switching to B the view shows A's thread while the
+// active id is B, and the NEXT send in B builds `appended` from that polluted
+// messagesRef and saves A's messages into B's stored record.
+//
+// This test reads the view after the switch and follows up with a send in B,
+// asserting both the view and a fake store (seeded with B's own record and
+// updated by onSaveConversation) stay equal to B's messages.
+// ============================================================================
+describe('ChatPage #269 AC1 (C1): mid-stream switch keeps B\'s view and record intact', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Re-establish the factory mocks (see F1 describe for rationale).
+    vi.mocked(llmFactoryModule.getLLMService).mockImplementation(() => ({
+      initialize: vi.fn().mockResolvedValue(undefined),
+      interrupt: vi.fn(),
+    }) as unknown as ReturnType<typeof llmFactoryModule.getLLMService>);
+    vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
+      mode: 'browser-local',
+      browserEngine: 'wllama',
+      ragPreset: 'balanced',
+      isModelReady: true,
+      isServerConnected: true,
+      modelLoadingProgress: 0,
+      modeError: null,
+      serverUrl: '',
+      setMode: vi.fn(),
+      setBrowserEngine: vi.fn(),
+      setRagPreset: vi.fn(),
+      setServerUrl: vi.fn(),
+      checkServerConnectivity: vi.fn(() => Promise.resolve(false)),
+      setModelReady: vi.fn(),
+      setModelLoadingProgress: vi.fn(),
+    } as unknown as ReturnType<typeof inferenceModule.useInferenceMode>);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test('mid-stream switch to existing B keeps view.messages equal to B\'s messages and B\'s record clean after a follow-up send (C1)', async () => {
+    const gate = makeDeferred();
+    const PARTIAL_TOKEN = 'PARTIAL-A-';
+
+    const orchestrator = { query: vi.fn() };
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
+      () => orchestrator as unknown as ragModule.RAGOrchestrator
+    );
+    orchestrator.query.mockImplementation(makeParkingStream(gate, PARTIAL_TOKEN));
+
+    // Fake store: seeded with B's own record; every defined-id save overwrites
+    // that conversation's record (mirrors saveMessages' update branch).
+    const bUserMsg = makeMessage('user', 'B-QUESTION');
+    const store = new Map<string, ChatMessage[]>([['B', [bUserMsg]]]);
+    const onSaveConversation = vi.fn((id: string | undefined, messages: ChatMessage[]) => {
+      if (id !== undefined) store.set(id, messages);
+    });
+    const setCurrentConversationId = vi.fn();
+
+    const aUserMsg = makeMessage('user', 'A-QUESTION');
+
+    type View = { convId: string; messages: ChatMessage[] };
+    let view: View = { convId: 'A', messages: [aUserMsg] };
+
+    function Harness() {
+      return (
+        <ChatPage
+          messages={view.messages}
+          onMessagesChange={(next) => {
+            view = {
+              ...view,
+              messages:
+                typeof next === 'function'
+                  ? (next as (p: ChatMessage[]) => ChatMessage[])(view.messages)
+                  : next,
+            };
+          }}
+          onSaveConversation={onSaveConversation}
+          currentConversationId={view.convId}
+          setCurrentConversationId={setCurrentConversationId}
+          onNewChat={() => {}}
+          onOpenSettings={() => {}}
+        />
+      );
+    }
+
+    const { rerender } = render(<Harness />);
+
+    // --- Step 1: send in A; the stream parks after one flushed token ---------
+    const textarea = screen.getByRole('textbox');
+    const sendButton = screen.getByRole('button', { name: /send message/i });
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'A-QUESTION' } });
+      fireEvent.click(sendButton);
+    });
+    await act(async () => {
+      await waitForPartialContent(() => view.messages, PARTIAL_TOKEN);
+    });
+
+    // Sanity: A's thread is live in the view with the partial assistant message.
+    expect(
+      view.messages.some((m) => m.role === 'assistant' && m.content.includes(PARTIAL_TOKEN)),
+      'sanity: the stream must be live in A before the switch'
+    ).toBe(true);
+
+    // --- Step 2: switch to B (App installs B's thread + id on the SAME page) --
+    await act(async () => {
+      view = { convId: 'B', messages: [bUserMsg] };
+      rerender(<Harness />);
+    });
+    await act(async () => {
+      await flushRafFrames(2);
+      await Promise.resolve();
+    });
+
+    // === ASSERTION 1: the view keeps B's messages ============================
+    // At base the switch effect writes A's finalized thread (A-QUESTION + the
+    // partial assistant message) into the live view right here.
+    expect(
+      view.messages,
+      'the switched-to view must still hold exactly B\'s messages after the switch'
+    ).toEqual([bUserMsg]);
+
+    // --- Step 3: follow-up send in B -----------------------------------------
+    onSaveConversation.mockClear();
+    await act(async () => {
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: 'FOLLOW-UP-B' } });
+      fireEvent.click(screen.getByRole('button', { name: /send message/i }));
+    });
+    // Flush microtasks ONLY (no RAF flush): the send-time save fires and the
+    // new stream parks with its token still buffered, so the assistant entry
+    // in the view/store is the empty placeholder (the issue's expected shape).
+    await act(async () => {
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+    });
+
+    // === ASSERTION 2: the view is B's thread + the new turn only =============
+    expect(
+      view.messages.map((m) => `${m.role}:${m.content}`),
+      'the view after a follow-up send in B must be B\'s thread plus the new turn only'
+    ).toEqual(['user:B-QUESTION', 'user:FOLLOW-UP-B', 'assistant:']);
+
+    // === ASSERTION 3: B's stored record equals the same thread ===============
+    // At base the send-time save writes A's polluted thread into B's record.
+    const storedB = store.get('B') ?? [];
+    expect(
+      storedB.map((m) => `${m.role}:${m.content}`),
+      'B\'s stored record after the follow-up send must be B\'s thread plus the new turn only'
+    ).toEqual(['user:B-QUESTION', 'user:FOLLOW-UP-B', 'assistant:']);
+    expect(
+      storedB.some((m) => m.content.includes('A-QUESTION')),
+      'B\'s record must not contain A\'s messages'
+    ).toBe(false);
+  });
+});

@@ -43,6 +43,7 @@ vi.mock('../hooks/useDocumentCount', () => ({
 import { ChatPage } from './ChatPage';
 import * as ragModule from '../lib/rag/rag-orchestrator';
 import * as inferenceModule from '../lib/inference';
+import type { ChatMessage } from '../types/chat';
 
 /** Parks after one token until `gate` resolves; yields `complete` only when `finish` is set. */
 function parkedStream(gate: Promise<void>, finish: boolean): () => AsyncGenerator<RAGEvent> {
@@ -68,15 +69,21 @@ async function flush(): Promise<void> {
   });
 }
 
-function Page() {
-  const [messages, setMessages] = React.useState<import('../types/chat').ChatMessage[]>([]);
+function Page({
+  onSaveConversation,
+}: {
+  // #269 AC7 (C6): the harness accepts a save observer; default no-op keeps
+  // the four announcement tests byte-identical in behavior.
+  onSaveConversation?: React.ComponentProps<typeof ChatPage>['onSaveConversation'];
+}) {
+  const [messages, setMessages] = React.useState<ChatMessage[]>([]);
   return (
     <ChatPage
       messages={messages}
       onMessagesChange={(next) =>
         setMessages((prev) => (typeof next === 'function' ? (next as (p: typeof prev) => typeof prev)(prev) : next))
       }
-      onSaveConversation={() => {}}
+      onSaveConversation={onSaveConversation ?? (() => {})}
       currentConversationId="conv-1"
       setCurrentConversationId={() => {}}
       onNewChat={() => {}}
@@ -118,10 +125,10 @@ describe('ChatPage live-region announcement on Stop (PRE-2)', () => {
     });
     await flush();
   }
-  async function startTurn(gate: Promise<void>, finish: boolean) {
+  async function startTurn(gate: Promise<void>, finish: boolean, onSaveConversation?: React.ComponentProps<typeof ChatPage>['onSaveConversation']) {
     orchestrator = { query: vi.fn().mockImplementation(parkedStream(gate, finish)) };
     vi.mocked(ragModule.RAGOrchestrator).mockImplementation(() => orchestrator as unknown as ragModule.RAGOrchestrator);
-    const view = render(<Page />);
+    const view = render(<Page onSaveConversation={onSaveConversation} />);
     await send('Question');
     return view;
   }
@@ -180,5 +187,27 @@ describe('ChatPage live-region announcement on Stop (PRE-2)', () => {
     await flush();
     expect(statusText()).toContain('Response complete');
     expect(statusText()).not.toContain('Response stopped');
+  });
+
+  test('Stop persists the assistant message with stopped:true (C6)', async () => {
+    // Issue #269 AC7 (claim 7): base's handleCancel finalizes only
+    // `isStreaming`, so after a reload a stopped answer is indistinguishable
+    // from a finished one. The cancel-path save must carry `stopped: true`.
+    const onSaveConversation = vi.fn();
+    await startTurn(new Promise<void>(() => {}), false, onSaveConversation); // parked mid-answer
+    fireEvent.click(await screen.findByRole('button', { name: /stop generation/i }));
+    await flush();
+
+    expect(onSaveConversation.mock.calls.length, 'Stop must persist the finalized turn').toBeGreaterThanOrEqual(1);
+    const lastCall = onSaveConversation.mock.calls[onSaveConversation.mock.calls.length - 1];
+    expect(lastCall[0], 'the Stop save targets the owning conversation').toBe('conv-1');
+    const persisted = lastCall[1] as ChatMessage[];
+    const assistant = persisted.find((m) => m.role === 'assistant');
+    expect(assistant, 'the truncated assistant message must be persisted').toBeDefined();
+    // The cancel flush (PRR-005) keeps the streamed partial in the save.
+    expect(assistant?.content).toContain('partial');
+    expect(assistant?.isStreaming).toBeFalsy();
+    // The marker under test (#269): undefined at base.
+    expect((assistant as ChatMessage & { stopped?: boolean })?.stopped).toBe(true);
   });
 });

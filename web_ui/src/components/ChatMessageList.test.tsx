@@ -425,6 +425,73 @@ describe('ChatMessageList', () => {
     });
   });
 
+  describe('Stopped-note rendering for a persisted stopped assistant message (#269 AC8 / C6)', () => {
+    it('renders a stopped note for a persisted stopped assistant message (C6)', () => {
+      // Issue #269 claims 7-8: Stop must persist a marker that still renders
+      // after a reload. The `stopped` field does not exist on ChatMessage at
+      // base (the AC7 production change adds it), hence the local intersection.
+      const messages: (ChatMessage & { stopped?: boolean })[] = [
+        { id: 'u', role: 'user', content: 'Q', timestamp: Date.now() },
+        {
+          id: 'a-stopped',
+          role: 'assistant',
+          content: 'Truncated partial answer',
+          timestamp: Date.now(),
+          stopped: true,
+        },
+      ];
+      // A reloaded conversation: not streaming, no live-region announcement.
+      const { container } = render(<ChatMessageList messages={messages} isStreaming={false} />);
+
+      // Scoped to the assistant message element: the list's visually-hidden
+      // live region already says "Response stopped" via the `stopped` prop —
+      // this note must render under the message itself.
+      const assistantEl = container.querySelector('.chat-msg--assistant');
+      expect(assistantEl, 'the assistant message element must render').not.toBeNull();
+      const noteEl = within(assistantEl as HTMLElement).getByText('Response stopped');
+      expect(noteEl).toBeInTheDocument();
+
+      // AMENDED (critic required revision 4): pin note ORDER — the stopped
+      // note renders UNDER the message content, i.e. it follows the content
+      // in DOM order within the assistant message element.
+      const contentEl = within(assistantEl as HTMLElement).getByText('Truncated partial answer');
+      expect(
+        contentEl.compareDocumentPosition(noteEl) & Node.DOCUMENT_POSITION_FOLLOWING,
+        'the "Response stopped" note must follow the message content within .chat-msg--assistant'
+      ).toBeTruthy();
+    });
+
+    it('a non-empty assistant message carrying both stopped and interrupted shows only the stopped note (precedence, C6)', () => {
+      // AMENDED (critic required revision 4): `stopped` wins over the
+      // interrupted note for a NON-EMPTY message. Neither field exists on
+      // ChatMessage at base, hence the local intersection.
+      const messages: (ChatMessage & { stopped?: boolean; interrupted?: boolean })[] = [
+        { id: 'u', role: 'user', content: 'Q', timestamp: Date.now() },
+        {
+          id: 'a-stopped-interrupted',
+          role: 'assistant',
+          content: 'Truncated partial answer',
+          timestamp: Date.now(),
+          stopped: true,
+          interrupted: true,
+        },
+      ];
+      const { container } = render(<ChatMessageList messages={messages} isStreaming={false} />);
+
+      const assistantEl = container.querySelector('.chat-msg--assistant');
+      expect(assistantEl, 'the assistant message element must render').not.toBeNull();
+      expect(within(assistantEl as HTMLElement).getByText('Truncated partial answer')).toBeInTheDocument();
+      expect(
+        within(assistantEl as HTMLElement).getByText('Response stopped'),
+        'the stopped note must render for a stopped+interrupted message'
+      ).toBeInTheDocument();
+      expect(
+        within(assistantEl as HTMLElement).queryByText(/Response was interrupted/),
+        'the interrupted note must be absent when the message is also stopped (stopped wins)'
+      ).not.toBeInTheDocument();
+    });
+  });
+
   describe('Zero-document empty state (U4)', () => {
     it('renders the add-documents hero when documentCount is 0', () => {
       mockUseDocumentCount.mockReturnValue({ count: 0, loading: false });

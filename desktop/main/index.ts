@@ -41,6 +41,11 @@ import {
   setXlsxWorkerForkFn,
   type XlsxWorkerChild,
 } from './backend/ingest/xlsx-worker.js';
+import { setPackWorkerForkFn, type PackWorkerChild } from './backend/packs/pack-worker.js';
+import {
+  setDocWorkerForkFn,
+  type DocWorkerChild,
+} from './backend/ingest/doc-worker.js';
 import {
   containedJoin,
   manifestGroupBytes,
@@ -252,6 +257,25 @@ export function bootstrap(): void {
         stdio: ['ignore', 'ignore', 'pipe'],
         serviceName: 'TrainingApp workbook parser',
       }) as unknown as XlsxWorkerChild,
+    );
+    // Pack-archive extractor launcher (issue #320 AC3): untrusted pack-zip
+    // extraction (POST /packs/install) runs as a utilityProcess child on
+    // the same seam, so a poisoned pack archive can only ever kill the child.
+    setPackWorkerForkFn((modulePath, args) =>
+      utilityProcess.fork(modulePath, args, {
+        stdio: ['ignore', 'ignore', 'pipe'],
+        serviceName: 'TrainingApp pack extractor',
+      }) as unknown as PackWorkerChild,
+    );
+    // Document parser launcher (issue #320 AC1): the untrusted .docx / .pptx /
+    // .pdf parse (and the .docx/.pptx zip-bomb cap) runs as a utilityProcess
+    // child beside the workbook parser — same seam, same packaging path, so a
+    // poisoned or hanging document can only ever kill or wedge the child.
+    setDocWorkerForkFn((modulePath, args) =>
+      utilityProcess.fork(modulePath, args, {
+        stdio: ['ignore', 'ignore', 'pipe'],
+        serviceName: 'TrainingApp document parser',
+      }) as unknown as DocWorkerChild,
     );
     // Packaged-smoke evidence leg (issue #276 G3b; opt-in env, see
     // desktop/scripts/packaged-smoke.mjs step 8): one device-only probe through

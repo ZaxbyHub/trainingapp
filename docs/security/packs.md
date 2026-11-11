@@ -14,6 +14,50 @@ and is cross-referenced from it. Pack format semantics are frozen by C1
 (`contracts/pack.schema.json`); Python-side server hardening generally is
 `docs/archive/pre-v3/security_hardening_guide.md`.
 
+## Extraction isolation (issue #320 AC3)
+
+On the desktop, the Node zip-upload extractor no longer decompresses
+untrusted pack bytes inside Electron's privileged main process. The public
+`extractPackZip` in `desktop/main/backend/packs/pack-extract.ts` is now a
+bridge: it resolves the limits and hands the bytes to the pack runner
+`desktop/main/backend/packs/pack-worker.ts`, which launches
+`desktop/main/backend/packs/pack-extract-child.ts` as a separate OS process
+(an Electron `utilityProcess`, service name `TrainingApp pack extractor`,
+registered at app ready beside the GPU-probe and workbook-parser launchers;
+a node fork outside Electron; a refusal, never an in-process fallback,
+inside Electron with no launcher registered). The whole extraction pipeline
+(the central-directory pre-filter, entry-name and symlink refusal, JSZip
+decompression, resolved-path containment and the written-bytes backstop)
+runs in that child, so a poisoned pack can crash or wedge only the child.
+The child loads only Node built-ins, `jszip` and the shared
+`pack-archive-rules.ts`; it never loads `pack-manager.ts` or the SQLite
+native addons. Refusals keep the same `PackManagerError` class, name and
+exact message text; the child report's `code` field is diagnostic-only and
+never surfaced. The runner owns a per-call workspace
+(`mkdtemp(<tmp>/pack-extract-)` holding `input.zip` and the `out/` directory
+the child extracts into). It adopts the output into a fresh
+`pack-install-*` directory only when the child reports exactly the `out/`
+path it was given, and it removes the workspace on success and on every
+failure path: launch refusal, crash, deadline (120 s, then a kill
+escalation), host stop, and malformed or oversize reports. The extraction
+still runs BEFORE the opt-in Ed25519 manifest-signature check, so signature
+verification does not gate decompression. That ordering is unchanged and
+out of scope here. What moved is where the parse runs: out of the
+privileged process.
+
+Temp-disk cost: each in-flight upload holds its compressed input
+(`input.zip`) and its extracted output on disk at the same time. The input
+is bounded by the unchanged 50 MB upload route cap, and the output by the
+configured `maxUncompressedBytes` cap. That cost applies per concurrent
+upload.
+
+Packaged-asar residual (disclosed, same class as the #319 xlsx child): the
+pack child's asar resolution is unexercised in packaged builds — the
+real-Electron parity/kill evidence (`desktop/scripts/pack-electron-harness.mjs`)
+runs the compiled child outside app.asar, and jszip is pure JS and not
+asarUnpack-pinned. The packaged smoke exercises pack directory installs,
+not the extract upload path.
+
 ## Architecture invariants
 
 1. **Every install path passes the shared validation core.** The checks
