@@ -53,12 +53,12 @@ afterEach(() => {
 // Five fixture documents: four variant-text producers and one plain control.
 // Each document is padded past the chunker's minimum so a chunk lands.
 const pad = (word: string): string => Array.from({ length: 40 }, () => word).join(' ');
-const DOCS: Array<{ name: string; text: string; query: string; expectHit: boolean }> = [
-  { name: 'plain.txt', text: `efficacy protocol notes ${pad('protocol')}`, query: 'protocol', expectHit: true },
-  { name: 'softhyphen.txt', text: `ef${SOFT}ficacy notes ${pad('filler')}`, query: 'efficacy', expectHit: true },
-  { name: 'zwsp.txt', text: `he${ZWSP}moglobin notes ${pad('filler2')}`, query: 'hemoglobin', expectHit: true },
-  { name: 'ligature.txt', text: `e${LIG_FFI}cacy trial ${pad('filler3')}`, query: 'efficacy', expectHit: true },
-  { name: 'fullwidth.txt', text: `${FW_A}${FW_B}${FW_G} ordering ${pad('filler4')}`, query: 'ABG', expectHit: true },
+const DOCS: Array<{ name: string; text: string; query: string }> = [
+  { name: 'plain.txt', text: `efficacy protocol notes ${pad('protocol')}`, query: 'protocol' },
+  { name: 'softhyphen.txt', text: `ef${SOFT}ficacy notes ${pad('filler')}`, query: 'efficacy' },
+  { name: 'zwsp.txt', text: `he${ZWSP}moglobin notes ${pad('filler2')}`, query: 'hemoglobin' },
+  { name: 'ligature.txt', text: `e${LIG_FFI}cacy trial ${pad('filler3')}`, query: 'efficacy' },
+  { name: 'fullwidth.txt', text: `${FW_A}${FW_B}${FW_G} ordering ${pad('filler4')}`, query: 'ABG' },
 ];
 
 async function seedIngested(): Promise<ReturnType<typeof openStore>> {
@@ -96,7 +96,6 @@ describe('b7 E-AC2: the lexical mirror and query are search-normalized (issue #2
     const store = await seedIngested();
     try {
       for (const doc of DOCS) {
-        if (!doc.expectHit) continue;
         const hits = ftsHit(store, doc.query);
         const docChunks = store.db
           .prepare('SELECT c.id FROM chunks c JOIN docs d ON d.id = c.doc_id WHERE d.path LIKE ?')

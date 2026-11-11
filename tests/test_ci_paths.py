@@ -610,6 +610,22 @@ def test_security_job_audit_guards_step_rolls_the_guard_roster():
     )
     for guard in _AUDIT_GUARD_ROSTER:
         assert guard in executable, f"Audit guards roster missing {guard}"
+    # impl-review r1 (batch-281-282): substring presence is not wiring — a
+    # literal two-char "\\n" inside the run line glues the roster into one
+    # word and pytest would exit 4 on a phantom "n" argument while this guard
+    # stayed green. Tokenize the shell command (bash line continuations join
+    # lines) and require every rostered path to be a STANDALONE token, then
+    # require every tests/ token to resolve on disk.
+    command = executable.replace("\\\n", " ")
+    tokens = [t for t in command.split() if t.startswith("tests/")]
+    for guard in _AUDIT_GUARD_ROSTER:
+        assert guard in tokens, f"Audit guards roster token is not standalone: {guard}"
+    import os
+
+    for token in tokens:
+        assert os.path.isfile(
+            REPO_ROOT / token
+        ), f"Audit guards token is not a real file: {token}"
     # the pins must be exact (==), the epic rule: no floating guard deps
     assert re.search(
         r"pip install pytest==[\d.]+ pyyaml==[\d.]+ packaging==[\d.]+", executable

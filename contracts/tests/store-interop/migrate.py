@@ -253,12 +253,20 @@ def _migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
     Row mapping mirrors desktop/main/backend/store/migrate.ts."""
     with conn:
         conn.execute("DELETE FROM chunks_fts")
-        rows = conn.execute("SELECT id, text FROM chunks ORDER BY rowid").fetchall()
-        for row_id, text in rows:
-            conn.execute(
-                "INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)",
-                (row_id, normalize_search(text)),
-            )
+        cursor = conn.execute("SELECT id, text FROM chunks ORDER BY rowid")
+        while True:
+            batch = cursor.fetchmany(1000)
+            if not batch:
+                break
+            for row_id, text in batch:
+                conn.execute(
+                    "INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)",
+                    (row_id, normalize_search(text)),
+                )
+        # Heal a pending manifest reconciliation in the same open (mirrors the
+        # v3->v4 step; without this a v4 store with doc_claims_reconciled
+        # 'pending' healed one open later than before - impl-review r1).
+        _stamp_reconciled(conn, _reconcile_doc_claims_locked(conn))
         conn.execute("UPDATE meta SET value = '5' WHERE key = 'schema_version'")
 
 

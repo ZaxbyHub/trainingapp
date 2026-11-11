@@ -18,7 +18,9 @@ _DASHES = re.compile("[\u2010-\u2015\u2212]")
 _SINGLE_QUOTES = re.compile("[\u2018\u2019]")
 _DOUBLE_QUOTES = re.compile("[\u201c\u201d]")
 _ELLIPSIS = re.compile("\u2026")
-_WS = re.compile(r"\s+")
+_WS = re.compile(
+    "[ \\t\\n\\x0b\\x0c\\r\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]+"
+)
 
 
 def normalize_search(text: str) -> str:

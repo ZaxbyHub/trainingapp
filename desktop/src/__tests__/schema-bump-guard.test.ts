@@ -55,7 +55,7 @@ const DDL_SHA_BY_VERSION: Record<number, string> = {
   4: 'c9561472d6951c067bff25a04373131721dd16e5499c5b38e671e2575b3d1427',
   // v5 (#281): chunks_fts comment documents the normalizeForSearch mirror;
   // seed 4 -> 5 with both ladders extended in the same commit (#100).
-  5: '2a9a3cb130dbb3754ae6596ba68483dc96beee8d611c52d9911346ce18e98d4b',
+  5: '82537e78dd3256e59a394d1c625b6c7bfc009744bbdccd1873951cd423eaa46d',
 };
 
 function schemaText(): string {

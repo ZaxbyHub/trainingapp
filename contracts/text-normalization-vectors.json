@@ -169,6 +169,18 @@
       "input": "a––b",
       "expected": "a--b",
       "note": "dash run folds per-character"
+    },
+    {
+      "id": "nel-kept",
+      "input": "ab",
+      "expected": "ab",
+      "note": "U+0085 is NOT whitespace in the JS set - kept verbatim (python str-backslash-s would fold it; the shared explicit class keeps twins identical, impl-review r1)"
+    },
+    {
+      "id": "file-sep-kept",
+      "input": "a\u001cb",
+      "expected": "a\u001cb",
+      "note": "U+001C is NOT whitespace in the JS set - kept verbatim (same parity rationale)"
     }
   ]
 }

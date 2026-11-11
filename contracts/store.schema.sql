@@ -91,7 +91,11 @@ CREATE VIRTUAL TABLE embeddings USING vec0 (
     embedding float[__EMBEDDING_DIMS__]      -- default metric: L2 (Euclidean)
 );
 
--- Full-text mirror of chunks.text (FTS5, default unicode61 tokenizer).
+-- Derived lexical mirror of chunks.text (FTS5, default unicode61 tokenizer),
+-- written through normalizeForSearch (issue #281): NFKC, Default_Ignorable
+-- strip, dash/quote/ellipsis folds, whitespace collapse. NOT identity-bearing
+-- (chunks.text/chunk ids/content_hash are; ADR-0004). Store schema v5
+-- rebuilds this mirror from chunks.text through the same function.
 -- rank is the NEGATED bm25 score: more negative = better match.
 CREATE VIRTUAL TABLE chunks_fts USING fts5 (
     chunk_id UNINDEXED,                      -- references chunks(id)

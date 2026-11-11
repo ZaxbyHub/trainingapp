@@ -22,5 +22,8 @@ export function normalizeForSearch(text: string): string {
   out = out.replace(SINGLE_QUOTES, "'");
   out = out.replace(DOUBLE_QUOTES, '"');
   out = out.replace(ELLIPSIS, '...');
-  return out.replace(/\s+/g, ' ').trim();
+  // Explicit JS-whitespace set (python str \s ALSO matches U+0085 and
+  // U+001C-1F, which this set does not) - the shared explicit class keeps
+  // both twins byte-identical on every input (impl-review r1 parity question).
+  return out.replace(/[ \t\n\v\f\r\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+/g, ' ').trim();
 }

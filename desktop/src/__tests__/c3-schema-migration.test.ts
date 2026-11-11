@@ -112,7 +112,7 @@ function seedV2Store(dbPath: string): SqlDb {
 }
 
 describe('c3 store schema migration (issue #70 AC6)', () => {
-  itReal('openStore migrates a v2 store to v4: shape, mapping, and data preserved', async () => {
+  itReal('openStore migrates a v2 store through v5: shape, mapping, and data preserved', async () => {
     const { openStore } = await import('../../main/backend/store/sqlite-store.js');
     const { CURRENT_SCHEMA_VERSION } = await import('../../main/backend/store/migrate.js');
     expect(CURRENT_SCHEMA_VERSION).toBe(5);

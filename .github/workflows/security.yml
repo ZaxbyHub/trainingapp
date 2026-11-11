@@ -127,7 +127,10 @@ jobs:
             tests/test_python_advisory_step.py \
             tests/test_ci_paths.py \
             tests/test_master_push_advisory_scan.py \
-            tests/test_319_guards.py \n            tests/test_text_normalization_vectors.py \n            tests/test_fixture_licensing_docs.py \n            tests/test_fixture_manifest.py -q
+            tests/test_319_guards.py \
+            tests/test_text_normalization_vectors.py \
+            tests/test_fixture_licensing_docs.py \
+            tests/test_fixture_manifest.py -q
 
       - name: Upload security report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

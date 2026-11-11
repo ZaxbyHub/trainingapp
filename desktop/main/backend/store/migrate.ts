@@ -360,14 +360,29 @@ function migrateV4ToV5(db: StoreDb): void {
   db.exec('BEGIN IMMEDIATE');
   try {
     db.exec('DELETE FROM chunks_fts');
-    const rows = db.prepare('SELECT id, text FROM chunks ORDER BY rowid').all() as Array<{
-      id: string;
-      text: string;
-    }>;
+    // Paged reads (not one .all()): a large store must not materialize every
+    // chunk row in memory inside the write transaction (impl-review r1
+    // question). better-sqlite3 cannot INSERT on a connection that is mid-
+    // iterate, so page by rowid instead.
     const insertFts = db.prepare('INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)');
-    for (const row of rows) {
-      insertFts.run(row.id, normalizeForSearch(row.text));
+    const page = db.prepare(
+      'SELECT rowid, id, text FROM chunks WHERE rowid > ? ORDER BY rowid LIMIT 500',
+    );
+    let lastRowid = 0;
+    for (;;) {
+      const batch = page.all(lastRowid) as Array<{ rowid: number; id: string; text: string }>;
+      if (batch.length === 0) break;
+      for (const row of batch) {
+        insertFts.run(row.id, normalizeForSearch(row.text));
+      }
+      const last = batch.at(-1);
+      if (last) lastRowid = last.rowid;
     }
+    // Heal a pending manifest reconciliation in the same open (mirrors the
+    // v3->v4 step; the else-branch reconcile only runs for already-v5 stores,
+    // so without this a v4 store with doc_claims_reconciled='pending' healed
+    // one open later than before — impl-review r1 question).
+    stampReconciled(db, reconcileDocClaimsLocked(db));
     db.prepare("UPDATE meta SET value = '5' WHERE key = 'schema_version'").run();
     db.exec('COMMIT');
   } catch (error) {
