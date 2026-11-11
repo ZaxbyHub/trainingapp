@@ -84,6 +84,16 @@ export const FAMILY_ROSTER: string[] = [
   // the informational desktop-build suite; rostered per the i199/i230
   // precedent (security-adjacent, no other merge-blocking home).
   'i289-xlsx-parse-isolation.test.ts',
+  // Issue #320 (review PRR-002, swarm-pr-review pr322-20261111): the frozen
+  // AC1/AC3 acceptance specs are the only guard that mammoth/jszip/pdfjs-dist
+  // parses and pack zip extraction cannot return to the Electron main
+  // process (the i289 T10 supersession moved the .docx/.pptx cap pin HERE
+  // from the rostered i289 spec). Their names escape the convention census
+  // (non-convention naming) and their only CI home was the informational
+  // desktop-build suite; rostered per the i289/i199/i230 precedent
+  // (security-adjacent, no other merge-blocking home).
+  'i320-doc-parsers-out-of-main.test.ts',
+  'i320-pack-extract-out-of-main.test.ts',
 ];
 
 /** Convention-matching specs owned by another CI context, with run-line evidence. */

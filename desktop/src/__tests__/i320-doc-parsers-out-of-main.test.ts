@@ -5718,7 +5718,18 @@ const SRC10_NODE_RESOLVER_SOURCE = [
 
 /** The electron devDependency's ELECTRON_RUN_AS_NODE executable (null when absent — the parity legs skip with an explicit reason only then). */
 function src10ElectronAsNodeExecutable(): string | null {
-  const p = path.resolve(MAIN_DIR, '..', 'node_modules', 'electron', 'dist', 'electron.exe');
+  // Cross-platform (PRR-001, review round 3): electron's install writes
+  // path.txt containing the dist-relative binary name ('electron.exe' on
+  // win32, 'electron' elsewhere); before install there is no path.txt and
+  // the caller sees an honest null (the parity leg then skips by reason).
+  const electronPkg = path.resolve(MAIN_DIR, '..', 'node_modules', 'electron');
+  const pathTxt = path.join(electronPkg, 'path.txt');
+  if (fs.existsSync(pathTxt)) {
+    const rel = fs.readFileSync(pathTxt, 'utf8').trim();
+    const p = path.join(electronPkg, rel);
+    return fs.existsSync(p) ? p : null;
+  }
+  const p = path.join(electronPkg, 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron');
   return fs.existsSync(p) ? p : null;
 }
 
@@ -9370,7 +9381,7 @@ describe('#320 AC1 S1/S2: no docx/pptx/pdf parser and no zip cap remain in the m
     src10AssertNodeChildFaithful(null, 'node');
     const electronExe = src10ElectronAsNodeExecutable();
     if (electronExe === null) {
-      console.log('S1 SRC-10\'\' parity leg SKIP: the electron devDependency binary (node_modules/electron/dist/electron.exe) is ABSENT on this machine');
+      console.log('S1 SRC-10\'\' parity leg SKIP: the electron devDependency binary is ABSENT on this machine (no path.txt / dist binary; PRR-001 fix materializes it in CI before the test step)');
     } else {
       src10AssertNodeChildFaithful(electronExe, 'electron-as-node');
     }

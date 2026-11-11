@@ -371,6 +371,12 @@ export async function extractDocOutOfProcess(
       lastExit = typeof code === 'number' ? code : null;
       lastSignal = signal ?? null;
       liveChildren.delete(entry);
+      // PRR-007 (review round 1): a deadline-armed escalation must not fire
+      // against an already-exited child; pack-worker.ts clears it here too.
+      if (escalate !== undefined) {
+        clearTimeout(escalate);
+        escalate = undefined;
+      }
       if (settled) return;
       // The report and exit notifications travel separate channels and the
       // child exits non-zero on every failure, so the grace covers failure

@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+## [Unreleased]
+
+- **Chat conversation integrity (issue #269)**:
+  - **Mid-stream conversation switches no longer corrupt the switched-to
+    conversation**: every ChatPage save (send, Regenerate, checkpoints,
+    completion/error, Stop, switch, engine switch, unmount) flows through a
+    module-scope per-conversation save sequencer
+    (`web_ui/src/lib/chat/save-sequencer.ts`), and one terminalization
+    protocol owns every stream-cancel path — Stop, New Chat, conversation
+    switch, engine switch, unmount, session clear and clear-chat.
+  - **Answers cut off by Stop or an interrupted checkpoint are marked**:
+    persisted messages carry `stopped`/`interrupted` markers that render as
+    "Response stopped" and "Response was interrupted. Use Regenerate to try
+    again." notes; partial streamed content now renders above error banners
+    instead of disappearing.
+  - **Regenerate always re-runs the question on screen** (derived from the
+    displayed thread, no cross-conversation leak), and a deleted conversation
+    is no longer resurrected by a late save — the persistence error is
+    surfaced instead.
+
 - **Out-of-process document parsing (issue #320 AC1/AC2)**:
   - **mammoth, JSZip and pdfjs-dist leave the main process**: desktop `.docx`, `.pptx` and
     `.pdf` uploads are parsed in a dedicated child OS process — runner
@@ -57,6 +77,10 @@
   (same class as #319's xlsx child): the real-Electron harness
   `desktop/scripts/pack-electron-harness.mjs` runs the compiled child outside app.asar, and
   the packaged smoke exercises pack directory installs, not the extract upload path.
+  - **Frozen-spec retargets recorded**: `pack-twin-parity.test.ts` and
+    `pack-archive-rules-drift.test.ts` now read the extraction flow from
+    `pack-extract-child.ts` (the ordering pin is unchanged); `c8-pack-security`
+    (13) and `browser-pack-extract-parity` (27) run unchanged.
 - **Out-of-process workbook parsing (issue #319)**:
   - **SheetJS leaves the main process**: desktop `.xlsx` uploads no longer run `XLSX.read`
     inside Electron's privileged main process. The parse (and the zip-bomb cap) execute in a

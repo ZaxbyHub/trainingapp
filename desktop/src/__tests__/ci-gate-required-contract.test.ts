@@ -17,20 +17,25 @@
 // frozen roster-exclusion-evidence-contract acceptance spec), and every
 // exclusion carries machine-verifiable owning-context evidence — the
 // workflow file must exist and its text must contain the pinned scalar.
-// The convention census at HEAD (this commit) matched 19 files = 10
+// The convention census at HEAD (this commit) matched 21 files = 12
 // rostered via the convention (the 6 original members plus
 // backend-env-repo-root-contract, i230-resolver-env-parity,
-// roster-exclusion-evidence-contract and frozen-recipe-replay-contract)
-// + 9 excluded (the ninth being the #320 PDF-parity acceptance check,
-// desktop-build-owned like the sibling fixture pins); eight rostered
-// specs are named OUTSIDE the convention and
-// are therefore invisible to the census — backend-lifecycle-capture-once-
-// census, backend-memory-tick-lifecycle, i199-backend-surface-lifecycle,
-// reranker-generation-lifecycle, i230-host-stop-profile-reset and
-// i230-sampler-liveness (the last two rostered by review PRR-008), plus
-// logline-contract-sweep.test.ts and acceptance-battery-precision.test.ts
-// (the trace 201-207-208-209-210 acceptance battery and its meta-guard,
-// rostered per the same PRR-008 precedent) — so
+// roster-exclusion-evidence-contract, frozen-recipe-replay-contract,
+// i230-host-stop-profile-reset and i230-sampler-liveness) + 9 excluded
+// (the ninth being the #320 PDF-parity acceptance check, desktop-build-
+// owned like the sibling fixture pins); FOURTEEN rostered specs are named
+// OUTSIDE the convention and are therefore invisible to the census —
+// backend-lifecycle-capture-once-census, backend-memory-tick-lifecycle,
+// i199-backend-surface-lifecycle, reranker-generation-lifecycle,
+// i230-host-stop-profile-reset and i230-sampler-liveness (the last two
+// rostered by review PRR-008), logline-contract-sweep.test.ts and
+// acceptance-battery-precision.test.ts (the trace 201-207-208-209-210
+// acceptance battery and its meta-guard, rostered per the same PRR-008
+// precedent), the #319 xlsx-isolation acceptance spec i289-xlsx-parse-
+// isolation.test.ts (PRR-001 of review pr321-20261107), the #313 router
+// spec, and the #320 behavioral acceptance specs i320-doc-parsers-out-of-
+// main.test.ts and i320-pack-extract-out-of-main.test.ts (PRR-002 of
+// review pr322-20261111) — so
 // the ROSTER, not the naming convention, is the closed set a new spec
 // must be added to.
 //

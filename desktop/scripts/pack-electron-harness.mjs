@@ -78,6 +78,12 @@ function finish(code, failReason) {
   if (finished) return;
   finished = true;
   if (failReason !== undefined) say(`HARNESS-FAIL:${failReason}`);
+  // PRR-008 (review round 1): watchdog/uncaught paths bypass run()'s finally,
+  // so reap live children and the temp dir here too (best-effort).
+  try {
+    if (typeof worker !== 'undefined' && worker?.terminatePackWorkers) worker.terminatePackWorkers();
+    if (typeof tmp !== 'undefined' && tmp) fs.rmSync(tmp, { recursive: true, force: true });
+  } catch { /* best-effort */ }
   app.exit(code);
 }
 

@@ -442,7 +442,10 @@ function runChild(
           finish(malformed('the failure report carries no code or no error'));
           return;
         }
-        if (process.env.TRAININGAPP_PACK_WORKER_DEBUG) {
+        // PRR-015 (review round 2): strict 1/true per the repo envBool
+        // convention - explicit-off spellings must not enable the log.
+        const debug = process.env.TRAININGAPP_PACK_WORKER_DEBUG === '1' || process.env.TRAININGAPP_PACK_WORKER_DEBUG === 'true';
+        if (debug) {
           // Diagnostic-only: the code is logged, never surfaced.
           console.error(`[pack-worker] child refusal code=${code}`);
         }
