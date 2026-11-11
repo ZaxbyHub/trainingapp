@@ -40,8 +40,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { normalizeForSearch } from '../ingest/normalize.js';
 
-export const CURRENT_SCHEMA_VERSION = 4;
+export const CURRENT_SCHEMA_VERSION = 5;
 
 /** Structural subset of a better-sqlite3 Database this module needs. */
 export interface StoreDb {
@@ -348,6 +349,38 @@ function migrateV3ToV4(db: StoreDb): void {
 }
 
 /**
+ * v4 -> v5 (issue #281, Workstream E): rebuild the derived lexical mirror
+ * chunks_fts from chunks.text through normalizeForSearch so documents whose
+ * extracted text carries Word optional hyphens, zero-width characters,
+ * ligatures or fullwidth forms are found by the plain query the user types.
+ * Identity is untouched: chunks.text, chunk ids and content_hash are
+ * byte-identical (ADR-0004); only the mirror rows change.
+ */
+function migrateV4ToV5(db: StoreDb): void {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.exec('DELETE FROM chunks_fts');
+    const rows = db.prepare('SELECT id, text FROM chunks ORDER BY rowid').all() as Array<{
+      id: string;
+      text: string;
+    }>;
+    const insertFts = db.prepare('INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)');
+    for (const row of rows) {
+      insertFts.run(row.id, normalizeForSearch(row.text));
+    }
+    db.prepare("UPDATE meta SET value = '5' WHERE key = 'schema_version'").run();
+    db.exec('COMMIT');
+  } catch (error) {
+    try {
+      db.exec('ROLLBACK');
+    } catch {
+      // The connection may be unusable after some failures; surface the cause.
+    }
+    throw error;
+  }
+}
+
+/**
  * Bring the store to CURRENT_SCHEMA_VERSION. Returns the final version.
  * Future versions extend this ladder; a store from the future (version >
  * CURRENT) fails loud instead of guessing.
@@ -367,8 +400,11 @@ export function migrate(db: StoreDb): number {
   }
   if (version < 4) {
     migrateV3ToV4(db);
+  }
+  if (version < 5) {
+    migrateV4ToV5(db);
   } else {
-    // Stores already at v4 re-attempt the manifest reconciliation on every
+    // Stores already at v5 re-attempt the manifest reconciliation on every
     // migrate() entry (heals a pending store once its manifest is readable).
     reconcileDocClaims(db);
   }

@@ -157,6 +157,6 @@ CREATE TABLE meta (
     value TEXT NOT NULL
 );
 INSERT INTO meta (key, value) VALUES
-    ('schema_version', '4'),
+    ('schema_version', '5'),
     ('embedding_model_id', ''),
     ('embedding_dims', '__EMBEDDING_DIMS__');

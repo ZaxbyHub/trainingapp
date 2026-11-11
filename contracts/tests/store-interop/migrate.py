@@ -29,7 +29,9 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION = 4
+from normalize_search import normalize_search
+
+CURRENT_SCHEMA_VERSION = 5
 
 # Shape mirror of contracts/store.schema.sql's links definition (v2).
 _LINKS_V2_DDL = """
@@ -242,6 +244,24 @@ def _migrate_v3_to_v4(conn: sqlite3.Connection) -> None:
         conn.execute("UPDATE meta SET value = '4' WHERE key = 'schema_version'")
 
 
+def _migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
+    """v4 -> v5 (#281): rebuild the derived lexical mirror chunks_fts from
+    chunks.text through normalize_search so variant text (Word optional
+    hyphens, zero-width characters, ligatures, fullwidth forms) is found by
+    plain typed queries. Identity is untouched: chunks.text, chunk ids and
+    content_hash are byte-identical (ADR-0004); only mirror rows change.
+    Row mapping mirrors desktop/main/backend/store/migrate.ts."""
+    with conn:
+        conn.execute("DELETE FROM chunks_fts")
+        rows = conn.execute("SELECT id, text FROM chunks ORDER BY rowid").fetchall()
+        for row_id, text in rows:
+            conn.execute(
+                "INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)",
+                (row_id, normalize_search(text)),
+            )
+        conn.execute("UPDATE meta SET value = '5' WHERE key = 'schema_version'")
+
+
 def migrate(conn: sqlite3.Connection) -> int:
     """Bring the store to CURRENT_SCHEMA_VERSION. Returns the final version.
 
@@ -266,8 +286,10 @@ def migrate(conn: sqlite3.Connection) -> int:
         _migrate_v2_to_v3(conn)
     if version < 4:
         _migrate_v3_to_v4(conn)
+    if version < 5:
+        _migrate_v4_to_v5(conn)
     else:
-        # Stores already at v4 re-attempt the manifest reconciliation on
+        # Stores already at v5 re-attempt the manifest reconciliation on
         # every migrate() entry (heals a pending store).
         _reconcile_doc_claims(conn)
     return _read_schema_version(conn)
@@ -336,17 +358,30 @@ def _selftest() -> int:
                     published_at TEXT,
                     pack_id      TEXT REFERENCES packs(id)
                 );
+                CREATE TABLE chunks (
+                    id           TEXT PRIMARY KEY,
+                    doc_id       TEXT NOT NULL REFERENCES docs(id),
+                    chunk_index  INTEGER NOT NULL,
+                    text         TEXT NOT NULL,
+                    content_hash TEXT NOT NULL
+                );
+                CREATE VIRTUAL TABLE chunks_fts USING fts5 (chunk_id UNINDEXED, text);
                 INSERT INTO packs (id, name, version, published_at, source_class, supersedes)
                 VALUES ('p1', 'Pack One', '1.0.0', NULL, 'bundled', NULL),
                        ('p2', 'Pack Two', '2.0.0', NULL, 'training', 'p1');
                 INSERT INTO docs (id, source_class, path, sha256, title, published_at, pack_id)
                 VALUES ('packaged-doc', 'bundled', 'docs/p.json', 'aaa111', 'P', NULL, 'p1'),
                        ('user-doc', 'general', 'notes.txt', 'bbb222', 'U', NULL, NULL);
+                INSERT INTO chunks (id, doc_id, chunk_index, text, content_hash)
+                VALUES ('variant-chunk', 'user-doc', 0, 'ef­ficacy he​moglobin', 'v1'),
+                       ('plain-chunk', 'user-doc', 1, 'plain protocol text', 'v2');
+                INSERT INTO chunks_fts (chunk_id, text)
+                SELECT id, text FROM chunks;
                 """
             )
             conn.commit()
             final = migrate(conn)
-            assert final == 4, f"expected final version 4, got {final}"
+            assert final == 5, f"expected final version 5, got {final}"
             cols = [
                 row[1] for row in conn.execute("PRAGMA table_info(packs)").fetchall()
             ]
@@ -385,7 +420,7 @@ def _selftest() -> int:
                 "pack_id",
             ], f"unexpected docs columns: {doc_cols}"
             version = _read_schema_version(conn)
-            assert version == 4, version
+            assert version == 5, version
             # v4 claims backfill: every docs row carries exactly the claim its
             # recorded owner implies ('pack:<id>' / 'user'); doc_claims keys on
             # docs.id (PC-3), not the sha. The active packs have NULL
@@ -404,7 +439,17 @@ def _selftest() -> int:
                 "SELECT value FROM meta WHERE key = 'doc_claims_reconciled'"
             ).fetchone()
             assert reconciled == ("done",), reconciled
-            print("selftest OK: v2 -> v4 ladder agrees with the Node mirror")
+            # v5 (#281): the mirror rebuilds normalized from the raw variant
+            # rows seeded above; identity (chunks.text / content_hash) is
+            # byte-identical.
+            fts_rows = conn.execute(
+                "SELECT chunk_id, text FROM chunks_fts ORDER BY rowid"
+            ).fetchall()
+            assert fts_rows == [
+                ("variant-chunk", "efficacy hemoglobin"),
+                ("plain-chunk", "plain protocol text"),
+            ], fts_rows
+            print("selftest OK: v2 -> v5 ladder agrees with the Node mirror")
             return 0
         finally:
             conn.close()
