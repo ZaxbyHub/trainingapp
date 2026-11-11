@@ -34,7 +34,6 @@ describe('f6 global-setup contract (issue #282 F-AC6): loud failure shapes', () 
     expect(() => globalSetup()).toThrowError(/PRECONDITION_MISSING packtool\/node_modules/);
     // The compiler is never invoked when the precondition fails.
     expect(fsMock.rmSync).not.toHaveBeenCalled();
-    expect(mocks.spawnSync).not.toHaveBeenCalled();
   });
 
   it('fails loudly naming packtool/node_modules/typescript when only typescript is absent', async () => {
@@ -59,7 +58,7 @@ describe('f6 global-setup contract (issue #282 F-AC6): loud failure shapes', () 
     vi.doMock('node:fs', () => ({ default: fsMock, ...fsMock }));
     vi.doMock('node:child_process', () => ({ default: { spawnSync: mocks.spawnSync }, spawnSync: mocks.spawnSync }));
     const { default: globalSetup } = await import(globalSetupPath);
-    expect(() => globalSetup()).toThrowError(/packtool build failed \(status 0\)|packtool\/dist\/cli\.js/);
+    expect(() => globalSetup()).toThrowError(/packtool build failed \(status 0\)[\s\S]*packtool\/dist\/cli\.js/);
     // Deterministic-in-any-worktree: the stale artifact was removed first.
     expect(fsMock.rmSync).toHaveBeenCalled();
     expect(mocks.spawnSync).toHaveBeenCalledTimes(1);

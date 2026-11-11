@@ -31,4 +31,9 @@ def normalize_search(text: str) -> str:
     out = _SINGLE_QUOTES.sub("'", out)
     out = _DOUBLE_QUOTES.sub('"', out)
     out = _ELLIPSIS.sub("...", out)
-    return _WS.sub(" ", out).strip()
+    # Collapse then trim by the SAME explicit class: str.strip() (no args)
+    # uses Python's whitespace set, which also strips U+0085 and U+001C-1F
+    # that the JS twins keep - boundary divergence (impl-review r2). Post-
+    # collapse every class run is a single space, so trimming spaces only is
+    # exactly the JS .trim() behavior on the collapsed string.
+    return _WS.sub(" ", out).strip(" ")

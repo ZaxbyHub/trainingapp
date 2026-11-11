@@ -610,22 +610,49 @@ def test_security_job_audit_guards_step_rolls_the_guard_roster():
     )
     for guard in _AUDIT_GUARD_ROSTER:
         assert guard in executable, f"Audit guards roster missing {guard}"
-    # impl-review r1 (batch-281-282): substring presence is not wiring — a
-    # literal two-char "\\n" inside the run line glues the roster into one
-    # word and pytest would exit 4 on a phantom "n" argument while this guard
-    # stayed green. Tokenize the shell command (bash line continuations join
-    # lines) and require every rostered path to be a STANDALONE token, then
-    # require every tests/ token to resolve on disk.
-    command = executable.replace("\\\n", " ")
-    tokens = [t for t in command.split() if t.startswith("tests/")]
-    for guard in _AUDIT_GUARD_ROSTER:
-        assert guard in tokens, f"Audit guards roster token is not standalone: {guard}"
+    # impl-review r1+r2 (batch-281-282): substring presence is not wiring.
+    # The shipped defect was a literal two-char "\\n" sequence BETWEEN tokens
+    # inside this YAML block scalar: PyYAML returns backslash+n verbatim, bash
+    # spawns a phantom "n" argument, pytest exits 4 — while every guard path
+    # stayed its own well-formed token and this file's earlier checks stayed
+    # green. Three independent bites:
+    # (1) the run text must contain NO literal two-char backslash-n sequence;
+    assert "\\n" not in run, (
+        "Audit guards run text carries a literal two-char backslash-n sequence "
+        "(a glued continuation) — bash would spawn a phantom 'n' argument"
+    )
+    # (2) tokenize as bash would (continuations join lines) and require every
+    # non-flag token to be a real file — a phantom 'n' or any glued path fails.
+    # Only the pytest invocation (from its first line through the final roster
+    # line) is tokenized; the pip install line has its own pinned word set
+    # checked by the regex below.
+    lines = executable.splitlines()
+    start = next(
+        (i for i, ln in enumerate(lines) if ln.strip().startswith("python -m pytest")),
+        None,
+    )
+    assert start is not None, "Audit guards pytest invocation line not found"
+    end = next(
+        (i for i in range(start, len(lines)) if lines[i].rstrip().endswith("-q")),
+        len(lines) - 1,
+    )
+    command = " ".join(ln.strip().rstrip("\\") for ln in lines[start : end + 1])
     import os
 
+    allowed_words = {"python", "-m", "pytest", "-q"}
+    tokens = command.split()
     for token in tokens:
-        assert os.path.isfile(
+        if token in allowed_words:
+            continue
+        assert token.startswith("tests/") and os.path.isfile(
             REPO_ROOT / token
-        ), f"Audit guards token is not a real file: {token}"
+        ), f"Audit guards run line has a non-file argument token: {token!r}"
+    # (3) every rostered path is a standalone token that resolves on disk.
+    file_tokens = [t for t in tokens if t.startswith("tests/")]
+    for guard in _AUDIT_GUARD_ROSTER:
+        assert (
+            guard in file_tokens
+        ), f"Audit guards roster token is not standalone: {guard}"
     # the pins must be exact (==), the epic rule: no floating guard deps
     assert re.search(
         r"pip install pytest==[\d.]+ pyyaml==[\d.]+ packaging==[\d.]+", executable

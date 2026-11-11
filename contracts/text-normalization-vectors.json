@@ -181,6 +181,24 @@
       "input": "a\u001cb",
       "expected": "a\u001cb",
       "note": "U+001C is NOT whitespace in the JS set - kept verbatim (same parity rationale)"
+    },
+    {
+      "id": "nel-leading-kept",
+      "input": "protocol",
+      "expected": "protocol",
+      "note": "BOUNDARY (impl-review r2): a LEADING U+0085 is kept verbatim - python str.strip() no-args would drop it; the JS .trim() set also keeps it"
+    },
+    {
+      "id": "file-sep-trailing-kept",
+      "input": "protocol\u001c",
+      "expected": "protocol\u001c",
+      "note": "BOUNDARY (impl-review r2): a TRAILING U+001C is kept verbatim - python str.strip() no-args would drop it"
+    },
+    {
+      "id": "class-boundary-trimmed",
+      "input": "  protocol 　",
+      "expected": "protocol",
+      "note": "BOUNDARY (impl-review r2): class members at the boundary (U+00A0/U+3000) ARE trimmed - collapse then space-only strip matches JS .trim() post-collapse"
     }
   ]
 }
