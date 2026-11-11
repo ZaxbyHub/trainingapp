@@ -170,6 +170,14 @@ Required top-level fields: `id`, `name`, `version`, `published_at`,
 
 ## Versioning, supersede, and rollback
 
+Bundled content ships with the app by requirement: every boot re-ensures
+manifest-declared bundled packs that are missing or older (`ensureBundledPacksAtBoot`),
+so a bundled pack the user removed via the Documents page is re-installed on the next
+launch, and a rolled-back bundled pack is re-upgraded to the shipped version at boot.
+The boot log line `bundled pack ensure skipped: ...` is informational — a store error
+is logged separately (see `desktop/main/first-run/bundled-packs.ts`).
+
+
 Chunk identity is content-derived (ADR-0004, normative):
 
 ```text

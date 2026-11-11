@@ -589,6 +589,11 @@ _AUDIT_GUARD_ROSTER = [
     "tests/test_ci_paths.py",
     "tests/test_master_push_advisory_scan.py",
     "tests/test_319_guards.py",
+    # issue #281/#282 (workstreams E/F): search-normalization twin parity +
+    # fixture licensing truth + per-file fixture manifest
+    "tests/test_text_normalization_vectors.py",
+    "tests/test_fixture_licensing_docs.py",
+    "tests/test_fixture_manifest.py",
 ]
 
 

@@ -24,6 +24,7 @@
 import type { StoreHandle } from '../store/sqlite-store.js';
 import type { EmbeddingSurface } from '../ingest/embedder.js';
 import { applyRecencyPrior, precedenceWinner, type PackClaim } from './recency.js';
+import { normalizeForSearch } from '../ingest/normalize.js';
 
 /** One retrieved chunk with its final score (fused RRF*recency, or reranker). */
 export interface RetrievedChunk {
@@ -141,11 +142,15 @@ export function sanitizeFtsQuery(query: string): string | null {
   const operators = new Set(['and', 'or', 'not', 'near']);
   const terms: string[] = [];
   for (const raw of query.split(/\s+/)) {
-    if (raw.length === 0) continue;
-    const lowered = raw.toLowerCase();
+    // Normalize BEFORE the operator/forbidden-character checks (critic r1: NFKC can
+    // produce ASCII specials from fullwidth forms, e.g. U+FF02 -> '"'; evaluating the
+    // checks on the normalized token keeps FTS syntax hazards out).
+    const normalized = normalizeForSearch(raw);
+    if (normalized.length === 0) continue;
+    const lowered = normalized.toLowerCase();
     if (operators.has(lowered)) continue;
-    if (/["*():^&]/.test(raw)) continue;
-    terms.push(`"${raw}"`);
+    if (/["*():^&]/.test(normalized)) continue;
+    terms.push(`"${normalized}"`);
   }
   if (terms.length === 0) return null;
   return terms.join(' ');

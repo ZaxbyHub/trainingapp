@@ -144,7 +144,7 @@ describe('b6 C7 (AC7): host-level clear cache', () => {
     const probe = openStore({ dbPath: storePath, dims: 8, repoRoot: REPO_ROOT });
     try {
       expect(countRows(probe, 'docs')).toBe(0);
-      expect(probe.schemaVersion).toBe(4);
+      expect(probe.schemaVersion).toBe(5);
       // issue #100 item 2: the clear -> reopen cycle preserves the WAL contract.
       const jm = probe.db.prepare('PRAGMA journal_mode').get() as { journal_mode: string };
       expect(jm.journal_mode).toBe('wal');

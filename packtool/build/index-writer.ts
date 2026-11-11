@@ -19,6 +19,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import type { PackManifest } from './pack-json.js';
 import { STORE_SCHEMA_VERSION } from './pack-json.js';
+import { normalizeForSearch } from './normalize.js';
 
 export const SCHEMA_RELATIVE_PATH = 'contracts/store.schema.sql';
 export const EMBEDDING_DIMS_TOKEN = '__EMBEDDING_DIMS__';
@@ -136,7 +137,8 @@ export function writePackIndex(options: WritePackIndexOptions): void {
   const db = openStoreWithSchema(dbPath, dims, repoRoot);
   try {
     // PR #286 compatibility matrix (issues #278/#279/#280): the AUTHORITATIVE
-    // store schema moved to v4 (store-side doc_claims + seed 4), but the
+    // store schema moved to v5 (#281 normalized lexical mirror; v4 was #278
+    // doc_claims), but the
     // EMBEDDED PACK INDEX is a v3-format ARTIFACT — packtool pins
     // STORE_SCHEMA_VERSION in both the manifest stamp and verifyPack, and the
     // browser's exact-v3 gate refuses anything else. Normalize the artifact
@@ -174,7 +176,7 @@ export function writePackIndex(options: WritePackIndexOptions): void {
       for (const chunk of chunks) {
         insertChunk.run(chunk.chunkId, chunk.docId, chunk.chunkIndex, chunk.text, chunk.contentHash);
         insertVector.run(chunk.chunkId, JSON.stringify(chunk.vector));
-        insertFts.run(chunk.chunkId, chunk.text);
+        insertFts.run(chunk.chunkId, normalizeForSearch(chunk.text));
       }
 
       if (links !== undefined && links.length > 0) {
@@ -284,7 +286,7 @@ export function installPackRows(
       }
       const insertFts = targetDb.prepare('INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)');
       for (const row of ftsRows) {
-        insertFts.run(row['chunk_id'], row['text']);
+        insertFts.run(row['chunk_id'], normalizeForSearch(String(row['text'])));
       }
       const insertLink = targetDb.prepare(
         'INSERT INTO links (chunk_id, slide_id, pack_id, score, rank, computed_at) VALUES (?, ?, ?, ?, ?, ?)',

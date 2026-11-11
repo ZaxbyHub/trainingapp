@@ -7,6 +7,7 @@
  */
 
 import { Index } from 'flexsearch';
+import { normalizeForSearch } from './normalize';
 import type { SearchResult } from '../../types/search';
 import type { DocumentChunk } from '../../types/document';
 import { getStorageDbNames } from '../storage/profile';
@@ -176,7 +177,7 @@ export class KeywordIndex {
         this.docIdToChunks.set(entry.docId, ids);
       }
       ids.add(entry.id);
-      index.add(entry.id, entry.text);
+      index.add(entry.id, normalizeForSearch(entry.text));
     }
     this.index = index;
   }
@@ -277,7 +278,7 @@ export class KeywordIndex {
     this.docIdToChunks.get(docId)!.add(id);
 
     // Add to FlexSearch index
-    this.index!.add(id, text);
+    this.index!.add(id, normalizeForSearch(text));
 
     this.pendingOps.set(docId, 'put');
     this.bumpOpSeq(docId);
@@ -335,7 +336,7 @@ export class KeywordIndex {
       // non-worker Index config above, search() returns synchronously; cast the
       // union return (which also includes Promise/Resolver under worker mode)
       // to the synchronous array shape actually produced here.
-      const results = this.index!.search(query, { limit, suggest: true }) as Array<string | number>;
+      const results = this.index!.search(normalizeForSearch(query), { limit, suggest: true }) as Array<string | number>;
 
       // F11: skip entries whose FlexSearch id has no resolvable metadata
       // instead of fabricating `docId:'unknown'` results (mirrors VectorIndex).

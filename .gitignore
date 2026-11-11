@@ -84,3 +84,6 @@ eval/bakeoff/assets/
 bench/.offline-matrix-journal.json
 bench/.offline-matrix-journal.json.tmp-*
 bench/offline-matrix-results/.*.tmp-*
+
+# packtool zip-safety spec fixture dir (issue #282 F-AC7)
+packtool/.agents-tmp/

@@ -325,7 +325,8 @@ npm install
 npm run desktop:build   # builds the web_ui renderer, stages models/packs, compiles,
                         # generates the sha256 manifest, runs electron-builder (NSIS x64)
 npm run desktop:dev     # vite dev server + Electron, for development
-npm test                # desktop test suites
+npm test                # desktop test suites (needs packtool/node_modules once:
+                        #   npm --prefix packtool ci; the desktop vitest globalSetup builds packtool locally, no network)
 ```
 
 Model weights must be staged first — see [PACKAGING.md](PACKAGING.md) and

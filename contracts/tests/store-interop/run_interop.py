@@ -28,6 +28,8 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
 
+from normalize_search import normalize_search
+
 # contracts/tests/store-interop/run_interop.py -> parents[3] is the repo root.
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCHEMA_PATH = REPO_ROOT / "contracts" / "store.schema.sql"
@@ -143,7 +145,7 @@ def write_fixture(conn: sqlite3.Connection, fixture: dict) -> None:
         )
         conn.execute(
             "INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)",
-            (chunk["id"], chunk["text"]),
+            (chunk["id"], normalize_search(chunk["text"])),
         )
         conn.execute(
             "INSERT INTO embeddings (chunk_id, embedding) VALUES (?, ?)",
@@ -266,7 +268,7 @@ def oracle_fts(fixture: dict) -> list[str]:
         for chunk in fixture["chunks"]:
             conn.execute(
                 "INSERT INTO t (chunk_id, text) VALUES (?, ?)",
-                (chunk["id"], chunk["text"]),
+                (chunk["id"], normalize_search(chunk["text"])),
             )
         rows = conn.execute(
             "SELECT chunk_id FROM t WHERE t MATCH ? ORDER BY bm25(t)",
@@ -329,6 +331,10 @@ def main() -> int:
             )
         )
         fts_match = writer.get("fts_hits") == o_fts and reader.get("fts_hits") == o_fts
+        # Independent normalization evidence (issue #281): the fixture declares its
+        # expected FTS hits for the normalized store; the oracle must reproduce them.
+        expected_fts = fixture.get("expected_fts_hits")
+        expected_fts_match = expected_fts is None or o_fts == expected_fts
         # Cross-runtime content-hash identity: both writers must derive the
         # SAME content_hash for every chunk from the frozen normalization rule.
         hashes_match = bool(writer.get("content_hashes")) and writer.get(
@@ -377,13 +383,21 @@ def main() -> int:
             "rows_match": rows_match,
             "topk_match": topk_match,
             "fts_match": fts_match,
+            "expected_fts_match": expected_fts_match,
             "hashes_match": hashes_match,
         }
 
-        if not (rows_match and topk_match and fts_match and hashes_match):
+        if not (
+            rows_match
+            and topk_match
+            and fts_match
+            and expected_fts_match
+            and hashes_match
+        ):
             log(
                 f"verdict mismatch: rows_match={rows_match} "
                 f"topk_match={topk_match} fts_match={fts_match} "
+                f"expected_fts_match={expected_fts_match} "
                 f"hashes_match={hashes_match}"
             )
             log(f"oracle topk ids={o_ids} distances={o_distances}")

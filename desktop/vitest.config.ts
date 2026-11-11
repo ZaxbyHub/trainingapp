@@ -27,6 +27,9 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/__tests__/**/*.test.ts'],
+    // F-AC6 (issue #282): compile packtool before the suite runs so a clean
+    // checkout passes `npm test` without reading CI. Compile-only, no network.
+    globalSetup: path.join(here, 'test', 'global-setup.ts'),
     // Suite-wide deadline ceiling. The PR #159 review proposed REMOVING this
     // (PRR-028) on the grounds that the diff already carried 14 per-test
     // budgets, and a local run at the 5s default was green. CI disagreed, and

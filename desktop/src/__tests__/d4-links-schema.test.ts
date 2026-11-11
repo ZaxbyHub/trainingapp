@@ -92,7 +92,7 @@ describe('d4 SCHEMA (issue #80): links columns and the current schema_version se
       const version = store.db
         .prepare("SELECT value FROM meta WHERE key = 'schema_version'")
         .get() as { value: string };
-      expect(version.value).toBe('4');
+      expect(version.value).toBe('5');
     } finally {
       store.close();
     }
