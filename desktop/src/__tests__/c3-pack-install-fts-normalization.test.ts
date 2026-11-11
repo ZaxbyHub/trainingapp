@@ -127,22 +127,31 @@ describe('c3 E-AC5: pack install writes a normalized mirror (issue #281)', () =>
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.writeFileSync(target, Buffer.from(await entry.async('nodebuffer')));
     }
-    // Corrupt the pack's index mirror back to the raw form an older packtool
-    // wrote, then stamp the manifest checksums off (the installer re-checks
-    // only the manifest hash over pack.json, not per-row FTS text).
+    // Corrupt the pack's index mirror back to the raw form an OLDER packtool
+    // wrote (regardless of how the current build wrote it — after #281 the
+    // fresh artifact is already normalized, so the inverse pass is what
+    // simulates the legacy artifact), then install and assert the installer
+    // normalizes.
     const indexSqlite = path.join(packDir, 'index.sqlite');
     expect(fs.existsSync(indexSqlite), 'packtool artifact carries index/index.sqlite').toBe(true);
     const Database = requireDesk('better-sqlite3');
     const indexDb = new Database(indexSqlite);
-    const rawRows = indexDb.prepare('SELECT chunk_id, text FROM chunks_fts').all() as Array<{ chunk_id: string; text: string }>;
-    expect(rawRows.some((r) => r.text.includes(SOFT) || r.text.includes(ZWSP)), 'the built pack has a variant row').toBe(true);
-    const inverse = (t: string): string => t.replace('efficacy', `ef${SOFT}ficacy`).replace('hemoglobin', `he${ZWSP}moglobin`);
-    const update = indexDb.prepare('UPDATE chunks_fts SET text = ? WHERE chunk_id = ?');
-    for (const row of rawRows) {
-      const rawed = inverse(row.text);
-      if (rawed !== row.text) update.run(rawed, row.chunk_id);
+    let rawedCount = 0;
+    try {
+      const rawRows = indexDb.prepare('SELECT chunk_id, text FROM chunks_fts').all() as Array<{ chunk_id: string; text: string }>;
+      const inverse = (t: string): string => t.replace('efficacy', `ef${SOFT}ficacy`).replace('hemoglobin', `he${ZWSP}moglobin`);
+      const update = indexDb.prepare('UPDATE chunks_fts SET text = ? WHERE chunk_id = ?');
+      for (const row of rawRows) {
+        const rawed = inverse(row.text);
+        if (rawed !== row.text) {
+          update.run(rawed, row.chunk_id);
+          rawedCount += 1;
+        }
+      }
+    } finally {
+      indexDb.close();
     }
-    indexDb.close();
+    expect(rawedCount, 'the alpha doc produced at least one invertible variant row').toBeGreaterThan(0);
 
     const root = makeTempDir('c3ftsi-mgr-');
     const store = openStore({ dbPath: path.join(root, 'store.db'), dims: 384, repoRoot: REPO_ROOT });
