@@ -50,48 +50,71 @@ const PACK_DOCUMENT = {
   'beta.json': JSON.stringify({ title: 'Beta', text: 'Beta body plain protocol.' }),
 };
 
-const variantChunks = (store: ReturnType<typeof openStore>): string[] =>
-  (
-    store.db
-      .prepare('SELECT f.text FROM chunks_fts f JOIN chunks c ON c.id = f.chunk_id JOIN docs d ON d.id = c.doc_id WHERE d.sha256 = ?')
-      .all('alpha-sha') as Array<{ text: string }>
-  ).map((r) => r.text);
-
 describe('c3 E-AC5: pack install writes a normalized mirror (issue #281)', () => {
-  it('the classic rebuild install normalizes variant rows and keeps ids', () => {
-    // Seed a v5 store by hand with RAW mirror rows exactly as an older
-    // packtool would have written them (chunks_fts.text = raw chunk text),
-    // then run the classic rebuild install path (writeLiveChunksLocked) over
-    // the same content and assert the freshly written rows are normalized.
+  it('the classic rebuild install writes normalized rows through the real PackManager path', async () => {
+    // A pack dir WITHOUT an index file takes the classic rebuild path
+    // (writeLiveChunksLocked): the real PackManager install re-embeds from the
+    // pack docs and writes the mirror. This leg executes that writer (critic
+    // r2 / mutant M1: the rebuild writer must have its own discriminating
+    // execution, not just a twin assertion).
+    const src = makeTempDir('c3ftsi-c-src-');
+    for (const [name, content] of Object.entries(PACK_DOCUMENT)) {
+      fs.writeFileSync(path.join(src, name), content, 'utf8');
+    }
+    const requireDesk = createRequire(path.join(REPO_ROOT, 'desktop', 'package.json'));
+    const spawnSync = requireDesk('node:child_process').spawnSync;
+    const JSZip = requireDesk('jszip');
+    const PACKTOOL_CLI = path.join(REPO_ROOT, 'packtool', 'dist', 'cli.js');
+    const zipPath = path.join(makeTempDir('c3ftsi-c-zip-'), 'pack.zip');
+    const run = spawnSync(process.execPath, [
+      PACKTOOL_CLI, 'build-docs', src, '--id', 'c3-fts-classic', '--version', '1.0.0',
+      '--embedder', 'hash', '--published-at', '2026-11-11T00:00:00.000Z', '-o', zipPath,
+    ], { encoding: 'utf8' });
+    expect(run.status, `packtool build-docs failed: ${run.stderr}`).toBe(0);
+    const packDir = makeTempDir('c3ftsi-c-pack-');
+    const zip = await JSZip.loadAsync(fs.readFileSync(zipPath));
+    for (const entry of Object.values(zip.files) as Array<{ name: string; dir: boolean; async(): Promise<Buffer> }>) {
+      const target = path.join(packDir, ...entry.name.split('/'));
+      if (entry.dir) {
+        fs.mkdirSync(target, { recursive: true });
+        continue;
+      }
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, Buffer.from(await entry.async('nodebuffer')));
+    }
+    // Classic path: remove the prebuilt index so installLocked rebuilds.
+    fs.rmSync(path.join(packDir, 'index.sqlite'), { force: true });
+
     const root = makeTempDir('c3ftsi-classic-');
-    const store = openStore({ dbPath: path.join(root, 'store.db'), dims: 8, repoRoot: REPO_ROOT });
+    const store = openStore({ dbPath: path.join(root, 'store.db'), dims: 384, repoRoot: REPO_ROOT });
     try {
-      const db = store.db as unknown as {
-        prepare(sql: string): { run(...p: unknown[]): unknown; get(...p: unknown[]): unknown; all(...p: unknown[]): unknown[] };
-      };
-      const rawText = PACK_DOCUMENT['alpha.md'];
-      db.prepare("INSERT INTO docs (id, source_class, path, sha256) VALUES ('legacy-doc', 'test', 'docs/alpha.md', 'alpha-sha')").run();
-      const chunkId = 'legacy-chunk-1';
-      db.prepare('INSERT INTO chunks (id, doc_id, chunk_index, text, content_hash) VALUES (?, ?, 0, ?, ?)').run(
-        chunkId,
-        'legacy-doc',
-        rawText,
-        'raw-hash',
-      );
-      // The OLD (pre-#281) mirror row: raw text, soft hyphen and ZWSP intact.
-      db.prepare('INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)').run(chunkId, rawText);
-      // The classic rebuild path normalizes on write; prove the expected
-      // normalized form matches the twin (and that the RAW form differs).
-      const normalized = normalizeForSearch(rawText);
-      expect(normalized).not.toBe(rawText);
-      expect(normalized).toContain('efficacy');
-      expect(normalized).toContain('hemoglobin');
-      // The v5 migration path (the other rebuild surface) is pinned by
-      // c3-schema-migration; here we pin the WRITE-side contract the pack
-      // install writers share: normalizeForSearch is the text transform.
-      const rowsBefore = variantChunks(store);
-      expect(rowsBefore.join('')).toContain(SOFT);
-      expect(normalizeForSearch(rowsBefore[0])).toBe(normalized);
+      const manager = new PackManager({
+        store,
+        embedder: new HashEmbedder({ dims: 384 }),
+        packsRoot: path.join(root, 'packs'),
+        repoRoot: REPO_ROOT,
+        packsSecurity: { embeddingModelId: 'hash' },
+      });
+      const result = await manager.install(packDir);
+      expect(result.chunksAdded).toBeGreaterThan(0);
+      const rows = store.db.prepare('SELECT chunk_id, text FROM chunks_fts').all() as Array<{
+        chunk_id: string;
+        text: string;
+      }>;
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) {
+        expect(row.text).not.toContain(SOFT);
+        expect(row.text).not.toContain(ZWSP);
+      }
+      expect(rows.some((r) => r.text.includes('efficacy')), 'classic mirror carries normalized efficacy').toBe(true);
+      // Identity: chunks.text keeps the raw variant bytes (ADR-0004).
+      const chunk = store.db
+        .prepare("SELECT text FROM chunks WHERE text LIKE '%' || char(173) || '%'")
+        .get() as { text: string } | undefined;
+      expect(chunk, 'identity chunks.text keeps the raw soft hyphen').toBeDefined();
+      // Twin consistency: the normalized form matches the desktop twin.
+      const raw = (chunk as { text: string }).text;
+      expect(normalizeForSearch(raw)).not.toContain(SOFT);
     } finally {
       store.close();
     }
