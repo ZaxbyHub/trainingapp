@@ -9409,11 +9409,18 @@ describe('#320 AC1 S1/S2: no docx/pptx/pdf parser and no zip cap remain in the m
     // the same module the packaged main receives), while plain Node resolves
     // the devDependency wrapper node_modules/electron/index.js (which the
     // gate judges and passes). No other package may differ across runtimes.
-    const builtinRows = rows.filter((r) => r.electron !== '' && r.electron.includes(':') && !/^[a-z]:/i.test(r.electron));
-    expect(new Set(builtinRows.map((r) => r.specifier)), "only the 'electron' package resolves to a runtime built-in under Electron-as-Node").toEqual(new Set(['electron']));
-    expect(builtinRows.map((r) => r.file).sort(), "the four base 'electron' import sites (index.ts, logging.ts, protocol.ts, security/config.ts)").toEqual(['index.ts', 'logging.ts', 'protocol.ts', 'security/config.ts']);
-    expect(new Set(builtinRows.map((r) => r.electron)), "Electron-as-Node's answer for 'electron' is its built-in URL").toEqual(new Set(['electron:electron']));
-    expect(rows.filter((r) => !builtinRows.includes(r)).every((r) => r.electron === r.node), 'every OTHER site: Electron-as-Node resolves the IDENTICAL file').toBe(true);
+    // CHECK_WRONG(CI round 2, 2026-11-11): this pinned r14 exception ALSO
+    // assumed the electron binary is present — on a runner whose parity leg
+    // skipped (binary absent), every r.electron is '' and the pins would
+    // assert an empty builtin set. The pins bind ONLY where the parity leg
+    // actually ran (electronExe non-null — the same precondition as the leg).
+    if (electronExe) {
+      const builtinRows = rows.filter((r) => r.electron !== '' && r.electron.includes(':') && !/^[a-z]:/i.test(r.electron));
+      expect(new Set(builtinRows.map((r) => r.specifier)), "only the 'electron' package resolves to a runtime built-in under Electron-as-Node").toEqual(new Set(['electron']));
+      expect(builtinRows.map((r) => r.file).sort(), "the four base 'electron' import sites (index.ts, logging.ts, protocol.ts, security/config.ts)").toEqual(['index.ts', 'logging.ts', 'protocol.ts', 'security/config.ts']);
+      expect(new Set(builtinRows.map((r) => r.electron)), "Electron-as-Node's answer for 'electron' is its built-in URL").toEqual(new Set(['electron:electron']));
+      expect(rows.filter((r) => !builtinRows.includes(r)).every((r) => r.electron === r.node), 'every OTHER site: Electron-as-Node resolves the IDENTICAL file').toBe(true);
+    }
     // The mode split is real: both modes appear in the base tree, and the
     // two dual-entry packages land on DIFFERENT files per mode (the base
     // fact that makes judging every site in one mode wrong). The base sites
