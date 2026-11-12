@@ -300,6 +300,7 @@ without a bridge play in both apps but report no slide state and accept no deep-
 exactly as on desktop.
 
 ### Install path parity
+
 - **Archive guards:** `pack-archive-rules.ts` is one rules module kept byte-identical in
   `desktop/main/backend/packs/` and `web_ui/src/lib/packs/` (drift test), consumed by desktop
   `pack-extract.ts` and the browser `pack-extract-browser.ts` (central directory first, read

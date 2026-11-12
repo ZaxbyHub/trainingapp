@@ -82,7 +82,6 @@ export interface EnsureBundledPacksResult {
   manifestError?: string;
 }
 
-/** The polite status copy (surfaced through onStatus; pinned by the specs). */
 /**
  * #266 (review round 1 pin): browser app only, never Electron and never a
  * framed context — the desktop app's bundled-pack ensure lives in its main
@@ -97,6 +96,7 @@ export function isBundledPacksBootEligible(
   return true;
 }
 
+/** The polite status copy (surfaced through onStatus; pinned by the specs). */
 export const BUNDLED_PACKS_STATUS_TEXT = 'Preparing knowledge packs…';
 
 function errorMessage(e: unknown): string {
