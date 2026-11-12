@@ -37,11 +37,16 @@ const corpus = JSON.parse(fs.readFileSync(VECTORS_PATH, 'utf8')) as {
 };
 
 // Self-describing floor: the vector file must stay at least as rich as the
-// contract requires (>= 24 vectors covering the listed families; a deletion
-// here is a contract shrink, not cleanup).
+// contract requires. The floor EQUALS the shipped corpus and REQUIRED_IDS pins
+// EVERY id (pr323 review PRR-005: a 9-below floor left the boundary vectors
+// deletable with all guards green), so any deletion is a contract shrink that
+// fails here, not cleanup.
 const REQUIRED_IDS = [
   'soft-hyphen-word',
+  'soft-hyphen-only',
   'zwsp-word',
+  'zwnj',
+  'zwj',
   'word-joiner',
   'bom',
   'ligature-fl',
@@ -51,21 +56,31 @@ const REQUIRED_IDS = [
   'fullwidth-quote',
   'superscript',
   'en-dash',
+  'em-dash',
+  'hyphen-bullet',
   'minus-sign',
   'curly-quotes',
   'double-quotes',
   'ellipsis',
   'nbsp',
+  'narrow-nbsp',
+  'mixed-variant-word',
   'greek-preserved',
   'cjk-preserved',
   'whitespace-collapse',
   'ignorable-only-with-space',
+  'dash-run',
+  'nel-kept',
+  'file-sep-kept',
+  'nel-leading-kept',
+  'file-sep-trailing-kept',
+  'class-boundary-trimmed',
 ];
 
 describe('text normalization vectors (issue #281 E-AC1)', () => {
   it('the vector corpus carries the contract-required families', () => {
     expect(corpus.version).toBe(1);
-    expect(corpus.vectors.length).toBeGreaterThanOrEqual(24);
+    expect(corpus.vectors.length).toBeGreaterThanOrEqual(33);
     const ids = new Set(corpus.vectors.map((v) => v.id));
     for (const required of REQUIRED_IDS) {
       expect(ids.has(required), `missing required vector ${required}`).toBe(true);

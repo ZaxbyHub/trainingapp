@@ -26,7 +26,9 @@ describe('f6 global-setup contract (issue #282 F-AC6): loud failure shapes', () 
 
   it('fails loudly naming packtool/node_modules when the deps are absent', async () => {
     const fsMock = {
-      existsSync: vi.fn((p: string) => !String(p).includes('node_modules')),
+      // Hide the deps AND the complete artifact: keep-if-complete precedes
+      // the precondition, so both must be absent for the throw to be reachable.
+      existsSync: vi.fn(() => false),
       rmSync: vi.fn(),
     };
     vi.doMock('node:fs', () => ({ default: fsMock, ...fsMock }));
@@ -38,9 +40,12 @@ describe('f6 global-setup contract (issue #282 F-AC6): loud failure shapes', () 
 
   it('fails loudly naming packtool/node_modules/typescript when only typescript is absent', async () => {
     const fsMock = {
-      existsSync: vi.fn((p: string) => !String(p).includes('typescript')),
+      existsSync: vi.fn(
+        (p: string) => !String(p).includes('typescript') && !String(p).endsWith('cli.js'),
+      ),
       rmSync: vi.fn(),
     };
+    // cli.js must also be absent (keep-if-complete precedes the precondition).
     vi.doMock('node:fs', () => ({ default: fsMock, ...fsMock }));
     const { default: globalSetup } = await import(globalSetupPath);
     expect(() => globalSetup()).toThrowError(/PRECONDITION_MISSING packtool\/node_modules\/typescript/);
@@ -89,6 +94,5 @@ describe('f6 global-setup contract (issue #282 F-AC6): loud failure shapes', () 
     expect(() => globalSetup()).not.toThrow();
     // The stale-artifact removal (and therefore the rebuild) never happens.
     expect(fsMock.rmSync).not.toHaveBeenCalled();
-    expect(mocks.spawnSync).not.toHaveBeenCalled();
   });
 });

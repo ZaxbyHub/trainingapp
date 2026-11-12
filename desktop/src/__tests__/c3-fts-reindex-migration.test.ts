@@ -78,10 +78,13 @@ describe('c3 E-AC7: the v5 re-index migration (issue #281)', () => {
       );
       identityRows.push({ id, text, content_hash: `hash-${i}` });
     });
+    // A deterministic embeddings row: the identity assertion must compare
+    // non-empty snapshots (pr323 review PRR-018: [] vs [] cannot detect a
+    // destructive embeddings change).
+    seed.db
+      .prepare('INSERT INTO embeddings (chunk_id, embedding) VALUES (?, ?)')
+      .run('chk-legacy-0', '[0.25,0.5,0.125,0.75,0.375,0.625,0.875,0.0625]');
     seed.close();
-
-    // Regress: raw mirror rows + schema_version 4 (exactly what a pre-#281
-    // store holds — the mirror is the ONLY thing v5 may touch).
     const regress = openStore({ dbPath, dims: 8, repoRoot: REPO_ROOT });
     const rdb = regress.db as unknown as SqlDbShape;
     rdb.exec('DELETE FROM chunks_fts');

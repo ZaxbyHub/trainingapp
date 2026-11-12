@@ -54,13 +54,19 @@ function seed(prefix: string): ReturnType<typeof Object> | any {
 }
 
 describe('b7 supplementary: FTS5 query sanitization (issue #65 AC1 edge case)', () => {
-  it('sanitizeFtsQuery quotes plain tokens and drops operator/bare-quote/star tokens', () => {
+  it('sanitizeFtsQuery quotes plain tokens, drops bare operators, strips inner FTS5 syntax (issue #65 + #281 PRR-003)', () => {
     expect(sanitizeFtsQuery('travel policy')).toBe('"travel" "policy"');
-    expect(sanitizeFtsQuery('"travel"')).toBeNull();
-    expect(sanitizeFtsQuery('travel*')).toBeNull();
+    // PRR-003: a quote inside a token is STRIPPED and the term kept (base kept
+    // smart-quoted terms and matched; dropping them lost recall).
+    expect(sanitizeFtsQuery('"travel"')).toBe('"travel"');
+    // Bare star-only and punctuation-only tokens strip to nothing -> dropped.
+    expect(sanitizeFtsQuery('travel*')).toBe('"travel"');
+    expect(sanitizeFtsQuery('*')).toBeNull();
     expect(sanitizeFtsQuery('AND OR NOT')).toBeNull();
     expect(sanitizeFtsQuery('a AND b')).toBe('"a" "b"');
-    expect(sanitizeFtsQuery('col:val ^x NEAR(y,z)')).toBeNull();
+    // col:val ^x NEAR(y,z): the hazard chars are stripped within each token,
+    // so the terms survive as clean quoted phrases.
+    expect(sanitizeFtsQuery('col:val ^x NEAR(y,z)')).toBe('"colval" "x" "NEARy,z"');
     expect(sanitizeFtsQuery('   ')).toBeNull();
   });
 

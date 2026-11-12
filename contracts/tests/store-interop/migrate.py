@@ -18,8 +18,9 @@ desktop/main/backend/store/migrate.ts — the store-interop suite proves the
 two runtimes agree.
 
 Self-test CLI (consumed by the c3-schema-migration test): `python migrate.py
---selftest` builds a v2-shaped store in a temp dir, migrates it to v4, and
-asserts the v3 packs shape/row mapping plus the v4 claims backfill; exits 0
+--selftest` builds a v2-shaped store in a temp dir, migrates it to v5, and
+asserts the v3 packs shape/row mapping, the v4 claims backfill, and the v5
+normalized FTS rebuild; exits 0
 on agreement.
 """
 
@@ -250,7 +251,27 @@ def _migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
     hyphens, zero-width characters, ligatures, fullwidth forms) is found by
     plain typed queries. Identity is untouched: chunks.text, chunk ids and
     content_hash are byte-identical (ADR-0004); only mirror rows change.
-    Row mapping mirrors desktop/main/backend/store/migrate.ts."""
+    Row mapping mirrors desktop/main/backend/store/migrate.ts, including its
+    pr323-review recovery: a corrupt FTS vtab (DELETE raises) is recovered by
+    drop + recreate + repopulate, never propagated to store deletion."""
+    try:
+        _rebuild_chunks_fts_normalized(conn)
+    except sqlite3.DatabaseError:
+        _recover_chunks_fts(conn)
+        return
+    with conn:
+        # Heal a pending manifest reconciliation in the same open (mirrors the
+        # v3->v4 step; without this a v4 store with doc_claims_reconciled
+        # 'pending' healed one open later than before - impl-review r1).
+        _stamp_reconciled(conn, _reconcile_doc_claims_locked(conn))
+
+
+_CHUNKS_FTS_DDL = (
+    "CREATE VIRTUAL TABLE chunks_fts USING fts5 (chunk_id UNINDEXED, text)"
+)
+
+
+def _rebuild_chunks_fts_normalized(conn: sqlite3.Connection) -> None:
     with conn:
         conn.execute("DELETE FROM chunks_fts")
         cursor = conn.execute("SELECT id, text FROM chunks ORDER BY rowid")
@@ -263,11 +284,41 @@ def _migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
                     "INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)",
                     (row_id, normalize_search(text)),
                 )
-        # Heal a pending manifest reconciliation in the same open (mirrors the
-        # v3->v4 step; without this a v4 store with doc_claims_reconciled
-        # 'pending' healed one open later than before - impl-review r1).
-        _stamp_reconciled(conn, _reconcile_doc_claims_locked(conn))
         conn.execute("UPDATE meta SET value = '5' WHERE key = 'schema_version'")
+
+
+def _recover_chunks_fts(conn: sqlite3.Connection) -> None:
+    """Drop + recreate + repopulate the damaged mirror; worst case a degraded
+    lexical mirror, never the corpus (mirrors migrate.ts recoverChunksFts)."""
+    try:
+        with conn:
+            conn.execute("DROP TABLE IF EXISTS chunks_fts")
+            conn.execute(_CHUNKS_FTS_DDL)
+            try:
+                for row_id, text in conn.execute("SELECT id, text FROM chunks"):
+                    conn.execute(
+                        "INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)",
+                        (row_id, normalize_search(text)),
+                    )
+            except sqlite3.DatabaseError as repopulate_error:
+                print(
+                    f"[trainingapp] chunks_fts repopulation incomplete after FTS "
+                    f"corruption ({repopulate_error}); lexical recall is degraded "
+                    "until the affected documents are re-ingested"
+                )
+            conn.execute("UPDATE meta SET value = '5' WHERE key = 'schema_version'")
+        print(
+            "[trainingapp] chunks_fts was corrupt and could not be rebuilt in place; "
+            "the mirror was dropped and recreated from chunks.text. Identity tables "
+            "are untouched."
+        )
+    except sqlite3.DatabaseError as fatal_error:
+        print(
+            f"[trainingapp] chunks_fts recovery failed ({fatal_error}); stamping "
+            "schema v5 with a degraded lexical mirror - the corpus is preserved"
+        )
+        with conn:
+            conn.execute("UPDATE meta SET value = '5' WHERE key = 'schema_version'")
 
 
 def migrate(conn: sqlite3.Connection) -> int:

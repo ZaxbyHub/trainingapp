@@ -69,7 +69,7 @@ describe('c3 E-AC5: pack install writes a normalized mirror (issue #281)', () =>
     const run = spawnSync(process.execPath, [
       PACKTOOL_CLI, 'build-docs', src, '--id', 'c3-fts-classic', '--version', '1.0.0',
       '--embedder', 'hash', '--published-at', '2026-11-11T00:00:00.000Z', '-o', zipPath,
-    ], { encoding: 'utf8' });
+    ], { encoding: 'utf8', timeout: 120_000 });
     expect(run.status, `packtool build-docs failed: ${run.stderr}`).toBe(0);
     const packDir = makeTempDir('c3ftsi-c-pack-');
     const zip = await JSZip.loadAsync(fs.readFileSync(zipPath));
@@ -120,7 +120,7 @@ describe('c3 E-AC5: pack install writes a normalized mirror (issue #281)', () =>
     }
   });
 
-  it('a prebuilt pack with raw mirror rows installs normalized through PackManager', async () => {
+  it('a prebuilt pack installs normalized through PackManager (mirror re-derived from chunk.text)', async () => {
     // Build a real pack with the packtool CLI (hash embedder), corrupt its
     // mirror rows back to RAW (simulating an older packtool), then install
     // through the real PackManager and assert the installed mirror is
@@ -130,6 +130,7 @@ describe('c3 E-AC5: pack install writes a normalized mirror (issue #281)', () =>
       fs.writeFileSync(path.join(src, name), content, 'utf8');
     }
     const requireDesk = createRequire(path.join(REPO_ROOT, 'desktop', 'package.json'));
+    const Database = requireDesk('better-sqlite3');
     const spawnSync = requireDesk('node:child_process').spawnSync;
     const JSZip = requireDesk('jszip');
     const PACKTOOL_CLI = path.join(REPO_ROOT, 'packtool', 'dist', 'cli.js');
@@ -137,7 +138,7 @@ describe('c3 E-AC5: pack install writes a normalized mirror (issue #281)', () =>
     const run = spawnSync(process.execPath, [
       PACKTOOL_CLI, 'build-docs', src, '--id', 'c3-fts-norm', '--version', '1.0.0',
       '--embedder', 'hash', '--published-at', '2026-11-11T00:00:00.000Z', '-o', zipPath,
-    ], { encoding: 'utf8' });
+    ], { encoding: 'utf8', timeout: 120_000 });
     expect(run.status, `packtool build-docs failed: ${run.stderr}`).toBe(0);
     const packDir = makeTempDir('c3ftsi-pack-');
     const zip = await JSZip.loadAsync(fs.readFileSync(zipPath));
@@ -150,31 +151,13 @@ describe('c3 E-AC5: pack install writes a normalized mirror (issue #281)', () =>
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.writeFileSync(target, Buffer.from(await entry.async('nodebuffer')));
     }
-    // Corrupt the pack's index mirror back to the raw form an OLDER packtool
-    // wrote (regardless of how the current build wrote it — after #281 the
-    // fresh artifact is already normalized, so the inverse pass is what
-    // simulates the legacy artifact), then install and assert the installer
-    // normalizes.
+    // The prebuilt importer (pack-manager.ts:1230 writeLiveOrImportedChunksLocked)
+    // re-derives the mirror from chunk.text at import, so normalization there is
+    // pinned by the assertions below — the shipped index.sqlite rows are NOT read
+    // (readPrebuiltIndex reads meta/chunks/embeddings/links only, pr323 review
+    // PRR-016), which is why no corrupt-to-raw step is needed or present.
     const indexSqlite = path.join(packDir, 'index.sqlite');
-    expect(fs.existsSync(indexSqlite), 'packtool artifact carries index/index.sqlite').toBe(true);
-    const Database = requireDesk('better-sqlite3');
-    const indexDb = new Database(indexSqlite);
-    let rawedCount = 0;
-    try {
-      const rawRows = indexDb.prepare('SELECT chunk_id, text FROM chunks_fts').all() as Array<{ chunk_id: string; text: string }>;
-      const inverse = (t: string): string => t.replace('efficacy', `ef${SOFT}ficacy`).replace('hemoglobin', `he${ZWSP}moglobin`);
-      const update = indexDb.prepare('UPDATE chunks_fts SET text = ? WHERE chunk_id = ?');
-      for (const row of rawRows) {
-        const rawed = inverse(row.text);
-        if (rawed !== row.text) {
-          update.run(rawed, row.chunk_id);
-          rawedCount += 1;
-        }
-      }
-    } finally {
-      indexDb.close();
-    }
-    expect(rawedCount, 'the alpha doc produced at least one invertible variant row').toBeGreaterThan(0);
+    expect(fs.existsSync(indexSqlite), 'packtool artifact carries index.sqlite').toBe(true);
 
     const root = makeTempDir('c3ftsi-mgr-');
     const store = openStore({ dbPath: path.join(root, 'store.db'), dims: 384, repoRoot: REPO_ROOT });

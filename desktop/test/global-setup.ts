@@ -5,10 +5,19 @@
 //
 // Compile only (packtool/node_modules/typescript/bin/tsc via process.execPath
 // — never npx, never a Windows .cmd shim): no network access is performed,
-// ever. When packtool/dist exists it is removed and rebuilt so both the
-// frozen C13 legs are deterministic in any worktree (the driver clears dist
-// too; the rebuild is unconditional). Fails loudly, naming packtool/node_modules,
-// when the compiler or the runtime deps are absent.
+// ever.
+//
+// Ordering and skips (impl-review r3 + pr323 review PRR-001):
+// 1. An existing complete artifact wins FIRST — keep-if-complete, no deps
+//    required (an rm+rebuild while the parallel worker pool spins up raced
+//    file locks on Windows, and the required security/harness-contracts jobs
+//    run desktop vitest WITHOUT packtool deps, so a deps precondition can
+//    never sit ahead of this check).
+// 2. Otherwise: no packtool deps + TRAININGAPP_SKIP_PACKTOOL_GLOBAL_SETUP=1
+//    (set by the security/harness-contracts workflows, whose rostered specs
+//    never invoke the packtool CLI) skips the build with a loud warning
+//    instead of failing the gate.
+// 3. Otherwise a missing deps tree throws loudly, naming packtool/node_modules.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -19,8 +28,27 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const PACKTOOL_DIR = path.join(REPO_ROOT, 'packtool');
 const PACKTOOL_DIST = path.join(PACKTOOL_DIR, 'dist');
 const TSC_BIN = path.join(PACKTOOL_DIR, 'node_modules', 'typescript', 'bin', 'tsc');
+const SKIP_ENV = 'TRAININGAPP_SKIP_PACKTOOL_GLOBAL_SETUP';
 
 export default function globalSetup(): void {
+  // 1. Keep-if-complete FIRST: the artifact alone satisfies every spec that
+  // shells out to `node packtool/dist/cli.js`, so no deps precondition may
+  // run ahead of it (PRR-001: the required security job has no packtool deps).
+  if (fs.existsSync(path.join(PACKTOOL_DIST, 'cli.js'))) {
+    return;
+  }
+  // 2. Opt-out for CI jobs whose rostered specs never touch the packtool CLI.
+  if (
+    !fs.existsSync(path.join(PACKTOOL_DIR, 'node_modules'))
+    && process.env[SKIP_ENV] === '1'
+  ) {
+    console.warn(
+      `[trainingapp] ${SKIP_ENV}=1 and packtool/node_modules absent: skipping the `
+        + 'packtool build. Specs that shell out to packtool/dist/cli.js will fail '
+        + 'in this run by design (this job\'s roster does not include them).',
+    );
+    return;
+  }
   if (!fs.existsSync(path.join(PACKTOOL_DIR, 'node_modules'))) {
     throw new Error(
       'PRECONDITION_MISSING packtool/node_modules — run `npm --prefix packtool ci` once '
@@ -32,15 +60,8 @@ export default function globalSetup(): void {
       'PRECONDITION_MISSING packtool/node_modules/typescript — run `npm --prefix packtool ci` once',
     );
   }
-  // Deterministic for the frozen C13 leg: that driver removes packtool/dist
-  // BEFORE vitest starts, so a missing cli.js here always rebuilds. When the
-  // artifact already exists we keep it: an rm+rebuild while the parallel
-  // worker pool spins up raced file locks on Windows (freshly emitted dist
-  // files transiently ENOENT for `node dist/cli.js` spawns mid-suite) and a
-  // stale-but-complete artifact is equally valid for the suite.
-  if (fs.existsSync(path.join(PACKTOOL_DIST, 'cli.js'))) {
-    return;
-  }
+  // 3. Deterministic rebuild when the artifact is absent: remove any partial
+  // output, then compile.
   fs.rmSync(PACKTOOL_DIST, { recursive: true, force: true });
   const run = spawnSync(process.execPath, [TSC_BIN, '-p', path.join(PACKTOOL_DIR, 'tsconfig.json')], {
     cwd: PACKTOOL_DIR,

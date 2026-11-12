@@ -149,8 +149,17 @@ export function sanitizeFtsQuery(query: string): string | null {
     if (normalized.length === 0) continue;
     const lowered = normalized.toLowerCase();
     if (operators.has(lowered)) continue;
-    if (/["*():^&]/.test(normalized)) continue;
-    terms.push(`"${normalized}"`);
+    // pr323 review PRR-003: normalization FOLDS typographic quotes into the
+    // guarded ASCII chars (U+201C/U+201D/U+FF02 -> '"'), so dropping the token
+    // here silently deleted terms the base build kept and matched (a smart-
+    // quoted "efficacy" paste lost its whole lexical leg). Keep the term:
+    // strip the hazardous characters from WITHIN the token (FTS5 doubles an
+    // inner quote inside a quoted phrase; we remove rather than rely on
+    // tokenizer-specific escaping), then emit the quoted remainder. Tokens
+    // reduced to nothing by the strip are skipped.
+    const sanitized = normalized.replace(/["*():^&]/g, '');
+    if (sanitized.length === 0) continue;
+    terms.push(`"${sanitized}"`);
   }
   if (terms.length === 0) return null;
   return terms.join(' ');

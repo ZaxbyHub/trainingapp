@@ -21,7 +21,10 @@ from normalize_search import normalize_search  # noqa: E402
 
 REQUIRED_IDS = (
     "soft-hyphen-word",
+    "soft-hyphen-only",
     "zwsp-word",
+    "zwnj",
+    "zwj",
     "word-joiner",
     "bom",
     "ligature-fl",
@@ -31,15 +34,25 @@ REQUIRED_IDS = (
     "fullwidth-quote",
     "superscript",
     "en-dash",
+    "em-dash",
+    "hyphen-bullet",
     "minus-sign",
     "curly-quotes",
     "double-quotes",
     "ellipsis",
     "nbsp",
+    "narrow-nbsp",
+    "mixed-variant-word",
     "greek-preserved",
     "cjk-preserved",
     "whitespace-collapse",
     "ignorable-only-with-space",
+    "dash-run",
+    "nel-kept",
+    "file-sep-kept",
+    "nel-leading-kept",
+    "file-sep-trailing-kept",
+    "class-boundary-trimmed",
 )
 
 

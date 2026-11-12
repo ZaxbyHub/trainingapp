@@ -138,8 +138,12 @@ describe('b7 E-AC2: the lexical mirror and query are search-normalized (issue #2
       }
       // U+FF02 fullwidth quote normalizes to an ASCII double quote; the
       // sanitized query must stay syntactically valid FTS5 (no unterminated
-      // string) and drop the hazardous token instead of throwing.
+      // string) without DROPPING the term (pr323 review PRR-003: base kept
+      // smart-quoted terms and matched; the sanitize strips inner syntax
+      // chars instead of discarding the token).
       expect(() => ftsHit(store, `query${FW_Q}x`)).not.toThrow();
+      const smartHits = ftsHit(store, `“efficacy”`);
+      expect(smartHits.length, 'a smart-quoted term must still match the variant doc').toBeGreaterThan(0);
       // An ignorable-only token normalizes to empty and is skipped, not quoted.
       expect(ftsHit(store, `${SOFT} ${ZWSP}`)).toEqual([]);
     } finally {

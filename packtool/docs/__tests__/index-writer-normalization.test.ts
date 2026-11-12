@@ -174,6 +174,7 @@ describe('index-writer normalization (issue #281 E-AC4)', () => {
       fs.readFileSync(path.join(REPO_ROOT, 'contracts', 'text-normalization-vectors.json'), 'utf8'),
     ) as { version: number; vectors: Array<{ id: string; input: string; expected: string }> };
     expect(corpus.version).toBe(1);
+    expect(corpus.vectors.length, 'twin legs must refuse a silently shrunken corpus').toBeGreaterThanOrEqual(33);
     for (const v of corpus.vectors) {
       expect(normalizeForSearch(v.input), `vector ${v.id}`).toBe(v.expected);
     }

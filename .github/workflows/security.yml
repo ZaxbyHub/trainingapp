@@ -78,6 +78,8 @@ jobs:
 
       - name: Run the contract-spec family (merge-blocking, issue #215)
         run: >
+          env:
+            TRAININGAPP_SKIP_PACKTOOL_GLOBAL_SETUP: '1'
           npm --prefix desktop test --
           src/__tests__/embed-seam-contract.test.ts
           src/__tests__/embed-threads-clamp-contract.test.ts

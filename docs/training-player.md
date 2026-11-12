@@ -358,12 +358,13 @@ immediately when the current slide reports ready). With the recovery, the
 <!-- fixture-licensing:v1 -->
 Fixture licensing (issue #282). The e2e fixture `desktop/e2e/fixtures/storyline-nav/` is
 classified per file in its `LICENSE-MANIFEST.json`. Rights holder of the course content
-(slide payloads, narration MP3s, mobile imagery): zaxbysauce (maintainer; recorded
-2026-11-03 on issue #282). The course content is NOT covered by this repository's MIT
-license. The Articulate Storyline 360 player runtime (`html5/lib/**`) is third-party
-published output carrying "Copyright (c) 2026 ; Not Licensed" headers (`html5/lib/scripts/*.min.js:1-2`),
-not repository MIT; its redistribution basis is a pending maintainer statement
-(issue #282 AC1, statement 6). Embedded components, named individually with tree-verified
+(narration MP3s, mobile imagery, and the slide content embodied in the fixture):
+zaxbysauce (maintainer; recorded 2026-11-03 on issue #282). The course content is NOT
+covered by this repository's MIT license. The Articulate Storyline 360 player runtime
+(`html5/lib/**` and the Slide-payload export scripts under `story_content/*.js`) is
+third-party published output carrying "Copyright (c) 2026 ; Not Licensed" headers
+(`html5/lib/scripts/*.min.js:1-2`), not repository MIT; its redistribution basis is a
+pending maintainer statement (issue #282 AC1, statement 6). Embedded components, named individually with tree-verified
 banners: GreenSock CSSRulePlugin 3.11.3 (standard license, all rights reserved,
 `bootstrapper.min.js:7-8`), Underscore.js 1.8.3 (MIT, `bootstrapper.min.js:30-37`), lodash
 (MIT, `bootstrapper.min.js:30-37`), regenerator-runtime (MIT, `slides.min.js`), Open Sans
@@ -373,7 +374,9 @@ screenshots and video (statement 3), any DoD/DHA public-release clearance (state
 the Storyline license tier used to publish (statement 2), and the GreenSock component
 license basis (statement 7) are pending maintainer statements (issue #282 AC1); this
 paragraph states verified facts only and makes no assertion about any pending basis.
-<!-- /fixture-licensing --> Fixture deviations from
+<!-- /fixture-licensing -->
+
+Fixture deviations from
 the original contract are recorded in `FIXTURE_CONTRACT.md` §8.
 
 ## Invalidations

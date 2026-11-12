@@ -204,9 +204,12 @@ describe('b7 review hardening (PR #102 findings)', () => {
   it('PRR-017: sanitizeFtsQuery preserves hyphen and tilde tokens', () => {
     expect(sanitizeFtsQuery('well-known')).toBe('"well-known"');
     expect(sanitizeFtsQuery('~prefix')).toBe('"~prefix"');
-    // The star in c* is an FTS5 operator and IS dropped (frozen rule); the
-    // hyphenated and tilde tokens must survive untouched.
-    expect(sanitizeFtsQuery('a "b" AND c*')).toBe('"a"');
+    // RULE CHANGE (pr323 review PRR-003, disclosed): hazard chars inside a
+    // token are now STRIPPED and the term kept (quoted phrases make the
+    // remaining content literal), instead of dropping the whole token — the
+    // base drop lost recall for smart-quoted terms. The hyphenated, tilde,
+    // quoted and starred tokens below all survive.
+    expect(sanitizeFtsQuery('a "b" AND c*')).toBe('"a" "b" "c"');
     expect(sanitizeFtsQuery('state-of-the-art ~2')).toBe('"state-of-the-art" "~2"');
   });
 

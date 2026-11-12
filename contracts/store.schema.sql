@@ -1,5 +1,5 @@
 -- =============================================================================
--- contracts/store.schema.sql — AUTHORITATIVE per-profile store schema (v4)
+-- contracts/store.schema.sql — AUTHORITATIVE per-profile store schema (v5)
 -- =============================================================================
 -- This file is the single source of truth for the SQLite store shared by the
 -- desktop Node backend (better-sqlite3) and the Python sidecar (sqlite3 +
