@@ -388,32 +388,18 @@ test.describe.serial('desktop model gate on Electron (PRR-151-028 / 018 / 017)',
     await expect(page.getByRole('alertdialog')).toHaveCount(0);
   });
 
-  test('with "In this window" selected, the browser gate condition is live and still only the desktop gate shows', async () => {
-    // Starts wherever the previous test left off (Settings); goToChat waits for the gate.
-    // The chat header's mode toggle is inert under the gate: switch through Settings,
-    // the path a user actually has.
+  test('the Electron run-location card offers only the Desktop backend (browser-local hidden, #265 recorded decision)', async () => {
+    // Issue #265 AC7 (recorded maintainer decision, comment 6825525627): the
+    // desktop package ships no browser weights, so the browser-local run
+    // location is no longer offered in Electron - the old "In this window"
+    // radio is gone and the browser gate scenario is unreachable from the UI.
     await nav(page).getByRole('button', { name: 'Settings', exact: true }).click();
-    const inWindow = page.getByRole('radio', { name: 'In this window' });
-    await inWindow.check();
-    await expect(inWindow).toBeChecked();
-    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('inference-mode') ?? '{}').mode as unknown);
-    expect(stored).toBe('browser-local');
-
-    await goToChat(page);
-    const content = page.locator('.chat-page__content');
-    // Positive: the browser readiness gate condition (isModelBlocked) is TRUE here:
-    // it disables the composer, which the desktop gate alone never does.
-    await expect(content.getByLabel('Message input')).toBeDisabled();
-    // PRR-151-017: exactly ONE gate, and it is the desktop one.
-    await expect(page.getByRole('alertdialog')).toHaveCount(1);
-    await expect(page.getByRole('alertdialog', { name: GATE_NAME })).toBeVisible();
-    await expect(page.getByRole('alertdialog', { name: 'Model not ready' })).toHaveCount(0);
-    await expect(content).toHaveAttribute('inert', '');
-
-    // Restore the profile's mode (the desktop seed would on the next boot anyway).
-    await nav(page).getByRole('button', { name: 'Settings', exact: true }).click();
+    await expect(page.getByRole('radio', { name: 'In this window' })).toHaveCount(0);
     const backend = page.getByRole('radio', { name: 'Desktop backend' });
+    await expect(backend).toBeVisible();
     await backend.check();
     await expect(backend).toBeChecked();
+    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('inference-mode') ?? '{}').mode as unknown);
+    expect(stored).toBe('api');
   });
 });
