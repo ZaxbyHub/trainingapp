@@ -620,6 +620,31 @@ _AUDIT_GUARD_ROSTER = [
 ]
 
 
+def test_desktop_build_store_interop_parity_step_skips_packtool_setup():
+    """pr323 review PRR-001 class, third surface: the store-interop job runs
+    the C1 parity leg through desktop vitest with only desktop deps
+    installed — no packtool/node_modules. The packtool-building globalSetup
+    must be told to skip or the leg dies on PRECONDITION_MISSING before any
+    test runs. Assert on the PARSED step env (the security.yml guard's
+    rationale applies verbatim: a glued `env:` inside the run scalar parses
+    as None and bash exits 127 on 'env:')."""
+    wf = _load_workflow("desktop-build.yml")
+    steps = wf["jobs"]["store-interop"].get("steps", [])
+    parity_steps = [s for s in steps if "test_pack_parity.py" in str(s.get("run", ""))]
+    assert parity_steps, "desktop-build.yml: store-interop lost the pack-parity step"
+    env = parity_steps[0].get("env") or {}
+    assert env.get("TRAININGAPP_SKIP_PACKTOOL_GLOBAL_SETUP") == "1", (
+        "desktop-build.yml store-interop: the pack-parity step lost its parsed "
+        "TRAININGAPP_SKIP_PACKTOOL_GLOBAL_SETUP env (glued into the run "
+        "scalar, or the opt-out was removed) — the vitest leg would die on "
+        "PRECONDITION_MISSING packtool/node_modules (pr323 review PRR-001)"
+    )
+    run_scalar = str(parity_steps[0].get("run", ""))
+    assert (
+        "env:" not in run_scalar[:200]
+    ), "desktop-build.yml store-interop: the parity run scalar begins with glue text ('env:')"
+
+
 def test_security_job_audit_guards_step_rolls_the_guard_roster():
     wf = _load_workflow("security.yml")
     steps = wf["jobs"]["security"].get("steps", [])

@@ -80,6 +80,13 @@ def _node_chunk_ids(workspace: Path) -> set:
         env=env,
         capture_output=True,
         text=True,
+        # The runner's locale codec (cp1252) cannot decode vitest's UTF-8
+        # output — the decode crash in the reader thread made stdout None and
+        # MASKED the real failure (a PRECONDITION_MISSING from the
+        # packtool-building globalSetup) behind a TypeError (pr323 review
+        # PRR-001 class, store-interop job). Decode as UTF-8, matching what
+        # node emits, so failures surface with their actual message.
+        encoding="utf-8",
         timeout=600,
     )
     if completed.returncode != 0:
