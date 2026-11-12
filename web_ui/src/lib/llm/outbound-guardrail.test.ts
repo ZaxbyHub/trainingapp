@@ -72,6 +72,16 @@ const ALLOWLIST: Record<string, [number, string]> = {
     1,
     'opt-in signed pack update feed + artifact (browser-training-parity AC8): zero calls before opt-in, https-only request and final URL, credentials omit, no-referrer, size-capped, compiled out under VITE_AIRGAP; bytes are sha256 + Ed25519 verified before install',
   ],
+  // Issue #266: the every-boot bundled-pack ensure. 3 fetch-alias hits = the
+  // injected `fetchImpl` seam (its `typeof fetch` type annotations and the
+  // `fetchImpl = fetch` default), not new call sites: the manifest and the
+  // pack archives are fetched same-origin (/packs/...) with
+  // credentials: 'same-origin', and every fetched zip is verified against the
+  // staged manifest's sha256 + size before install.
+  'lib/packs/bundled-packs-boot.ts': [
+    3,
+    'same-origin bundled-pack manifest + archives (/packs/packs.manifest.json, /packs/*.zip) served by the app\'s own static host; fetchImpl seam alias only, sha256+size verified at fetch (issue #266)',
+  ],
 };
 
 // PR #142 Stage B: Worker / SharedWorker fetch their script URL; every

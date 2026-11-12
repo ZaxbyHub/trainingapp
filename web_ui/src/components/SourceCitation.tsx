@@ -55,6 +55,11 @@ export const SourceCitation: React.FC<SourceCitationProps> = React.memo(({ sourc
     };
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        // #267 (AC4): preventDefault when this handler actually closes an
+        // expanded citation, so the window-level Escape consumer (stop the
+        // generation) can see the key was consumed here and never
+        // double-acts. The effect only runs while a citation IS expanded.
+        e.preventDefault();
         setExpandedKey(null);
       }
     };
@@ -92,12 +97,16 @@ export const SourceCitation: React.FC<SourceCitationProps> = React.memo(({ sourc
   }, []);
 
   // Pill keyboard contract (unchanged): Enter/Space toggle the popover, Escape closes it.
+  // #267 (AC4): Escape preventDefaults only when it actually closes something
+  // (the closure is re-created every render, so the expandedKey it reads is
+  // current), so the unconsumed case keeps native behavior.
   const pillKeyDown = (key: string) => (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       handleToggleExpand(key);
     }
-    if (e.key === 'Escape') {
+    if (e.key === 'Escape' && expandedKey !== null) {
+      e.preventDefault();
       setExpandedKey(null);
     }
   };

@@ -60,8 +60,11 @@ export type LLMModelInfo = {
 
 /**
  * The active inference backend.
- * - 'webgpu': WebLLM (MLC) — fast when WebGPU is available.
- * - 'wasm':   wllama (llama.cpp WASM) — CPU/SIMD, no WebGPU required.
+ * - 'webgpu': WebGPU backend — WebLLM (MLC) always requires it; wllama uses it
+ *   when the browser exposes a usable navigator.gpu (Firefox additionally
+ *   needs JSPI — wllama-acceleration.ts mirrors the installed library's gate).
+ * - 'wasm':   CPU/WASM backend — wllama's fallback when WebGPU is not usable
+ *   (WASM SIMD + threads; no WebGPU required).
  * - 'openai-compat': remote OpenAI-compatible endpoint — no local model at all.
  * - 'anthropic-compat': remote Anthropic Messages API endpoint — no local
  *   model at all (universal-provider-settings-overhaul).

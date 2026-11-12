@@ -9,9 +9,10 @@
   "scripts": {
     "dev": "vite",
     "prepare-models": "node scripts/prepare-models.mjs",
+    "prepare-packs": "node scripts/prepare-packs.mjs",
     "build": "tsc -b && vite build",
     "build:desktop": "tsc -b && vite build --mode desktop",
-    "build:offline": "npm run prepare-models && npm run build && npm run validate-build",
+    "build:offline": "npm run prepare-models && npm run prepare-packs && npm run build && npm run validate-build",
     "build:airgap": "node scripts/build-airgap.mjs",
     "validate-build": "node scripts/validate-build.mjs",
     "preview": "vite preview",

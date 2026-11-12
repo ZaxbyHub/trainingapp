@@ -270,7 +270,8 @@ describe('SettingsPage', () => {
     });
     expect(screen.getByRole('heading', { name: 'Hardware capability' })).toBeInTheDocument();
     // Both engine options present and the persisted choice (wllama) is selected.
-    const wllamaRadio = screen.getByRole('radio', { name: /wllama \(cpu/i });
+    // #265 (AC2): the wllama label states the derived backend truthfully.
+    const wllamaRadio = screen.getByRole('radio', { name: /wllama \(webgpu when available, cpu otherwise\)/i });
     const webllmRadio = screen.getByRole('radio', { name: /webllm \(webgpu/i });
     expect(wllamaRadio).toBeChecked();
     expect(webllmRadio).not.toBeChecked();

@@ -4,10 +4,27 @@
  *
  * Issue #156: the image-attach control was removed with the Gemma 4 + mmproj
  * multimodal surface — the packaged browser LLM (LFM2-1.2B-RAG) is text-only.
+ *
+ * Issue #267 (keyboard-first composer):
+ *   - ArrowUp recalls the newest user message; repeated presses step older,
+ *     stopping at the oldest. ArrowDown walks back newer; past the newest it
+ *     restores the pre-browse draft (the stash).
+ *   - Guard matrix: modifiers, IME composition, non-collapsed selections,
+ *     multi-line carets (entering browse from a middle line) and an empty
+ *     history leave the value untouched and the event un-prevented; prevent
+ *     default only on an actual recall/restore.
+ *   - `draftKey` keys the in-memory per-conversation draft store
+ *     (lib/chat/draft-store.ts): every displayed-value mutation (hydration on
+ *     key switch or remount, edits, recalls, sends) reports through
+ *     onDraftChange AND writes the store; browse state resets on every key
+ *     switch. The textarea carries `data-chat-composer` so the global
+ *     shortcut hook can carve composer-target shortcuts out of its
+ *     editable bail-out.
  */
 
 import React, { useRef, useCallback, useState, useEffect, type ReactNode } from 'react';
 import { IconButton } from '../ui';
+import { getDraft, setDraft } from '../lib/chat/draft-store';
 import '../pages/chat.css';
 
 interface ChatInputProps {
@@ -22,6 +39,15 @@ interface ChatInputProps {
   /** Notifies the parent of the current draft text so a global shortcut
    *  (Ctrl+Enter) can send it without owning the input state. */
   onDraftChange?: (text: string) => void;
+  /** Conversation-scoped recall history (newest LAST; #267 AC1/AC2). */
+  history?: string[];
+  /** Draft-store key (the conversation id or the new-chat sentinel). The
+   *  composer hydrates from the store on every key change/remount and writes
+   *  every mutation back (#267 AC7/AC8). */
+  draftKey?: string;
+  /** Optional external handle to the composer textarea (#267 AC5): ChatPage
+   *  focuses it for the Ctrl/Cmd+K and '/' shortcuts. */
+  textareaRef?: React.MutableRefObject<HTMLTextAreaElement | null>;
   /** Status row rendered INSIDE the composer card (Lumen phase 5): the streaming /
    *  model-load indicator. The row collapses when this renders nothing. */
   status?: ReactNode;
@@ -37,13 +63,35 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   disabled = false,
   disabledReasonId,
   onDraftChange,
+  history,
+  draftKey,
+  textareaRef,
   status,
 }) => {
   const [value, setValue] = useState('');
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // HTMLTextAreaElement | null (not the bare element type) so the ref object
+  // stays MUTABLE — useRef<T>(null) alone yields a read-only RefObject in the
+  // React 18 typings, and the merged-ref callback below writes .current.
+  const internalTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  // Merge the internal ref with the optional external one so both see the
+  // same element (focus shortcuts + internal height/caret logic).
+  const setTextarea = useCallback(
+    (el: HTMLTextAreaElement | null) => {
+      internalTextareaRef.current = el;
+      if (textareaRef) textareaRef.current = el;
+    },
+    [textareaRef]
+  );
+  // #267 browse state: index into `history` while recalling (null = not
+  // browsing), plus the stashed pre-browse draft restored by ArrowDown past
+  // the newest entry. Refs (not state): the browse position never re-renders.
+  const browseIndexRef = useRef<number | null>(null);
+  const draftStashRef = useRef('');
+  /** Moves the caret to the end once the NEXT value commit lands (recalls). */
+  const caretToEndRef = useRef(false);
 
   const adjustHeight = useCallback(() => {
-    const textarea = textareaRef.current;
+    const textarea = internalTextareaRef.current;
     if (!textarea) return;
 
     textarea.style.height = 'auto';
@@ -57,6 +105,16 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   useEffect(() => {
     adjustHeight();
   }, [value, adjustHeight]);
+
+  // Caret-to-end after a recall: the displayed value is a controlled React
+  // value, so the DOM textarea only carries the recalled text after the
+  // commit — the selection is moved in the effect that follows it.
+  useEffect(() => {
+    if (!caretToEndRef.current) return;
+    caretToEndRef.current = false;
+    const textarea = internalTextareaRef.current;
+    if (textarea) textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+  }, [value]);
 
   // The auto-resize measures the (placeholder) text, so it must re-measure once the
   // web font is in: measured against the fallback font the placeholder fits on one
@@ -84,30 +142,127 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   // re-enables, move focus back so keyboard users aren't stranded on body.
   useEffect(() => {
     if (!isLoading) {
-      textareaRef.current?.focus();
+      internalTextareaRef.current?.focus();
     }
   }, [isLoading]);
+
+  // #267 (AC27): hydrate the displayed draft from the store on mount AND on
+  // every draftKey switch, and reset the browse state on every switch (the
+  // recalled history is conversation-scoped). This is a displayed-value
+  // mutation: it reports through onDraftChange so the parent's draft mirror
+  // never holds the previous conversation's text.
+  useEffect(() => {
+    browseIndexRef.current = null;
+    draftStashRef.current = '';
+    const stored = draftKey !== undefined ? (getDraft(draftKey) ?? '') : '';
+    setValue(stored);
+    caretToEndRef.current = true;
+    onDraftChangeRef.current?.(stored);
+    if (draftKey !== undefined) setDraft(draftKey, stored);
+    // draftKey alone: a key switch is exactly the hydration trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey]);
+
+  // onDraftChange identity is unstable across parent renders; read it through
+  // a ref so the hydration effect above does not re-run for it.
+  const onDraftChangeRef = useRef(onDraftChange);
+  onDraftChangeRef.current = onDraftChange;
+
+  /**
+   * Set the DISPLAYED value and mirror every mutation (#267): the parent's
+   * onDraftChange and (when keyed) the draft store.
+   */
+  const setDisplayed = useCallback((text: string) => {
+    setValue(text);
+    onDraftChangeRef.current?.(text);
+    if (draftKeyRef.current !== undefined) setDraft(draftKeyRef.current, text);
+  }, []);
+
+  // draftKey through a ref for the same reason as onDraftChange.
+  const draftKeyRef = useRef(draftKey);
+  draftKeyRef.current = draftKey;
 
   const handleSubmit = useCallback(() => {
     const trimmed = value.trim();
     if (!trimmed || isLoading) return;
 
     onSend(trimmed);
-    setValue('');
-    onDraftChange?.('');
+    // A sent turn clears the draft everywhere it is mirrored (#267 AC27).
+    browseIndexRef.current = null;
+    draftStashRef.current = '';
+    setDisplayed('');
 
     // Reset textarea height
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
+    if (internalTextareaRef.current) {
+      internalTextareaRef.current.style.height = 'auto';
     }
-  }, [value, isLoading, onSend]);
+  }, [value, isLoading, onSend, setDisplayed]);
+
+  /**
+   * #267 (AC1-AC3): history recall. Called AFTER the IME guard and BEFORE
+   * the Enter branches; acts only on plain arrows with a collapsed
+   * selection; preventDefault happens ONLY on an actual recall/restore.
+   */
+  const handleHistoryNavigation = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+      if (!history || history.length === 0) return;
+      if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+      const textarea = e.currentTarget;
+      if (textarea.selectionStart !== textarea.selectionEnd) return;
+
+      if (e.key === 'ArrowUp') {
+        if (browseIndexRef.current === null) {
+          // Entering browse: the caret must be on the FIRST line — ArrowUp in
+          // the middle of a multi-line draft moves the caret, it must not
+          // blow the draft away.
+          const beforeCaret = value.slice(0, textarea.selectionStart ?? 0);
+          if (beforeCaret.includes('\n')) return;
+          browseIndexRef.current = history.length - 1;
+          draftStashRef.current = value;
+        } else if (browseIndexRef.current > 0) {
+          browseIndexRef.current -= 1;
+        } else {
+          return; // already at the oldest entry: nothing more to recall
+        }
+        e.preventDefault();
+        setDisplayed(history[browseIndexRef.current] ?? '');
+        caretToEndRef.current = true;
+        return;
+      }
+
+      // ArrowDown: meaningful only while browsing; otherwise the native
+      // caret move stands.
+      if (browseIndexRef.current === null) return;
+      e.preventDefault();
+      if (browseIndexRef.current < history.length - 1) {
+        browseIndexRef.current += 1;
+        setDisplayed(history[browseIndexRef.current] ?? '');
+      } else {
+        // Past the newest: restore the pre-browse draft (#267 AC2).
+        browseIndexRef.current = null;
+        setDisplayed(draftStashRef.current);
+        draftStashRef.current = '';
+      }
+      caretToEndRef.current = true;
+    },
+    [history, value, setDisplayed]
+  );
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       // IME composition guard: when the user is mid-composition (CJK/Vietnamese
       // input methods), Enter confirms a candidate — it must NOT send the
-      // message. Check before any Enter-to-send logic.
-      if (e.key === 'Enter' && e.nativeEvent.isComposing) {
+      // message, and the recall arrows must not steal candidate navigation.
+      // Checked before any Enter/recall logic.
+      if (
+        (e.key === 'Enter' || e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
+        e.nativeEvent.isComposing
+      ) {
+        return;
+      }
+      // #267: recall arrows run after the IME guard, before the Enter branches.
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        handleHistoryNavigation(e);
         return;
       }
       // Enter (no Shift): send. Ctrl/Cmd+Enter also sends — the global
@@ -125,17 +280,19 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
         handleSubmit();
       }
     },
-    [handleSubmit]
+    [handleSubmit, handleHistoryNavigation]
   );
 
   const handleClear = useCallback(() => {
-    setValue('');
+    // Editing (or clearing) ends browse mode.
+    browseIndexRef.current = null;
+    draftStashRef.current = '';
+    setDisplayed('');
     // Keep the parent's draft mirror in sync so a subsequent Ctrl+Enter
     // (global shortcut, focus outside the textarea) doesn't send stale text.
     // (PR #28 PRR-007)
-    onDraftChange?.('');
-    textareaRef.current?.focus();
-  }, [onDraftChange]);
+    internalTextareaRef.current?.focus();
+  }, [setDisplayed]);
 
   const handleCancel = useCallback(() => {
     onCancel();
@@ -148,13 +305,18 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
       <div className="chat-composer__card" data-loading={isLoading || undefined}>
         <div className="chat-composer__row">
           <textarea
-            ref={textareaRef}
+            ref={setTextarea}
             className="chat-composer__input"
+            // #267 (AC5/AC6): marks this textarea as the chat composer so the
+            // global shortcut hook's editable bail-out can carve out the
+            // composer-aware shortcuts (Ctrl/Cmd+Shift+L, Ctrl/Cmd+,).
+            data-chat-composer="true"
             value={value}
             onChange={(e) => {
-              const next = e.target.value;
-              setValue(next);
-              onDraftChange?.(next);
+              // Editing ends browse mode (#267 AC3).
+              browseIndexRef.current = null;
+              draftStashRef.current = '';
+              setDisplayed(e.target.value);
             }}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}

@@ -2,9 +2,11 @@
  * Browser LLM engine backed by wllama (llama.cpp compiled to WASM).
  *
  * Why this exists: the target hardware (12th-gen i5 + Iris Xe) frequently lacks
- * usable WebGPU, which the WebLLM engine hard-requires. wllama runs on CPU via
- * WASM SIMD + threads, loads the SAME GGUF family as the desktop app, and is
- * therefore the primary, most-robust browser engine.
+ * usable WebGPU, which the WebLLM engine hard-requires. wllama uses WebGPU when
+ * the browser exposes a usable navigator.gpu (Firefox additionally needs JSPI;
+ * wllama-acceleration.ts mirrors the installed library's own gate) and falls
+ * back to CPU via WASM SIMD + threads otherwise, loads the SAME GGUF family as
+ * the desktop app, and is therefore the primary, most-robust browser engine.
  *
  * Issue #156: the packaged model is LiquidAI LFM2-1.2B-RAG — TEXT-ONLY. The
  * previous model's mmproj multimodal surface (image attachments,
@@ -39,6 +41,7 @@ import {
 } from '../models/model-manifest';
 import { probeAsset } from '../models/probe';
 import { filterDeclineSentences } from './decline-filter';
+import { getWllamaAccelerationState, type WllamaAccelerationState } from './wllama-acceleration';
 
 /** Context window. LFM2-1.2B-RAG supports up to 32K; 8192 is a safe default
  *  that leaves ample RAM for weights + KV cache on 8 GB target boxes. */
@@ -424,8 +427,21 @@ export class WllamaService implements LLMService {
     }
   }
 
+  /**
+   * #265 (AC4): the DERIVED acceleration state — 'webgpu' only when the
+   * installed wllama would actually use its WebGPU backend here
+   * (wllama-acceleration.ts), 'wasm' (CPU) otherwise. Never hard-coded.
+   */
   getInferenceMode(): LLMInferenceMode {
-    return 'wasm';
+    return getWllamaAccelerationState() === 'webgpu-eligible' ? 'webgpu' : 'wasm';
+  }
+
+  /**
+   * #265 (AC4): the user-presentable acceleration state behind
+   * getInferenceMode() ('cpu' | 'webgpu-eligible').
+   */
+  getAccelerationState(): WllamaAccelerationState {
+    return getWllamaAccelerationState();
   }
 
   getModelInfo(): LLMModelInfo | null {

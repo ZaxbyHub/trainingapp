@@ -20,6 +20,7 @@ import { getBrowserPackManager } from '../lib/packs/browser-pack-manager';
 import { releaseBrowserTrainingIfEmpty } from '../lib/packs/browser-training';
 import { AIRGAP_UPDATES_DETAIL, getUpdatesBridge } from '../lib/packs/pack-update-controller';
 import { IS_AIRGAP } from '../lib/llm/airgap';
+import { WEBLLM_VISIBLE } from '../lib/llm/engine-visibility';
 import type { RAGPreset } from '../lib/rag/rag-presets';
 import { fetchFirstRunStatus, resetFirstRun, emitFirstRunReopen } from '../lib/first-run';
 import type { ModelStatus, SettingsResponse } from '../lib/api/types';
@@ -1309,28 +1310,16 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
     <>
       {desktopApp && (
         <SettingsSubsection title="Where the built-in model runs" headingId="inference-mode-heading">
-          <SettingsRadioCards<'browser-local' | 'api'>
+          {/* #265 (AC7): the desktop package deliberately ships no browser-LLM
+              weights, so browser-local is not a runnable target inside
+              Electron — the card offers the desktop backend only (decision
+              comment 6825525627: Electron browser-local hidden). */}
+          <SettingsRadioCards<'api'>
             legend="Where the built-in model runs"
             name="inference-mode"
             isChecked={(value) => mode === value}
             onChange={(value) => setMode(value)}
             options={[
-              {
-                value: 'browser-local',
-                label: 'In this window',
-                // issue #155: keep "GPU"/"Vulkan" wording OUT of this card's
-                // text. The card's description lives inside its <label>, so
-                // it is part of the radio's accessible labeling; naming the
-                // engine's graphics capability here made this unrelated radio
-                // the FIRST control on the page whose labeling mentions a GPU,
-                // so keyboard/AT users (and the acceptance check) looking for
-                // "the GPU control" landed on the run-location card instead of
-                // the GPU override in the Desktop backend section. The engine's
-                // graphics requirement is stated where the engine is chosen
-                // (Browser engine / Hardware capability).
-                description: 'Runs in this app window with wllama (CPU) or WebLLM, chosen below.',
-                descriptionId: 'browser-local-desc',
-              },
               {
                 value: 'api',
                 label: 'Desktop backend',
@@ -1507,17 +1496,26 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
               name="browser-engine"
               isChecked={(engine) => browserEngine === engine}
               onChange={(engine) => setBrowserEngine(engine)}
+              // #265 (AC2/AC3): the wllama option tells the truth about the
+              // packaged LFM2 model (WebGPU when available, CPU otherwise;
+              // text-only), and WebLLM is an option only in plain dev builds
+              // (engine-visibility.ts) — its 1.9 GB Llama download contradicts
+              // every packaged build's offline guarantee.
               options={([
                 {
                   id: 'wllama' as const,
-                  label: 'wllama (CPU / no GPU)',
-                  desc: 'Robust without WebGPU and supports image input (multimodal).',
+                  label: 'wllama (WebGPU when available, CPU otherwise)',
+                  desc: 'Runs the bundled LFM2 model offline; text only.',
                 },
-                {
-                  id: 'webllm' as const,
-                  label: 'WebLLM (WebGPU)',
-                  desc: 'Fastest when WebGPU is available; text only. Requires a GPU-capable browser.',
-                },
+                ...(WEBLLM_VISIBLE
+                  ? [
+                      {
+                        id: 'webllm' as const,
+                        label: 'WebLLM (WebGPU)',
+                        desc: 'Downloads Llama 3.2 (~1.9 GB) from the internet; not the packaged model.',
+                      },
+                    ]
+                  : []),
               ]).map((opt) => ({
                 value: opt.id,
                 label: opt.label,
@@ -1526,7 +1524,9 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
                   <>
                     {opt.desc}
                     {/* AC9: the ONE derived recommendation (same source as
-                        the header and the Hardware row). */}
+                        the header and the Hardware row) — engine-capability
+                        recommends among visible engines only, so WebLLM is
+                        never recommended where it is hidden. */}
                     {capability?.recommendedEngine === opt.id && ' Recommended.'}
                   </>
                 ),
@@ -1570,7 +1570,7 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
                 />
               )}
 
-              {browserEngine === 'webllm' && !modelCached && !isDownloading && (
+              {browserEngine === 'webllm' && WEBLLM_VISIBLE && !modelCached && !isDownloading && (
                 <>
                   <div className="settings-row">
                     <Button variant="primary" onClick={handleDownloadModel}>
@@ -1583,7 +1583,7 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
                 </>
               )}
 
-              {browserEngine === 'webllm' && modelCached && !isDownloading && (
+              {browserEngine === 'webllm' && WEBLLM_VISIBLE && modelCached && !isDownloading && (
                 <span className="settings-label settings-tone--accent">
                   Model ready to use
                 </span>
@@ -1599,8 +1599,13 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
                   the broken-install copy must not contradict it. The desktop
                   package ships no browser-LLM weights by design. */}
               {browserEngine === 'wllama' && !modelCached && !desktopApp && (
-                <p className="settings-text settings-tone--warning">
-                  The packaged model is missing from this build. The wllama engine cannot download it. Contact your administrator, or set up a local server or cloud model under Model & connection below.
+                <p className="settings-text settings-tone--warning" data-testid="missing-model-note">
+                  The packaged model is missing from this build. The wllama engine cannot download it. Contact your administrator, or set up a local server or cloud model under Model & connection below.{' '}
+                  {/* #265 (AC9): developer hint — the note renders only outside
+                      Electron (!desktopApp), and staging the model is a
+                      from-source action, so the build:offline hint belongs
+                      exactly here. */}
+                  Building from source? Run npm run build:offline to stage the model.
                 </p>
               )}
             </div>

@@ -18,10 +18,11 @@ import { getToken } from '../api/auth';
 import { initDesktopSession, isElectron } from '../desktop-session';
 import { INFERENCE_MODE_KEY } from '../storage/persisted-keys';
 import { migrateLegacyProviderBlob, migrateUnboundExternalKey } from '../llm/external-migration';
+import { WEBLLM_VISIBLE } from '../llm/engine-visibility';
 
 export type InferenceMode = 'browser-local' | 'api';
 
-/** Default browser engine — wllama (robust without WebGPU; multimodal-capable). */
+/** Default browser engine — wllama (robust without WebGPU; runs the bundled LFM2 model, text-only). */
 const DEFAULT_BROWSER_ENGINE: BrowserEngine = 'wllama';
 
 function isRagPreset(v: unknown): v is RAGPreset {
@@ -120,7 +121,12 @@ function loadStoredState(): InferenceModeState {
         serverUrl: desktop ? parsed.serverUrl || defaultState.serverUrl : defaultState.serverUrl,
         browserEngine:
           parsed.browserEngine === 'webllm' || parsed.browserEngine === 'wllama'
-            ? parsed.browserEngine
+            // #265 (A3-ii): a persisted 'webllm' that outlives a switch to a
+            // packaged/offline build normalizes to wllama in memory (the next
+            // persist writes the normalized value back).
+            ? parsed.browserEngine === 'webllm' && !WEBLLM_VISIBLE
+              ? 'wllama'
+              : parsed.browserEngine
             : defaultState.browserEngine,
         ragPreset: isRagPreset(parsed.ragPreset) ? parsed.ragPreset : defaultState.ragPreset,
       };

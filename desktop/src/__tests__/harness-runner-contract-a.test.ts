@@ -94,9 +94,11 @@ describe('harness runner contracts A (issue #216 AC5)', () => {
   it('runner-contract: build-airgap runs exactly the airgap plan with VITE_AIRGAP=1 and an injected spawn seam', () => {
     expect(typeof airgapMain).toBe('function');
     const steps = airgapSteps({ npm: 'npm', node: 'node' });
-    expect(steps.map((s) => s.label)).toEqual(['prepare-models', 'build', 'validate-build --airgap']);
+    // Issue #266: prepare-packs stages the bundled pack archives between the
+    // model staging and the Vite build (the same slot as build:offline).
+    expect(steps.map((s) => s.label)).toEqual(['prepare-models', 'prepare-packs', 'build', 'validate-build --airgap']);
     // The load-bearing difference vs build:offline: the validate step carries --airgap.
-    expect(steps[2].args).toEqual(['node', 'scripts/validate-build.mjs', '--airgap']);
+    expect(steps[3].args).toEqual(['node', 'scripts/validate-build.mjs', '--airgap']);
 
     const seen: Array<{ cmd: string; args: string[]; env: Record<string, string>; cwd: unknown; stdio: unknown }> = [];
     const spawnSyncImpl = ((cmd: string, args: string[], opts: { env: Record<string, string>; cwd: unknown; stdio: unknown }) => {
@@ -105,7 +107,7 @@ describe('harness runner contracts A (issue #216 AC5)', () => {
     }) as unknown as typeof import('node:child_process').spawnSync;
     const code = airgapMain({ spawnSyncImpl, log: () => {}, logError: () => {} });
     expect(code).toBe(0);
-    expect(seen.length).toBe(3);
+    expect(seen.length).toBe(4);
     for (const call of seen) {
       expect(call.env.VITE_AIRGAP).toBe('1');
       // PR #220 review PRR-011 + final-critic: the plan's load-bearing spawn

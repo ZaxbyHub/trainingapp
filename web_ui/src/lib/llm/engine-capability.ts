@@ -2,9 +2,13 @@
  * Engine capability detection + recommendation.
  *
  * The two browser engines have very different hardware needs:
- *   - WebLLM  → requires usable WebGPU (fails hard without it).
- *   - wllama  → CPU/WASM; benefits from cross-origin isolation (threads) but works
- *               without WebGPU. Multimodal-capable.
+ *   - WebLLM  → requires usable WebGPU (fails hard without it); downloads its
+ *               Llama weights from the internet, so it is selectable only in
+ *               plain dev builds (engine-visibility.ts, #265).
+ *   - wllama  → runs the bundled LFM2 model (text-only); uses WebGPU when the
+ *               browser exposes a usable navigator.gpu and falls back to
+ *               CPU/WASM otherwise; benefits from cross-origin isolation
+ *               (threads).
  *
  * On the target hardware (12th-gen i5 + Iris Xe) WebGPU is often unavailable, so a
  * naive "WebGPU required" gate would wrongly block all browser inference. This
@@ -15,6 +19,7 @@
 import type { BrowserEngine } from '../../types/llm';
 import { getMemoryBudget } from '../embeddings/memory-aware';
 import { isElectron } from '../desktop-session';
+import { WEBLLM_VISIBLE } from './engine-visibility';
 
 export type CapabilityTier = 'green' | 'yellow' | 'red';
 export type MemoryTier = 'HIGH' | 'MEDIUM' | 'LOW';
@@ -75,10 +80,13 @@ function isCrossOriginIsolated(): boolean {
 /**
  * Detect capabilities and compute an engine/mode recommendation + tier.
  *
- * Recommendation logic (deliberately simple and explainable):
+ * Recommendation logic (deliberately simple and explainable; the
+ * recommendation is computed among VISIBLE engines only, #265 plan A3-iv —
+ * WebLLM is never recommended where it is hidden, while the raw `webgpu`
+ * hardware result is retained either way):
  *   - No WASM at all                       → red, recommend server (api).
- *   - WebGPU available                     → WebLLM is the fast path (green),
- *                                            but note wllama for multimodal.
+ *   - WebGPU available, WebLLM visible     → WebLLM is the fast path (green).
+ *   - WebGPU available, WebLLM hidden      → wllama (green; it can use WebGPU).
  *   - No WebGPU, WASM + threads + ≥MEDIUM  → wllama, green.
  *   - No WebGPU, WASM but no threads or LOW → wllama, yellow (works, slower).
  */
@@ -107,11 +115,21 @@ export async function detectEngineCapability(): Promise<EngineCapability> {
         : 'WebAssembly is unavailable; browser inference is not supported — use the desktop app or an external model server (Settings → Model & connection).'
     );
   } else if (webgpu) {
-    recommendedEngine = 'webllm';
-    recommendedMode = 'browser-local';
-    tier = 'green';
-    reasons.push('WebGPU is available — WebLLM offers the fastest local inference.');
-    reasons.push('Switch to wllama if you need image/screenshot input (multimodal).');
+    if (WEBLLM_VISIBLE) {
+      recommendedEngine = 'webllm';
+      recommendedMode = 'browser-local';
+      tier = 'green';
+      reasons.push('WebGPU is available — WebLLM offers the fastest local inference.');
+      reasons.push('wllama runs the bundled LFM2 model offline (text-only) if you prefer no download.');
+    } else {
+      // #265 (A3-iv): WebLLM is hidden in packaged/offline builds; among the
+      // visible engines wllama is the recommendation — and it can use the
+      // detected WebGPU too.
+      recommendedEngine = 'wllama';
+      recommendedMode = 'browser-local';
+      tier = 'green';
+      reasons.push('WebGPU is available — wllama can run the bundled model on it.');
+    }
   } else {
     // No WebGPU → wllama is the only viable browser engine.
     recommendedEngine = 'wllama';

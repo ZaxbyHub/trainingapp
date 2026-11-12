@@ -101,18 +101,18 @@ describe('InferenceModeToggle honest status', () => {
     expect(screen.getByTestId('inference-mode-status')).toHaveTextContent('Desktop backend (not connected)');
   });
 
-  it('the toggle button name contains its visible label (WCAG 2.5.3)', () => {
+  it('no flip button renders — the control is a non-flipping status (#265 AC6)', () => {
+    // #265: the header control never offers switching to browser-local inside
+    // Electron (the desktop package ships no browser-LLM weights); it renders
+    // a status only, with no button.
     ctx({ mode: 'browser-local' });
     const { unmount } = render(<InferenceModeToggle />);
-    let btn = screen.getByRole('button');
-    expect(btn).toHaveTextContent('On this computer');
-    expect(btn.getAttribute('aria-label')).toContain('On this computer');
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.getByTestId('inference-mode-status')).toBeInTheDocument();
     unmount();
     ctx({ mode: 'api', isServerConnected: true });
     render(<InferenceModeToggle />);
-    btn = screen.getByRole('button');
-    expect(btn).toHaveTextContent('Desktop backend');
-    expect(btn.getAttribute('aria-label')).toContain('Desktop backend');
-    expect(btn).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(statusWord()).toBe('Connected');
   });
 });
