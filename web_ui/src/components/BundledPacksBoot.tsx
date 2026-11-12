@@ -44,10 +44,18 @@ export function BundledPacksBoot(): React.ReactElement | null {
         onPackFailure: (packId, detail) => {
           showToast(`Could not install the bundled pack "${packId}": ${detail}`, 'error');
         },
-      }).catch((error: unknown) => {
-        // Never expected (the ensure itself never throws) — belt only.
-        console.warn('[packs] bundled pack boot ensure failed:', error);
-      });
+      })
+        .then((result) => {
+          // Final critic r1: a missing/unfetchable manifest must not be
+          // silent — subpath mis-deploys surface here.
+          if (result.manifestError) {
+            console.warn('[packs] bundled pack manifest unavailable:', result.manifestError);
+          }
+        })
+        .catch((error: unknown) => {
+          // Never expected (the ensure itself never throws) — belt only.
+          console.warn('[packs] bundled pack boot ensure failed:', error);
+        });
     });
     return () => {
       cancelled = true;

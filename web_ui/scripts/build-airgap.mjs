@@ -5,7 +5,7 @@
  * Sets `VITE_AIRGAP=1` for the offline build so that Vite inlines
  * `import.meta.env.VITE_AIRGAP === '1'` as a literal true, letting Rollup
  * tree-shake the `@mlc-ai/web-llm` dynamic import out of the bundle. Then runs
- * prepare-models + build, and FINALLY runs `validate-build --airgap` (not the
+ * prepare-models + prepare-packs + build, and FINALLY runs `validate-build --airgap` (not the
  * default `validate-build`) so the airgap-specific check fires: it asserts no
  * emitted chunk references `CreateMLCEngine` / `prebuiltMLCAppConfig` and no
  * chunk name matches `/web-?llm/i`. Without the explicit `--airgap` flag the

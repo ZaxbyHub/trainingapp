@@ -18,6 +18,7 @@ import {
   type BundledPackManifestEntry,
   type BundledPacksManifest,
   isBundledPacksBootEligible,
+  resolvePacksBase,
 } from '../bundled-packs-boot';
 
 const enc = new TextEncoder();
@@ -167,5 +168,22 @@ describe('ensureBundledPacksInBrowser installs unsatisfied packs (#266 AC12)', (
     const plain: { self: unknown; desktopApi?: unknown } = { self: {} };
     (plain.self as { top?: unknown }).top = plain.self;
     expect(isBundledPacksBootEligible(plain)).toBe(true);
+  });
+
+  it('resolvePacksBase is deploy-aware: subpath deployments fetch /docqa/packs/, origin root stays /packs/ (final critic r1)', () => {
+    const g = globalThis as { document?: { baseURI?: string } };
+    const saved = g.document;
+    const env = import.meta.env as { BASE_URL?: string };
+    const savedBase = env.BASE_URL;
+    try {
+      env.BASE_URL = './';
+      g.document = { baseURI: 'https://host/docqa/app/' };
+      expect(resolvePacksBase()).toBe('/docqa/app/packs/');
+      g.document = { baseURI: 'https://host/' };
+      expect(resolvePacksBase()).toBe('/packs/');
+    } finally {
+      g.document = saved;
+      env.BASE_URL = savedBase;
+    }
   });
 });

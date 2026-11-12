@@ -99,6 +99,24 @@ export function isBundledPacksBootEligible(
 /** The polite status copy (surfaced through onStatus; pinned by the specs). */
 export const BUNDLED_PACKS_STATUS_TEXT = 'Preparing knowledge packs…';
 
+/**
+ * Deploy-aware base for the bundled-pack staging, mirroring the models
+ * manifest's resolveAbsoluteBase: `import.meta.env.BASE_URL` ('./' by
+ * default) resolved against `document.baseURI` into an ABSOLUTE same-origin
+ * pathname prefix, so subpath deployments (PACKAGING.md: serve from any
+ * path) fetch `/docqa/packs/...` while origin-root stays `/packs/...`. The
+ * fallback under a non-browser environment (tests) is the origin root.
+ */
+export function resolvePacksBase(): string {
+  try {
+    const resolved = new URL(import.meta.env.BASE_URL, document.baseURI).pathname;
+    const clean = resolved.replace(/^\/+|\/+$/g, '');
+    return clean === '' ? '/packs/' : `/${clean}/packs/`.replace(/\/{2,}/g, '/');
+  } catch {
+    return '/packs/';
+  }
+}
+
 function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -146,8 +164,10 @@ async function fetchBundledPackZip(
 async function runEnsure(deps: EnsureBundledPacksDeps): Promise<EnsureBundledPacksResult> {
   const {
     manager,
-    manifestUrl = '/packs/packs.manifest.json',
-    packsBaseUrl = '/packs/',
+    // Defaults are deploy-aware (subpath hosting per PACKAGING.md); tests
+    // inject explicit URLs.
+    manifestUrl = `${resolvePacksBase()}packs.manifest.json`,
+    packsBaseUrl = resolvePacksBase(),
     fetchImpl = fetch,
     onStatus,
     onPackFailure,
