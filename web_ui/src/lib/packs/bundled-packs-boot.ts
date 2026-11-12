@@ -51,10 +51,25 @@ export interface BundledPacksManifest {
   packs: BundledPackManifestEntry[];
 }
 
+/**
+ * The injected fetch seam's hand-written type (SEC-1): spelling it out —
+ * instead of `typeof fetch` — keeps the outbound guardrail honest: the file
+ * contains exactly ONE direct `fetch(` call site (the default binding
+ * below); every other reference is this named seam type.
+ */
+type BundledPacksFetch = (input: string, init?: RequestInit) => Promise<Response>;
+
 /** The pack-manager surface the ensure needs (BrowserPackManager satisfies it). */
 export interface BundledPacksManagerSurface {
   activeRecords(): Promise<Array<{ packId: string; version: string }>>;
   installPack(file: Blob & { name: string }): Promise<{ packId: string; version: string }>;
+  /**
+   * Browser features a pack install needs that this browser lacks (REL-2):
+   * a non-empty list means the ensure is skipped up front (no manifest
+   * fetch, no per-pack attempts) and the miss is reported through
+   * manifestError. BrowserPackManager already implements this.
+   */
+  missingCapabilities(): string[];
 }
 
 export interface EnsureBundledPacksDeps {
@@ -63,7 +78,7 @@ export interface EnsureBundledPacksDeps {
   manifestUrl?: string;
   /** Base URL for the pack zips (default /packs/). */
   packsBaseUrl?: string;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: BundledPacksFetch;
   /** Polite status line: set when work starts, cleared (null) when it ends. */
   onStatus?: (text: string | null) => void;
   /** Per-pack failure notice; the message names the pack. */
@@ -121,11 +136,35 @@ function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const copy = new Uint8Array(bytes.byteLength);
-  copy.set(bytes);
-  const digest = await crypto.subtle.digest('SHA-256', copy.buffer);
-  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+/**
+ * REL-1 (3x whole-zip copies → 0): hash the fetched ArrayBuffer DIRECTLY —
+ * `crypto.subtle.digest` accepts an ArrayBuffer, so the old defensive copy
+ * (a full Uint8Array clone inside sha256Hex) is gone. The Blob is built
+ * HERE, inside the fetch helper, so the raw buffer does not outlive this
+ * await in the caller. (pack-manifest.ts's sha256Hex also copies —
+ * deliberately NOT imported.)
+ */
+async function fetchBundledPackZip(
+  entry: BundledPackManifestEntry,
+  baseUrl: string,
+  fetchImpl: BundledPacksFetch,
+): Promise<Blob & { name: string }> {
+  const response = await fetchImpl(`${baseUrl}${entry.file}`, { credentials: 'same-origin' });
+  if (!response.ok) {
+    throw new Error(`fetching ${entry.file} failed: HTTP ${response.status}`);
+  }
+  const buffer = await response.arrayBuffer();
+  if (buffer.byteLength !== entry.size) {
+    throw new Error(
+      `${entry.file} size mismatch: manifest says ${entry.size} bytes, fetched ${buffer.byteLength}`,
+    );
+  }
+  const digest = await crypto.subtle.digest('SHA-256', buffer);
+  const sha256 = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+  if (sha256.toLowerCase() !== entry.sha256.toLowerCase()) {
+    throw new Error(`${entry.file} sha256 mismatch: manifest says ${entry.sha256}, fetched ${sha256}`);
+  }
+  return Object.assign(new Blob([buffer]), { name: entry.file }) as Blob & { name: string };
 }
 
 /** Desktop parity: an ACTIVE record at the entry's version OR NEWER satisfies. */
@@ -139,28 +178,6 @@ export function isBundledPackSatisfied(
   );
 }
 
-async function fetchBundledPackZip(
-  entry: BundledPackManifestEntry,
-  baseUrl: string,
-  fetchImpl: typeof fetch,
-): Promise<Uint8Array> {
-  const response = await fetchImpl(`${baseUrl}${entry.file}`, { credentials: 'same-origin' });
-  if (!response.ok) {
-    throw new Error(`fetching ${entry.file} failed: HTTP ${response.status}`);
-  }
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength !== entry.size) {
-    throw new Error(
-      `${entry.file} size mismatch: manifest says ${entry.size} bytes, fetched ${bytes.byteLength}`,
-    );
-  }
-  const sha256 = await sha256Hex(bytes);
-  if (sha256.toLowerCase() !== entry.sha256.toLowerCase()) {
-    throw new Error(`${entry.file} sha256 mismatch: manifest says ${entry.sha256}, fetched ${sha256}`);
-  }
-  return bytes;
-}
-
 async function runEnsure(deps: EnsureBundledPacksDeps): Promise<EnsureBundledPacksResult> {
   const {
     manager,
@@ -168,10 +185,25 @@ async function runEnsure(deps: EnsureBundledPacksDeps): Promise<EnsureBundledPac
     // inject explicit URLs.
     manifestUrl = `${resolvePacksBase()}packs.manifest.json`,
     packsBaseUrl = resolvePacksBase(),
-    fetchImpl = fetch,
+    // SEC-1: the ONE direct `fetch(` call site in this file; everything else
+    // goes through the injected, hand-typed BundledPacksFetch seam.
+    fetchImpl = ((input, init) => fetch(input, init)) as BundledPacksFetch,
     onStatus,
     onPackFailure,
   } = deps;
+
+  // REL-2 (capability gate): a browser without the pack runtime (no OPFS,
+  // per missingPackCapabilities) cannot install anything — bail out BEFORE
+  // the manifest fetch, without raising the status line and without any
+  // per-pack toast. The component surfaces manifestError the same way as a
+  // missing manifest (console.warn): the app stays usable.
+  const missing = typeof manager.missingCapabilities === 'function' ? manager.missingCapabilities() : [];
+  if (missing.length > 0) {
+    return {
+      results: [],
+      manifestError: `bundled packs unavailable: this browser is missing required capabilities (${missing.join(', ')})`,
+    };
+  }
 
   let manifest: BundledPacksManifest;
   try {
@@ -202,49 +234,54 @@ async function runEnsure(deps: EnsureBundledPacksDeps): Promise<EnsureBundledPac
 
   const results: BundledPackEnsureOutcome[] = [];
   let statusRaised = false;
-  for (const entry of manifest.packs) {
-    let satisfied = isBundledPackSatisfied(entry, installedRecords);
-    if (satisfied) {
-      results.push({ id: entry.id, outcome: 'satisfied', version: entry.version });
-      continue;
-    }
-    if (!statusRaised) {
-      statusRaised = true;
-      onStatus?.(BUNDLED_PACKS_STATUS_TEXT);
-    }
-    try {
-      const bytes = await fetchBundledPackZip(entry, packsBaseUrl, fetchImpl);
-      const blob = Object.assign(new Blob([bytes as Uint8Array<ArrayBuffer>]), {
-        name: entry.file,
-      }) as Blob & { name: string };
-      const installed = await manager.installPack(blob);
-      // Refresh the snapshot so a later entry's screen stays correct.
+  // COR-2: the whole loop runs inside try/finally so the status clear ALWAYS
+  // runs (a throw outside the per-pack try — previously the satisfaction
+  // screen sat there — would otherwise strand the polite status line), and
+  // the satisfaction screen itself is INSIDE the per-pack try so a throw
+  // (e.g. a non-semver manifest version) becomes THAT pack's named failure
+  // while the loop continues with the remaining packs.
+  try {
+    for (const entry of manifest.packs) {
       try {
-        installedRecords = await manager.activeRecords();
-      } catch {
-        installedRecords = [];
-      }
-      results.push({ id: installed.packId ?? entry.id, outcome: 'installed', version: installed.version ?? entry.version });
-    } catch (error) {
-      // Post-error satisfaction re-check: a concurrent equal-version install
-      // (installPack throws on an equal ACTIVE version) means the pack IS
-      // present — that is success, not failure.
-      try {
-        const after = await manager.activeRecords();
-        if (isBundledPackSatisfied(entry, after)) {
-          installedRecords = after;
-          results.push({ id: entry.id, outcome: 'recovered', version: entry.version });
+        if (isBundledPackSatisfied(entry, installedRecords)) {
+          results.push({ id: entry.id, outcome: 'satisfied', version: entry.version });
           continue;
         }
-      } catch {
-        // fall through to the named failure
+        if (!statusRaised) {
+          statusRaised = true;
+          onStatus?.(BUNDLED_PACKS_STATUS_TEXT);
+        }
+        const blob = await fetchBundledPackZip(entry, packsBaseUrl, fetchImpl);
+        const installed = await manager.installPack(blob);
+        // Refresh the snapshot so a later entry's screen stays correct.
+        try {
+          installedRecords = await manager.activeRecords();
+        } catch {
+          installedRecords = [];
+        }
+        results.push({ id: installed.packId ?? entry.id, outcome: 'installed', version: installed.version ?? entry.version });
+      } catch (error) {
+        // Post-error satisfaction re-check: a concurrent equal-version install
+        // (installPack throws on an equal ACTIVE version) means the pack IS
+        // present — that is success, not failure.
+        try {
+          const after = await manager.activeRecords();
+          if (isBundledPackSatisfied(entry, after)) {
+            installedRecords = after;
+            results.push({ id: entry.id, outcome: 'recovered', version: entry.version });
+            continue;
+          }
+        } catch {
+          // fall through to the named failure
+        }
+        const detail = errorMessage(error);
+        onPackFailure?.(entry.id, detail);
+        results.push({ id: entry.id, outcome: 'failed', detail });
       }
-      const detail = errorMessage(error);
-      onPackFailure?.(entry.id, detail);
-      results.push({ id: entry.id, outcome: 'failed', detail });
     }
+  } finally {
+    if (statusRaised) onStatus?.(null);
   }
-  if (statusRaised) onStatus?.(null);
   return { results };
 }
 

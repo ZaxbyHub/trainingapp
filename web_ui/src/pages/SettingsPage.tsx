@@ -1909,7 +1909,14 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
               <p className="settings-text">
                 {mode === 'api'
                   ? 'Answers come from the built-in desktop backend: llama.cpp (node-llama-cpp) generation with hybrid retrieval over the desktop document library.'
-                  : 'Runs in this browser with WebLLM (WebGPU) or wllama (WebAssembly), or with the external model you configured; documents are stored in IndexedDB.'}
+                  : /* INT-3 (issue 265): the About copy advertises WebLLM only
+                      where the engine is actually selectable (plain dev
+                      builds). In packaged/offline builds (WEBLLM_VISIBLE
+                      false) the bundled wllama engine is the whole
+                      browser-local story. */
+                    WEBLLM_VISIBLE
+                    ? 'Runs in this browser with WebLLM (WebGPU) or wllama (WebAssembly), or with the external model you configured; documents are stored in IndexedDB.'
+                    : 'Runs in this browser with wllama (WebAssembly), or with the external model you configured; documents are stored in IndexedDB.'}
               </p>
             </div>
             {electronMode && <FirstRunSetupCard />}

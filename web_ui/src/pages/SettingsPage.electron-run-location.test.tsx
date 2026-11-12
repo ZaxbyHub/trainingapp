@@ -198,5 +198,18 @@ describe('SettingsPage run-location card in Electron (#265 AC7)', () => {
     await waitFor(() => {
       expect(screen.getByRole('region', { name: /^model & connection$/i })).toBeInTheDocument();
     });
+    // TST-7: pin the checked state too. Under the legacy browser-local seed the
+    // sole 'Desktop backend' radio renders UNCHECKED (mode !== 'api') — but an
+    // unchecked sole radio is NOT a state production leaves the card in: the
+    // real context normalizes a legacy blob (and every Electron mount without
+    // a stored blob, #247 AC1) to 'api'. Seed the production state through
+    // the harness's set seam and assert the radio is checked.
+    const legacyRadio = screen.getByRole('radio', { name: /^desktop backend$/i }) as HTMLInputElement;
+    expect(legacyRadio.checked).toBe(false);
+    act(() => {
+      H.set({ mode: 'api' });
+    });
+    await settle();
+    expect(screen.getByRole('radio', { name: /^desktop backend$/i })).toBeChecked();
   });
 });

@@ -159,6 +159,68 @@ describe('ensureBundledPacksInBrowser installs unsatisfied packs (#266 AC12)', (
     expect(await registry.list()).toEqual([]);
   });
 
+  it('REL-2: a browser missing pack capabilities skips the ensure entirely — zero fetches, no status, manifestError names the miss', async () => {
+    resetBundledPacksBootForTests();
+    const { manager } = setupManager();
+    // The real manager with the capability probe saying OPFS is missing —
+    // the exact BrowserPackManager.missingCapabilities surface the ensure
+    // gates on before anything else.
+    vi.spyOn(manager, 'missingCapabilities').mockReturnValue(['OPFS']);
+    let fetchCalls = 0;
+    const fetchSpy = (async () => {
+      fetchCalls += 1;
+      return { ok: false, status: 500, json: async () => ({}), arrayBuffer: async () => new ArrayBuffer(0) } as unknown as Response;
+    }) as unknown as typeof fetch;
+    const statuses: Array<string | null> = [];
+    const failures: Array<[string, string]> = [];
+
+    const result = await ensureBundledPacksInBrowser({
+      manager,
+      fetchImpl: fetchSpy,
+      onStatus: (text) => statuses.push(text),
+      onPackFailure: (packId, detail) => failures.push([packId, detail]),
+    });
+
+    // Not even the MANIFEST was fetched; no status raised; no per-pack toast.
+    expect(fetchCalls).toBe(0);
+    expect(statuses).toEqual([]);
+    expect(failures).toEqual([]);
+    expect(result.results).toEqual([]);
+    // The miss is named through manifestError (the component warns it).
+    expect(result.manifestError).toMatch(/OPFS/);
+  });
+
+  it('COR-2: a throwing satisfaction screen is that pack\'s named failure; the OTHER pack still installs and the status clears', async () => {
+    resetBundledPacksBootForTests();
+    const { manager } = setupManager();
+    // Seed an ACTIVE record for the same id as a manifest entry whose version
+    // "1.0" is not semver — compareVersions throws inside the satisfaction
+    // screen, which used to sit OUTSIDE the per-pack try (it would abort the
+    // whole ensure and strand the status line).
+    const seeded = buildPackZip('screen-throw', '1.0.0');
+    await manager.installPack(Object.assign(new Blob([seeded.zip as Uint8Array<ArrayBuffer>]), { name: seeded.entry.file }));
+    const good = buildPackZip('good-pack', '1.0.0');
+    const badEntry: BundledPackManifestEntry = { ...seeded.entry, version: '1.0' };
+    const failures: Array<[string, string]> = [];
+    const statuses: Array<string | null> = [];
+
+    const result = await ensureBundledPacksInBrowser({
+      manager,
+      fetchImpl: fakeFetch({ packs: [badEntry, good.entry] }, new Map([[good.entry.file, good.zip]])),
+      onPackFailure: (packId, detail) => failures.push([packId, detail]),
+      onStatus: (text) => statuses.push(text),
+    });
+
+    // The throwing screen became THAT pack's named failure...
+    expect(result.results[0]).toMatchObject({ id: 'screen-throw', outcome: 'failed' });
+    expect(failures).toEqual([['screen-throw', expect.stringContaining('semver')]]);
+    // ...the OTHER pack still installed...
+    expect(result.results[1]).toEqual({ id: 'good-pack', outcome: 'installed', version: '1.0.0' });
+    expect(await manager.activeRecords()).toHaveLength(2);
+    // ...and the status line was cleared (not stranded) despite the throw.
+    expect(statuses[statuses.length - 1]).toBeNull();
+  });
+
   it('boot eligibility: skipped in Electron (desktopApi present) and in framed contexts; eligible in the plain browser app', () => {
     const electronScope = { desktopApi: {}, self: {} };
     expect(isBundledPacksBootEligible(electronScope)).toBe(false);

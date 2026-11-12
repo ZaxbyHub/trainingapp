@@ -10,14 +10,15 @@
  * send/clear-chat, and also wires Ctrl+, for its own model-blocked overlay,
  * but that registration disappears whenever ChatPage unmounts).
  *
- * Before this fix, Ctrl+, only worked while on the Chat page. The intended
- * regression test for this (`ChatPage.shortcuts.test.tsx`) is excluded from
- * CI (see `vitest.config.ts`'s `exclude` list, a pre-existing/unrelated
- * concern), so it provides no real protection today. This file is NOT
- * excluded and asserts the actual end-to-end behavior: dispatching a real
- * `keydown` on `window` while a NON-chat page (Documents) is showing still
- * navigates to Settings, proving the hook is registered above the page
- * switch rather than inside ChatPage.
+ * Before this fix, Ctrl+, only worked while on the Chat page. The keyboard
+ * coverage today: this file asserts the actual end-to-end behavior —
+ * dispatching a real `keydown` on `window` while a NON-chat page (Documents)
+ * is showing still navigates to Settings, proving the hook is registered
+ * above the page switch rather than inside ChatPage. The hook's own unit
+ * contract is pinned by the useKeyboardShortcuts.* hook specs (composer
+ * carve-outs, Escape/stop, focus), and the ChatPage-level LIVE wiring of
+ * those shortcuts (Ctrl+K focus, Ctrl+Shift+L clear, Escape stop) by
+ * ChatPage.keyboard-wiring.test.tsx.
  *
  * Mocking follows the same convention as `App.test.tsx`: only the heavy/
  * unrelated dependency graph (IndexedDB conversation persistence, service

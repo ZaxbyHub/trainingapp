@@ -20,6 +20,7 @@ import type { BrowserEngine } from '../../types/llm';
 import { getMemoryBudget } from '../embeddings/memory-aware';
 import { isElectron } from '../desktop-session';
 import { WEBLLM_VISIBLE } from './engine-visibility';
+import { isWllamaWebGPUAccelerated } from './wllama-acceleration';
 
 export type CapabilityTier = 'green' | 'yellow' | 'red';
 export type MemoryTier = 'HIGH' | 'MEDIUM' | 'LOW';
@@ -123,12 +124,19 @@ export async function detectEngineCapability(): Promise<EngineCapability> {
       reasons.push('wllama runs the bundled LFM2 model offline (text-only) if you prefer no download.');
     } else {
       // #265 (A3-iv): WebLLM is hidden in packaged/offline builds; among the
-      // visible engines wllama is the recommendation — and it can use the
-      // detected WebGPU too.
+      // visible engines wllama is the recommendation. INT-1: the WebGPU
+      // reason is reconciled with the wllama acceleration TRUTH via the
+      // shared probe — navigator.gpu presence alone does not make wllama
+      // WebGPU-accelerated (Firefox without JSPI: wllama disables WebGPU
+      // there), so the copy must not claim it does.
       recommendedEngine = 'wllama';
       recommendedMode = 'browser-local';
       tier = 'green';
-      reasons.push('WebGPU is available — wllama can run the bundled model on it.');
+      if (isWllamaWebGPUAccelerated()) {
+        reasons.push('WebGPU is available — wllama can run the bundled model on it.');
+      } else {
+        reasons.push('WebGPU is present, but the bundled model runs on CPU/WASM in this browser.');
+      }
     }
   } else {
     // No WebGPU → wllama is the only viable browser engine.

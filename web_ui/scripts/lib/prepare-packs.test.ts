@@ -258,4 +258,26 @@ describe('stageBundledPacks (AC15: manifest + source log + installability smoke)
     expect(problems.join(' ')).toMatch(/training pack missing/);
     expect(fs.existsSync(manifestPath)).toBe(false);
   });
+
+  it('REL-6: a mid-loop failure rolls back the zips THIS run wrote — no half-staged set beside the old manifest', async () => {
+    const root = tmp();
+    makeOperatorTree(root);
+    // The SECOND pack's pack.json is corrupt: the selector is satisfied (the
+    // file exists), the FIRST pack archives fine, then the staging fails.
+    fs.writeFileSync(
+      path.join(operatorRoot(root), TRAINING_PACK_DIR, 'pack.json'),
+      '{ not json',
+      'utf8',
+    );
+    const outDir = path.join(root, 'public', 'packs');
+    const manifestPath = path.join(outDir, 'packs.manifest.json');
+    const { problems } = await stageBundledPacks({ repoRoot: root, outDir, manifestPath, log: () => {} });
+    expect(problems.join(' ')).toMatch(/pack manifest unreadable/);
+    // No manifest was published...
+    expect(fs.existsSync(manifestPath)).toBe(false);
+    // ...and the docs zip this run DID write was unlinked (the on-disk set
+    // stays whatever the previous consistent run left, never a half-staged
+    // mixture).
+    expect(fs.readdirSync(outDir)).toEqual([]);
+  });
 });

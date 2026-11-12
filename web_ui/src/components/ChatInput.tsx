@@ -45,6 +45,12 @@ interface ChatInputProps {
    *  composer hydrates from the store on every key change/remount and writes
    *  every mutation back (#267 AC7/AC8). */
   draftKey?: string;
+  /** The id the parent ADOPTED for the not-yet-created conversation's first
+   *  turn (#267 review r2 / COR-1): the sentinel→real-id draft migration fires
+   *  only when the incoming draftKey is exactly this id. An arbitrary key
+   *  switch away from the sentinel (selecting an existing conversation) must
+   *  NOT move the sentinel's draft. */
+  adoptedDraftKey?: string;
   /** Optional external handle to the composer textarea (#267 AC5): ChatPage
    *  focuses it for the Ctrl/Cmd+K and '/' shortcuts. */
   textareaRef?: React.MutableRefObject<HTMLTextAreaElement | null>;
@@ -65,6 +71,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   onDraftChange,
   history,
   draftKey,
+  adoptedDraftKey,
   textareaRef,
   status,
 }) => {
@@ -93,6 +100,10 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   // mirror of the displayed value (hydrate-caret nit: only jump the caret
   // when the hydrated value actually differs).
   const prevDraftKeyRef = useRef<string | undefined>(undefined);
+  // #267 delta review r2: adoption keys already consumed by the sentinel
+  // migration — makes the adoption one-shot even if a stale adoptedDraftKey
+  // prop lingers after the user leaves the adopted conversation.
+  const consumedAdoptionsRef = useRef<Set<string>>(new Set());
   const valueRef = useRef('');
   valueRef.current = value;
 
@@ -164,11 +175,27 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
     // inside the composer's key-switch handler (not in ChatPage): the first
     // turn of a new conversation adopts its real id in the parent, the
     // composer sees the key change, and the sentinel's draft travels to the
-    // adopted id before hydration. Pinned by ChatInput.drafts.test.tsx —
-    // deleting this call turns the carry leg RED.
+    // adopted id before hydration. Review round 2 (COR-1): the migration is
+    // gated on an EXPLICIT adoption signal — the parent sets adoptedDraftKey
+    // to the adopted id in the same batched update as the draftKey switch —
+    // so switching from the sentinel to any OTHER key (selecting an existing
+    // conversation) leaves the sentinel's draft where it is. The adoption is
+    // ONE-SHOT per adopted key (delta review r2): once consumed, a stale
+    // adoptedDraftKey prop can never re-trigger the move — after New chat,
+    // re-selecting the previously adopted conversation must not pull the new
+    // sentinel draft into it. Pinned by ChatInput.drafts.test.tsx — deleting
+    // this call turns the carry leg RED.
     const prevKey = prevDraftKeyRef.current;
-    if (prevKey !== undefined && prevKey !== draftKey && prevKey === NEW_DRAFT_SENTINEL && draftKey !== undefined) {
+    if (
+      prevKey !== undefined &&
+      prevKey !== draftKey &&
+      prevKey === NEW_DRAFT_SENTINEL &&
+      draftKey !== undefined &&
+      draftKey === adoptedDraftKey &&
+      !consumedAdoptionsRef.current.has(draftKey)
+    ) {
       moveDraftIfTargetEmpty(prevKey, draftKey);
+      consumedAdoptionsRef.current.add(draftKey);
     }
     prevDraftKeyRef.current = draftKey;
     const stored = draftKey !== undefined ? (getDraft(draftKey) ?? '') : '';

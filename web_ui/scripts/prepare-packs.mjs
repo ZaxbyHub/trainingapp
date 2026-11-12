@@ -89,7 +89,8 @@ export function listPackFilesRelative(root, statImpl = (p) => fs.lstatSync(p), d
  * @param {string} staging Absolute pack source dir (pack.json at its root).
  * @param {string} outPath Destination zip path.
  * @param {Date} zipDate Every entry's date (the manifest published_at).
- * @returns {Promise<number>} The zip byte length.
+ * @returns {Promise<Buffer>} The zip bytes (the caller hashes the in-memory
+ *   buffer — REL-7 — instead of re-reading the file back).
  */
 export async function writeDeterministicPackZip(staging, outPath, zipDate) {
   const zip = new JSZip();
@@ -119,13 +120,18 @@ export async function writeDeterministicPackZip(staging, outPath, zipDate) {
   const tempOut = `${outPath}.tmp-${process.pid}`;
   fs.writeFileSync(tempOut, buffer);
   fs.renameSync(tempOut, outPath);
-  return buffer.length;
+  return buffer;
 }
 
-function sha256OfFile(filePath) {
-  const hash = createHash('sha256');
-  hash.update(fs.readFileSync(filePath));
-  return hash.digest('hex');
+/**
+ * Atomic text publish (REL-5): sibling temp file + rename — the same publish
+ * discipline as the zips — so a crash mid-write can never leave a torn
+ * packs.manifest.json at the user-visible path.
+ */
+function writeTextAtomically(filePath, contents) {
+  const tempOut = `${filePath}.tmp-${process.pid}`;
+  fs.writeFileSync(tempOut, contents, 'utf8');
+  fs.renameSync(tempOut, filePath);
 }
 
 /**
@@ -172,7 +178,7 @@ export async function stageBundledPacks(opts = {}) {
       `NO bundled pack source: the operator root (${path.relative(repoRoot, knowledgePackSrcRoot)}) is absent and the fixture (${path.relative(repoRoot, fixturePackSource)}) is missing — staging an EMPTY packs manifest`,
     );
     fs.mkdirSync(outDir, { recursive: true });
-    fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+    writeTextAtomically(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
     return { problems, manifest, source: 'empty' };
   }
 
@@ -185,6 +191,11 @@ export async function stageBundledPacks(opts = {}) {
   }
 
   fs.mkdirSync(outDir, { recursive: true });
+  // REL-6: every zip THIS run wrote, so a problems-before-manifest exit can
+  // roll them back — the on-disk manifest (if any) still describes the
+  // PREVIOUS run's archives, and this run's half-staged zips must not be
+  // left next to it as an inconsistent pair.
+  const writtenZips = [];
   for (const pack of selection.packs) {
     const packJsonPath = path.join(pack.source, 'pack.json');
     let meta;
@@ -202,23 +213,45 @@ export async function stageBundledPacks(opts = {}) {
     const file = `${meta.id}-${version}.zip`;
     const outPath = path.join(outDir, file);
     try {
-      await writeDeterministicPackZip(pack.source, outPath, new Date(meta.published_at ?? 0));
+      // REL-7: the writer returns the in-memory zip buffer — the manifest's
+      // sha256/size are computed from it directly (identical bytes to what
+      // the atomic rename published), with no whole-file re-read.
+      const buffer = await writeDeterministicPackZip(pack.source, outPath, new Date(meta.published_at ?? 0));
+      writtenZips.push(outPath);
+      manifest.packs.push({
+        id: meta.id,
+        version,
+        file,
+        sha256: createHash('sha256').update(buffer).digest('hex'),
+        size: buffer.length,
+      });
     } catch (err) {
       report(`archiving ${path.relative(repoRoot, pack.source)} failed: ${err instanceof Error ? err.message : err}`);
       continue;
     }
-    manifest.packs.push({
-      id: meta.id,
-      version,
-      file,
-      sha256: sha256OfFile(outPath),
-      size: fs.statSync(outPath).size,
-    });
     log(`staged ${pack.classDir}/${meta.id}-${version} -> ${path.relative(repoRoot, outPath)}`);
   }
 
-  if (problems.length > 0) return { problems, manifest, source: selection.source };
-  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+  if (problems.length > 0) {
+    // REL-6: roll back the just-written zips (best-effort, fail-loud on
+    // rollback errors) so the previous manifest+zips pair stays consistent.
+    // Delta review r2 question — why unlink even a path a previous run
+    // staged: the atomic rename already destroyed that file's previous
+    // bytes, so sparing it would leave the OLD manifest hashing NEW bytes
+    // (a silent corruption lookalike). Unlinking fails loudly at
+    // validate-build ("missing") instead, which is the honest outcome.
+    for (const zipPath of writtenZips) {
+      try {
+        fs.unlinkSync(zipPath);
+      } catch (err) {
+        report(
+          `rolling back just-written zip ${path.relative(repoRoot, zipPath)} failed: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+    return { problems, manifest, source: selection.source };
+  }
+  writeTextAtomically(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   log(`wrote ${manifest.packs.length} pack entr${manifest.packs.length === 1 ? 'y' : 'ies'} -> ${path.relative(repoRoot, manifestPath)}`);
   return { problems, manifest, source: selection.source };
 }

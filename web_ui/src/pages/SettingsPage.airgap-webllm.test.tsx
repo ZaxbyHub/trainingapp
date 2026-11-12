@@ -140,6 +140,34 @@ describe('SettingsPage hides WebLLM while the packaged/offline visibility gate i
     });
     expect(container.textContent ?? '').not.toMatch(/download model|webllm cdn/i);
   });
+
+  test('INT-3: the About copy names only wllama while the gate is closed (no WebLLM advertisement)', async () => {
+    inferenceMock.state = {
+      mode: 'browser-local',
+      browserEngine: 'wllama',
+      ragPreset: 'balanced',
+      isServerConnected: false,
+      isModelReady: false,
+      modelLoadingProgress: 0,
+      modeError: null,
+      serverUrl: '',
+      setMode: vi.fn(),
+      setBrowserEngine: vi.fn(),
+      setRagPreset: vi.fn(),
+      checkServerConnectivity: vi.fn(() => Promise.resolve(false)),
+      setModelReady: vi.fn(),
+      setModelLoadingProgress: vi.fn(),
+    };
+    render(<SettingsPage />);
+    // The hidden-mode About sentence (scoped to this paragraph — other
+    // sections legitimately mention WebLLM downloads in the abstract).
+    await waitFor(() => {
+      expect(
+        screen.getByText('Runs in this browser with wllama (WebAssembly), or with the external model you configured; documents are stored in IndexedDB.'),
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/Runs in this browser with WebLLM/)).not.toBeInTheDocument();
+  });
 });
 
 describe('persisted-WebLLM fallback legs (hidden builds)', () => {

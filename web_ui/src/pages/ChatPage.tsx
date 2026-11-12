@@ -326,6 +326,23 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // composer's key-switch handler — ChatInput owns it, review round 1).
   const draftKey = currentConversationId ?? NEW_DRAFT_SENTINEL;
 
+  // #267 review r2 (COR-1): the EXPLICIT adoption signal for the composer's
+  // sentinel→real-id draft migration. Set — batched with
+  // setCurrentConversationId(resolvedOwningId) — exactly when a first turn
+  // adopts its real conversation id; ChatInput migrates the sentinel's draft
+  // only onto THIS id, never onto an arbitrary key switch away from the
+  // sentinel.
+  const [adoptedDraftKey, setAdoptedDraftKey] = useState<string | undefined>(undefined);
+  // Delta review r2 backstop: the adoption signal is one-shot (ChatInput also
+  // tracks consumed adoptions), so when the conversation id drifts away from
+  // the adopted key (New chat, selecting another conversation), drop the
+  // stale signal so it can never re-arm the migration.
+  useEffect(() => {
+    if (adoptedDraftKey !== undefined && currentConversationId !== adoptedDraftKey) {
+      setAdoptedDraftKey(undefined);
+    }
+  }, [adoptedDraftKey, currentConversationId]);
+
   // #267 (AC1/AC2): conversation-scoped recall history, derived from the
   // messages PROP (newest last). Named composerHistory: the bare `history`
   // name collides with the history snapshots used by runGeneration.
@@ -1119,6 +1136,9 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       // the terminal callbacks' guard is correct even if no re-render has
       // interleaved between the send-time save and done/error firing.
       currentConversationIdRef.current = resolvedOwningId;
+      // Batched with the id adoption so ChatInput sees the adoption signal in
+      // the same render as the draftKey switch (COR-1).
+      setAdoptedDraftKey(resolvedOwningId);
       setCurrentConversationId(resolvedOwningId);
     }
 
@@ -1383,6 +1403,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         onDraftChange={(text) => { draftRef.current = text; }}
         history={composerHistory}
         draftKey={draftKey}
+        adoptedDraftKey={adoptedDraftKey}
         textareaRef={composerTextareaRef}
         status={
           /* Lumen phase 5 (design-language.md section 5): every chat status lives

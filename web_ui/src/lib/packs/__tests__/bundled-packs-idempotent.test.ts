@@ -140,6 +140,7 @@ describe('ensureBundledPacksInBrowser idempotency (#266 AC13)', () => {
     // version refusal (the exact production refusal text).
     const racingManager: BundledPacksManagerSurface = {
       activeRecords: manager.activeRecords.bind(manager),
+      missingCapabilities: () => [],
       installPack: async (file) => {
         await manager.installPack(file);
         throw new Error(`${(file as File).name}: ${'bundled-a@1.0.0'} is already installed and active; remove it first`);

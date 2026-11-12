@@ -4,7 +4,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, createEvent, waitFor, cleanup } from '@testing-library/react';
 import { SourceCitation } from './SourceCitation';
 
 // Mock clipboard API
@@ -165,7 +165,14 @@ describe('SourceCitation', () => {
         expect(screen.getByText('/path/to/document.pdf')).toBeInTheDocument();
       });
 
-      fireEvent.keyDown(pill, { key: 'Escape' });
+      // TST-8: dispatch through a held event object so the Escape handler's
+      // preventDefault is observable after the dispatch — the global shortcut
+      // hook (useKeyboardShortcuts) relies on defaultPrevented to keep this
+      // Escape from ALSO stopping a generation.
+      const escapeEvent = createEvent.keyDown(pill, { key: 'Escape' });
+      fireEvent(pill, escapeEvent);
+      expect(escapeEvent.defaultPrevented).toBe(true);
+
       await waitFor(() => {
         expect(screen.queryByText('/path/to/document.pdf')).not.toBeInTheDocument();
       });
