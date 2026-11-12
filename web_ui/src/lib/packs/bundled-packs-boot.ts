@@ -83,6 +83,20 @@ export interface EnsureBundledPacksResult {
 }
 
 /** The polite status copy (surfaced through onStatus; pinned by the specs). */
+/**
+ * #266 (review round 1 pin): browser app only, never Electron and never a
+ * framed context — the desktop app's bundled-pack ensure lives in its main
+ * process, and a framed app runs no pack lifecycle. Exported so the guard is
+ * pinned by bundled-packs-boot.test.ts; the component consumes it.
+ */
+export function isBundledPacksBootEligible(
+  scope: { desktopApi?: unknown; self: unknown } = window,
+): boolean {
+  if (scope.desktopApi !== undefined) return false;
+  if (scope.self !== (scope.self as { top?: unknown }).top) return false;
+  return true;
+}
+
 export const BUNDLED_PACKS_STATUS_TEXT = 'Preparing knowledge packs…';
 
 function errorMessage(e: unknown): string {

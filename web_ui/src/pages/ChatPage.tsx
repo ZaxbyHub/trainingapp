@@ -39,7 +39,7 @@ import { downloadConversation } from '../lib/export/conversation-export';
 import { messagesForRegenerate } from '../lib/chat/message-ops';
 import { sequenceConversationSave } from '../lib/chat/save-sequencer';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
-import { moveDraftIfTargetEmpty } from '../lib/chat/draft-store';
+import { NEW_DRAFT_SENTINEL } from '../lib/chat/draft-store';
 import { fetchModelStatus, isElectron, modelsAbsentForRealEngine, useDesktopSession } from '../lib/desktop-session';
 import { notifyDesktopModelsChanged } from '../lib/desktop-models-events';
 import { DesktopModelBlockedOverlay } from '../components/DesktopModelBlockedOverlay';
@@ -321,21 +321,9 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // #267 (AC8): the composer's draft-store key. The new-conversation
   // sentinel (NEW_CONVERSATION_RESERVED_KEY) is the SAME single sentinel the
   // persistence sequencer uses; a first-turn send later adopts the real id
-  // and the sentinel's draft travels with it (the migration below).
-  const draftKey = currentConversationId ?? NEW_CONVERSATION_RESERVED_KEY;
-  const prevDraftKeyRef = useRef(draftKey);
-  if (prevDraftKeyRef.current !== draftKey) {
-    const prevKey = prevDraftKeyRef.current;
-    prevDraftKeyRef.current = draftKey;
-    // ONE atomic migration owner (plan C5), and BEFORE hydration: this runs
-    // during ChatPage's render, so it lands before ChatInput's hydration
-    // effect (child effects flush after the parent renders). Only a
-    // sentinel -> real-id adoption moves the draft, and only onto an empty
-    // target; a synchronous Map makes rapid A->B->C switches safe.
-    if (prevKey === NEW_CONVERSATION_RESERVED_KEY && draftKey !== NEW_CONVERSATION_RESERVED_KEY) {
-      moveDraftIfTargetEmpty(prevKey, draftKey);
-    }
-  }
+  // and the sentinel's draft travels with it (the migration runs inside the
+  // composer's key-switch handler — ChatInput owns it, review round 1).
+  const draftKey = currentConversationId ?? NEW_DRAFT_SENTINEL;
 
   // #267 (AC1/AC2): conversation-scoped recall history, derived from the
   // messages PROP (newest last). Named composerHistory: the bare `history`

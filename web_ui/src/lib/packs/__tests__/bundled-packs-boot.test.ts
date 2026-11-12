@@ -17,6 +17,7 @@ import {
   resetBundledPacksBootForTests,
   type BundledPackManifestEntry,
   type BundledPacksManifest,
+  isBundledPacksBootEligible,
 } from '../bundled-packs-boot';
 
 const enc = new TextEncoder();
@@ -155,5 +156,16 @@ describe('ensureBundledPacksInBrowser installs unsatisfied packs (#266 AC12)', (
     expect(result.results).toEqual([]);
     expect(result.manifestError).toMatch(/404/);
     expect(await registry.list()).toEqual([]);
+  });
+
+  it('boot eligibility: skipped in Electron (desktopApi present) and in framed contexts; eligible in the plain browser app', () => {
+    const electronScope = { desktopApi: {}, self: {} };
+    expect(isBundledPacksBootEligible(electronScope)).toBe(false);
+    const framedScope = { self: {} as unknown };
+    (framedScope as { self: { top?: unknown } }).self.top = { sentinel: 1 };
+    expect(isBundledPacksBootEligible(framedScope)).toBe(false);
+    const plain: { self: unknown; desktopApi?: unknown } = { self: {} };
+    (plain.self as { top?: unknown }).top = plain.self;
+    expect(isBundledPacksBootEligible(plain)).toBe(true);
   });
 });

@@ -22,19 +22,17 @@
 
 import { useEffect, useState } from 'react';
 import { useToast } from './ToastProvider';
-import { isElectron } from '../lib/desktop-session';
-import { isFramedContext } from '../lib/packs/player-origin';
 import { getBrowserPackManager } from '../lib/packs/browser-pack-manager';
-import { ensureBundledPacksInBrowser } from '../lib/packs/bundled-packs-boot';
+import { ensureBundledPacksInBrowser, isBundledPacksBootEligible } from '../lib/packs/bundled-packs-boot';
 
 export function BundledPacksBoot(): React.ReactElement | null {
   const { showToast } = useToast();
   const [statusText, setStatusText] = useState<string | null>(null);
 
   useEffect(() => {
-    // Browser app only, never framed: the desktop app's bundled-pack ensure
-    // lives in its main process, and a framed app runs no pack lifecycle.
-    if (isElectron() || isFramedContext()) return undefined;
+    // Browser app only, never Electron, never framed — the eligibility
+    // predicate is exported and pinned by bundled-packs-boot.test.ts.
+    if (!isBundledPacksBootEligible()) return undefined;
     let cancelled = false;
     // Post-commit scheduling: the boot ensure never blocks first paint.
     const raf = requestAnimationFrame(() => {

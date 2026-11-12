@@ -48,6 +48,13 @@ export function clearDraft(key: string): void {
  * (never clobbers an existing draft of the adopted conversation). The moved
  * draft is removed from `fromKey`. Returns whether a draft was moved.
  */
+/**
+ * #267 (plan C5): the single new-conversation draft sentinel, shared by
+ * ChatPage (draft key for the not-yet-created conversation) and ChatInput
+ * (the sentinel-to-adopted-id migration trigger below).
+ */
+export const NEW_DRAFT_SENTINEL = '\u0000new';
+
 export function moveDraftIfTargetEmpty(fromKey: string, toKey: string): boolean {
   if (fromKey === toKey) return false;
   const moving = drafts.get(fromKey);

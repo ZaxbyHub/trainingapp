@@ -2,7 +2,7 @@
  * #267 (AC8, frozen check C24): per-conversation drafts in the composer —
  * a draftKey switch saves the outgoing draft, shows the stored draft, and
  * reports it through onDraftChange; a remount restores; a send clears;
- * and the sentinel migration (moveDraftIfTargetEmpty — the helper ChatPage
+ * and the sentinel migration (moveDraftIfTargetEmpty — the helper ChatInput
  * owns as the single migration owner) carries the '\u0000new' draft to the
  * adopted conversation id BEFORE hydration would read the store.
  */
@@ -12,7 +12,7 @@ import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import '@testing-library/jest-dom';
 
 import { ChatInput } from './ChatInput';
-import { clearDraft, getDraft, moveDraftIfTargetEmpty, setDraft } from '../lib/chat/draft-store';
+import { clearDraft, getDraft, setDraft } from '../lib/chat/draft-store';
 
 const NEW_CONVERSATION_RESERVED_KEY = '\u0000new';
 
@@ -100,16 +100,28 @@ describe('ChatInput per-conversation drafts (#267 AC8)', () => {
     expect(textarea().value).toBe('');
   });
 
-  it('the sentinel migration carries the new-chat draft to the adopted id (single owner: moveDraftIfTargetEmpty)', () => {
+  it('the sentinel migration carries the new-chat draft to the adopted id THROUGH the component (review r1: production call site pinned)', () => {
     // The user typed under the new-conversation sentinel, then the first turn
-    // adopted a real conversation id.
+    // adopted a real conversation id: the composer's key-switch handler must
+    // move the sentinel draft onto the adopted key before hydration. This
+    // leg exercises the production call inside ChatInput (not the helper
+    // directly), so deleting the moveDraftIfTargetEmpty call there goes RED.
     setDraft(NEW_CONVERSATION_RESERVED_KEY, 'carried to the adopted id');
-    expect(moveDraftIfTargetEmpty(NEW_CONVERSATION_RESERVED_KEY, 'conv-9')).toBe(true);
+    const onDraftChange = vi.fn();
+    const { onSend, textarea, view } = setup(NEW_CONVERSATION_RESERVED_KEY, onDraftChange);
+    expect(textarea().value).toBe('carried to the adopted id');
+    view.rerender(
+      <ChatInput
+        onSend={onSend}
+        isLoading={false}
+        onCancel={vi.fn()}
+        draftKey="conv-9"
+        onDraftChange={onDraftChange}
+      />,
+    );
+    expect(textarea().value).toBe('carried to the adopted id');
     expect(getDraft('conv-9')).toBe('carried to the adopted id');
     expect(getDraft(NEW_CONVERSATION_RESERVED_KEY)).toBeUndefined();
-    // Hydration afterwards (what ChatInput's draftKey effect does) shows it.
-    const { textarea } = setup('conv-9');
-    expect(textarea().value).toBe('carried to the adopted id');
     clearDraft('conv-9');
   });
 

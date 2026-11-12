@@ -24,7 +24,7 @@
 
 import React, { useRef, useCallback, useState, useEffect, type ReactNode } from 'react';
 import { IconButton } from '../ui';
-import { getDraft, setDraft } from '../lib/chat/draft-store';
+import { getDraft, setDraft, NEW_DRAFT_SENTINEL, moveDraftIfTargetEmpty } from '../lib/chat/draft-store';
 import '../pages/chat.css';
 
 interface ChatInputProps {
@@ -89,6 +89,12 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   const draftStashRef = useRef('');
   /** Moves the caret to the end once the NEXT value commit lands (recalls). */
   const caretToEndRef = useRef(false);
+  // #267 review r1: previous draft key (sentinel-migration trigger) and a
+  // mirror of the displayed value (hydrate-caret nit: only jump the caret
+  // when the hydrated value actually differs).
+  const prevDraftKeyRef = useRef<string | undefined>(undefined);
+  const valueRef = useRef('');
+  valueRef.current = value;
 
   const adjustHeight = useCallback(() => {
     const textarea = internalTextareaRef.current;
@@ -154,9 +160,22 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   useEffect(() => {
     browseIndexRef.current = null;
     draftStashRef.current = '';
+    // #267 (AC27, review round 1): the sentinel-migration owner lives HERE,
+    // inside the composer's key-switch handler (not in ChatPage): the first
+    // turn of a new conversation adopts its real id in the parent, the
+    // composer sees the key change, and the sentinel's draft travels to the
+    // adopted id before hydration. Pinned by ChatInput.drafts.test.tsx —
+    // deleting this call turns the carry leg RED.
+    const prevKey = prevDraftKeyRef.current;
+    if (prevKey !== undefined && prevKey !== draftKey && prevKey === NEW_DRAFT_SENTINEL && draftKey !== undefined) {
+      moveDraftIfTargetEmpty(prevKey, draftKey);
+    }
+    prevDraftKeyRef.current = draftKey;
     const stored = draftKey !== undefined ? (getDraft(draftKey) ?? '') : '';
     setValue(stored);
-    caretToEndRef.current = true;
+    if (stored !== valueRef.current) {
+      caretToEndRef.current = true;
+    }
     onDraftChangeRef.current?.(stored);
     if (draftKey !== undefined) setDraft(draftKey, stored);
     // draftKey alone: a key switch is exactly the hydration trigger.
