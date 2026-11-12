@@ -40,8 +40,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { normalizeForSearch } from '../ingest/normalize.js';
 
-export const CURRENT_SCHEMA_VERSION = 4;
+export const CURRENT_SCHEMA_VERSION = 5;
 
 /** Structural subset of a better-sqlite3 Database this module needs. */
 export interface StoreDb {
@@ -348,6 +349,155 @@ function migrateV3ToV4(db: StoreDb): void {
 }
 
 /**
+ * v4 -> v5 (issue #281, Workstream E): rebuild the derived lexical mirror
+ * chunks_fts from chunks.text through normalizeForSearch so documents whose
+ * extracted text carries Word optional hyphens, zero-width characters,
+ * ligatures or fullwidth forms are found by the plain query the user types.
+ * Identity is untouched: chunks.text, chunk ids and content_hash are
+ * byte-identical (ADR-0004); only the mirror rows change.
+ */
+function migrateV4ToV5(db: StoreDb): void {
+  try {
+    rebuildChunksFtsNormalized(db);
+  } catch (error) {
+    // pr323 review PRR-002: a malformed FTS5 inverted index makes even
+    // DELETE FROM chunks_fts raise SQLITE_CORRUPT_VTAB. At base that fault
+    // surfaced at query time and degraded only the lexical leg; if it
+    // propagated from here, openStore would fail and the corruption-recovery
+    // path would rmSync the WHOLE store (chunks, docs, embeddings) over a
+    // damaged DERIVED mirror. Recover inside the migration instead: drop the
+    // virtual table and recreate it from the authoritative DDL (mirrors
+    // contracts/store.schema.sql; schema-bump-guard pins that file's hash so
+    // drift fails CI), leaving identity tables untouched. Worst case is an
+    // empty lexical mirror — never a deleted corpus.
+    try {
+      db.exec('ROLLBACK');
+    } catch {
+      // The connection may be unusable after some failures; best effort.
+    }
+    recoverChunksFts(db, error);
+    return;
+  }
+  // Heal a pending manifest reconciliation in the same open (mirrors the
+  // v3->v4 step; the else-branch reconcile only runs for already-v5 stores,
+  // so without this a v4 store with doc_claims_reconciled='pending' healed
+  // one open later than before — impl-review r1 question).
+  stampReconciled(db, reconcileDocClaimsLocked(db));
+}
+
+const CHUNKS_FTS_DDL =
+  'CREATE VIRTUAL TABLE chunks_fts USING fts5 (chunk_id UNINDEXED, text)';
+
+function rebuildChunksFtsNormalized(db: StoreDb): void {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.exec('DELETE FROM chunks_fts');
+    // Paged reads (not one .all()): a large store must not materialize every
+    // chunk row in memory inside the write transaction (impl-review r1
+    // question). better-sqlite3 cannot INSERT on a connection that is mid-
+    // iterate, so page by rowid instead.
+    const insertFts = db.prepare('INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)');
+    const page = db.prepare(
+      'SELECT rowid, id, text FROM chunks WHERE rowid > ? ORDER BY rowid LIMIT 500',
+    );
+    let lastRowid = 0;
+    for (;;) {
+      const batch = page.all(lastRowid) as Array<{ rowid: number; id: string; text: string }>;
+      if (batch.length === 0) break;
+      for (const row of batch) {
+        insertFts.run(row.id, normalizeForSearch(row.text));
+      }
+      const last = batch.at(-1);
+      if (last) lastRowid = last.rowid;
+    }
+    db.prepare("UPDATE meta SET value = '5' WHERE key = 'schema_version'").run();
+    db.exec('COMMIT');
+  } catch (error) {
+    try {
+      db.exec('ROLLBACK');
+    } catch {
+      // The connection may be unusable after some failures; surface the cause.
+    }
+    throw error;
+  }
+}
+
+/**
+ * Last-resort recovery when the in-place FTS rebuild fails on a damaged
+ * virtual table: drop and recreate chunks_fts from the authoritative DDL and
+ * repopulate what the identity tables still hold. If even the drop/recreate
+ * fails, stamp v5 with the mirror degraded (lexical leg errors per query at
+ * worst — the pre-#323 behavior) rather than letting the open failure route
+ * the store into rmSync. Throws only when the database file itself is
+ * unusable (even the v5 stamp fails) — plain mirror damage never does.
+ */
+function recoverChunksFts(db: StoreDb, cause: unknown): void {
+  const detail = cause instanceof Error ? cause.message : String(cause);
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    db.exec('DROP TABLE IF EXISTS chunks_fts');
+    db.exec(CHUNKS_FTS_DDL);
+    try {
+      // Paged like the in-place rebuild: a large corpus must not materialize
+      // every chunk row inside the write transaction (impl-review r1).
+      const insertFts = db.prepare('INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)');
+      const page = db.prepare(
+        'SELECT rowid, id, text FROM chunks WHERE rowid > ? ORDER BY rowid LIMIT 500',
+      );
+      let lastRowid = 0;
+      for (;;) {
+        const batch = page.all(lastRowid) as Array<{ rowid: number; id: string; text: string }>;
+        if (batch.length === 0) break;
+        for (const row of batch) {
+          insertFts.run(row.id, normalizeForSearch(row.text));
+        }
+        const last = batch.at(-1);
+        if (last) lastRowid = last.rowid;
+      }
+    } catch (repopulateError) {
+      // The fresh table is usable; a partial repopulation is a degraded
+      // mirror, not a corpus loss. Keep the version stamp.
+      console.error(
+        `[trainingapp] chunks_fts repopulation incomplete after FTS corruption `
+          + `(${repopulateError instanceof Error ? repopulateError.message : String(repopulateError)}); `
+          + 'lexical recall is degraded until the affected documents are re-ingested',
+      );
+    }
+    db.prepare("UPDATE meta SET value = '5' WHERE key = 'schema_version'").run();
+    db.exec('COMMIT');
+    console.error(
+      `[trainingapp] chunks_fts was corrupt and could not be rebuilt in place `
+        + `(${detail}); the mirror was dropped and recreated from chunks.text. `
+        + 'Identity tables are untouched.',
+    );
+  } catch (fatalError) {
+    // Even DROP/recreate failed: stamp v5 so the ladder advances and the
+    // lexical leg degrades per-query (the pre-#323 corruption behavior)
+    // instead of the open failure routing the store into rmSync.
+    console.error(
+      `[trainingapp] chunks_fts recovery failed (${fatalError instanceof Error ? fatalError.message : String(fatalError)}); `
+        + 'stamping schema v5 with a degraded lexical mirror — the corpus is preserved',
+    );
+    // The transaction opened above may still be active on this connection
+    // (better-sqlite3 does not auto-rollback on a failed DDL); stamping
+    // requires a clean transaction state (fix-reviewer r1).
+    try {
+      db.exec('ROLLBACK');
+    } catch {
+      // Nothing was open — fine.
+    }
+    try {
+      db.exec('BEGIN IMMEDIATE');
+      db.prepare("UPDATE meta SET value = '5' WHERE key = 'schema_version'").run();
+      db.exec('COMMIT');
+    } catch {
+      // The database file itself is unusable; surface the original cause.
+      throw new Error(`chunks_fts recovery failed and the store could not be stamped: ${detail}`);
+    }
+  }
+}
+
+/**
  * Bring the store to CURRENT_SCHEMA_VERSION. Returns the final version.
  * Future versions extend this ladder; a store from the future (version >
  * CURRENT) fails loud instead of guessing.
@@ -367,8 +517,11 @@ export function migrate(db: StoreDb): number {
   }
   if (version < 4) {
     migrateV3ToV4(db);
+  }
+  if (version < 5) {
+    migrateV4ToV5(db);
   } else {
-    // Stores already at v4 re-attempt the manifest reconciliation on every
+    // Stores already at v5 re-attempt the manifest reconciliation on every
     // migrate() entry (heals a pending store once its manifest is readable).
     reconcileDocClaims(db);
   }

@@ -230,10 +230,14 @@ not the extract upload path.
   install. With it on, a pack signed only by the retired key is refused at
   install with a not-in-the-trusted-keyset error (browser and desktop:
   `signature key_id '<id>' is not in the trusted keyset`; Python:
-  `... is not in packs.security.trustedKeys`). The gate runs at install
-  time only: packs already installed are not re-verified, and a rollback or
-  re-activation of a retained version does not re-check the signature (a
-  registry flip on the browser, desktop and Python managers). To purge content
+  `... is not in packs.security.trustedKeys`). All three install-time policy gates
+  (the sqlite-vec stamp gate, the embedding-model gate, and this signature gate)
+  run at install time only: packs already installed are not re-verified, and a
+  rollback or re-activation of a retained version skips all three gates (a
+  registry flip on the browser, desktop and Python managers). Retained versions
+  carry no install-time whole-manifest hash pin — the per-document bytes ARE
+  re-validated on activation (`validatedManifest` checks every `docs[].sha256`),
+  but no pin covers the manifest as a whole. To purge content
   signed by a compromised key, also remove its installed packs (and their
   retained versions) explicitly.
 - **Separate anchors.** The update feed has its own trust anchor

@@ -1,0 +1,204 @@
+{
+  "_comment": "Search normalization vectors (issue #281, Workstream E). One table-driven normalizeForSearch contract applied at every lexical FTS write site, the desktop query (sanitizeFtsQuery), the browser keyword index (add + search), packtool (build + compose), the interop harness writers + oracle, and the Python twin contracts/tests/store-interop/normalize_search.py. Semantics (pinned by these vectors): NFKC, strip Default_Ignorable code points (U+00AD, U+200B, U+200C, U+200D, U+2060, U+FEFF), fold dash variants (U+2010-U+2015, U+2212) to '-', quote variants (U+2018/U+2019 to apostrophe, U+201C/U+201D to double quote), U+2026 to '...', NBSP/NNBSP to space (already NFKC), collapse whitespace runs to one space, trim. Greek and CJK letters preserved. Consumers: desktop text-normalization-vectors.test.ts, web_ui keyword-index.normalization.test.ts, packtool index-writer-normalization.test.ts, python tests/test_text_normalization_vectors.py, interop harness legs.",
+  "version": 1,
+  "vectors": [
+    {
+      "id": "soft-hyphen-word",
+      "input": "ef­ficacy",
+      "expected": "efficacy",
+      "note": "U+00AD from mammoth w:softHyphen splits the token for unicode61"
+    },
+    {
+      "id": "soft-hyphen-only",
+      "input": "­",
+      "expected": "",
+      "note": "ignorable-only input normalizes to empty"
+    },
+    {
+      "id": "zwsp-word",
+      "input": "he​moglobin",
+      "expected": "hemoglobin",
+      "note": "U+200B zero-width space splits tokens"
+    },
+    {
+      "id": "zwnj",
+      "input": "co‌operative",
+      "expected": "cooperative",
+      "note": "U+200C zero-width non-joiner"
+    },
+    {
+      "id": "zwj",
+      "input": "co‍operative",
+      "expected": "cooperative",
+      "note": "U+200D zero-width joiner"
+    },
+    {
+      "id": "word-joiner",
+      "input": "a⁠b",
+      "expected": "ab",
+      "note": "U+2060 word joiner"
+    },
+    {
+      "id": "bom",
+      "input": "﻿report",
+      "expected": "report",
+      "note": "U+FEFF stripped"
+    },
+    {
+      "id": "ligature-fl",
+      "input": "ﬂow",
+      "expected": "flow",
+      "note": "U+FB02 fl ligature, NFKC compatibility fold"
+    },
+    {
+      "id": "ligature-ffi",
+      "input": "first-line eﬃcacy",
+      "expected": "first-line efficacy",
+      "note": "U+FB03 ffi ligature folds to ffi"
+    },
+    {
+      "id": "fullwidth-letter",
+      "input": "ＡBG",
+      "expected": "ABG",
+      "note": "fullwidth A folds to ASCII A"
+    },
+    {
+      "id": "fullwidth-word",
+      "input": "eｆficacy",
+      "expected": "efficacy",
+      "note": "fullwidth e folds to ASCII e"
+    },
+    {
+      "id": "superscript",
+      "input": "spO²",
+      "expected": "spO2",
+      "note": "superscript two to digit two"
+    },
+    {
+      "id": "en-dash",
+      "input": "first–line",
+      "expected": "first-line",
+      "note": "U+2013 en dash to hyphen"
+    },
+    {
+      "id": "em-dash",
+      "input": "a—b",
+      "expected": "a-b",
+      "note": "U+2014 em dash to hyphen"
+    },
+    {
+      "id": "hyphen-bullet",
+      "input": "a‐b",
+      "expected": "a-b",
+      "note": "U+2010 hyphen-bullet to hyphen"
+    },
+    {
+      "id": "minus-sign",
+      "input": "temp −4",
+      "expected": "temp -4",
+      "note": "U+2212 minus sign to hyphen"
+    },
+    {
+      "id": "curly-quotes",
+      "input": "‘x’",
+      "expected": "'x'",
+      "note": "U+2018/2019 to apostrophe"
+    },
+    {
+      "id": "double-quotes",
+      "input": "“x”",
+      "expected": "\"x\"",
+      "note": "U+201C/201D to double quote"
+    },
+    {
+      "id": "ellipsis",
+      "input": "wait…",
+      "expected": "wait...",
+      "note": "U+2026 to three dots"
+    },
+    {
+      "id": "nbsp",
+      "input": "a b",
+      "expected": "a b",
+      "note": "U+00A0 to space (NFKC) then collapse"
+    },
+    {
+      "id": "narrow-nbsp",
+      "input": "a b",
+      "expected": "a b",
+      "note": "U+202F to space (NFKC) then collapse"
+    },
+    {
+      "id": "fullwidth-quote",
+      "input": "query＂x",
+      "expected": "query\"x",
+      "note": "U+FF02 NFKC-folds to ASCII double quote"
+    },
+    {
+      "id": "mixed-variant-word",
+      "input": "ef­fi​cacy",
+      "expected": "efficacy",
+      "note": "soft hyphen + ZWSP in one word"
+    },
+    {
+      "id": "greek-preserved",
+      "input": "β-blocker",
+      "expected": "β-blocker",
+      "note": "Greek letters preserved (ClipSanitizer lossy half must NOT be carried)"
+    },
+    {
+      "id": "cjk-preserved",
+      "input": "血氧 ABG",
+      "expected": "血氧 ABG",
+      "note": "CJK letters preserved"
+    },
+    {
+      "id": "whitespace-collapse",
+      "input": "a\n\n  b\tc",
+      "expected": "a b c",
+      "note": "whitespace runs collapse to one space"
+    },
+    {
+      "id": "ignorable-only-with-space",
+      "input": "­ ​",
+      "expected": "",
+      "note": "ignorables + space collapse to empty"
+    },
+    {
+      "id": "dash-run",
+      "input": "a––b",
+      "expected": "a--b",
+      "note": "dash run folds per-character"
+    },
+    {
+      "id": "nel-kept",
+      "input": "ab",
+      "expected": "ab",
+      "note": "U+0085 is NOT whitespace in the JS set - kept verbatim (python str-backslash-s would fold it; the shared explicit class keeps twins identical, impl-review r1)"
+    },
+    {
+      "id": "file-sep-kept",
+      "input": "a\u001cb",
+      "expected": "a\u001cb",
+      "note": "U+001C is NOT whitespace in the JS set - kept verbatim (same parity rationale)"
+    },
+    {
+      "id": "nel-leading-kept",
+      "input": "protocol",
+      "expected": "protocol",
+      "note": "BOUNDARY (impl-review r2): a LEADING U+0085 is kept verbatim - python str.strip() no-args would drop it; the JS .trim() set also keeps it"
+    },
+    {
+      "id": "file-sep-trailing-kept",
+      "input": "protocol\u001c",
+      "expected": "protocol\u001c",
+      "note": "BOUNDARY (impl-review r2): a TRAILING U+001C is kept verbatim - python str.strip() no-args would drop it"
+    },
+    {
+      "id": "class-boundary-trimmed",
+      "input": "  protocol 　",
+      "expected": "protocol",
+      "note": "BOUNDARY (impl-review r2): class members at the boundary (U+00A0/U+3000) ARE trimmed - collapse then space-only strip matches JS .trim() post-collapse"
+    }
+  ]
+}

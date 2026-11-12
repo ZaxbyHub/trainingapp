@@ -18,8 +18,9 @@ desktop/main/backend/store/migrate.ts — the store-interop suite proves the
 two runtimes agree.
 
 Self-test CLI (consumed by the c3-schema-migration test): `python migrate.py
---selftest` builds a v2-shaped store in a temp dir, migrates it to v4, and
-asserts the v3 packs shape/row mapping plus the v4 claims backfill; exits 0
+--selftest` builds a v2-shaped store in a temp dir, migrates it to v5, and
+asserts the v3 packs shape/row mapping, the v4 claims backfill, and the v5
+normalized FTS rebuild; exits 0
 on agreement.
 """
 
@@ -29,7 +30,9 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION = 4
+from normalize_search import normalize_search
+
+CURRENT_SCHEMA_VERSION = 5
 
 # Shape mirror of contracts/store.schema.sql's links definition (v2).
 _LINKS_V2_DDL = """
@@ -242,6 +245,93 @@ def _migrate_v3_to_v4(conn: sqlite3.Connection) -> None:
         conn.execute("UPDATE meta SET value = '4' WHERE key = 'schema_version'")
 
 
+def _migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
+    """v4 -> v5 (#281): rebuild the derived lexical mirror chunks_fts from
+    chunks.text through normalize_search so variant text (Word optional
+    hyphens, zero-width characters, ligatures, fullwidth forms) is found by
+    plain typed queries. Identity is untouched: chunks.text, chunk ids and
+    content_hash are byte-identical (ADR-0004); only mirror rows change.
+    Row mapping mirrors desktop/main/backend/store/migrate.ts, including its
+    pr323-review recovery: a corrupt FTS vtab (DELETE raises) is recovered by
+    drop + recreate + repopulate, never propagated to store deletion."""
+    try:
+        _rebuild_chunks_fts_normalized(conn)
+    except sqlite3.DatabaseError:
+        _recover_chunks_fts(conn)
+        return
+    with conn:
+        # Heal a pending manifest reconciliation in the same open (mirrors the
+        # v3->v4 step; without this a v4 store with doc_claims_reconciled
+        # 'pending' healed one open later than before - impl-review r1).
+        _stamp_reconciled(conn, _reconcile_doc_claims_locked(conn))
+
+
+_CHUNKS_FTS_DDL = (
+    "CREATE VIRTUAL TABLE chunks_fts USING fts5 (chunk_id UNINDEXED, text)"
+)
+
+
+def _rebuild_chunks_fts_normalized(conn: sqlite3.Connection) -> None:
+    with conn:
+        conn.execute("DELETE FROM chunks_fts")
+        cursor = conn.execute("SELECT id, text FROM chunks ORDER BY rowid")
+        while True:
+            batch = cursor.fetchmany(1000)
+            if not batch:
+                break
+            for row_id, text in batch:
+                conn.execute(
+                    "INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)",
+                    (row_id, normalize_search(text)),
+                )
+        conn.execute("UPDATE meta SET value = '5' WHERE key = 'schema_version'")
+
+
+def _recover_chunks_fts(conn: sqlite3.Connection) -> None:
+    """Drop + recreate + repopulate the damaged mirror; worst case a degraded
+    lexical mirror, never the corpus (mirrors migrate.ts recoverChunksFts).
+    Raises only if the database file itself is unusable (even the v5 stamp
+    fails) — plain mirror damage never does. The repopulation is paged like
+    the in-place rebuild, and the fatal fallback stamps v5 from a clean
+    transaction state."""
+    try:
+        with conn:
+            conn.execute("DROP TABLE IF EXISTS chunks_fts")
+            conn.execute(_CHUNKS_FTS_DDL)
+            try:
+                # Paged like the in-place rebuild: a large corpus must not
+                # materialize every chunk row inside the write transaction.
+                cursor = conn.execute("SELECT id, text FROM chunks ORDER BY rowid")
+                while True:
+                    batch = cursor.fetchmany(1000)
+                    if not batch:
+                        break
+                    for row_id, text in batch:
+                        conn.execute(
+                            "INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)",
+                            (row_id, normalize_search(text)),
+                        )
+            except sqlite3.DatabaseError as repopulate_error:
+                print(
+                    f"[trainingapp] chunks_fts repopulation incomplete after FTS "
+                    f"corruption ({repopulate_error}); lexical recall is degraded "
+                    "until the affected documents are re-ingested"
+                )
+            conn.execute("UPDATE meta SET value = '5' WHERE key = 'schema_version'")
+        print(
+            "[trainingapp] chunks_fts was corrupt and could not be rebuilt in place; "
+            "the mirror was dropped and recreated from chunks.text. Identity tables "
+            "are untouched."
+        )
+    except sqlite3.DatabaseError as fatal_error:
+        print(
+            f"[trainingapp] chunks_fts recovery failed ({fatal_error}); stamping "
+            "schema v5 with a degraded lexical mirror - the corpus is preserved"
+        )
+        with conn:
+            conn.execute("UPDATE meta SET value = '5' WHERE key = 'schema_version'")
+
+
 def migrate(conn: sqlite3.Connection) -> int:
     """Bring the store to CURRENT_SCHEMA_VERSION. Returns the final version.
 
@@ -266,8 +356,10 @@ def migrate(conn: sqlite3.Connection) -> int:
         _migrate_v2_to_v3(conn)
     if version < 4:
         _migrate_v3_to_v4(conn)
+    if version < 5:
+        _migrate_v4_to_v5(conn)
     else:
-        # Stores already at v4 re-attempt the manifest reconciliation on
+        # Stores already at v5 re-attempt the manifest reconciliation on
         # every migrate() entry (heals a pending store).
         _reconcile_doc_claims(conn)
     return _read_schema_version(conn)
@@ -336,17 +428,30 @@ def _selftest() -> int:
                     published_at TEXT,
                     pack_id      TEXT REFERENCES packs(id)
                 );
+                CREATE TABLE chunks (
+                    id           TEXT PRIMARY KEY,
+                    doc_id       TEXT NOT NULL REFERENCES docs(id),
+                    chunk_index  INTEGER NOT NULL,
+                    text         TEXT NOT NULL,
+                    content_hash TEXT NOT NULL
+                );
+                CREATE VIRTUAL TABLE chunks_fts USING fts5 (chunk_id UNINDEXED, text);
                 INSERT INTO packs (id, name, version, published_at, source_class, supersedes)
                 VALUES ('p1', 'Pack One', '1.0.0', NULL, 'bundled', NULL),
                        ('p2', 'Pack Two', '2.0.0', NULL, 'training', 'p1');
                 INSERT INTO docs (id, source_class, path, sha256, title, published_at, pack_id)
                 VALUES ('packaged-doc', 'bundled', 'docs/p.json', 'aaa111', 'P', NULL, 'p1'),
                        ('user-doc', 'general', 'notes.txt', 'bbb222', 'U', NULL, NULL);
+                INSERT INTO chunks (id, doc_id, chunk_index, text, content_hash)
+                VALUES ('variant-chunk', 'user-doc', 0, 'ef­ficacy he​moglobin', 'v1'),
+                       ('plain-chunk', 'user-doc', 1, 'plain protocol text', 'v2');
+                INSERT INTO chunks_fts (chunk_id, text)
+                SELECT id, text FROM chunks;
                 """
             )
             conn.commit()
             final = migrate(conn)
-            assert final == 4, f"expected final version 4, got {final}"
+            assert final == 5, f"expected final version 5, got {final}"
             cols = [
                 row[1] for row in conn.execute("PRAGMA table_info(packs)").fetchall()
             ]
@@ -385,7 +490,7 @@ def _selftest() -> int:
                 "pack_id",
             ], f"unexpected docs columns: {doc_cols}"
             version = _read_schema_version(conn)
-            assert version == 4, version
+            assert version == 5, version
             # v4 claims backfill: every docs row carries exactly the claim its
             # recorded owner implies ('pack:<id>' / 'user'); doc_claims keys on
             # docs.id (PC-3), not the sha. The active packs have NULL
@@ -404,7 +509,89 @@ def _selftest() -> int:
                 "SELECT value FROM meta WHERE key = 'doc_claims_reconciled'"
             ).fetchone()
             assert reconciled == ("done",), reconciled
-            print("selftest OK: v2 -> v4 ladder agrees with the Node mirror")
+            # v5 (#281): the mirror rebuilds normalized from the raw variant
+            # rows seeded above; identity (chunks.text / content_hash) is
+            # byte-identical.
+            fts_rows = conn.execute(
+                "SELECT chunk_id, text FROM chunks_fts ORDER BY rowid"
+            ).fetchall()
+            assert fts_rows == [
+                ("variant-chunk", "efficacy hemoglobin"),
+                ("plain-chunk", "plain protocol text"),
+            ], fts_rows
+            print("selftest OK: v2 -> v5 ladder agrees with the Node mirror")
+            return 0
+        finally:
+            conn.close()
+
+
+def _selftest_corrupt_mirror() -> int:
+    """PRR-002 twin leg (pr323 fix-reviewer r1): a corrupt FTS5 mirror
+    (%_data shadow rows wiped) recovers by drop+recreate during the v2->v5
+    ladder; the identity corpus is byte-identical afterwards. Mirrors the
+    desktop spec leg in c3-fts-reindex-migration.test.ts."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "corrupt.sqlite"
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conn.executescript(
+                """
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                INSERT INTO meta (key, value) VALUES ('schema_version', '2');
+                CREATE TABLE packs (
+                    id           TEXT PRIMARY KEY,
+                    name         TEXT NOT NULL,
+                    version      TEXT NOT NULL,
+                    published_at TEXT,
+                    source_class TEXT NOT NULL,
+                    supersedes   TEXT REFERENCES packs(id)
+                );
+                CREATE TABLE docs (
+                    id           TEXT PRIMARY KEY,
+                    source_class TEXT NOT NULL,
+                    path         TEXT NOT NULL,
+                    sha256       TEXT NOT NULL,
+                    title        TEXT,
+                    published_at TEXT,
+                    pack_id      TEXT REFERENCES packs(id)
+                );
+                CREATE TABLE chunks (
+                    id           TEXT PRIMARY KEY,
+                    doc_id       TEXT NOT NULL REFERENCES docs(id),
+                    chunk_index  INTEGER NOT NULL,
+                    text         TEXT NOT NULL,
+                    content_hash TEXT NOT NULL
+                );
+                CREATE VIRTUAL TABLE chunks_fts USING fts5 (chunk_id UNINDEXED, text);
+                INSERT INTO docs (id, source_class, path, sha256)
+                VALUES ('user-doc', 'general', 'notes.txt', 'bbb222');
+                INSERT INTO chunks VALUES
+                    ('variant-chunk', 'user-doc', 0, 'ef­ficacy he​moglobin', 'v1'),
+                    ('plain-chunk', 'user-doc', 1, 'plain protocol text', 'v2');
+                INSERT INTO chunks_fts (chunk_id, text) SELECT id, text FROM chunks;
+                """
+            )
+            conn.commit()
+            # Real on-disk corruption: wipe the FTS5 %_data shadow rows.
+            conn.execute("DELETE FROM chunks_fts_data")
+            conn.commit()
+            final = migrate(conn)
+            assert final == 5, f"expected final version 5, got {final}"
+            chunks_after = conn.execute(
+                "SELECT id, text FROM chunks ORDER BY rowid"
+            ).fetchall()
+            assert chunks_after == [
+                ("variant-chunk", "ef­ficacy he​moglobin"),
+                ("plain-chunk", "plain protocol text"),
+            ], chunks_after
+            fts_after = conn.execute(
+                "SELECT chunk_id, text FROM chunks_fts ORDER BY rowid"
+            ).fetchall()
+            assert fts_after == [
+                ("variant-chunk", "efficacy hemoglobin"),
+                ("plain-chunk", "plain protocol text"),
+            ], fts_after
+            print("selftest OK: corrupt-mirror recovery preserves the corpus")
             return 0
         finally:
             conn.close()
@@ -413,4 +600,6 @@ def _selftest() -> int:
 if __name__ == "__main__":
     import sys
 
+    if "--selftest-corrupt" in sys.argv[1:]:
+        raise SystemExit(_selftest_corrupt_mirror())
     raise SystemExit(_selftest() if "--selftest" in sys.argv[1:] else 0)

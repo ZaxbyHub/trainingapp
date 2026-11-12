@@ -150,7 +150,7 @@ Required top-level fields: `id`, `name`, `version`, `published_at`,
 | `embedding` | `{model_id, dims, normalize}` — all required. Packtool's pin is `bge-small-en-v1.5` (384 dims, L2-normalized; `packtool/build/pack-json.ts` / ADR-0006). |
 | `chunking` | `{strategy, size, overlap}` — enum `fixed-words`, `fixed-tokens`, `page-aware`, `slide-aware`. |
 | `docs[]` | `{path, sha256, title, mime}` (+optional per-doc `published_at`). `path` is pack-relative, forward-slash separated, no `..` segments; `sha256` is the hex digest of the raw doc bytes BEFORE chunking. |
-| `index` | `{path, schema_version, sqlite_vec_version}` when a prebuilt index ships. `schema_version` must match `STORE_SCHEMA_VERSION` in `packtool/build/pack-json.ts` (currently `3` — the pack ARTIFACT index version; the desktop store's seeded `schema_version` in `contracts/store.schema.sql` is independent and currently `4`); `sqlite_vec_version` must equal the pin `0.1.9` (ADR-0005). |
+| `index` | `{path, schema_version, sqlite_vec_version}` when a prebuilt index ships. `schema_version` must match `STORE_SCHEMA_VERSION` in `packtool/build/pack-json.ts` (currently `3` — the pack ARTIFACT index version; the desktop store's seeded `schema_version` in `contracts/store.schema.sql` is independent and currently `5`); `sqlite_vec_version` must equal the pin `0.1.9` (ADR-0005). |
 | `signature` | `{algorithm, value, key_id}` detached signature block. |
 
 ## Embeddings
@@ -169,6 +169,14 @@ Required top-level fields: `id`, `name`, `version`, `published_at`,
   `--embedder hash` or stage the weights first.
 
 ## Versioning, supersede, and rollback
+
+Bundled content ships with the app by requirement: every boot re-ensures
+manifest-declared bundled packs that are missing or older (`ensureBundledPacksAtBoot`),
+so a bundled pack the user removed via the Documents page is re-installed on the next
+launch, and a rolled-back bundled pack is re-upgraded to the shipped version at boot.
+The boot log line `bundled pack ensure skipped: ...` is informational — a store error
+is logged separately (see `desktop/main/first-run/bundled-packs.ts`).
+
 
 Chunk identity is content-derived (ADR-0004, normative):
 

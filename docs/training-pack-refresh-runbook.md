@@ -161,6 +161,12 @@ install through the same hardened loopback route as a drag-drop zip
 
 ## Rollback
 
+Bundled-pack note: a bundled pack the user removed (or rolled back to a retained
+version) is re-ensured to the shipped version on the next launch
+(`ensureBundledPacksAtBoot`); the `bundled pack ensure skipped: ...` boot log line is
+informational, with any store error logged separately.
+
+
 PackManager rollback semantics make a bad refresh recoverable without
 re-downloading anything: superseded versions are retained on disk
 (inactive-but-retained), and `rollback(pack_id, to)` reactivates a prior

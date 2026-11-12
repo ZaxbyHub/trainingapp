@@ -5,7 +5,7 @@
  * declared size/ratio limits) even though it never extracts.
  * Constants mirror the frozen C11/C2/C3 drivers.
  */
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,6 +18,13 @@ import {
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PACKTOOL_ROOT = path.resolve(HERE, '..', '..');
+
+// F-AC7 (issue #282): this spec writes its zip fixtures under
+// packtool/.agents-tmp; every run must leave no residue behind (an
+// interrupted run is additionally covered by the tracked .gitignore entry).
+afterAll(() => {
+  fs.rmSync(path.join(PACKTOOL_ROOT, '.agents-tmp'), { recursive: true, force: true });
+});
 
 /** Minimal zip writer ported from the frozen C11 driver (exact control
  * over entry names; zlib for deflate) so hostile names survive verbatim. */

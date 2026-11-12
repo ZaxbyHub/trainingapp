@@ -24,6 +24,7 @@
 import type { StoreHandle } from '../store/sqlite-store.js';
 import type { EmbeddingSurface } from '../ingest/embedder.js';
 import { applyRecencyPrior, precedenceWinner, type PackClaim } from './recency.js';
+import { normalizeForSearch } from '../ingest/normalize.js';
 
 /** One retrieved chunk with its final score (fused RRF*recency, or reranker). */
 export interface RetrievedChunk {
@@ -132,20 +133,36 @@ export function recencyWeight(_chunk: unknown): number {
 
 /**
  * FTS5 MATCH does not accept raw user syntax safely (quotes, `*`, `AND`/`OR`/
- * `NOT`/`NEAR`, `^`, `:` are all operators). Wrap each remaining term in double
- * quotes (a quoted single term is observably identical to the bare term) and
- * drop operator/bare-quote/star tokens outright. A query reduced to nothing
+ * `NOT`/`NEAR`, `^`, `:` are all operators). Whole-token operators are dropped;
+ * every other token is normalized and its inner hazard characters are
+ * STRIPPED while the term itself is KEPT, emitted as a double-quoted phrase
+ * (pr323 review PRR-003: dropping the whole token deleted terms the base
+ * build matched — smart-quoted pastes lost their entire lexical leg). Tokens
+ * reduced to nothing by the strip are skipped; a query reduced to nothing
  * yields an empty FTS leg instead of a thrown syntax error.
  */
 export function sanitizeFtsQuery(query: string): string | null {
   const operators = new Set(['and', 'or', 'not', 'near']);
   const terms: string[] = [];
   for (const raw of query.split(/\s+/)) {
-    if (raw.length === 0) continue;
-    const lowered = raw.toLowerCase();
+    // Normalize BEFORE the operator/forbidden-character checks (critic r1: NFKC can
+    // produce ASCII specials from fullwidth forms, e.g. U+FF02 -> '"'; evaluating the
+    // checks on the normalized token keeps FTS syntax hazards out).
+    const normalized = normalizeForSearch(raw);
+    if (normalized.length === 0) continue;
+    const lowered = normalized.toLowerCase();
     if (operators.has(lowered)) continue;
-    if (/["*():^&]/.test(raw)) continue;
-    terms.push(`"${raw}"`);
+    // pr323 review PRR-003: normalization FOLDS typographic quotes into the
+    // guarded ASCII chars (U+201C/U+201D/U+FF02 -> '"'), so dropping the token
+    // here silently deleted terms the base build kept and matched (a smart-
+    // quoted "efficacy" paste lost its whole lexical leg). Keep the term:
+    // strip the hazardous characters from WITHIN the token (FTS5 doubles an
+    // inner quote inside a quoted phrase; we remove rather than rely on
+    // tokenizer-specific escaping), then emit the quoted remainder. Tokens
+    // reduced to nothing by the strip are skipped.
+    const sanitized = normalized.replace(/["*():^&]/g, '');
+    if (sanitized.length === 0) continue;
+    terms.push(`"${sanitized}"`);
   }
   if (terms.length === 0) return null;
   return terms.join(' ');

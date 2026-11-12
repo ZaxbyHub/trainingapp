@@ -43,7 +43,7 @@ desktop/
 | Script | What it does |
 |---|---|
 | `npm run compile` | tsc -> `dist/` (main as ESM/nodenext; preload as CommonJS, renamed .cjs) |
-| `npm test` | all acceptance spec files (vitest; B1 + B2 suites) |
+| `npm test` | all acceptance spec files (vitest; B1 + B2 suites). Precondition: `packtool/node_modules` must exist (run `npm --prefix packtool ci` once FROM THE REPO ROOT; the vitest globalSetup then compiles packtool locally, no network) |
 | `npm run dev` | compile + launch Electron with `--dev` (expects the vite dev server already running — use `desktop:dev` to start both) |
 | `npm run desktop:dev` | vite dev (web_ui) + Electron with reload, via `concurrently` |
 | `npm run desktop:build` | build web_ui, copy `web_ui/dist` -> `renderer/`, compile, run electron-builder (NSIS x64, unsigned) |

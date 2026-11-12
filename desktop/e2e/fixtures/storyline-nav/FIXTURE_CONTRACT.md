@@ -199,3 +199,24 @@ The fixture embeds third-party Articulate Storyline 360 output (minified
 runtime, slide payloads, narration MP3s) used internally for testing only.
 It is not covered by this repository's MIT license and must not be
 redistributed outside the organization.
+
+<!-- fixture-licensing:v1 -->
+Fixture licensing (issue #282). The e2e fixture `desktop/e2e/fixtures/storyline-nav/` is
+classified per file in its `LICENSE-MANIFEST.json`. Rights holder of the course content
+(narration MP3s, mobile imagery, and the slide content embodied in the fixture):
+zaxbysauce (maintainer; recorded 2026-11-03 on issue #282). The course content is NOT
+covered by this repository's MIT license. The Articulate Storyline 360 player runtime
+(`html5/lib/**` and the Slide-payload export scripts under `story_content/*.js`) is
+third-party published output carrying "Copyright (c) 2026 ; Not Licensed" headers
+(`html5/lib/scripts/*.min.js:1-2`), not repository MIT; its redistribution basis is a
+pending maintainer statement (issue #282 AC1, statement 6). Embedded components, named individually with tree-verified
+banners: GreenSock CSSRulePlugin 3.11.3 (standard license, all rights reserved,
+`bootstrapper.min.js:7-8`), Underscore.js 1.8.3 (MIT, `bootstrapper.min.js:30-37`), lodash
+(MIT, `bootstrapper.min.js:30-37`), regenerator-runtime (MIT, `slides.min.js`), Open Sans
+1.10 (Apache-2.0, font nameID-14 license URL, `html5/lib/stylesheets/mobile-fonts/*.woff`).
+Narration voice provenance (statement 4), rights or permission for the clinical-application
+screenshots and video (statement 3), any DoD/DHA public-release clearance (statement 5),
+the Storyline license tier used to publish (statement 2), and the GreenSock component
+license basis (statement 7) are pending maintainer statements (issue #282 AC1); this
+paragraph states verified facts only and makes no assertion about any pending basis.
+<!-- /fixture-licensing -->

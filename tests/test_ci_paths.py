@@ -527,6 +527,29 @@ def test_security_workflow_carries_the_contract_gate():
     assert (
         "npm --prefix desktop ci" in run_scalars
     ), "security.yml lost the contract-family install step"
+    # pr323 feedback r2 (fix-reviewer r1): the F1 skip opt-out must be a real
+    # step-level env sibling, not text inside the run scalar — the shipped
+    # defect glued `env:` INTO the folded `run: >` block (PyYAML: env None,
+    # run begins 'env:\n' and bash exits 127 on 'env:'), while these substring
+    # checks stayed green. Assert on the PARSED step env of the desktop-test
+    # step; if the glue reappears, env is None / run starts with 'env:' and
+    # this assertion (and the run-prefix shape) go RED.
+    test_steps = [
+        s
+        for s in job.get("steps", [])
+        if str(s.get("run", "")).startswith("npm --prefix desktop test")
+    ]
+    assert test_steps, "security.yml: no step whose run invokes the desktop tests"
+    step_env = test_steps[0].get("env") or {}
+    assert step_env.get("TRAININGAPP_SKIP_PACKTOOL_GLOBAL_SETUP") == "1", (
+        "security.yml: the contract-family step lost its parsed "
+        "TRAININGAPP_SKIP_PACKTOOL_GLOBAL_SETUP env (glued into the run "
+        "scalar, or the opt-out was removed) — globalSetup would abort the "
+        "required job (pr323 review PRR-001)"
+    )
+    assert (
+        "env:" not in str(test_steps[0].get("run", ""))[:200]
+    ), "security.yml: the desktop-test run scalar begins with glue text ('env:')"
     needs = job.get("needs")
     assert not needs, f"security job must not gate on needs: {needs}"
     assert "if" not in job, "security job must not carry a job-level if"
@@ -589,7 +612,37 @@ _AUDIT_GUARD_ROSTER = [
     "tests/test_ci_paths.py",
     "tests/test_master_push_advisory_scan.py",
     "tests/test_319_guards.py",
+    # issue #281/#282 (workstreams E/F): search-normalization twin parity +
+    # fixture licensing truth + per-file fixture manifest
+    "tests/test_text_normalization_vectors.py",
+    "tests/test_fixture_licensing_docs.py",
+    "tests/test_fixture_manifest.py",
 ]
+
+
+def test_desktop_build_store_interop_parity_step_skips_packtool_setup():
+    """pr323 review PRR-001 class, third surface: the store-interop job runs
+    the C1 parity leg through desktop vitest with only desktop deps
+    installed — no packtool/node_modules. The packtool-building globalSetup
+    must be told to skip or the leg dies on PRECONDITION_MISSING before any
+    test runs. Assert on the PARSED step env (the security.yml guard's
+    rationale applies verbatim: a glued `env:` inside the run scalar parses
+    as None and bash exits 127 on 'env:')."""
+    wf = _load_workflow("desktop-build.yml")
+    steps = wf["jobs"]["store-interop"].get("steps", [])
+    parity_steps = [s for s in steps if "test_pack_parity.py" in str(s.get("run", ""))]
+    assert parity_steps, "desktop-build.yml: store-interop lost the pack-parity step"
+    env = parity_steps[0].get("env") or {}
+    assert env.get("TRAININGAPP_SKIP_PACKTOOL_GLOBAL_SETUP") == "1", (
+        "desktop-build.yml store-interop: the pack-parity step lost its parsed "
+        "TRAININGAPP_SKIP_PACKTOOL_GLOBAL_SETUP env (glued into the run "
+        "scalar, or the opt-out was removed) — the vitest leg would die on "
+        "PRECONDITION_MISSING packtool/node_modules (pr323 review PRR-001)"
+    )
+    run_scalar = str(parity_steps[0].get("run", ""))
+    assert (
+        "env:" not in run_scalar[:200]
+    ), "desktop-build.yml store-interop: the parity run scalar begins with glue text ('env:')"
 
 
 def test_security_job_audit_guards_step_rolls_the_guard_roster():
@@ -605,9 +658,62 @@ def test_security_job_audit_guards_step_rolls_the_guard_roster():
     )
     for guard in _AUDIT_GUARD_ROSTER:
         assert guard in executable, f"Audit guards roster missing {guard}"
-    # the pins must be exact (==), the epic rule: no floating guard deps
-    assert re.search(
-        r"pip install pytest==[\d.]+ pyyaml==[\d.]+ packaging==[\d.]+", executable
+    # impl-review r1+r2 (batch-281-282): substring presence is not wiring.
+    # The shipped defect was a literal two-char "\\n" sequence BETWEEN tokens
+    # inside this YAML block scalar: PyYAML returns backslash+n verbatim, bash
+    # spawns a phantom "n" argument, pytest exits 4 — while every guard path
+    # stayed its own well-formed token and this file's earlier checks stayed
+    # green. Three independent bites:
+    # (1) the run text must contain NO literal two-char backslash-n sequence;
+    assert "\\n" not in run, (
+        "Audit guards run text carries a literal two-char backslash-n sequence "
+        "(a glued continuation) — bash would spawn a phantom 'n' argument"
+    )
+    # (2) tokenize as bash would (continuations join lines) and require every
+    # non-flag token to be a real file — a phantom 'n' or any glued path fails.
+    # Only the pytest invocation (from its first line through the final roster
+    # line) is tokenized; the pip install line has its own pinned word set
+    # checked by the regex below.
+    lines = executable.splitlines()
+    start = next(
+        (i for i, ln in enumerate(lines) if ln.strip().startswith("python -m pytest")),
+        None,
+    )
+    assert start is not None, "Audit guards pytest invocation line not found"
+    end = next(
+        (i for i in range(start, len(lines)) if lines[i].rstrip().endswith("-q")),
+        len(lines) - 1,
+    )
+    command = " ".join(ln.strip().rstrip("\\") for ln in lines[start : end + 1])
+    import os
+
+    allowed_words = {"python", "-m", "pytest", "-q"}
+    tokens = command.split()
+    for token in tokens:
+        if token in allowed_words:
+            continue
+        assert token.startswith("tests/") and os.path.isfile(
+            REPO_ROOT / token
+        ), f"Audit guards run line has a non-file argument token: {token!r}"
+    # (3) every rostered path is a standalone token that resolves on disk.
+    file_tokens = [t for t in tokens if t.startswith("tests/")]
+    for guard in _AUDIT_GUARD_ROSTER:
+        assert (
+            guard in file_tokens
+        ), f"Audit guards roster token is not standalone: {guard}"
+    # the pins must be exact (==), the epic rule: no floating guard deps.
+    # pr323 feedback r2 (PRR-019): the guard is LINE-EXACT — a regex over the
+    # executable tolerates extra packages, --index-url or a swapped pin on the
+    # same line; the shipped defect (fix-reviewer r1: the F14 edit was absent
+    # from the pushed commit) left the substring shape in place.
+    pip_lines = [
+        ln.strip()
+        for ln in executable.splitlines()
+        if ln.strip().startswith("pip install ")
+    ]
+    assert pip_lines == ["pip install pytest==9.1.1 pyyaml==6.0.2 packaging==26.2"], (
+        "Audit guards pip line must stay exact (== pins, no extra packages, "
+        f"no extra flags): {pip_lines}"
     )
 
 

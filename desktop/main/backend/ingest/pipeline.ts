@@ -32,6 +32,7 @@ import { isSupportedFile, extractDocumentFromFile, type ExtractionPage } from '.
 import type { EmbeddingSurface } from './embedder.js';
 import type { IngestConfig, IngestLimits } from './config.js';
 import { TextChunker } from './text-chunker.js';
+import { normalizeForSearch } from './normalize.js';
 
 export interface IngestFileInput {
   name: string;
@@ -421,7 +422,7 @@ export class IngestPipeline {
         const chunkId = sha256Hex(`${docId}:${chunk.chunkIndex}:${normalized}`);
         insertChunk.run(chunkId, docId, chunk.chunkIndex, chunk.text, sha256Hex(normalized));
         insertVector.run(chunkId, JSON.stringify(vectors[chunk.chunkIndex] ?? []));
-        insertFts.run(chunkId, chunk.text);
+        insertFts.run(chunkId, normalizeForSearch(chunk.text));
       }
 
       // D4/#80: refresh the doc's links inside the SAME transaction so a

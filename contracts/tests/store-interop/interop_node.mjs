@@ -62,6 +62,23 @@ function parseArgs(argv) {
 // Matches the Python writer exactly: same normalization, same id/hash rules,
 // same insertion order. chunk_index is the fixture-array position (0-based).
 const normalized = (text) => text.replace(/\r\n/g, '\n').replace(/[ \t]+$/gm, '');
+
+// Harness-local twin of the search normalization contract (issue #281): NFKC,
+// strip Default_Ignorable code points, fold dash/quote/ellipsis variants,
+// collapse whitespace. The TABLE is pinned by contracts/text-normalization-
+// vectors.json (desktop + python full-vector tests); this function's behavior
+// is discriminated by the fixture's expected_fts_hits (chk-007 carries a soft
+// hyphen and must be found by the plain query after normalization).
+const normalizeForSearch = (text) => {
+  let out = text.normalize('NFKC');
+  out = out.replace(/[\u00AD\u200B\u200C\u200D\u2060\uFEFF]/g, '');
+  out = out.replace(/[\u2010-\u2015\u2212]/g, '-');
+  out = out.replace(/[\u2018\u2019]/g, "'");
+  out = out.replace(/[\u201C\u201D]/g, '"');
+  out = out.replace(/\u2026/g, '...');
+  return out.replace(/\s+/g, ' ').trim();
+};
+
 const sha256Hex = (text) =>
   requireFromDesktop('node:crypto').createHash('sha256').update(text, 'utf8').digest('hex');
 
@@ -120,7 +137,7 @@ function writeFixture(db, fixture) {
     }
     fixture.chunks.forEach((chunk, index) => {
       insertChunk.run(chunk.id, chunk.doc_id, index, chunk.text, sha256Hex(normalized(chunk.text)));
-      insertFts.run(chunk.id, chunk.text);
+      insertFts.run(chunk.id, normalizeForSearch(chunk.text));
       insertEmbedding.run(chunk.id, JSON.stringify(fixture.vectors[index]));
     });
   });

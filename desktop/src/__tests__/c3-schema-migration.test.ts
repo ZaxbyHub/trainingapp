@@ -92,15 +92,30 @@ function seedV2Store(dbPath: string): SqlDb {
       VALUES ('legacy-pack', 'Legacy Pack', '1.0.0', NULL, 'bundled', NULL);
     INSERT INTO docs (id, source_class, path, sha256, title, published_at, pack_id)
       VALUES ('legacy-doc-sha', 'bundled', 'docs/a.json', 'legacy-doc-sha', 'A', NULL, 'legacy-pack');
+    -- v5 rebuild surface (issue #281): raw variant mirror rows the migration
+    -- must normalize (soft hyphen U+00AD splits 'efficacy'; ZWSP splits
+    -- 'hemoglobin'). Identity columns (text/content_hash) stay untouched.
+    CREATE TABLE chunks (
+      id           TEXT PRIMARY KEY,
+      doc_id       TEXT NOT NULL REFERENCES docs(id),
+      chunk_index  INTEGER NOT NULL,
+      text         TEXT NOT NULL,
+      content_hash TEXT NOT NULL
+    );
+    CREATE VIRTUAL TABLE chunks_fts USING fts5 (chunk_id UNINDEXED, text);
+    INSERT INTO chunks (id, doc_id, chunk_index, text, content_hash) VALUES
+      ('legacy-chunk-1', 'legacy-doc-sha', 0, 'first' || char(173) || 'line ef' || char(173) || 'ficacy', 'h1'),
+      ('legacy-chunk-2', 'legacy-doc-sha', 1, 'he' || char(0x200B) || 'moglobin plain', 'h2');
+    INSERT INTO chunks_fts (chunk_id, text) SELECT id, text FROM chunks;
   `);
   return db;
 }
 
 describe('c3 store schema migration (issue #70 AC6)', () => {
-  itReal('openStore migrates a v2 store to v4: shape, mapping, and data preserved', async () => {
+  itReal('openStore migrates a v2 store through v5: shape, mapping, and data preserved', async () => {
     const { openStore } = await import('../../main/backend/store/sqlite-store.js');
     const { CURRENT_SCHEMA_VERSION } = await import('../../main/backend/store/migrate.js');
-    expect(CURRENT_SCHEMA_VERSION).toBe(4);
+    expect(CURRENT_SCHEMA_VERSION).toBe(5);
 
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'c3-migrate-'));
     tempDirs.push(dir);
@@ -113,10 +128,10 @@ describe('c3 store schema migration (issue #70 AC6)', () => {
     const store = openStore({ dbPath, dims: 8 });
     try {
       const db = store.db as unknown as SqlDb;
-      expect(store.schemaVersion).toBe(4);
+      expect(store.schemaVersion).toBe(5);
       expect(
         (db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as { value: string }).value,
-      ).toBe('4');
+      ).toBe('5');
 
       // packs: v3 shape — PK (id, version) + active/install_path.
       const packCols = (
@@ -201,6 +216,47 @@ describe('c3 store schema migration (issue #70 AC6)', () => {
       } finally {
         fresh.close();
       }
+    } finally {
+      store.close();
+    }
+  });
+
+  itReal('openStore migrates a v2 store to v5: the chunks_fts mirror rebuilds normalized (issue #281)', async () => {
+    const { openStore } = await import('../../main/backend/store/sqlite-store.js');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'c3-ftsv5-'));
+    tempDirs.push(dir);
+    const dbPath = path.join(dir, 'store.db');
+    const seeded = seedV2Store(dbPath);
+    seeded.close();
+
+    const store = openStore({ dbPath, dims: 8 });
+    try {
+      const db = store.db as unknown as SqlDb;
+      // Ladder ran through v5; identity tables are byte-identical.
+      expect(store.schemaVersion).toBe(5);
+      const chunkRows = db.prepare('SELECT id, text, content_hash FROM chunks ORDER BY rowid').all() as Array<{
+        id: string;
+        text: string;
+        content_hash: string;
+      }>;
+      expect(chunkRows).toEqual([
+        { id: 'legacy-chunk-1', text: 'first­line ef­ficacy', content_hash: 'h1' },
+        { id: 'legacy-chunk-2', text: 'he​moglobin plain', content_hash: 'h2' },
+      ]);
+      // The mirror rows are normalized: soft hyphen and ZWSP are gone.
+      const ftsRows = db.prepare('SELECT chunk_id, text FROM chunks_fts ORDER BY rowid').all() as Array<{
+        chunk_id: string;
+        text: string;
+      }>;
+      expect(ftsRows).toEqual([
+        { chunk_id: 'legacy-chunk-1', text: 'firstline efficacy' },
+        { chunk_id: 'legacy-chunk-2', text: 'hemoglobin plain' },
+      ]);
+      // And the rebuilt mirror actually answers the plain query.
+      const hits = db
+        .prepare('SELECT chunk_id FROM chunks_fts WHERE chunks_fts MATCH ?')
+        .all('"efficacy"') as Array<{ chunk_id: string }>;
+      expect(hits.map((h) => h.chunk_id)).toContain('legacy-chunk-1');
     } finally {
       store.close();
     }
@@ -345,7 +401,7 @@ describe('v3 -> v4 store schema migration (issue #278)', () => {
     const store = openStore({ dbPath, dims: 8 });
     try {
       const db = store.db as unknown as SqlDb;
-      expect(store.schemaVersion).toBe(4);
+      expect(store.schemaVersion).toBe(5);
       expect(
         (db.prepare("SELECT value FROM meta WHERE key = 'doc_claims_reconciled'").get() as { value: string }).value,
       ).toBe('done');
@@ -427,7 +483,7 @@ describe('v3 -> v4 store schema migration (issue #278)', () => {
     let store = openStore({ dbPath, dims: 8 });
     try {
       const db = store.db as unknown as SqlDb;
-      expect(store.schemaVersion).toBe(4);
+      expect(store.schemaVersion).toBe(5);
       expect(
         (db.prepare("SELECT value FROM meta WHERE key = 'doc_claims_reconciled'").get() as { value: string }).value,
       ).toBe('pending');

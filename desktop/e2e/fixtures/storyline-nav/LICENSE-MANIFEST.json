@@ -1,0 +1,2553 @@
+{
+  "_comment": "Per-file licensing classification of the storyline-nav e2e fixture (issue #282 F-AC3). One entry per TRACKED file including this manifest itself. Classes: maintainer-content | articulate-runtime | third-party:<name> | generated. tests/test_fixture_manifest.py enforces two-way set equality with git ls-files, license presence, class vocabulary, and no duplicates. Verified third-party facts: GreenSock CSSRulePlugin 3.11.3 standard-license banner (bootstrapper.min.js:7-8), lodash MIT + Underscore.js 1.8.3 MIT banners (bootstrapper.min.js:30-37), regenerator-runtime MIT (slides.min.js), Open Sans 1.10 Apache-2.0 via font nameID-14 URL (html5/lib/stylesheets/mobile-fonts/*.woff), Articulate \"Copyright (c) 2026 ; Not Licensed\" headers (html5/lib/scripts/*.min.js:1-2).",
+  "version": 1,
+  "files": [
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/FIXTURE_CONTRACT.md",
+      "class": "generated",
+      "license": "MIT (this repository)",
+      "rights": "authored by this repository; the fixture layout contract",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/LICENSE-MANIFEST.json",
+      "class": "generated",
+      "license": "MIT (this repository)",
+      "rights": "authored by this repository; describes the fixture",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/data/css/output.min.css",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline player file; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/data/js/5WB9cNnxOlq.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline player file; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/data/js/5WPdDfMu1kK.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline player file; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/data/js/5aekClXIESa.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline player file; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/data/js/5gDfO5cQKNZ.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline player file; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/data/js/5m9bkEDzWA8.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline player file; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/data/js/5rN4PvXJM5d.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline player file; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/data/js/6DFIkaCmtTO.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline player file; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/data/js/6GS4zInSHj7.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline player file; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/data/js/6RdggQhakWc.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline player file; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/data/js/6ZLL3kg8suP.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline player file; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/data/js/6ZYUMez1qPq.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline player file; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/data/js/6cdRMINdr9M.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline player file; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/data/js/6e9cgBrg3Fe.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline player file; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/data/js/6mEtFwFWVpq.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline player file; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/data/js/6mZvfaT2voE.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline player file; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/data/js/6o652ZiseLC.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline player file; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/data/js/data.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline player file; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/data/js/frame.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline player file; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/data/js/paths.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline player file; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/lib/scripts/bootstrapper.min.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output; \"Copyright (c) 2026 ; Not Licensed\" header)",
+      "rights": "bundled third-party components carry their own licenses as listed; the Articulate \"Copyright (c) 2026 ; Not Licensed\" header stays disclosed; runtime redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": [
+        "Articulate ds-bootstrap (Not Licensed)",
+        "GreenSock CSSRulePlugin 3.11.3 (standard license, all rights reserved)",
+        "Underscore.js 1.8.3 (MIT)",
+        "lodash (MIT, OpenJS Foundation)"
+      ]
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/lib/scripts/frame.desktop.min.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output; \"Copyright (c) 2026 ; Not Licensed\" header)",
+      "rights": "bundled third-party components carry their own licenses as listed; the Articulate \"Copyright (c) 2026 ; Not Licensed\" header stays disclosed; runtime redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": [
+        "Articulate frame runtime (Not Licensed)"
+      ]
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/lib/scripts/frame.mobile.min.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output; \"Copyright (c) 2026 ; Not Licensed\" header)",
+      "rights": "bundled third-party components carry their own licenses as listed; the Articulate \"Copyright (c) 2026 ; Not Licensed\" header stays disclosed; runtime redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": [
+        "Articulate frame runtime (Not Licensed)"
+      ]
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/lib/scripts/slides.min.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output; \"Copyright (c) 2026 ; Not Licensed\" header)",
+      "rights": "bundled third-party components carry their own licenses as listed; the Articulate \"Copyright (c) 2026 ; Not Licensed\" header stays disclosed; runtime redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": [
+        "Articulate slides runtime (Not Licensed)",
+        "regenerator-runtime (MIT, Facebook)"
+      ]
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/lib/stylesheets/desktop.min.css",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline player file; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/lib/stylesheets/mobile-fonts/open-sans-bold.woff",
+      "class": "third-party:Open Sans",
+      "license": "Apache License 2.0 (font nameID-14 license URL, Open Sans 1.10)",
+      "rights": "redistributed as embedded font files within the Articulate output",
+      "components": [
+        "Open Sans 1.10 (bold/light/regular .woff)"
+      ]
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/lib/stylesheets/mobile-fonts/open-sans-light.woff",
+      "class": "third-party:Open Sans",
+      "license": "Apache License 2.0 (font nameID-14 license URL, Open Sans 1.10)",
+      "rights": "redistributed as embedded font files within the Articulate output",
+      "components": [
+        "Open Sans 1.10 (bold/light/regular .woff)"
+      ]
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/lib/stylesheets/mobile-fonts/open-sans-regular.woff",
+      "class": "third-party:Open Sans",
+      "license": "Apache License 2.0 (font nameID-14 license URL, Open Sans 1.10)",
+      "rights": "redistributed as embedded font files within the Articulate output",
+      "components": [
+        "Open Sans 1.10 (bold/light/regular .woff)"
+      ]
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/html5/lib/stylesheets/mobile.min.css",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline player file; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/mobile/5XLEacf60QB_90.jpg",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course imagery (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); clinical-application screenshot/video rights and any DoD/DHA clearance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/mobile/5o52CEapxBS_90.jpg",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course imagery (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); clinical-application screenshot/video rights and any DoD/DHA clearance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/mobile/5z6FaBSYcma.png",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course imagery (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); clinical-application screenshot/video rights and any DoD/DHA clearance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/mobile/6D3uq8a5V9O_90.jpg",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course imagery (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); clinical-application screenshot/video rights and any DoD/DHA clearance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/mobile/6Dov5LP51GT_90.jpg",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course imagery (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); clinical-application screenshot/video rights and any DoD/DHA clearance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/mobile/6ExtVtV2SYc_90.jpg",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course imagery (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); clinical-application screenshot/video rights and any DoD/DHA clearance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/mobile/6OL93TjpDg8_90.jpg",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course imagery (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); clinical-application screenshot/video rights and any DoD/DHA clearance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/mobile/6XLQzUczoGy_90.jpg",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course imagery (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); clinical-application screenshot/video rights and any DoD/DHA clearance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/mobile/6YmorjCWJta_90.jpg",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course imagery (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); clinical-application screenshot/video rights and any DoD/DHA clearance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/mobile/6eMvISK8hW5_90.jpg",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course imagery (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); clinical-application screenshot/video rights and any DoD/DHA clearance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/mobile/6qSQg6ddtyB_90.jpg",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course imagery (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); clinical-application screenshot/video rights and any DoD/DHA clearance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/mobile/Shape6eRH8gVIVno.png",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course imagery (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); clinical-application screenshot/video rights and any DoD/DHA clearance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/mobile/poster_5ciTR6eNgk0_video_5isWy96v20b_9_56_378x690.jpg",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course imagery (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); clinical-application screenshot/video rights and any DoD/DHA clearance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/mobile/poster_5gTmbHTPcKm_video_62VaxXucXaJ_9_56_1154x614.jpg",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course imagery (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); clinical-application screenshot/video rights and any DoD/DHA clearance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/mobile/txt__default_5V6s6VmTrZ7.png",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course imagery (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); clinical-application screenshot/video rights and any DoD/DHA clearance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/mobile/txt__default_5fNbkenJkh7.png",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course imagery (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); clinical-application screenshot/video rights and any DoD/DHA clearance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/mobile/txt__default_5lTkVtZipw7.png",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course imagery (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); clinical-application screenshot/video rights and any DoD/DHA clearance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/mobile/txt__default_5rjqtkqAJq4.png",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course imagery (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); clinical-application screenshot/video rights and any DoD/DHA clearance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/mobile/txt__default_5wCiQ7S4RVf.png",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course imagery (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); clinical-application screenshot/video rights and any DoD/DHA clearance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/mobile/txt__default_60Qxw9LYOKe.png",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course imagery (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); clinical-application screenshot/video rights and any DoD/DHA clearance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/mobile/txt__default_64Zi5orYy1o.png",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course imagery (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); clinical-application screenshot/video rights and any DoD/DHA clearance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/mobile/txt__default_67F3iufD65j.png",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course imagery (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); clinical-application screenshot/video rights and any DoD/DHA clearance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/mobile/txt__default_6cIHLHB2mGL.png",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course imagery (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); clinical-application screenshot/video rights and any DoD/DHA clearance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story.html",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "Copyright (c) 2026 ; Not Licensed header in html5/lib/scripts \u2014 published-output redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": [
+        "Articulate Storyline 360 player runtime"
+      ]
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5VOOljZy4F3_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5VYGmJLZRSQ_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5VficAuxnjD_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5Vzvmnsgifb_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5W5WV5Oz00C_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5W94IrumU4s_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5WPfIid2rzS_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5WsyPQv8VJC_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5XkMdbcENYQ_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5Xu0klK9iGB_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5Yf22dWsRJJ_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5YhtfNjbr9k_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5YiraMPQ9RD_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5Yt0or2RbIC_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5ZMN8nxlelt_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5ZPZEs1mWh0_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5ZoRJaAekRc_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5aAwQZss84y_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5aPv9sabQy8_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5ae3CdKImO1_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5agBSBXM5e2_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5ahv4apGsV2_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5amT3qWoxUo_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5auty3phqQA_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5axbS8GvtU8_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5b4VMzy5Klc_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5b7B6KEGaoE_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5bBqOsZ8OR0_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5bYdX8U65FH_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5cKTCc0RQ6o_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5cW8Dp0VOnD_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5dWYgXmE3tp_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5dsmFiru6ed_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5dzkAKSrKlx_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5eG3BhlmKSL_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5eGeKy5Usgl_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5eIW8PQa5yC_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5ecdTgtyBiz_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5ecimwRG7lk_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5edtNYUYGAj_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5egnLJiM0yx_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5f8njYdAdmL_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5fm7Y1rhpy7_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5g69nUOsB0d_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5gEb56NOQsD_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5gPcWJT87NI_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5gTmbHTPcKm_captions.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline export artifact; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5gTmbHTPcKm_transcripts.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline export artifact; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5gdhmdgvf1e_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5gfx5T7GTQw_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5grib0LIRkA_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5h1KNMfYPad_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5h2hg5o6PUj_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5h7fxdJq3qA_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5hK3lC1vlSx_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5hX34DTbksS_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5hcBGSNZJi1_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5hpN6hwqIhR_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5hxxYQQ8CKn_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5i3lU4bTtH2_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5iKPriTPqWH_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5iMTtzBX3IU_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5iOCHODHtxo_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5ia4LCTLNOF_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5iguggrka9O_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5itzEgkkkpu_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5ji6vNeVGiX_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5jxJPFEKZ8P_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5k1NTiWS0qM_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5kN7BD2sEAx_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5kWvj8T9huE_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5lJpZKjLQZV_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5lOVXPA8P7i_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5lOkja6rMXQ_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5lzcleYnxZh_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5mF3mP32kaJ_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5mNropfogY4_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5mZchR1ZYes_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5nWJ5fEjKkv_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5oOsa0AafvZ_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5oVacpqZ4HK_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5oWrhrkNx17_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5oXmHeIYCKJ_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5p8E0juJfit_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5pk2x48vPTx_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5poL92CzLOU_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5qWy3dzXd7n_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5qY2J8Gq4YJ_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5qe8Z3uPXSu_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5qh9BGLIWWK_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5qs5gf3WmO2_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5qsdpPGjDHK_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5qxvym1UDaU_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5r0nfnrybbK_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5rJfPnZvvOH_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5raYqZ7SaRw_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5sJi4LigDvr_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5tJWfVLcGuN_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5u65z85sRhd_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5u6Uvm6d8av_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5uBa9us27Yj_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5uKIBVK6o6X_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5uLKodD1coy_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5ulcsCLaMDc_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5uxXL9eEzHv_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5vQbCZcguVM_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5vjQKmZmQCB_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5vlqMVAPKOO_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5wB1IJgxwHG_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5wB62YvQxzg_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5x0kHL6VkjY_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5xZuMsZz6Jv_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5xvyLQZNypN_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5yI54C9v3jf_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5ypy4W5WO2K_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5z8iZaF8Q9f_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5zCXvVVPBDF_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5zXwaaA7kUM_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/5zotFRZDsuc_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/607pBf3yRQG_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/61GSgFVhoqm_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/61KWrcdj7ml_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/61nK5UOakJk_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/61q333tPF1z_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/62A8L41XiaM_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/62QcPxpnvrm_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/62YAmxIyle2_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/62g5xB6OmpB_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/637hnEipIiO_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/638SlfYYNtj_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/63G7ua0w7Kl_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/64YkKAzwbEJ_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/64gwCKpahnX_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/64hZ7CZebGx_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/64ldKY0vZbX_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/64slGdpecW8_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/65nxiXMIWrm_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/65sQGdhU2ma_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/65smgbcQeDV_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/660He3DZK2y_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6677VCeWfju_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/66Lfdbvys4n_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/66RwwTFek4t_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/67VPM74i2q1_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/67kA3y4mm61_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/67q7o9BdlW4_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/68QWEZczyjR_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/68fEl6ILUnK_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/68qhWaqJM8v_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/68zVQQxUbPx_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/69DjUAcR8WU_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/69QbZhz6IUm_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6A0vC9Nlbk0_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6AGgB7TrtwJ_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6Aq4zHc91HW_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6AuqXfQN5Iq_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6BZSSdgvGE0_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6BiRC06RpyX_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6D6YTvX5zul_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6DJQzrs9ECc_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6DOkC3alqUe_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6DP44ptXbbn_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6EQUjPvNpOn_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6EgE0a5kgj5_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6EjjdkaX3ue_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6EkzGmNf5W8_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6FS8DBFiLpR_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6FljDZlyeY1_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6FsQyEMFOm6_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6GKAD4vXia3_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6GiNXZkhXrF_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6GxmjzpBl4A_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6H9XNGsvmJ7_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6HdvVIqxqgk_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6IG94CEun1d_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6IlQrVMWkGX_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6JiThyZPKO3_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6JxBvDTmlHu_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6JyFkhzPkBz_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6KHttyjCuOg_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6LiYqCH2pd6_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6M2YvGoJcrF_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6MGW9F4qK5P_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6MKXKTolfH7_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6MlJfdpPFkv_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6MsRU9vKLEI_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6MvyQh4UkaY_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6Ngvncz6L7o_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6OdWOP74Hs4_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6Osq8Es5Z2s_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6P9zmVvDaij_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6PDKvt7au8W_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6PVHsCIljBG_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6PxWTYC74wy_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6QDhaJGj42t_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6QjfLnBxAEh_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6Qvzw8ik0mW_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6R5a2JOY8o6_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6RD6z2Kawj7_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6RhthYARVGh_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6RmdzbH48FY_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6S1nV2gqIT3_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6SnaN7Vkttj_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6T23xUVBjNz_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6T2FurYwz4o_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6T4tgJhUQiU_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6T5KR4oxysD_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6T9jmPzIMCL_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6TETMPJsrfr_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6TF3BxsZu2v_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6TUHI1lsICy.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline export artifact; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6TmnK7rRMS8_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6TqQv9ykry6_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6ULuNMGOdlR_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6UQuosaa51d_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6UfIpEqg8Q5_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6Ut2qaa5eSm_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6V0RrSeB08a_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6V6GfDgupzC_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6VMIBEnUFhc_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6WADmVFgn8a_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6WFHb5rjc80_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6WQXdoNNU0a_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6WTtiLPkHWx_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6WVh5slchWw_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6X9MgnAbWrE_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6XK6GkkZqOJ_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6XL8ahqbHeB_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6XOMoOErU5O_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6Xc0icuCdMK_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6Y3OvGmMdpr_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6Y65Dp7RQ6Z_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6Y8rPUOQA5q_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6YHd3MC00iU_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6YMIe4bitiv_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6YQC7wkOVnO_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6YWrrNma1cB_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6ZoONiTj8Sj_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6ZxTtXwUaRR_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6aPMUnzdGrT_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6aaX7nP6g93_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6abxayAK4TM_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6acssq0c6IB_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6b3JcPhWebG_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6bShGqoe5MS_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6bXAi1vyTyG_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6bZoHj3J6Aa_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6cmydnHeZmY_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6co5mcJ98aH_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6cyXxXVdKVv_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6dX34W6W8XO_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6dicoUXv5aL_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6dtmccoC5CL_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6e6uaP7QEib_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6eDmltpXn7I_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6eEAybkwY0y_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6eIQEGZDJal_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6el2Vrs7qRg_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6f6shH40TyV_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6fl8oL3TyD5_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6fxuUXCpSCY_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6fzvGIMqM0F_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6g81rC1BWaZ_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6gR8k2VEg5a_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6ggvMReKtOT_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6gizOhML570_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6gvSpiNfdlS_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6h8fxY1MylL_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6hZ3qbtiint_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6hazI438aiQ_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6hutoujOIX7_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6iBuld3CfY7_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6iISesfP3Ef_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6iOfuhnzWPK_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6iYQ1MaYNsb_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6j2A1kGOoND_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6j4cw53GJ3K_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6j8wpDwTazg_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6jiAOtNITCR_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6kEEHKa3YAM_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6kjeOJEO48E_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6lWTAsig0JV_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6mHofKhskdB_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6mwoh96kxOE_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6n4ObfPiVBu_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6nbzqJT40Pv_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6nwrI6OARWv_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6o27GyPMkkm_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6oapSR8rEqd_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6oec8LaL0Wh_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6ozTXZXy50o_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6p02KIx9J5z_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6pKhgqt2dKQ_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6qDBlsb4FxR_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6qL2k02lHUe_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6qLQ3y1D9MA_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6qNoXKH6TVI_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6qjA7xg19w4_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6quNeiZRb3n_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6qxqaDLB6ym_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6rIiDvuBRgZ_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6rQMRG3iV1b_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/6rf4rGSIQTt_44100_56_0.mp3",
+      "class": "maintainer-content",
+      "license": "Maintainer-owned course content (not repository MIT)",
+      "rights": "Rights holder stated by the maintainer on 2026-11-03 (issue #282 record); narration voice provenance pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/trainingapp-bridge.js",
+      "class": "generated",
+      "license": "MIT (this repository)",
+      "rights": "authored by this repository for the e2e bridge",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/triggers.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline export artifact; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    },
+    {
+      "path": "desktop/e2e/fixtures/storyline-nav/story_content/user.js",
+      "class": "articulate-runtime",
+      "license": "Proprietary (Articulate Storyline 360 output)",
+      "rights": "published Storyline export artifact; redistribution basis pending maintainer statement on issue #282 (AC1)",
+      "components": []
+    }
+  ]
+}

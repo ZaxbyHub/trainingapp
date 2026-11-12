@@ -44,6 +44,7 @@ import {
   type LinksDb,
 } from './links.js';
 import type { EmbeddingSurface } from '../ingest/embedder.js';
+import { normalizeForSearch } from '../ingest/normalize.js';
 import { findRepoRoot, unpackAsarPath } from './sqlite-store.js';
 import {
   modelIdMatches,
@@ -127,7 +128,8 @@ export const PACKS_SQLITE_VEC_PIN = '0.1.9';
  * schema_version stamped inside a pack's embedded index.sqlite by packtool's
  * STORE_SCHEMA_VERSION (packtool/build/pack-json.ts). Deliberately NOT the
  * live store's schemaVersion — the store ladder moved to v4 for doc_claims
- * (#278) while the SHIPPED-ARTIFACT format stayed at v3 (doc_claims is a
+ * (#278) and to v5 for the normalized lexical mirror (#281) while the
+ * SHIPPED-ARTIFACT format stayed at v3 (doc_claims is a
  * store-side table the desktop stamps at install time), and gating against
  * the store version would refuse every existing v3 artifact. Same domain in
  * the verify.ts / pack_extract.py / browser PACK_STORE_SCHEMA_VERSION
@@ -892,7 +894,7 @@ export class PackManager {
     // AC4: a pack that carries a prebuilt index block must match the ARTIFACT
     // index format version — a mismatch is an explicit refusal, never silent.
     // #278: the gate compares against ARTIFACT_INDEX_SCHEMA_VERSION, not the
-    // live store's schemaVersion (store v4 / artifact v3 — see the constant).
+    // live store's schemaVersion (store v5 / artifact v3 — see the constant).
     if (manifest.index !== undefined && manifest.index.schema_version !== ARTIFACT_INDEX_SCHEMA_VERSION) {
       throw new PackManagerError(
         `pack index schema_version ${manifest.index.schema_version} does not match the pack artifact index schema version ${ARTIFACT_INDEX_SCHEMA_VERSION}; refusing install`,
@@ -1183,7 +1185,7 @@ export class PackManager {
         chunk.chunkId,
         JSON.stringify(vectors[i]),
       );
-      this.stmt('INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)').run(chunk.chunkId, chunk.text);
+      this.stmt('INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)').run(chunk.chunkId, normalizeForSearch(chunk.text));
     }
     this.stmt("UPDATE meta SET value = ? WHERE key = 'embedding_model_id'").run(this.embedder.modelId);
     return storeDocIdBySha;
@@ -1225,7 +1227,7 @@ export class PackManager {
         chunk.chunkId,
         JSON.stringify(imported.vectors[i]),
       );
-      this.stmt('INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)').run(chunk.chunkId, chunk.text);
+      this.stmt('INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)').run(chunk.chunkId, normalizeForSearch(chunk.text));
     }
     // Shipped links are authoritative (the shipped chunks just landed with
     // the same ids, so every reference resolves).

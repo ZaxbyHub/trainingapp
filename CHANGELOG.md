@@ -2,6 +2,43 @@
 
 ## [Unreleased]
 
+- **Lexical retrieval sees the text users type (issue #281, frontier-audit Workstream E)**:
+  - One search-normalization contract (`normalizeForSearch`: NFKC, Default_Ignorable
+    strip, dash/quote/ellipsis folds, whitespace collapse) is twin-tested by
+    `contracts/text-normalization-vectors.json` in all four runtimes (desktop,
+    web_ui, packtool, python `normalize_search.py`) and applied at every
+    `chunks_fts` write site (user ingest, pack install and update, packtool build
+    and compose, the store-interop harness writers and oracle), in the desktop
+    query (`sanitizeFtsQuery`), and in the browser keyword index (add + reload +
+    search) — a document whose extracted text carries Word optional hyphens,
+    zero-width characters, ligatures or fullwidth forms is found by the plain
+    query a user types, and a plain document by a variant query.
+  - Desktop store schema v5: existing stores rebuild `chunks_fts` from
+    `chunks.text` through the new function on first open (rebuild-only;
+    `chunks.text`, chunk ids and `content_hash` stay byte-identical per
+    ADR-0004; pack artifact format stays v3).
+  - The python twin vector guard is rostered in the required security job's
+    Audit guards step.
+- **Docs and test preconditions tell the truth (issue #282, frontier-audit
+  Workstream F)**:
+  - The licensing truth is recorded: `docs/licenses.md`, `docs/training-player.md`
+    and the fixture contract carry an identical fixture-licensing block (rights
+    holder; the Articulate "Not Licensed" runtime; GreenSock, Underscore, lodash,
+    regenerator, Open Sans with tree-verified licenses; pending maintainer
+    statements disclosed), `LICENSE` gains the carve-out, and
+    `desktop/e2e/fixtures/storyline-nav/LICENSE-MANIFEST.json` classifies every
+    tracked fixture file (guarded by `tests/test_fixture_manifest.py` and
+    `tests/test_fixture_licensing_docs.py` in the Audit guards step).
+  - The pack docs name the boot re-ensure behavior (a removed or rolled-back
+    bundled pack is re-installed/re-upgraded at next launch) and
+    `docs/security/packs.md` names all three install-time gates that rollback
+    and supersede skip, plus the absent whole-manifest hash pin.
+  - `npm test` in `desktop/` builds packtool itself via a vitest `globalSetup`
+    (compile only, no network; fails loudly naming `packtool/node_modules` when
+    absent), so a clean checkout passes without reading CI; packtool's
+    zip-safety spec cleans up its `.agents-tmp` fixtures and the directory is
+    now tracked-ignored.
+
 - **Chat conversation integrity (issue #269)**:
   - **Mid-stream conversation switches no longer corrupt the switched-to
     conversation**: every ChatPage save (send, Regenerate, checkpoints,
