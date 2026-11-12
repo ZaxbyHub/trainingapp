@@ -133,9 +133,12 @@ export function recencyWeight(_chunk: unknown): number {
 
 /**
  * FTS5 MATCH does not accept raw user syntax safely (quotes, `*`, `AND`/`OR`/
- * `NOT`/`NEAR`, `^`, `:` are all operators). Wrap each remaining term in double
- * quotes (a quoted single term is observably identical to the bare term) and
- * drop operator/bare-quote/star tokens outright. A query reduced to nothing
+ * `NOT`/`NEAR`, `^`, `:` are all operators). Whole-token operators are dropped;
+ * every other token is normalized and its inner hazard characters are
+ * STRIPPED while the term itself is KEPT, emitted as a double-quoted phrase
+ * (pr323 review PRR-003: dropping the whole token deleted terms the base
+ * build matched — smart-quoted pastes lost their entire lexical leg). Tokens
+ * reduced to nothing by the strip are skipped; a query reduced to nothing
  * yields an empty FTS leg instead of a thrown syntax error.
  */
 export function sanitizeFtsQuery(query: string): string | null {

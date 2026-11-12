@@ -65,8 +65,8 @@ def test_corpus_shape_and_required_families():
     assert corpus.get("version") == 1, "vector file version must be 1"
     vectors = corpus.get("vectors", [])
     assert (
-        len(vectors) >= 24
-    ), f"contract floor is 24 vectors, file carries {len(vectors)}"
+        len(vectors) >= 33
+    ), f"contract floor is 33 vectors, file carries {len(vectors)}"
     ids = [v["id"] for v in vectors]
     assert len(ids) == len(
         set(ids)

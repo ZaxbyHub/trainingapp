@@ -289,17 +289,28 @@ def _rebuild_chunks_fts_normalized(conn: sqlite3.Connection) -> None:
 
 def _recover_chunks_fts(conn: sqlite3.Connection) -> None:
     """Drop + recreate + repopulate the damaged mirror; worst case a degraded
-    lexical mirror, never the corpus (mirrors migrate.ts recoverChunksFts)."""
+    lexical mirror, never the corpus (mirrors migrate.ts recoverChunksFts).
+    Raises only if the database file itself is unusable (even the v5 stamp
+    fails) — plain mirror damage never does. The repopulation is paged like
+    the in-place rebuild, and the fatal fallback stamps v5 from a clean
+    transaction state."""
     try:
         with conn:
             conn.execute("DROP TABLE IF EXISTS chunks_fts")
             conn.execute(_CHUNKS_FTS_DDL)
             try:
-                for row_id, text in conn.execute("SELECT id, text FROM chunks"):
-                    conn.execute(
-                        "INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)",
-                        (row_id, normalize_search(text)),
-                    )
+                # Paged like the in-place rebuild: a large corpus must not
+                # materialize every chunk row inside the write transaction.
+                cursor = conn.execute("SELECT id, text FROM chunks ORDER BY rowid")
+                while True:
+                    batch = cursor.fetchmany(1000)
+                    if not batch:
+                        break
+                    for row_id, text in batch:
+                        conn.execute(
+                            "INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)",
+                            (row_id, normalize_search(text)),
+                        )
             except sqlite3.DatabaseError as repopulate_error:
                 print(
                     f"[trainingapp] chunks_fts repopulation incomplete after FTS "
@@ -514,7 +525,81 @@ def _selftest() -> int:
             conn.close()
 
 
+def _selftest_corrupt_mirror() -> int:
+    """PRR-002 twin leg (pr323 fix-reviewer r1): a corrupt FTS5 mirror
+    (%_data shadow rows wiped) recovers by drop+recreate during the v2->v5
+    ladder; the identity corpus is byte-identical afterwards. Mirrors the
+    desktop spec leg in c3-fts-reindex-migration.test.ts."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "corrupt.sqlite"
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conn.executescript(
+                """
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                INSERT INTO meta (key, value) VALUES ('schema_version', '2');
+                CREATE TABLE packs (
+                    id           TEXT PRIMARY KEY,
+                    name         TEXT NOT NULL,
+                    version      TEXT NOT NULL,
+                    published_at TEXT,
+                    source_class TEXT NOT NULL,
+                    supersedes   TEXT REFERENCES packs(id)
+                );
+                CREATE TABLE docs (
+                    id           TEXT PRIMARY KEY,
+                    source_class TEXT NOT NULL,
+                    path         TEXT NOT NULL,
+                    sha256       TEXT NOT NULL,
+                    title        TEXT,
+                    published_at TEXT,
+                    pack_id      TEXT REFERENCES packs(id)
+                );
+                CREATE TABLE chunks (
+                    id           TEXT PRIMARY KEY,
+                    doc_id       TEXT NOT NULL REFERENCES docs(id),
+                    chunk_index  INTEGER NOT NULL,
+                    text         TEXT NOT NULL,
+                    content_hash TEXT NOT NULL
+                );
+                CREATE VIRTUAL TABLE chunks_fts USING fts5 (chunk_id UNINDEXED, text);
+                INSERT INTO docs (id, source_class, path, sha256)
+                VALUES ('user-doc', 'general', 'notes.txt', 'bbb222');
+                INSERT INTO chunks VALUES
+                    ('variant-chunk', 'user-doc', 0, 'ef­ficacy he​moglobin', 'v1'),
+                    ('plain-chunk', 'user-doc', 1, 'plain protocol text', 'v2');
+                INSERT INTO chunks_fts (chunk_id, text) SELECT id, text FROM chunks;
+                """
+            )
+            conn.commit()
+            # Real on-disk corruption: wipe the FTS5 %_data shadow rows.
+            conn.execute("DELETE FROM chunks_fts_data")
+            conn.commit()
+            final = migrate(conn)
+            assert final == 5, f"expected final version 5, got {final}"
+            chunks_after = conn.execute(
+                "SELECT id, text FROM chunks ORDER BY rowid"
+            ).fetchall()
+            assert chunks_after == [
+                ("variant-chunk", "ef­ficacy he​moglobin"),
+                ("plain-chunk", "plain protocol text"),
+            ], chunks_after
+            fts_after = conn.execute(
+                "SELECT chunk_id, text FROM chunks_fts ORDER BY rowid"
+            ).fetchall()
+            assert fts_after == [
+                ("variant-chunk", "efficacy hemoglobin"),
+                ("plain-chunk", "plain protocol text"),
+            ], fts_after
+            print("selftest OK: corrupt-mirror recovery preserves the corpus")
+            return 0
+        finally:
+            conn.close()
+
+
 if __name__ == "__main__":
     import sys
 
+    if "--selftest-corrupt" in sys.argv[1:]:
+        raise SystemExit(_selftest_corrupt_mirror())
     raise SystemExit(_selftest() if "--selftest" in sys.argv[1:] else 0)

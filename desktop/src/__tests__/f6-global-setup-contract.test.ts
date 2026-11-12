@@ -9,7 +9,7 @@
 // ~1s compile inside a vitest worker perturbs parallel-suite scheduling enough
 // to flip i320's tmpdir census race (full-suite A/B, 2026-11-11) — and the
 // pinned contract is the ERROR CHANNEL, not the compiler.
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const globalSetupPath = '../../test/global-setup.ts';
 
@@ -18,10 +18,27 @@ const mocks = vi.hoisted(() => ({
 }));
 
 describe('f6 global-setup contract (issue #282 F-AC6): loud failure shapes', () => {
+  const ORIGINAL_SKIP_ENV = process.env.TRAININGAPP_SKIP_PACKTOOL_GLOBAL_SETUP;
+
+  beforeEach(() => {
+    // Env-independent spec (fix-reviewer r1 nit): the documented CI opt-out
+    // (pr323 review PRR-001) must not flip these legs — globalSetup consults
+    // the env at call time, so a caller-exported TRAININGAPP_SKIP_...
+    // would otherwise fail leg 1. Cleared BEFORE each test; restored in
+    // afterAll.
+    delete process.env.TRAININGAPP_SKIP_PACKTOOL_GLOBAL_SETUP;
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
     vi.resetModules();
     mocks.spawnSync.mockReset();
+  });
+
+  afterAll(() => {
+    if (ORIGINAL_SKIP_ENV !== undefined) {
+      process.env.TRAININGAPP_SKIP_PACKTOOL_GLOBAL_SETUP = ORIGINAL_SKIP_ENV;
+    }
   });
 
   it('fails loudly naming packtool/node_modules when the deps are absent', async () => {

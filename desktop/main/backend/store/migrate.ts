@@ -428,7 +428,8 @@ function rebuildChunksFtsNormalized(db: StoreDb): void {
  * repopulate what the identity tables still hold. If even the drop/recreate
  * fails, stamp v5 with the mirror degraded (lexical leg errors per query at
  * worst — the pre-#323 behavior) rather than letting the open failure route
- * the store into rmSync. Never throws.
+ * the store into rmSync. Throws only when the database file itself is
+ * unusable (even the v5 stamp fails) — plain mirror damage never does.
  */
 function recoverChunksFts(db: StoreDb, cause: unknown): void {
   const detail = cause instanceof Error ? cause.message : String(cause);
@@ -437,13 +438,21 @@ function recoverChunksFts(db: StoreDb, cause: unknown): void {
     db.exec('DROP TABLE IF EXISTS chunks_fts');
     db.exec(CHUNKS_FTS_DDL);
     try {
+      // Paged like the in-place rebuild: a large corpus must not materialize
+      // every chunk row inside the write transaction (impl-review r1).
       const insertFts = db.prepare('INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)');
-      const rows = db.prepare('SELECT id, text FROM chunks').all() as Array<{
-        id: string;
-        text: string;
-      }>;
-      for (const row of rows) {
-        insertFts.run(row.id, normalizeForSearch(row.text));
+      const page = db.prepare(
+        'SELECT rowid, id, text FROM chunks WHERE rowid > ? ORDER BY rowid LIMIT 500',
+      );
+      let lastRowid = 0;
+      for (;;) {
+        const batch = page.all(lastRowid) as Array<{ rowid: number; id: string; text: string }>;
+        if (batch.length === 0) break;
+        for (const row of batch) {
+          insertFts.run(row.id, normalizeForSearch(row.text));
+        }
+        const last = batch.at(-1);
+        if (last) lastRowid = last.rowid;
       }
     } catch (repopulateError) {
       // The fresh table is usable; a partial repopulation is a degraded
@@ -469,6 +478,14 @@ function recoverChunksFts(db: StoreDb, cause: unknown): void {
       `[trainingapp] chunks_fts recovery failed (${fatalError instanceof Error ? fatalError.message : String(fatalError)}); `
         + 'stamping schema v5 with a degraded lexical mirror — the corpus is preserved',
     );
+    // The transaction opened above may still be active on this connection
+    // (better-sqlite3 does not auto-rollback on a failed DDL); stamping
+    // requires a clean transaction state (fix-reviewer r1).
+    try {
+      db.exec('ROLLBACK');
+    } catch {
+      // Nothing was open — fine.
+    }
     try {
       db.exec('BEGIN IMMEDIATE');
       db.prepare("UPDATE meta SET value = '5' WHERE key = 'schema_version'").run();
