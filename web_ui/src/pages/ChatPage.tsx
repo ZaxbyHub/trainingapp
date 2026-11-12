@@ -319,9 +319,10 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   pinnedSlideRef.current = pinnedSlide;
 
   // #267 (AC8): the composer's draft-store key. The new-conversation
-  // sentinel (NEW_CONVERSATION_RESERVED_KEY) is the SAME single sentinel the
-  // persistence sequencer uses; a first-turn send later adopts the real id
-  // and the sentinel's draft travels with it (the migration runs inside the
+  // sentinel value (NEW_DRAFT_SENTINEL, draft-store) is the same '\u0000new'
+  // value the persistence sequencer reserves for the not-yet-created
+  // conversation; a first-turn send later adopts the real id and the
+  // sentinel's draft travels with it (the migration runs inside the
   // composer's key-switch handler — ChatInput owns it, review round 1).
   const draftKey = currentConversationId ?? NEW_DRAFT_SENTINEL;
 
