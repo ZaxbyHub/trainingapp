@@ -191,11 +191,12 @@ def query_evidence(conn: sqlite3.Connection, fixture: dict) -> dict:
 
 
 def _stamp_pair_or_fail(writer: dict, reader: dict) -> None:
-    """Issue #325 AC3: refuse a mismatched or missing contract/driver stamp
+    """Issue #325 AC3: refuse a missing stamp or a mismatched CONTRACT stamp
     pair BEFORE comparing rows, naming both versions. A missing stamp means a
-    driver predating the stamp contract; a mismatch means one side's driver
-    (or the contract it implements) drifted — either way the row comparison
-    would be opaque, so refuse loud."""
+    driver predating the stamp contract; a contract mismatch means the two
+    sides implement different schema contracts — the row comparison would be
+    opaque, so refuse loud. driver_stamp is per-runtime (carried as explicit
+    evidence, never silently fallback-named)."""
     for role, side in (("writer", writer), ("reader", reader)):
         for key in ("contract_stamp", "driver_stamp"):
             if key not in side:

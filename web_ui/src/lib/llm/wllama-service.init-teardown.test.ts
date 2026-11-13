@@ -145,7 +145,7 @@ describe('WllamaService init/dispose boundary serialization (issue #328)', () =>
     }
   });
 
-  it('single-flight: a second initialize() during an in-flight doInitialize after a completed teardown returns the same promise', { retry: 2 }, async () => {
+  it('single-flight: a second initialize() during an in-flight doInitialize after a completed teardown returns the same promise', async () => {
     const service = WllamaService.getInstance();
     // First engine + full teardown (completed, not in flight).
     await service.initialize();
