@@ -46,8 +46,8 @@ function sqliteVecVersion() {
 }
 
 // Issue #325 AC3: paired contract/driver stamps. contract_stamp names the
-// store schema contract this driver implements (the literal the python side
-// pins as SCHEMA_LITERAL); driver_stamp bumps whenever this driver's
+// store schema contract this driver implements (mirroring run_interop.py's
+// CONTRACT_STAMP); driver_stamp bumps whenever this driver's
 // comparison-relevant semantics change (insertion rules, normalization,
 // query shape). run_interop.py refuses a mismatched CONTRACT stamp and a
 // missing stamp before comparing rows; driver_stamp is per-runtime (carried
