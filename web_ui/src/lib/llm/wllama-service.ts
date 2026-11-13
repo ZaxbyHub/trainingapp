@@ -205,7 +205,7 @@ export class WllamaService implements LLMService {
     if (this.ready) return;
     if (this.initPromise !== null) return this.initPromise;
     if (WllamaService.teardownPromise) { await WllamaService.teardownPromise; }
-    // Boundary serialization (issue #328): the teardown guard above ran only
+    // Boundary serialization (issue 328): the teardown guard above ran only
     // BEFORE the await, so a dispose() arriving while we awaited it could
     // begin its own safeExit between that await and the initPromise
     // assignment below — the caller then held a resolved initialize()
@@ -224,7 +224,7 @@ export class WllamaService implements LLMService {
       if (WllamaService.teardownPromise) { await WllamaService.teardownPromise; }
       throw new Error(
         'WllamaService.initialize() refused: the engine was disposed while ' +
-        'initialization was starting (init/dispose boundary serialization, issue #328)',
+        'initialization was starting (init/dispose boundary serialization, issue 328)',
       );
     }
     this.initPromise = this.doInitialize(modelId, onProgress);
