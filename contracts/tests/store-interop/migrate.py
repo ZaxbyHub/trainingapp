@@ -525,6 +525,209 @@ def _selftest() -> int:
             conn.close()
 
 
+def _selftest_v4_pending() -> int:
+    """Issue #324 AC2 twin leg: a store BORN at v4 carrying
+    doc_claims_reconciled='pending' is healed inside the v4->v5 step
+    (_stamp_reconciled(_reconcile_doc_claims_locked(conn)) in
+    _migrate_v4_to_v5) in the SAME open, mirroring the desktop leg in
+    c3-schema-migration.test.ts. Two sub-legs: readable manifest -> 'done'
+    inside the same open; unreadable manifest -> stays 'pending' through the
+    v5 step, then heals on a reopen through the already-v5 reconcile."""
+    import hashlib
+    import tempfile
+
+    sha = hashlib.sha256("v4-pending doc bytes".encode("utf-8")).hexdigest()
+    with tempfile.TemporaryDirectory() as tmp:
+        pack_dir = Path(tmp) / "managed" / "pack-a" / "1.0.0"
+        pack_dir.mkdir(parents=True)
+        db_path = Path(tmp) / "v4pending.sqlite"
+        conn = sqlite3.connect(str(db_path))
+        try:
+            # Direct v4 construction: schema v5 DDL minus doc_claims (added
+            # here with the v4 backfill rows), version dialled back to 4, and
+            # the pending stamp written directly.
+            conn.executescript(
+                """
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE packs (
+                    id           TEXT NOT NULL,
+                    version      TEXT NOT NULL,
+                    name         TEXT NOT NULL,
+                    published_at TEXT,
+                    source_class TEXT NOT NULL,
+                    active       INTEGER NOT NULL DEFAULT 0 CHECK (active IN (0, 1)),
+                    install_path TEXT,
+                    supersedes   TEXT,
+                    PRIMARY KEY (id, version)
+                );
+                CREATE TABLE docs (
+                    id           TEXT PRIMARY KEY,
+                    source_class TEXT NOT NULL,
+                    path         TEXT NOT NULL,
+                    sha256       TEXT NOT NULL,
+                    title        TEXT,
+                    published_at TEXT,
+                    pack_id      TEXT REFERENCES packs(id)
+                );
+                CREATE TABLE chunks (
+                    id           TEXT PRIMARY KEY,
+                    doc_id       TEXT NOT NULL REFERENCES docs(id),
+                    chunk_index  INTEGER NOT NULL,
+                    text         TEXT NOT NULL,
+                    content_hash TEXT NOT NULL
+                );
+                CREATE VIRTUAL TABLE chunks_fts USING fts5 (chunk_id UNINDEXED, text);
+                """
+            )
+            conn.execute(_DOC_CLAIMS_V4_DDL)
+            conn.execute(
+                "INSERT INTO packs (id, version, name, published_at, source_class,"
+                " active, install_path, supersedes) VALUES"
+                " ('pack-a', '1.0.0', 'Pack A', '2026-01-01T00:00:00Z',"
+                " 'bundled', 1, ?, NULL)",
+                (str(pack_dir),),
+            )
+            conn.execute(
+                "INSERT INTO docs (id, source_class, path, sha256, title,"
+                " published_at, pack_id) VALUES"
+                " ('doc-1', 'bundled', 'docs/shared-0.json', ?, 'Seed', NULL, 'pack-a')",
+                (sha,),
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO doc_claims (doc_id, claimant)"
+                " VALUES ('doc-1', 'pack:pack-a')"
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES"
+                " ('doc_claims_reconciled', 'pending')"
+            )
+            conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '4')")
+            conn.commit()
+
+            # Sub-leg A: readable manifest -> healed inside the SAME open.
+            (pack_dir / "pack.json").write_text(
+                json.dumps(
+                    {
+                        "id": "pack-a",
+                        "docs": [{"path": "docs/shared-0.json", "sha256": sha}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            final = migrate(conn)
+            assert final == 5, f"expected final version 5, got {final}"
+            marker = conn.execute(
+                "SELECT value FROM meta WHERE key = 'doc_claims_reconciled'"
+            ).fetchone()
+            assert marker == (
+                "done",
+            ), f"readable-manifest leg: expected healed 'done' in the same open, got {marker}"
+            print(
+                "selftest v4-pending leg A OK: readable manifest healed inside the v5 open"
+            )
+        finally:
+            conn.close()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        pack_dir = Path(tmp) / "managed" / "pack-a" / "1.0.0"
+        pack_dir.mkdir(parents=True)  # NO pack.json: unreadable
+        db_path = Path(tmp) / "v4pending-closed.sqlite"
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conn.executescript(
+                """
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE packs (
+                    id           TEXT NOT NULL,
+                    version      TEXT NOT NULL,
+                    name         TEXT NOT NULL,
+                    published_at TEXT,
+                    source_class TEXT NOT NULL,
+                    active       INTEGER NOT NULL DEFAULT 0 CHECK (active IN (0, 1)),
+                    install_path TEXT,
+                    supersedes   TEXT,
+                    PRIMARY KEY (id, version)
+                );
+                CREATE TABLE docs (
+                    id           TEXT PRIMARY KEY,
+                    source_class TEXT NOT NULL,
+                    path         TEXT NOT NULL,
+                    sha256       TEXT NOT NULL,
+                    title        TEXT,
+                    published_at TEXT,
+                    pack_id      TEXT REFERENCES packs(id)
+                );
+                CREATE TABLE chunks (
+                    id           TEXT PRIMARY KEY,
+                    doc_id       TEXT NOT NULL REFERENCES docs(id),
+                    chunk_index  INTEGER NOT NULL,
+                    text         TEXT NOT NULL,
+                    content_hash TEXT NOT NULL
+                );
+                CREATE VIRTUAL TABLE chunks_fts USING fts5 (chunk_id UNINDEXED, text);
+                """
+            )
+            conn.execute(_DOC_CLAIMS_V4_DDL)
+            conn.execute(
+                "INSERT INTO packs (id, version, name, published_at, source_class,"
+                " active, install_path, supersedes) VALUES"
+                " ('pack-a', '1.0.0', 'Pack A', '2026-01-01T00:00:00Z',"
+                " 'bundled', 1, ?, NULL)",
+                (str(pack_dir),),
+            )
+            conn.execute(
+                "INSERT INTO docs (id, source_class, path, sha256, title,"
+                " published_at, pack_id) VALUES"
+                " ('doc-1', 'bundled', 'docs/shared-0.json', ?, 'Seed', NULL, 'pack-a')",
+                (sha,),
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO doc_claims (doc_id, claimant)"
+                " VALUES ('doc-1', 'pack:pack-a')"
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES"
+                " ('doc_claims_reconciled', 'pending')"
+            )
+            conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '4')")
+            conn.commit()
+
+            # Sub-leg B: unreadable manifest -> fail-closed 'pending' through
+            # the v5 step.
+            final = migrate(conn)
+            assert final == 5, f"expected final version 5, got {final}"
+            marker = conn.execute(
+                "SELECT value FROM meta WHERE key = 'doc_claims_reconciled'"
+            ).fetchone()
+            assert marker == (
+                "pending",
+            ), f"unreadable-manifest leg: expected fail-closed 'pending', got {marker}"
+            # Reopen-equivalent: manifest restored, the already-v5 reconcile heals.
+            (pack_dir / "pack.json").write_text(
+                json.dumps(
+                    {
+                        "id": "pack-a",
+                        "docs": [{"path": "docs/shared-0.json", "sha256": sha}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            final = migrate(conn)
+            marker = conn.execute(
+                "SELECT value FROM meta WHERE key = 'doc_claims_reconciled'"
+            ).fetchone()
+            assert marker == (
+                "done",
+            ), f"reopen heal leg: expected 'done', got {marker}"
+            print(
+                "selftest v4-pending leg B OK: unreadable manifest stays pending, heals on reopen"
+            )
+            print("selftest OK: v4-pending heal twin agrees with the Node mirror")
+            return 0
+        finally:
+            conn.close()
+
+
 def _selftest_corrupt_mirror() -> int:
     """PRR-002 twin leg (pr323 fix-reviewer r1): a corrupt FTS5 mirror
     (%_data shadow rows wiped) recovers by drop+recreate during the v2->v5
@@ -602,4 +805,8 @@ if __name__ == "__main__":
 
     if "--selftest-corrupt" in sys.argv[1:]:
         raise SystemExit(_selftest_corrupt_mirror())
-    raise SystemExit(_selftest() if "--selftest" in sys.argv[1:] else 0)
+    if "--selftest" in sys.argv[1:]:
+        rc = _selftest()
+        if rc != 0:
+            raise SystemExit(rc)
+        raise SystemExit(_selftest_v4_pending())

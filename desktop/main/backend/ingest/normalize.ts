@@ -11,6 +11,13 @@
  * this function on first open after the upgrade.
  */
 
+// Issue #324 AC3 (decision requested on #281, comment 6857107430): the
+// SIX-CODE-POINT enumeration below is the normative Default_Ignorable
+// contract — NOT the full Unicode property. The property adds directional
+// marks (U+200E/U+200F), bidi controls (U+202A-202E, U+2066-2069), variation
+// selectors (U+FE00-FE0F) and U+034F whose removal has no demonstrated
+// lexical-search benefit; the twins and the vector corpus all pin this
+// enumeration.
 const DEFAULT_IGNORABLES = /[\u00AD\u200B\u200C\u200D\u2060\uFEFF]/g;
 const DASHES = /[\u2010-\u2015\u2212]/g;
 const SINGLE_QUOTES = /[\u2018\u2019]/g;

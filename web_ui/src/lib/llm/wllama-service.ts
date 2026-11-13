@@ -205,6 +205,28 @@ export class WllamaService implements LLMService {
     if (this.ready) return;
     if (this.initPromise !== null) return this.initPromise;
     if (WllamaService.teardownPromise) { await WllamaService.teardownPromise; }
+    // Boundary serialization (issue #328): the teardown guard above ran only
+    // BEFORE the await, so a dispose() arriving while we awaited it could
+    // begin its own safeExit between that await and the initPromise
+    // assignment below — the caller then held a resolved initialize()
+    // wrapping a disposed or mid-teardown engine. Re-validate AFTER the
+    // await, in the SAME synchronous block as the assignment (dispose() sets
+    // `disposed` synchronously at its entry, so one synchronous re-check
+    // closes the window): a NEW teardownPromise means a second dispose began
+    // while we awaited the first; `disposed` or a replaced instance means
+    // this instance is (being) torn down. Either way the caller gets a
+    // rejection naming the disposed state instead of a coherent-looking
+    // resolution.
+    if (WllamaService.teardownPromise || this.disposed || WllamaService.instance !== this) {
+      // A second dispose began while we awaited the first teardown: wait it
+      // out, then refuse below (the engine it left behind is not ours to
+      // use).
+      if (WllamaService.teardownPromise) { await WllamaService.teardownPromise; }
+      throw new Error(
+        'WllamaService.initialize() refused: the engine was disposed while ' +
+        'initialization was starting (init/dispose boundary serialization, issue #328)',
+      );
+    }
     this.initPromise = this.doInitialize(modelId, onProgress);
     return this.initPromise;
   }

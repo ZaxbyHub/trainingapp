@@ -36,6 +36,10 @@ SCHEMA_PATH = REPO_ROOT / "contracts" / "store.schema.sql"
 FIXTURE_PATH = Path(__file__).resolve().parent / "fixture.json"
 NODE_DRIVER = Path(__file__).resolve().parent / "interop_node.mjs"
 FIXTURE_LITERAL = "contracts/tests/store-interop/fixture.json"
+# Issue #325 AC3: paired contract/driver stamps (mirrors interop_node.mjs).
+# run_interop.py refuses a mismatched pair BEFORE comparing rows.
+CONTRACT_STAMP = "store-schema-v5"
+DRIVER_STAMP_PYTHON = "interop-python-1"
 SCHEMA_LITERAL = "contracts/store.schema.sql"
 # sqlite-vec computes L2 distances in float32, so returned values differ from
 # a pure-float64 oracle by up to ~1e-6 absolute (measured: 1.3e-9 on the
@@ -186,6 +190,32 @@ def query_evidence(conn: sqlite3.Connection, fixture: dict) -> dict:
     }
 
 
+def _stamp_pair_or_fail(writer: dict, reader: dict) -> None:
+    """Issue #325 AC3: refuse a mismatched or missing contract/driver stamp
+    pair BEFORE comparing rows, naming both versions. A missing stamp means a
+    driver predating the stamp contract; a mismatch means one side's driver
+    (or the contract it implements) drifted — either way the row comparison
+    would be opaque, so refuse loud."""
+    for role, side in (("writer", writer), ("reader", reader)):
+        for key in ("contract_stamp", "driver_stamp"):
+            if key not in side:
+                raise RuntimeError(
+                    f"interop stamp refusal: {role} evidence carries no {key} "
+                    f"(driver predates the stamp contract)"
+                )
+    if writer["contract_stamp"] != reader["contract_stamp"]:
+        raise RuntimeError(
+            f"interop stamp refusal: contract stamp mismatch — "
+            f"writer={writer['contract_stamp']} reader={reader['contract_stamp']}"
+        )
+    # driver_stamp is PER-RUNTIME (interop-node-N vs interop-python-N): a
+    # difference is expected and carried as explicit evidence; a MISSING
+    # stamp on either side is refused above. A driver's own stamp bump means
+    # its comparison semantics changed — reconcile the runtimes before
+    # trusting the row comparison (the per-runtime values make that visible
+    # in every verdict instead of an opaque mismatch).
+
+
 def node_side(db_path: Path, mode: str) -> dict:
     proc = subprocess.run(
         ["node", str(NODE_DRIVER), f"--{mode}", str(db_path)],
@@ -222,6 +252,8 @@ def python_write(db_path: Path, fixture: dict) -> dict:
     evidence.update(
         {
             "runtime": "python",
+            "contract_stamp": CONTRACT_STAMP,
+            "driver_stamp": DRIVER_STAMP_PYTHON,
             "sqlite_vec_version": sqlite_vec_version(),
             "fixture": FIXTURE_LITERAL,
         }
@@ -238,6 +270,8 @@ def python_read(db_path: Path, fixture: dict) -> dict:
     evidence.update(
         {
             "runtime": "python",
+            "contract_stamp": CONTRACT_STAMP,
+            "driver_stamp": DRIVER_STAMP_PYTHON,
             "sqlite_vec_version": sqlite_vec_version(),
             "fixture": FIXTURE_LITERAL,
         }
@@ -309,6 +343,8 @@ def main() -> int:
             reader = node_side(db_path, "read")
             writer_runtime, reader_runtime = "python", "node"
 
+        _stamp_pair_or_fail(writer, reader)
+
         o_ids, o_distances = oracle_topk(fixture)
         o_fts = oracle_fts(fixture)
         expected_rows = {
@@ -346,9 +382,18 @@ def main() -> int:
             "direction": direction,
             "fixture": FIXTURE_LITERAL,
             "schema": SCHEMA_LITERAL,
-            "sqlite_vec_version": reader.get(
-                "sqlite_vec_version", writer.get("sqlite_vec_version")
-            ),
+            "contract_stamp": {
+                "writer": writer["contract_stamp"],
+                "reader": reader["contract_stamp"],
+            },
+            "driver_stamp": {
+                "writer": writer["driver_stamp"],
+                "reader": reader["driver_stamp"],
+            },
+            "sqlite_vec_version": {
+                "writer": writer.get("sqlite_vec_version"),
+                "reader": reader.get("sqlite_vec_version"),
+            },
             "writer": {
                 "runtime": writer.get("runtime", writer_runtime),
                 "docs_rows": writer.get("docs_rows"),

@@ -10,6 +10,9 @@
  * rebuildFromEntries re-normalizes on every load.
  */
 
+// Issue #324 AC3: the SIX-CODE-POINT enumeration below is the normative
+// Default_Ignorable contract (not the full Unicode property) — see the
+// desktop twin's header comment and the decision request on #281.
 const DEFAULT_IGNORABLES = /[\u00AD\u200B\u200C\u200D\u2060\uFEFF]/g;
 const DASHES = /[\u2010-\u2015\u2212]/g;
 const SINGLE_QUOTES = /[\u2018\u2019]/g;

@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+- **Follow-up batch #324/#325/#326/#328 (test determinism, coverage honesty, CI census, init/dispose race)**:
+  - #324: the i320 pack-extract success-move census is composition-robust
+    (identity-keyed instead of a net-growth count over the shared tmpdir);
+    the v4→v5 migration's pending-reconcile heal is pinned by desktop +
+    python legs (born-v4 pending store: readable manifest heals inside the
+    same open, unreadable stays fail-closed); the six-code-point
+    Default_Ignorable enumeration is recorded as the normative normalization
+    contract (decision requested on #281).
+  - #325: `docs/migration-notes.md` gives the rollback runbook a real target
+    (v4→v5 forward-only fact + downgrade recipe) with a
+    `tests/test_docs_migration_notes.py` guard; the keyword index's
+    production `load()` wiring is driven end-to-end by a new spec
+    (deleting the `rebuildFromEntries` call in `load()` turns it RED); the
+    store-interop drivers stamp `contract_stamp`/`driver_stamp` into their
+    evidence and `run_interop.py` refuses a mismatched contract-stamp pair
+    before comparing rows (mismatch oracle included).
+  - #326: `tests/test_ci_paths.py` gains a desktop-runner env census — every
+    workflow step reaching the desktop test runner (directly or via the
+    declared wrapper inventory) must carry the parsed
+    `TRAININGAPP_SKIP_PACKTOOL_GLOBAL_SETUP: '1'` or sit on a declared
+    allowlist; a negative control proves the census bites on omission.
+  - #328: `WllamaService.initialize()` re-validates the teardown boundary
+    after its `teardownPromise` await (same synchronous block as the
+    `initPromise` assignment) and rejects naming the disposed state instead
+    of resolving onto a disposed or mid-teardown engine; the new
+    `wllama-service.init-teardown.test.ts` pins the interleaving and
+    single-flight legs, both mutation-proven.
+
 - **Lexical retrieval sees the text users type (issue #281, frontier-audit Workstream E)**:
   - One search-normalization contract (`normalizeForSearch`: NFKC, Default_Ignorable
     strip, dash/quote/ellipsis folds, whitespace collapse) is twin-tested by
