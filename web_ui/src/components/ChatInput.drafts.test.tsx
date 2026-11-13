@@ -181,15 +181,19 @@ describe('ChatInput per-conversation drafts (#267 AC8)', () => {
     );
     fireEvent.change(textarea(), { target: { value: 'draft B typed after New chat' } });
     expect(getDraft(NEW_CONVERSATION_RESERVED_KEY)).toBe('draft B typed after New chat');
+    // Match the real post-send state: sending the first turn CLEARED conv-9's
+    // draft (final-critic delta round: without this, the no-clobber rule
+    // alone explains the outcome and the leg cannot fail on a removed
+    // one-shot guard).
+    clearDraft('conv-9');
     // Re-select conv-9 with the STALE adoption signal: the adoption was
-    // consumed, so B stays under the sentinel.
+    // consumed, so B stays under the sentinel and conv-9 hydrates empty.
     view.rerender(
       <ChatInput onSend={onSend} isLoading={false} onCancel={vi.fn()} draftKey="conv-9" adoptedDraftKey="conv-9" onDraftChange={vi.fn()} />,
     );
-    expect(textarea().value).toBe('draft A for the first turn');
-    expect(getDraft('conv-9')).toBe('draft A for the first turn');
+    expect(textarea().value).toBe('');
+    expect(getDraft('conv-9')).toBeUndefined();
     expect(getDraft(NEW_CONVERSATION_RESERVED_KEY)).toBe('draft B typed after New chat');
-    clearDraft('conv-9');
     clearDraft(NEW_CONVERSATION_RESERVED_KEY);
   });
 
