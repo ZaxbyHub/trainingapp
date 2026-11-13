@@ -77,12 +77,18 @@ describe('detectEngineCapability', () => {
     // navigator.gpu exists and requestAdapter succeeds (the raw webgpu probe
     // is true), but wllama itself disables WebGPU on Firefox without JSPI —
     // the recommendation copy must not claim wllama will use WebGPU there.
+    // JSPI is forced OFF explicitly: newer Node/V8 runtimes expose
+    // WebAssembly.Suspending (CI failed here once on the ambient presence),
+    // so the leg pins the no-JSPI carve-out instead of assuming it.
     const savedUA = navigator.userAgent;
+    const WasmGlobal = WebAssembly as { Suspending?: unknown };
+    const savedSuspending = WasmGlobal.Suspending;
     Object.defineProperty(navigator, 'userAgent', {
       value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0',
       configurable: true,
     });
     try {
+      delete (WebAssembly as { Suspending?: unknown }).Suspending;
       vi.doMock('./engine-visibility', () => ({ WEBLLM_VISIBLE: false }));
       vi.resetModules();
       const { detectEngineCapability: detectHidden } = await import('./engine-capability');
@@ -92,11 +98,14 @@ describe('detectEngineCapability', () => {
       expect(cap.webgpu).toBe(true);
       expect(cap.recommendedEngine).toBe('wllama');
       expect(cap.tier).toBe('green');
-      // ...but the reason names the CPU/WASM reality (jsdom has no
-      // WebAssembly.Suspending, so JSPI is absent: the exact carve-out).
+      // ...but the reason names the CPU/WASM reality (JSPI forced absent:
+      // wllama's exact Firefox carve-out).
       expect(cap.reasons).toContain('WebGPU is present, but the bundled model runs on CPU/WASM in this browser.');
       expect(cap.reasons.join(' ')).not.toMatch(/wllama can run the bundled model on it/);
     } finally {
+      if (savedSuspending !== undefined) {
+        WasmGlobal.Suspending = savedSuspending;
+      }
       vi.doUnmock('./engine-visibility');
       vi.resetModules();
       Object.defineProperty(navigator, 'userAgent', { value: savedUA, configurable: true });
