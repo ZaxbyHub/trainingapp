@@ -21,7 +21,7 @@ llama-cpp-python>=0.2.72,<1.0.0
 # Web server (for API mode)
 fastapi>=0.109.1,<1.0.0
 uvicorn>=0.27.0,<1.0.0
-sse-starlette>=2.0.0,<4.0.0  # required: /ask/stream route is gated on HAS_SSE
+sse-starlette>=3.5.1,<4.0.0  # required: /ask/stream route is gated on HAS_SSE
 PyYAML>=6.0.3,<7.0  # contracts route-drift check in contracts/tests/run_conformance.py
 python-jose[cryptography]>=3.4.0,<4.0.0  # JWT authentication
 cryptography>=42.0.0  # ed25519 pack-signature verification (C8); direct import in pack_extract.py
