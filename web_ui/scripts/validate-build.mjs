@@ -49,6 +49,8 @@ import { closeSync, createReadStream, existsSync, openSync, readFileSync, readSy
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { verifyDistPacks } from './lib/validate-packs.mjs';
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WEB_UI = resolve(__dirname, '..');
 const DIST = join(WEB_UI, 'dist');
@@ -228,6 +230,17 @@ if (existsSync(MANIFEST)) {
 } else {
   fail('public/models/manifest.json not found.');
 }
+
+// 2.5 (issue #266 AC16) bundled pack archives: every packs.manifest.json entry
+// must exist in dist/packs/ with the recorded size and SHA-256, and no staged
+// pack archive may be a Git-LFS pointer stub. Runs on BOTH validation paths
+// (the default validate-build and validate-build --airgap execute this script);
+// every failure names the pack.
+await verifyDistPacks({
+  distPacksDir: join(DIST, 'packs'),
+  manifestPath: join(DIST, 'packs', 'packs.manifest.json'),
+  onProblem: fail,
+});
 
 // 3. (Issue #37 P4) Vite asset chunk sanity check. The build emits these chunks
 //    by name (or name pattern); their absence indicates a broken Rollup config

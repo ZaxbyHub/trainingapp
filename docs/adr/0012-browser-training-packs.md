@@ -328,7 +328,10 @@ exactly as on desktop.
     list; nothing is restored automatically. The only recovery is to reinstall the pack from
     its `.zip` (a feed update does not help: it skips packs that are not installed). Packs shows
     "(not persistent: the browser may evict installed packs under storage pressure)" when
-    persistence was not granted.
+    persistence was not granted. **Amended for BUNDLED packs (issue #266):** the every-boot
+    ensure below re-installs the build's bundled packs after an eviction on the next launch, so
+    for exactly the bundled set "never restored" no longer holds; a user-installed pack that is
+    not in the build's manifest still needs a manual reinstall.
   - **No Web Locks (PR 144 review F6).** Without Web Locks the install lock falls back to a
     per-tab promise chain, so two tabs installing different versions of one pack concurrently
     could leave two active rows. Every supported engine has Web Locks; the state is recoverable
@@ -341,6 +344,41 @@ exactly as on desktop.
   active, and its slides are not searchable until the pack is removed and reinstalled
   (reinstalling the same active version is refused) or rolled back and re-activated (which
   re-runs the ingest); only the embedding half resumes, on `embedding-service-ready`.
+
+### Bundled packs at boot (issue #266; decisions in maintainer comment 6825526111)
+
+- **Build-time staging.** `web_ui/scripts/prepare-packs.mjs` stages the SAME bundled pack set
+  the desktop installer stages (the pinned selector in `web_ui/scripts/lib/pack-selector.mjs`,
+  desktop-parity with `stage-installer-resources.mjs`: the docs pack plus `opmed-cdp-mlc-1.0.1`
+  from the operator root `desktop/knowledge-pack-src/`; incomplete or unexpected operator trees
+  fail the build loudly). When the operator root is wholly absent (CI, weights-less checkouts)
+  the stager SILENTLY falls back to the `contracts/fixtures/packs/bundled-min` fixture. It writes
+  deterministic archives plus `packs.manifest.json` (`{id, version, file, sha256, size}`) under
+  `public/packs/`, which `vite build` copies to `dist/packs/`; `validate-build` verifies every
+  entry there (existence, size, SHA-256; LFS-pointer refusal).
+- **Every-boot ensure (browser only, never Electron, never framed).** The `BundledPacksBoot`
+  component (under ToastProvider) runs `ensureBundledPacksInBrowser` once per boot, post-commit,
+  so a fresh browser profile gets the bundled packs without any manual install — parity with the
+  desktop app's own boot ensure.
+- **Satisfaction before install.** Each manifest entry is screened against the active records
+  FIRST (an active record at the entry's version or newer satisfies it, desktop parity); only
+  unsatisfied packs are fetched and installed. The screen is required because `installPack`
+  refuses an equal active version — without it the every-boot ensure would fail on every boot.
+  An install that nevertheless loses a race to a concurrent equal-version install counts as
+  success after a post-error satisfaction re-check.
+- **Per-pack isolation + notice.** One pack's failure never aborts the others and never throws;
+  the failure toast NAMES the pack, and the app stays usable. A small non-blocking status line
+  ("Preparing knowledge packs…", an always-mounted polite region) appears only while there is
+  unsatisfied work and clears when it ends.
+- **Ingestion.** Installs go through the same guarded `installPack` path as manual installs:
+  keyword-first indexing immediately, vector embeddings in the background when the embedding
+  model is ready (resumable) — no second ingestion path exists for bundled packs.
+- **Integrity at fetch.** The fetched zip is verified against the manifest's SHA-256 and size
+  before install. This is corruption/coverage verification of the staged artifact, explicitly
+  NOT a hostile-host defense: a hostile host that serves different bytes controls the manifest
+  too. Transport-hostile threats remain the hosting requirements' job (HTTPS, static-only hosts).
+- **Signature policy unchanged.** The opt-in pack-signature policy inside `installPack` applies
+  to bundled installs exactly as to manual ones; bundling adds no signature bypass.
 
 ### Updates
 

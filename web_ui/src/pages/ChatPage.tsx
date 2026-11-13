@@ -3,7 +3,7 @@
  * Displays messages, renders markdown, and supports streaming responses.
  */
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import type { ChatMessage, TrainingTarget, CitationRef } from '../types/chat';
 import type { SearchResult } from '../types/search';
 import type { ModelStatus } from '../lib/api/types';
@@ -39,6 +39,7 @@ import { downloadConversation } from '../lib/export/conversation-export';
 import { messagesForRegenerate } from '../lib/chat/message-ops';
 import { sequenceConversationSave } from '../lib/chat/save-sequencer';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
+import { NEW_DRAFT_SENTINEL } from '../lib/chat/draft-store';
 import { fetchModelStatus, isElectron, modelsAbsentForRealEngine, useDesktopSession } from '../lib/desktop-session';
 import { notifyDesktopModelsChanged } from '../lib/desktop-models-events';
 import { DesktopModelBlockedOverlay } from '../components/DesktopModelBlockedOverlay';
@@ -296,6 +297,8 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // Current input draft, mirrored from ChatInput so the Ctrl+Enter shortcut can
   // send it without ChatPage owning the textarea state.
   const draftRef = useRef('');
+  // #267 (AC5): the composer textarea, focused by the Ctrl/Cmd+K and '/' shortcuts.
+  const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Mirror of the current messages so async callbacks (onToken) can read the
   // latest array without placing side effects inside a state updater. NOTE
@@ -314,6 +317,39 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // closure from an earlier render.
   const pinnedSlideRef = useRef<PinnedSlide | null | undefined>(pinnedSlide);
   pinnedSlideRef.current = pinnedSlide;
+
+  // #267 (AC8): the composer's draft-store key. The new-conversation
+  // sentinel value (NEW_DRAFT_SENTINEL, draft-store) is the same '\u0000new'
+  // value the persistence sequencer reserves for the not-yet-created
+  // conversation; a first-turn send later adopts the real id and the
+  // sentinel's draft travels with it (the migration runs inside the
+  // composer's key-switch handler — ChatInput owns it, review round 1).
+  const draftKey = currentConversationId ?? NEW_DRAFT_SENTINEL;
+
+  // #267 review r2 (COR-1): the EXPLICIT adoption signal for the composer's
+  // sentinel→real-id draft migration. Set — batched with
+  // setCurrentConversationId(resolvedOwningId) — exactly when a first turn
+  // adopts its real conversation id; ChatInput migrates the sentinel's draft
+  // only onto THIS id, never onto an arbitrary key switch away from the
+  // sentinel.
+  const [adoptedDraftKey, setAdoptedDraftKey] = useState<string | undefined>(undefined);
+  // Delta review r2 backstop: the adoption signal is one-shot (ChatInput also
+  // tracks consumed adoptions), so when the conversation id drifts away from
+  // the adopted key (New chat, selecting another conversation), drop the
+  // stale signal so it can never re-arm the migration.
+  useEffect(() => {
+    if (adoptedDraftKey !== undefined && currentConversationId !== adoptedDraftKey) {
+      setAdoptedDraftKey(undefined);
+    }
+  }, [adoptedDraftKey, currentConversationId]);
+
+  // #267 (AC1/AC2): conversation-scoped recall history, derived from the
+  // messages PROP (newest last). Named composerHistory: the bare `history`
+  // name collides with the history snapshots used by runGeneration.
+  const composerHistory = useMemo(
+    () => messages.map((m) => (m.role === 'user' ? m.content : null)).filter((c): c is string => c !== null),
+    [messages]
+  );
 
   // S1: cancel any in-flight stream when the active conversation changes (a
   // non-empty→non-empty switch). This is ADDITIVE to the existing
@@ -1100,6 +1136,9 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       // the terminal callbacks' guard is correct even if no re-render has
       // interleaved between the send-time save and done/error firing.
       currentConversationIdRef.current = resolvedOwningId;
+      // Batched with the id adoption so ChatInput sees the adoption signal in
+      // the same render as the draftKey switch (COR-1).
+      setAdoptedDraftKey(resolvedOwningId);
       setCurrentConversationId(resolvedOwningId);
     }
 
@@ -1203,7 +1242,9 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // on the Chat page there are therefore two window keydown listeners, and both
   // fire on Ctrl+,, but `openSettings` is idempotent (`setCurrentPage('settings')`
   // called twice with the same value), so the double-firing is harmless.
-  // Ctrl+Enter sends the current draft; Ctrl+L clears; Ctrl+, opens Settings.
+  // Ctrl+Enter sends the current draft; Ctrl+Shift+L clears; Ctrl+, opens
+  // Settings; Escape stops the in-flight generation; Ctrl/Cmd+K and '/' focus
+  // the composer (#267).
   useKeyboardShortcuts({
     onSendMessage: () => {
       const draft = draftRef.current.trim();
@@ -1216,6 +1257,13 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     },
     onClearChat: handleClearClick,
     onOpenSettings,
+    // #267 (AC4): Escape stops the in-flight turn through the single
+    // terminalization protocol (the same path as the Stop button).
+    onStopGeneration: handleCancel,
+    isGenerating: isLoading,
+    // #267 (AC5): Ctrl/Cmd+K (any target) and plain '/' (non-editable
+    // targets) focus the composer.
+    onFocusComposer: () => composerTextareaRef.current?.focus(),
   });
 
   // Lumen phase 5 model chip: which generator answers the next turn, from the same
@@ -1258,8 +1306,9 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   useInertFallback(gatedContentRef, modelGateUp);
   // PRR-151-017: exactly ONE gate at a time. The desktop gate wins: handleSend
   // returns early on desktopModelBlocked in every inference mode, so it is the
-  // gate that actually binds; the browser gate (reachable in Electron when
-  // "In this window" is selected) would only stack a second alertdialog on it.
+  // gate that actually binds. (#265 AC7 removed the Electron browser-local
+  // option entirely, so the browser gate can no longer be reached inside
+  // Electron; the precedence rule stays as belt for legacy migrated state.)
   const browserGateUp = isModelBlocked && !desktopModelBlocked;
 
   return (
@@ -1352,6 +1401,10 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         disabled={isInputDisabled}
         disabledReasonId={isModelLoading ? 'chat-model-loading-note' : undefined}
         onDraftChange={(text) => { draftRef.current = text; }}
+        history={composerHistory}
+        draftKey={draftKey}
+        adoptedDraftKey={adoptedDraftKey}
+        textareaRef={composerTextareaRef}
         status={
           /* Lumen phase 5 (design-language.md section 5): every chat status lives
              in the composer card's status row: the desktop resident-model load

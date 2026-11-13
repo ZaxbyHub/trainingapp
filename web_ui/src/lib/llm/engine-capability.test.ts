@@ -43,15 +43,73 @@ describe('detectEngineCapability', () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it('recommends WebLLM (green) when WebGPU is available', async () => {
+  it('recommends WebLLM (green) when WebGPU is available and WebLLM is visible', async () => {
     setEnv({ webgpuAdapter: 'ok', coi: true, availableMB: 8192 });
     const cap = await detectEngineCapability();
     expect(cap.webgpu).toBe(true);
     expect(cap.recommendedEngine).toBe('webllm');
     expect(cap.recommendedMode).toBe('browser-local');
     expect(cap.tier).toBe('green');
-    // Should still hint that wllama covers multimodal.
-    expect(cap.reasons.join(' ')).toMatch(/multimodal|image/i);
+    // #265 (AC2/A2): truthful copy — the LFM2 model is text-only; the old
+    // "multimodal" hint was false and is gone.
+    expect(cap.reasons.join(' ')).toMatch(/bundled LFM2/i);
+    expect(cap.reasons.join(' ')).not.toMatch(/multimodal|image/i);
+  });
+
+  it('recommends wllama (green) on WebGPU hardware when WebLLM is hidden (#265 A3-iv)', async () => {
+    // Packaged/offline builds hide WebLLM; the recommendation is computed
+    // among visible engines only, while the raw webgpu result is retained.
+    vi.doMock('./engine-visibility', () => ({ WEBLLM_VISIBLE: false }));
+    vi.resetModules();
+    const { detectEngineCapability: detectHidden } = await import('./engine-capability');
+    setEnv({ webgpuAdapter: 'ok', coi: true, availableMB: 8192 });
+    const cap = await detectHidden();
+    expect(cap.webgpu).toBe(true);
+    expect(cap.recommendedEngine).toBe('wllama');
+    expect(cap.recommendedMode).toBe('browser-local');
+    expect(cap.tier).toBe('green');
+    expect(cap.reasons.join(' ')).toMatch(/wllama can run the bundled model/i);
+    vi.doUnmock('./engine-visibility');
+    vi.resetModules();
+  });
+
+  it('INT-1: on Firefox without JSPI the hidden-mode reason tells the CPU/WASM truth, not a wllama WebGPU claim', async () => {
+    // navigator.gpu exists and requestAdapter succeeds (the raw webgpu probe
+    // is true), but wllama itself disables WebGPU on Firefox without JSPI —
+    // the recommendation copy must not claim wllama will use WebGPU there.
+    // JSPI is forced OFF explicitly: newer Node/V8 runtimes expose
+    // WebAssembly.Suspending (CI failed here once on the ambient presence),
+    // so the leg pins the no-JSPI carve-out instead of assuming it.
+    const savedUA = navigator.userAgent;
+    const WasmGlobal = WebAssembly as { Suspending?: unknown };
+    const savedSuspending = WasmGlobal.Suspending;
+    Object.defineProperty(navigator, 'userAgent', {
+      value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0',
+      configurable: true,
+    });
+    try {
+      delete (WebAssembly as { Suspending?: unknown }).Suspending;
+      vi.doMock('./engine-visibility', () => ({ WEBLLM_VISIBLE: false }));
+      vi.resetModules();
+      const { detectEngineCapability: detectHidden } = await import('./engine-capability');
+      setEnv({ webgpuAdapter: 'ok', coi: true, availableMB: 8192 });
+      const cap = await detectHidden();
+      // The RAW hardware result is still true...
+      expect(cap.webgpu).toBe(true);
+      expect(cap.recommendedEngine).toBe('wllama');
+      expect(cap.tier).toBe('green');
+      // ...but the reason names the CPU/WASM reality (JSPI forced absent:
+      // wllama's exact Firefox carve-out).
+      expect(cap.reasons).toContain('WebGPU is present, but the bundled model runs on CPU/WASM in this browser.');
+      expect(cap.reasons.join(' ')).not.toMatch(/wllama can run the bundled model on it/);
+    } finally {
+      if (savedSuspending !== undefined) {
+        WasmGlobal.Suspending = savedSuspending;
+      }
+      vi.doUnmock('./engine-visibility');
+      vi.resetModules();
+      Object.defineProperty(navigator, 'userAgent', { value: savedUA, configurable: true });
+    }
   });
 
   it('recommends wllama (green) without WebGPU when threads + memory are good', async () => {

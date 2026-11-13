@@ -88,17 +88,21 @@ This copies into `public/models/`:
 
 ```bash
 cd web_ui
-npm run build:offline      # = prepare-models && tsc/vite build && validate-build
+npm run build:offline      # = prepare-models && prepare-packs && tsc/vite build && validate-build
 ```
 
-`build:offline` runs three steps:
+`build:offline` runs four steps:
 1. `prepare-models` — stage all model assets into `public/models/`. This script
    **fails loudly (non-zero exit)** if a required weight file is a Git-LFS
    pointer stub (detected via the `version https://git-lfs.github.com/spec/v1`
    header) rather than the real binary — so a build that forgot `git lfs pull`
    cannot silently copy garbage into the archive. Run `git lfs pull` first to
    restore the embedding ONNX.
-2. `vite build` — emit `web_ui/dist/`. The bundle uses a **relative base**
+2. `prepare-packs` - stage the bundled packs into `public/packs/` with
+   `packs.manifest.json` (operator packs when `desktop/knowledge-pack-src/`
+   is present; the `bundled-min` fixture otherwise - the recorded decision on
+   issue #266). CI runs this step weights-less via the fixture fallback.
+3. `vite build` — emit `web_ui/dist/`. The bundle uses a **relative base**
    (`base: './'`) for its own asset URLs, and model paths are resolved to an
    **absolute, deploy-aware** prefix (derived from `import.meta.env.BASE_URL`
    against `document.baseURI` in `model-manifest.ts`) so model fetches work
@@ -106,7 +110,7 @@ npm run build:offline      # = prepare-models && tsc/vite build && validate-buil
    (e.g. `https://host/docqa/`). Course playback is the exception: it needs the
    origin root (see the course player hosting note in §3). Production builds drop sourcemaps
    (`sourcemap: command === 'serve'`); pass a dev override if you need them.
-3. `validate-build` (`scripts/validate-build.mjs`) — **fails the build** if
+4. `validate-build` (`scripts/validate-build.mjs`) — **fails the build** if
    `dist/index.html`/`dist/models/` are missing or if any file required by
    `public/models/manifest.json` is absent from `dist/models/`. The manifest is
    the **single source of truth** shared with `src/lib/models/model-manifest.ts`
@@ -192,7 +196,7 @@ would otherwise make a build with zero model files falsely report "ready".
 
 ## 5. Browser LLM — wllama + lfm2-1.2b-rag (text-only)
 
-Browser inference uses **wllama** (llama.cpp in WASM, CPU/SIMD, **no WebGPU**)
+Browser inference uses **wllama** (llama.cpp in WASM, WebGPU when available, CPU otherwise; text only)
 running the **LFM2-1.2B-RAG (`lfm2-1.2b-rag`) Q4_K_M GGUF** — text-only. The
 multimodal projector artifact is gone from every shipped surface with the #156 LFM
 swap (the historical image-input browser path was removed with it — see §7). Two

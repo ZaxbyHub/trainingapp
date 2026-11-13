@@ -113,6 +113,14 @@ export function ModelBlockedOverlay({
         <p id={HEADLINE_ID} className="blocking-gate__lead">
           {headline}
         </p>
+        {/* #265 (AC8): developer hint for the missing-packaged-model state, as
+            a SEPARATE element — the live-region statusText concatenation above
+            is pinned by ModelBlockedOverlay.test.tsx and stays untouched. */}
+        {browserEngine === 'wllama' && (
+          <p className="blocking-gate__hint" data-testid="model-blocked-build-hint">
+            Building from source? Run npm run build:offline to stage the model.
+          </p>
+        )}
         {!hasRealFailure && modelLoadingProgress > 0 && (
           <>
             <ProgressBar label="Model loading progress" value={modelLoadingProgress} />

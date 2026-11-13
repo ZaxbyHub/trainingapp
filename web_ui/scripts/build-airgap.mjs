@@ -5,7 +5,7 @@
  * Sets `VITE_AIRGAP=1` for the offline build so that Vite inlines
  * `import.meta.env.VITE_AIRGAP === '1'` as a literal true, letting Rollup
  * tree-shake the `@mlc-ai/web-llm` dynamic import out of the bundle. Then runs
- * prepare-models + build, and FINALLY runs `validate-build --airgap` (not the
+ * prepare-models + prepare-packs + build, and FINALLY runs `validate-build --airgap` (not the
  * default `validate-build`) so the airgap-specific check fires: it asserts no
  * emitted chunk references `CreateMLCEngine` / `prebuiltMLCAppConfig` and no
  * chunk name matches `/web-?llm/i`. Without the explicit `--airgap` flag the
@@ -44,9 +44,12 @@ export function airgapSteps({ npm, node }) {
   return [
     // 1. Stage model weights (operator-acquired; airgap build still expects them).
     { label: 'prepare-models', args: [npm, 'run', 'prepare-models'] },
-    // 2. Vite build under VITE_AIRGAP=1 (Rollup tree-shakes @mlc-ai/web-llm).
+    // 2. Stage the bundled pack archives into public/packs/ (issue #266: the
+    //    air-gapped artifact carries its knowledge/training packs too).
+    { label: 'prepare-packs', args: [npm, 'run', 'prepare-packs'] },
+    // 3. Vite build under VITE_AIRGAP=1 (Rollup tree-shakes @mlc-ai/web-llm).
     { label: 'build', args: [npm, 'run', 'build'] },
-    // 3. Validate WITH --airgap so the WebLLM-exclusion check fires. This is
+    // 4. Validate WITH --airgap so the WebLLM-exclusion check fires. This is
     //    the load-bearing difference vs `build:offline` (which runs
     //    validate-build with no flags and would skip the airgap symbol scan).
     { label: 'validate-build --airgap', args: [node, 'scripts/validate-build.mjs', '--airgap'] },

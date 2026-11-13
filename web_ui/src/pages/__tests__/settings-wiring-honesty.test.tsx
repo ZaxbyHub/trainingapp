@@ -625,7 +625,7 @@ describe('Lumen phase 4: six sections + section nav (design-language.md section 
     fireEvent.click(model.getByRole('radio', { name: /^local or network server$/i }));
     expect(model.getByRole('switch', { name: /^use external model$/i })).not.toBeChecked();
     expect(model.getByTestId('builtin-still-answering')).toBeInTheDocument();
-    expect(model.getByRole('radio', { name: /wllama \(cpu/i })).toBeInTheDocument();
+    expect(model.getByRole('radio', { name: /wllama \(webgpu when available, cpu otherwise\)/i })).toBeInTheDocument();
     expect(model.getByRole('group', { name: /^browser engine$/i })).toBeInTheDocument();
     expect(model.getByRole('group', { name: /^hardware capability$/i })).toBeInTheDocument();
     expect(model.getByText(/^Status:/)).toBeInTheDocument();
@@ -640,7 +640,10 @@ describe('Lumen phase 4: six sections + section nav (design-language.md section 
     fireEvent.click(model.getByRole('radio', { name: /^cloud provider$/i }));
     expect(model.getByRole('switch', { name: /^use external model$/i })).not.toBeChecked();
     expect(model.getByRole('radio', { name: /^desktop backend$/i })).toBeChecked();
-    expect(model.getByRole('radio', { name: /^in this window$/i })).toBeInTheDocument();
+    // #265 (AC7): browser-local is hidden inside Electron (the desktop package
+    // ships no browser-LLM weights), so the run-location card offers the
+    // desktop backend only.
+    expect(model.queryByRole('radio', { name: /^in this window$/i })).not.toBeInTheDocument();
     expect(model.getByRole('group', { name: /^desktop backend$/i })).toBeInTheDocument();
     expect(model.getByRole('group', { name: /^inference profile$/i })).toBeInTheDocument();
   });
@@ -652,7 +655,7 @@ describe('Lumen phase 4: six sections + section nav (design-language.md section 
     const region = (name: RegExp) => within(screen.getByRole('region', { name }));
     const model = region(/^model & connection$/i);
     expect(model.getByRole('radio', { name: /^built-in model$/i })).toBeInTheDocument();
-    expect(model.getByRole('radio', { name: /wllama \(cpu/i })).toBeInTheDocument();
+    expect(model.getByRole('radio', { name: /wllama \(webgpu when available, cpu otherwise\)/i })).toBeInTheDocument();
     expect(model.getByRole('group', { name: /^hardware capability$/i })).toBeInTheDocument();
     expect(region(/^answers$/i).getByRole('radio', { name: /^balanced$/i })).toBeInTheDocument();
     expect(region(/^appearance$/i).getByRole('radio', { name: /^dark$/i })).toBeInTheDocument();
@@ -664,15 +667,17 @@ describe('Lumen phase 4: six sections + section nav (design-language.md section 
     expect(region(/^about$/i).getByText(/^Version:/)).toBeInTheDocument();
   });
 
-  test('desktop app: the built-in model runs "In this window" or in the "Desktop backend" (renamed from Browser-local / API Server)', async () => {
+  test('desktop app: the built-in model runs in the "Desktop backend" (renamed from Browser-local / API Server; #265 hides browser-local in Electron)', async () => {
     H.reset({ mode: 'api' });
     const { session } = makeSession(backend([], {}));
     const { container } = renderElectron(session);
     await settle();
     const model = within(screen.getByRole('region', { name: /^model & connection$/i }));
     expect(model.getByRole('radio', { name: /^desktop backend$/i })).toBeChecked();
-    expect(model.getByRole('radio', { name: /^in this window$/i })).not.toBeChecked();
-    expect(container.querySelectorAll('input[name="inference-mode"]')).toHaveLength(2);
+    // #265 (AC7): the desktop package ships no browser-LLM weights, so the
+    // run-location card no longer offers "In this window".
+    expect(screen.queryByRole('radio', { name: /^in this window$/i })).not.toBeInTheDocument();
+    expect(container.querySelectorAll('input[name="inference-mode"]')).toHaveLength(1);
     expect(screen.queryByText(/api server/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('radio', { name: /browser-local/i })).not.toBeInTheDocument();
     // First-run setup lives in About (desktop only).

@@ -258,9 +258,9 @@ describe('SettingsPage style composition (AC8: every radio family, both directio
       await waitFor(() => screen.getByRole('heading', { level: 2, name: /^model & connection$/i }));
       await settle();
 
-      // Inference Mode (run location) both directions.
-      clickRadio(container, 'inference-mode', 'api');
-      clickRadio(container, 'inference-mode', 'browser-local');
+      // Inference Mode (run location): #265 (AC7) removed the Electron
+      // browser-local option — the desktop backend is the only choice,
+      // so the family has a single radio to exercise.
       clickRadio(container, 'inference-mode', 'api');
 
       // Inference profile: every option.

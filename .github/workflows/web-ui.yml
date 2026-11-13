@@ -144,6 +144,15 @@ jobs:
       - name: Prepare models (--no-embedder --no-reranker)
         run: npm run prepare-models -- --no-embedder --no-reranker
 
+      # Stage the bundled packs for packaging validation (#266). CI is
+      # weights-less for packs too: with desktop/knowledge-pack-src absent on
+      # the runner, prepare-packs takes its silent bundled-min fixture
+      # fallback (the recorded maintainer decision on issue #266), so the
+      # packs gate in validate-build below has a manifest and archives to
+      # verify.
+      - name: Prepare packs (bundled-min fixture fallback)
+        run: npm run prepare-packs
+
       # Rebuild so dist/models/ contains the staged model assets, then validate.
       # (The earlier Build step ran before prepare-models, so its dist/ has no
       # models — packaging validation needs them present.)

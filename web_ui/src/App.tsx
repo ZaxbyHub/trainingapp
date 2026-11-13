@@ -24,6 +24,7 @@ import { FirstRunGate } from './components/FirstRunWizard';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Banner, Button, Dialog, IconButton, ProgressBar } from './ui';
 import { ChatPage } from './pages/ChatPage';
+import { BundledPacksBoot } from './components/BundledPacksBoot';
 import { DocumentsPage } from './pages/DocumentsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { TrainingPage } from './pages/TrainingPage';
@@ -583,6 +584,11 @@ function AppContent() {
           </Banner>
         )}
       </div>
+      {/* #266: every-boot bundled-pack ensure (browser app only; the
+          component itself skips Electron and framed contexts). Mounted
+          here so it lives under ToastProvider for its per-pack failure
+          notices, with its own always-mounted polite status region. */}
+      <BundledPacksBoot />
       {renderPage()}
     </AppLayout>
   );
