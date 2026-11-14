@@ -3,13 +3,15 @@
  *
  * The teardown guard in initialize() ran only BEFORE the await; a dispose()
  * arriving while initialize() awaited a completed teardown, then assigning
- * initPromise, left the caller with a resolved initialize() wrapping a
- * disposed or mid-teardown engine. These legs drive the interleaving with
- * test-controlled promises (no wall-clock sleeps) and pin the coherent-state
- * contract + single-flight across the teardown boundary.
+ * initPromise, let doInitialize START an engine build on the disposed or
+ * mid-teardown instance before its inner check rejected late. These legs
+ * drive the interleaving with test-controlled promises (no wall-clock
+ * sleeps) and pin the early-refusal contract + single-flight across the
+ * teardown boundary.
  *
- * AC1 (interleaving): pre-fix RED (resolved-while-disposed observed), GREEN
- *     after the boundary serialization.
+ * AC1 (interleaving): pre-fix RED (the refused attempt still entered
+ *     doInitialize and consumed a build — late rejection observed), GREEN
+ *     after the boundary serialization (no build on the refused attempt).
  * AC2 (-t single-flight): a second initialize() during an in-flight
  *     doInitialize after a completed teardown returns the SAME promise.
  */
@@ -83,10 +85,10 @@ describe('WllamaService init/dispose boundary serialization (issue #328)', () =>
     // flight (the issue's interleaving: engine switches in settings or
     // dispose-on-navigation overlapping a new init on the live service).
     // Pre-fix this awaited the teardown, then assigned initPromise
-    // unconditionally — resolving onto the disposed/mid-teardown engine of
-    // the instance it was called on. Post-fix it must reject naming the
-    // disposed state (this instance IS being disposed), never resolve
-    // wrapping a disposed engine.
+    // unconditionally — doInitialize ran and STARTED A BUILD on the
+    // disposed/mid-teardown instance before its inner check rejected late.
+    // Post-fix it must refuse EARLY (this instance IS being disposed), never
+    // start a build on the torn-down instance.
     const outcome: { settled: 'resolved' | 'rejected'; rejection: unknown } = {
       settled: 'resolved',
       rejection: null,
@@ -185,12 +187,19 @@ describe('WllamaService init/dispose boundary serialization (issue #328)', () =>
     expect(recorded).not.toBeNull();
     p2 = second.initialize();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    // The second caller joined the SAME recorded promise (no second engine
-    // build started — loadModelFromUrl call count stays at the first leg's).
+    // The second caller joined the SAME recorded promise (asserted below via
+    // the private field through the parked doInitialize override).
     expect(internals2.initPromise).toBe(recorded);
-    expect(loadModelFromUrl).toHaveBeenCalledTimes(1);
     releaseInit();
     await p1;
     await p2;
+    // After BOTH inits settle: the parked second instance completed its
+    // original doInitialize (the deferred gate does not suppress it), so the
+    // total is exactly 2 builds (leg 1's engine + the second instance's).
+    // A broken single-flight that ENTERS doInitialize for the second caller
+    // yields 3 here (the second instance's build runs twice); a broken
+    // single-flight that only re-assigns initPromise without entering is
+    // caught by the identity check above. Either way the leg REDs.
+    expect(loadModelFromUrl).toHaveBeenCalledTimes(2);
   });
 });

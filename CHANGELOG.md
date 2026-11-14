@@ -25,8 +25,10 @@
     allowlist; a negative control proves the census bites on omission.
   - #328: `WllamaService.initialize()` re-validates the teardown boundary
     after its `teardownPromise` await (same synchronous block as the
-    `initPromise` assignment) and rejects naming the disposed state instead
-    of resolving onto a disposed or mid-teardown engine; the new
+    `initPromise` assignment) and refuses naming the disposed state —
+    EARLY, before any engine build starts on the disposed or
+    mid-teardown instance (pre-fix the attempt ran a wasted build before
+    the inner check rejected late); the new
     `wllama-service.init-teardown.test.ts` pins the interleaving and
     single-flight legs, both mutation-proven.
 

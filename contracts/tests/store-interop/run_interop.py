@@ -11,7 +11,12 @@ Usage (from the repository root):
 
 stdout contract: the LAST non-empty line is a single JSON verdict object
 (see .agents issue-trace check-interface.md / docs/adr/0005). Diagnostics go
-to stderr. Exit 0 iff rows, top-k and FTS invariants all held.
+to stderr. Exit 0 iff rows, top-k and FTS invariants all held. Since the
+stamp contract (issue #325) the verdict's contract_stamp, driver_stamp and
+sqlite_vec_version fields are explicit {writer, reader} objects (previously
+sqlite_vec_version was a plain string); no tracked file parses the verdict
+beyond CI's exit-code check, so this docstring is the shape's canonical
+record (PR #347 review: the ADR never pinned a verdict schema).
 """
 from __future__ import annotations
 

@@ -617,6 +617,10 @@ _AUDIT_GUARD_ROSTER = [
     "tests/test_text_normalization_vectors.py",
     "tests/test_fixture_licensing_docs.py",
     "tests/test_fixture_manifest.py",
+    # issue #325 (PR #347 swarm-pr-review F4): the migration-notes guard
+    # polices docs-only regressions, so it must bind on every PR via this
+    # unbucketed roster (docs/** alone never trips the python bucket).
+    "tests/test_docs_migration_notes.py",
 ]
 
 

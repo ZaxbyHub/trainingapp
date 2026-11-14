@@ -130,4 +130,31 @@ describe('SCHEMA-BUMP-CONTRACT (issue #100 item 3): version copies agree', () =>
       `SCHEMA-BUMP-CONTRACT: contracts/tests/store-interop/migrate.py has no ladder step for schema version ${seed} — add the step in the same commit as the bump (#100)`,
     ).toContain(`if version < ${seed}:`);
   });
+
+  it('both store-interop drivers\' CONTRACT_STAMP name the CURRENT schema version', () => {
+    // PR #347 swarm-pr-review F2 (CAND-intent-architecture-1 et al.): the
+    // interop stamps are hand-maintained literals compared only
+    // writer-vs-reader — mutually matching but STALE stamps (both left at
+    // store-schema-v4 under seed 5) left every check green (executed
+    // probe). Bind both emitters to the authoritative seed: a legitimate
+    // schema bump must consciously re-touch both stamps in the same commit.
+    const seed = schemaSeed(schemaText());
+    const expected = `store-schema-v${seed}`;
+    const runInterop = fs.readFileSync(
+      path.join(REPO_ROOT, 'contracts', 'tests', 'store-interop', 'run_interop.py'),
+      'utf8',
+    );
+    const interopNode = fs.readFileSync(
+      path.join(REPO_ROOT, 'contracts', 'tests', 'store-interop', 'interop_node.mjs'),
+      'utf8',
+    );
+    expect(
+      runInterop,
+      `SCHEMA-BUMP-CONTRACT: run_interop.py's CONTRACT_STAMP does not name the current schema seed ${seed} — bump it to ${expected} in the same commit as the schema bump (#100, #325)`,
+    ).toContain(`CONTRACT_STAMP = "${expected}"`);
+    expect(
+      interopNode,
+      `SCHEMA-BUMP-CONTRACT: interop_node.mjs's CONTRACT_STAMP does not name the current schema seed ${seed} — bump it to ${expected} in the same commit as the schema bump (#100, #325)`,
+    ).toContain(`CONTRACT_STAMP = '${expected}'`);
+  });
 });
