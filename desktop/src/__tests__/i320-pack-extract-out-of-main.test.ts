@@ -3047,8 +3047,21 @@ describe('#320 AC3 P3: public extractPackZip launches the child through the regi
     expect(path.basename(result)).toMatch(/^pack-install-/);
     expect(fs.existsSync(path.join(result, 'pack.json'))).toBe(true);
     expect(Buffer.compare(fs.readFileSync(path.join(result, 'pack.json')), PACK_JSON_STUB), 'the moved tree content is correct').toBe(0);
-    const tmpAfter = fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('pack-install-'));
-    expect(tmpAfter.length).toBeGreaterThan((stateAtLaunch?.tmpBefore ?? []).length);
+    // Composition-robust census (issue #324 AC1): the old form asserted NET
+    // GROWTH of the SHARED os.tmpdir()'s pack-install-* count between two
+    // snapshots, which flips with suite composition under the parallel worker
+    // pool (any sibling creating/removing such a dir contributes to the
+    // delta). The identity-keyed form proves the same contract — a FRESH dir
+    // created BY THIS CALL — without shared state: the returned dir's name
+    // must not have existed at launch (the parent creates it inside the
+    // success move), and it must still exist right before this test cleans
+    // it up.
+    const installBefore = stateAtLaunch?.tmpBefore ?? [];
+    expect(
+      installBefore.includes(path.basename(result)),
+      'the adopted dir is FRESH: its name did not exist at launch',
+    ).toBe(false);
+    expect(fs.existsSync(result), 'the adopted dir exists before this test cleans it up').toBe(true);
     fs.rmSync(result, { recursive: true, force: true });
   });
 

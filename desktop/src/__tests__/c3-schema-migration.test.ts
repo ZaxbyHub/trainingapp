@@ -537,4 +537,93 @@ describe('v3 -> v4 store schema migration (issue #278)', () => {
       store.close();
     }
   });
+
+  // Issue #324 AC2: the v4->v5 step heals a BORN-v4 store carrying
+  // doc_claims_reconciled='pending' inside the SAME open (migrateV4ToV5's
+  // stampReconciled(reconcileDocClaimsLocked(db))); a store already at v5
+  // heals through the else branch instead. No existing fixture constructs a
+  // store BORN at v4, so the heal inside the v5 step was undriven.
+  async function seedV4PendingStore(dbPath: string, packDir: string, withManifest: boolean): Promise<void> {
+    const { openStore } = await import('../../main/backend/store/sqlite-store.js');
+    const store = openStore({ dbPath, dims: 8 });
+    try {
+      const db = store.db as unknown as SqlDb;
+      // Direct v4 construction: the schema DDL already created doc_claims
+      // (contracts/store.schema.sql), so only the backfill rows + the pending
+      // stamp + the version dial-back are needed (mirrors migrateV3ToV4's
+      // backfill shape without running the ladder).
+      db.prepare(
+        "INSERT INTO packs (id, version, name, published_at, source_class, active, install_path, supersedes) VALUES ('pack-a', '1.0.0', 'Pack A', '2026-01-01T00:00:00Z', 'bundled', 1, ?, NULL)",
+      ).run(packDir);
+      db.prepare(
+        "INSERT INTO docs (id, source_class, path, sha256, title, published_at, pack_id) VALUES ('doc-1', 'bundled', 'docs/shared-0.json', ?, 'Seed', NULL, 'pack-a')",
+      ).run(createHash('sha256').update('v4-pending doc bytes').digest('hex'));
+      const insertClaim = db.prepare('INSERT OR IGNORE INTO doc_claims (doc_id, claimant) VALUES (?, ?)');
+      insertClaim.run('doc-1', 'pack:pack-a');
+      db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('doc_claims_reconciled', 'pending')").run();
+      db.prepare("UPDATE meta SET value = '4' WHERE key = 'schema_version'").run();
+      if (withManifest) writeRetainedManifest(packDir, 'pack-a', [createHash('sha256').update('v4-pending doc bytes').digest('hex')]);
+    } finally {
+      store.close();
+    }
+  }
+
+  itReal('v4-born pending store: readable manifest heals inside the v5 open (issue #324 AC2, migrateV4ToV5 heal)', async () => {
+    const { openStore } = await import('../../main/backend/store/sqlite-store.js');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'c3-v4-pending-'));
+    tempDirs.push(dir);
+    const dbPath = path.join(dir, 'store.db');
+    const packDir = path.join(dir, 'managed', 'pack-a', '1.0.0');
+    fs.mkdirSync(packDir, { recursive: true });
+    await seedV4PendingStore(dbPath, packDir, true);
+    // FIRST open: version=4 -> migrateV4ToV5 -> the :385 heal re-derives and
+    // stamps 'done' in the SAME open. Discriminating: without the heal line
+    // the marker stays 'pending' until a SECOND open (the else branch).
+    let store = openStore({ dbPath, dims: 8 });
+    try {
+      const db = store.db as unknown as SqlDb;
+      expect(store.schemaVersion).toBe(5);
+      expect(
+        (db.prepare("SELECT value FROM meta WHERE key = 'doc_claims_reconciled'").get() as { value: string }).value,
+      ).toBe('done');
+      // Printed explicitly: the default vitest reporter omits fast test
+      // names, and the frozen check C2 requires the v4-pending token in the
+      // desktop leg's output.
+      console.info('v4-pending heal leg (desktop, readable manifest): healed in the same open');
+    } finally {
+      store.close();
+    }
+    void store;
+  });
+
+  itReal('v4-born pending store: unreadable manifest stays fail-closed through the v5 open, heals on reopen (issue #324 AC2)', async () => {
+    const { openStore } = await import('../../main/backend/store/sqlite-store.js');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'c3-v4-pending-'));
+    tempDirs.push(dir);
+    const dbPath = path.join(dir, 'store.db');
+    const packDir = path.join(dir, 'managed', 'pack-a', '1.0.0');
+    fs.mkdirSync(packDir, { recursive: true }); // NO pack.json: unreadable
+    await seedV4PendingStore(dbPath, packDir, false);
+    let store = openStore({ dbPath, dims: 8 });
+    try {
+      const db = store.db as unknown as SqlDb;
+      expect(store.schemaVersion).toBe(5);
+      expect(
+        (db.prepare("SELECT value FROM meta WHERE key = 'doc_claims_reconciled'").get() as { value: string }).value,
+      ).toBe('pending');
+    } finally {
+      store.close();
+    }
+    // Reopen with the manifest restored: the else-branch reconcile heals.
+    writeRetainedManifest(packDir, 'pack-a', [createHash('sha256').update('v4-pending doc bytes').digest('hex')]);
+    store = openStore({ dbPath, dims: 8 });
+    try {
+      const db = store.db as unknown as SqlDb;
+      expect(
+        (db.prepare("SELECT value FROM meta WHERE key = 'doc_claims_reconciled'").get() as { value: string }).value,
+      ).toBe('done');
+    } finally {
+      store.close();
+    }
+  });
 });

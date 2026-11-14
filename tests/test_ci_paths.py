@@ -617,6 +617,10 @@ _AUDIT_GUARD_ROSTER = [
     "tests/test_text_normalization_vectors.py",
     "tests/test_fixture_licensing_docs.py",
     "tests/test_fixture_manifest.py",
+    # issue #325 (PR #347 swarm-pr-review F4): the migration-notes guard
+    # polices docs-only regressions, so it must bind on every PR via this
+    # unbucketed roster (docs/** alone never trips the python bucket).
+    "tests/test_docs_migration_notes.py",
 ]
 
 
@@ -767,3 +771,138 @@ def test_llama_cpp_pin_check_detects_drift():
         _pin_files_consistent(constraints.replace("==", "==9."), wheel)
     with pytest.raises(AssertionError):
         _pin_files_consistent(constraints, re.sub(r"[0-9a-f]{64}", "abc", wheel))
+
+
+# ---------------------------------------------------------------------------
+# Desktop-runner env census (issue #326, AC1/AC2)
+# ---------------------------------------------------------------------------
+
+# Declared wrapper inventory: files whose execution reaches the desktop test
+# runner without naming `npm --prefix desktop test` or `npx vitest` in the
+# workflow step's own run text. A NEW wrapper joins this inventory in the
+# same PR that adds it (the census keys on a DECLARED inventory, not an
+# assumed call-graph solver).
+DESKTOP_RUNNER_WRAPPER_INVENTORY = ("contracts/tests/test_pack_parity.py",)
+
+# Steps that legitimately reach the desktop test runner WITHOUT the skip env
+# because they must BUILD packtool first (globalSetup would be a no-op skip
+# for them; their specs shell out to packtool/dist/cli.js). Keyed by
+# (workflow file, job key, step name) so a renamed step fails the census and
+# the allowlist is refreshed consciously.
+DESKTOP_RUNNER_ENV_ALLOWLIST = {
+    # desktop-build.yml's acceptance-tests step runs in the job that builds
+    # packtool at the "Build packtool (issue #73 dependency of the desktop
+    # tests)" step; its specs shell out to packtool/dist/cli.js.
+    ("desktop-build.yml", "*", "Acceptance tests (vitest, stubbed electron)"),
+}
+
+
+def _desktop_runner_reaches(run_text: str) -> bool:
+    """True when a workflow step's run text invokes the desktop test runner
+    directly or through a declared wrapper (issue #326 census predicate)."""
+    if "npm --prefix desktop test" in run_text or "npx vitest" in run_text:
+        return True
+    return any(wrapper in run_text for wrapper in DESKTOP_RUNNER_WRAPPER_INVENTORY)
+
+
+def _desktop_runner_census(wf_name: str, wf: dict) -> list[tuple[str, str, str, bool]]:
+    """Walk every job/step of one workflow; return the enumerated inventory
+    (workflow, job, step name, env-ok) for every runner-reaching step. The
+    step's PARSED env must carry TRAININGAPP_SKIP_PACKTOOL_GLOBAL_SETUP == '1'
+    unless (workflow, job, step name) sits on the declared allowlist."""
+    inventory: list[tuple[str, str, str, bool]] = []
+    for job_key, job in (wf.get("jobs") or {}).items():
+        for step in job.get("steps", []) or []:
+            run_text = str(step.get("run", ""))
+            if not _desktop_runner_reaches(run_text):
+                continue
+            step_name = str(step.get("name", ""))
+            env = step.get("env") or {}
+            env_ok = env.get("TRAININGAPP_SKIP_PACKTOOL_GLOBAL_SETUP") == "1"
+            allowed = any(
+                (w == wf_name or w == "*")
+                and (j == job_key or j == "*")
+                and (s == step_name or s == "*")
+                for w, j, s in DESKTOP_RUNNER_ENV_ALLOWLIST
+            )
+            inventory.append((wf_name, str(job_key), step_name, env_ok or allowed))
+    return inventory
+
+
+def _assert_census(inventory: list[tuple[str, str, str, bool]]) -> None:
+    """Shared assertion: every runner-reaching step carries the parsed env or
+    an allowlist entry; failures enumerate the inventory for auditability."""
+    bad = [row for row in inventory if not row[3]]
+    assert not bad, (
+        "desktop-runner env census: runner-reaching workflow step(s) without "
+        "TRAININGAPP_SKIP_PACKTOOL_GLOBAL_SETUP: '1' and not on the declared "
+        "allowlist (pr323 review PRR-001 class; a future step without the env "
+        "must fail here, not silently inherit the packtool-building "
+        "globalSetup) — enumerated inventory (workflow, job, step, env-ok): "
+        f"{inventory}"
+    )
+
+
+def test_desktop_runner_census_shipped_tree():
+    """Issue #326 AC1: EVERY workflow step reachable from .github/workflows/
+    that reaches the desktop test runner (directly or via the declared
+    wrapper inventory) carries the parsed skip env or a declared allowlist
+    entry. Negative control: test_desktop_runner_census_negative_control."""
+    inventory: list[tuple[str, str, str, bool]] = []
+    for wf_path in sorted(WORKFLOWS.glob("*.yml")):
+        wf = _load_workflow(wf_path.name)
+        inventory.extend(_desktop_runner_census(wf_path.name, wf))
+    # The census must have matched the SHIPPED surfaces (a zero-match census
+    # is vacuous: if the predicates stop matching, this pin goes RED).
+    assert inventory, "desktop-runner env census matched NO steps (predicate drift)"
+    shipped = {(w, j) for w, j, _s, _ok in inventory}
+    assert (
+        "security.yml",
+        "security",
+    ) in shipped, "census lost the security.yml contract-family surface"
+    assert any(
+        w == "harness-contracts.yml" for w, _j in shipped
+    ), "census lost the harness-contracts surfaces"
+    assert any(
+        w == "desktop-build.yml" for w, _j in shipped
+    ), "census lost the desktop-build surfaces (wrapper + acceptance)"
+    _assert_census(inventory)
+
+
+def test_desktop_runner_census_negative_control():
+    """Issue #326 AC1 negative control: a fixture workflow carrying an
+    unenv'd runner-reaching step turns the census RED (the census bites on
+    OMISSION, not merely re-verification of env'd steps)."""
+    fixture = {
+        "jobs": {
+            "future-job": {
+                "steps": [
+                    {
+                        "name": "Unenv'd future runner step",
+                        "run": "npm --prefix desktop test -- src/__tests__/future.test.ts",
+                    },
+                ]
+            }
+        }
+    }
+    inventory = _desktop_runner_census("fixture.yml", fixture)
+    assert len(inventory) == 1, inventory
+    assert inventory[0][3] is False, "fixture step should read env-not-ok"
+    with pytest.raises(AssertionError) as excinfo:
+        _assert_census(inventory)
+    assert "future-job" in str(excinfo.value)
+    # And the same fixture WITH the env passes the assertion.
+    fixed = {
+        "jobs": {
+            "future-job": {
+                "steps": [
+                    {
+                        "name": "Env'd future runner step",
+                        "run": "npm --prefix desktop test -- src/__tests__/future.test.ts",
+                        "env": {"TRAININGAPP_SKIP_PACKTOOL_GLOBAL_SETUP": "1"},
+                    },
+                ]
+            }
+        }
+    }
+    _assert_census(_desktop_runner_census("fixture.yml", fixed))

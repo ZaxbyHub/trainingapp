@@ -302,6 +302,9 @@ jobs:
       - name: Interop — Python writes, Node reads
         run: python contracts/tests/store-interop/run_interop.py --direction "python->node"
 
+      - name: Interop — contract/driver stamp refusal oracle (issue #325)
+        run: python contracts/tests/store-interop/stamp_refusal_oracle.py
+
       - name: Pack schema — validator + fixtures suite (issue #68)
         run: python -m pytest contracts/tests/test_pack_schema.py -q
 

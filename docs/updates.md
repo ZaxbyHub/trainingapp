@@ -91,7 +91,8 @@ resolve to (the default URL uses the Releases "latest" asset pattern).
 - **App binary (manual runbook):** reinstall the prior installer (keep it, or re-download from
   the Release whose `sha256` you can verify against the old feed entry — feeds for old releases
   stay valid). Per-user install; data survives. If the new build migrated data forward, check
-  `docs/` migration notes before downgrading.
+  `docs/migration-notes.md` (the store migration notes: current schema v5 is forward-only, and
+  the downgrade recipe restores the pre-upgrade store) before downgrading.
 
 ## Verification recipe (local, offline)
 

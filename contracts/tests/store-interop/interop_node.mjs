@@ -45,6 +45,17 @@ function sqliteVecVersion() {
   return 'unknown';
 }
 
+// Issue #325 AC3: paired contract/driver stamps. contract_stamp names the
+// store schema contract this driver implements (mirroring run_interop.py's
+// CONTRACT_STAMP); driver_stamp bumps whenever this driver's
+// comparison-relevant semantics change (insertion rules, normalization,
+// query shape). run_interop.py refuses a mismatched CONTRACT stamp and a
+// missing stamp before comparing rows; driver_stamp is per-runtime (carried
+// as explicit evidence in every verdict, never silently fallback-named), so
+// driver drift is visible instead of surfacing as an opaque row mismatch.
+const CONTRACT_STAMP = 'store-schema-v5';
+const DRIVER_STAMP = 'interop-node-1';
+
 function fail(message) {
   process.stderr.write(`interop_node: ${message}\n`);
   process.exit(1);
@@ -180,6 +191,8 @@ try {
   const evidence = queryEvidence(db, fixture);
   const payload = {
     runtime: 'node',
+    contract_stamp: CONTRACT_STAMP,
+    driver_stamp: DRIVER_STAMP,
     sqlite_vec_version: sqliteVecVersion(),
     fixture: 'contracts/tests/store-interop/fixture.json',
     ...evidence,
