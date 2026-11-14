@@ -14,8 +14,8 @@
  * there, which is the expected base signature.
  *
  * WordPiece oracle: a minimal BertTokenizer reader implemented in this file
- * (vocab from web_ui/public/models/embeddings/snowflake-arctic-embed-m-v1.5/
- * tokenizer.json `model.vocab`; greedy longest-match-first with ##
+ * (vocab from models/bge-small-en-v1.5/tokenizer.json
+ * `model.vocab`; greedy longest-match-first with ##
  * continuations; uncased behavior = lowercase + NFD accent-strip;
  * max_input_chars_per_word = 100 with [UNK] fallback; BasicTokenizer
  * whitespace/punctuation splitting with CJK per-char isolation). Counts
@@ -47,19 +47,15 @@
  *   normal-prose fixture: 37 chunks, chunk-texts sha256
  *   ad75c9cc5c99e456086b05e5090f8cb8206bbf7fe61c41c70ed4d5a21f9be713
  *
- * HOST DEPENDENCY + SKIP SEMANTICS (round 4, CI fix — honest disclosure):
- * the oracle reads tokenizer.json from the git-ignored model directory
- * (web_ui/public/models/embeddings/... — .git/info/exclude excludes models/,
- * so fresh clones and CI runners do not have it). The module-level loader
- * therefore yields null when the file is absent, and every ORACLE-dependent
- * test (self-check, adversarial battery, exact-boundary, pack leg)
- * self-skips via it.skipIf — their names keep the frozen 'token budget
- * guard' -t token, so they still match the driver filter. The NON-oracle
- * tests (surface, byte-identical prose pin, ctor validation) are
- * UNCONDITIONAL and never skip. Consequence: plain `npm test` on a fresh
- * clone runs the non-oracle subset (3 tests); the acceptance path
- * (check-c2.sh) junctions the models dir from the main checkout, so the
- * frozen check always runs all 7. A PRESENT-but-corrupt tokenizer.json
+ * SKIP SEMANTICS (issue #271 AC6 amendment): the oracle reads tokenizer.json
+ * from the GIT-TRACKED models/bge-small-en-v1.5/ directory (model section
+ * byte-equivalent to the arctic one — pinned counts and the normal-prose sha
+ * reproduce unchanged), so fresh clones and CI runners execute the battery,
+ * exact-boundary and pack legs UNCONDITIONALLY. The ONE remaining skip gate
+ * is the oracle self-check (its comparison target is the real
+ * transformers.js reader, whose import is environment-dependent): it
+ * self-skips via it.skipIf when the tokenizer is unavailable, keeping the
+ * frozen 'token budget guard' -t token. A PRESENT-but-corrupt tokenizer.json
  * still fails loudly (JSON.parse throws inside loadTokenizerModel).
  *
  * AMENDMENT ROUND 5 (swarm review; sanctioned CHECK_WRONG round 5): two
@@ -129,9 +125,15 @@ import type { PackManifest } from '../packs/pack-manifest';
 // Offline WordPiece oracle (minimal BertTokenizer, uncased)
 // ---------------------------------------------------------------------------
 
+// Issue #271 AC6: the oracle reads its WordPiece vocabulary from the
+// GIT-TRACKED bge tokenizer (models/bge-small-en-v1.5/tokenizer.json) whose
+// model section is byte-equivalent to the arctic one (ordered vocab keys and
+// values equal, same unk/prefix/max-chars — verified before the repoint; all
+// pinned counts and the normal-prose sha reproduce UNCHANGED). Fresh clones
+// and CI runners therefore execute every battery leg without staged weights.
 const MODEL_DIR = path.resolve(
   __dirname, '..', '..', '..',
-  'public', 'models', 'embeddings', 'snowflake-arctic-embed-m-v1.5'
+  '..', 'models', 'bge-small-en-v1.5'
 );
 
 interface WordPieceModel {
@@ -161,7 +163,8 @@ function loadTokenizerModel(): WordPieceModel {
 /**
  * The tokenizer model, or null when this host lacks the git-ignored model
  * directory (fresh clones / CI runners). Oracle-dependent tests self-skip
- * on null (it.skipIf); the non-oracle tests never skip.
+ * on null (it.skipIf — the ONLY gated leg); every other oracle-dependent
+ * test is unconditional under the tracked bge tokenizer.
  */
 const TOKENIZER_MODEL: WordPieceModel | null = fs.existsSync(
   path.join(MODEL_DIR, 'tokenizer.json')
@@ -217,7 +220,9 @@ function basicTokenize(text: string): string[] {
 /** Greedy longest-match-first WordPiece with ## continuations and [UNK] fallback. */
 function wordpiece(word: string): string[] {
   if (VOCAB === null) {
-    // Unreachable in practice: every caller is it.skipIf-guarded on
+    // Unreachable in practice: the loader's only skipIf-guarded caller is
+    // the oracle self-check, guarded on null; the unconditional battery legs
+    // crash loudly instead of silently passing if the model vanished.
     // TOKENIZER_MODEL === null. Loud failure if a future test forgets.
     throw new Error('WordPiece oracle unavailable on this host (tokenizer.json missing).');
   }
@@ -563,6 +568,10 @@ describe('TextChunker token budget guard (#35-B3 / AC2)', () => {
     expect(n).toBeGreaterThan(0);
   });
 
+  // THE one permitted skip gate (issue #271 AC6): the oracle self-check
+  // alone compares against the real transformers.js reader, whose import is
+  // environment-dependent; every other leg is UNCONDITIONAL (the tracked
+  // bge tokenizer makes them runnable everywhere).
   it.skipIf(TOKENIZER_MODEL === null)(
     'token budget guard: oracle self-check — the offline WordPiece reader matches the real transformers.js tokenizer',
     async () => {
@@ -595,7 +604,7 @@ describe('TextChunker token budget guard (#35-B3 / AC2)', () => {
     }
   });
 
-  it.skipIf(TOKENIZER_MODEL === null)(
+  it(
     'token budget guard: adversarial battery — every emitted chunk fits 512 ACTUAL WordPiece tokens, markers preserved in order',
     () => {
     const battery = makeBatteryFixtures();
@@ -638,7 +647,7 @@ describe('TextChunker token budget guard (#35-B3 / AC2)', () => {
     }
   });
 
-  it.skipIf(TOKENIZER_MODEL === null)(
+  it(
     'token budget guard: exact-boundary — 64 deoxyribonucleic words (content estimate 512, real 514 incl specials) are split so every emitted piece fits 512 real tokens',
     () => {
     // Critic round-3 shape: the fixture's word-shape-aware content estimate
@@ -711,7 +720,7 @@ describe('TextChunker token budget guard (#35-B3 / AC2)', () => {
     expect(() => new TextChunker(256, 100, 512)).not.toThrow();
   });
 
-  it.skipIf(TOKENIZER_MODEL === null)(
+  it(
     'token budget guard: pack slide chunks (bypassing TextChunker) are split to fit 512 actual tokens with the leading marker preserved',
     () => {
     // Critic finding 4 (scope completion): pack slide docs are emitted as a
