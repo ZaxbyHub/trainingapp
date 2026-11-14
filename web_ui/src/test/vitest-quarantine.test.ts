@@ -95,7 +95,8 @@ export function parseQuarantine(configText: string): QuarantineEntry[] {
       continue;
     }
 
-    const entryMatch = code.match(/'(src\/[^']+)'/);
+    // Accept single- and double-quoted entries (issue #349 review F-006).
+    const entryMatch = code.match(/['"](src\/[^'"]+)['"]/);
     if (entryMatch) {
       const inlineOwners = comment.match(/#(\d+)\b/g)?.map((t) => Number(t.slice(1))) ?? [];
       entries.push({

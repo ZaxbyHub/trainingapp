@@ -50,12 +50,19 @@ describe('tokenguard oracle reads a git-tracked fixture (issue #271 AC6)', () =>
     expect(specText).not.toContain("'public', 'models'");
   });
 
-  test('at most one it.skipIf remains and it is the identified oracle self-check', () => {
+  test('at most one skipIf remains (any vitest API) and it is the identified oracle self-check', () => {
     // Comment-aware scan: blank comment interiors offset-preserving before
-    // counting, so prose mentions (docs lines) do not count.
+    // counting, so prose mentions (docs lines) do not count. Issue #349
+    // review F-003: the pin must reject skipIf gating reintroduced through
+    // BOTH the it and describe/test APIs — a bare \bskipIf\b scan covers
+    // it.skipIf, describe.skipIf and test.skipIf (and an alias binding still
+    // contains the token); the banned runIf/.skip( forms stay.
     const stripped = stripComments(specText);
-    const skipIfs = [...stripped.matchAll(/\bit\.skipIf\b/g)];
-    expect(skipIfs.length, 'exactly one it.skipIf (the self-check)').toBeLessThanOrEqual(1);
+    const skipIfs = [...stripped.matchAll(/\bskipIf\b/g)];
+    expect(
+      skipIfs.length,
+      'exactly one skipIf (the self-check; describe.skipIf/test.skipIf/alias forms all contain the token)',
+    ).toBeLessThanOrEqual(1);
     expect(stripped).not.toMatch(/\brunIf\b/);
     expect(stripped).not.toMatch(/\.skip\(/);
     if (skipIfs.length === 1) {

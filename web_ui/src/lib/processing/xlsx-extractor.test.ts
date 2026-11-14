@@ -122,6 +122,24 @@ describe('XLSX Text Extraction', () => {
       expect(String(error.error)).toContain('Corrupt');
     });
 
+    test('classifies a corrupt-workbook message through the corrupt-classifier branch (lowercase match)', async () => {
+      // Issue #349 review F-002: the capital-C fixture above falls through
+      // the case-sensitive includes('corrupt') classifier to the generic
+      // path; this fixture carries a lowercase 'corrupt' so the classified
+      // 'Failed to extract XLSX' classified branch (xlsx-extractor.ts:161-170) executes.
+      readMock.mockImplementation(() => {
+        throw new Error('file is corrupt and unreadable');
+      });
+
+      const error = (await extractXlsxText(xlsxFile('corrupt.xlsx')).catch(
+        (e: unknown) => e,
+      )) as ExtractionError;
+
+      expect(error.stage).toBe('xlsx');
+      expect(error.fileName).toBe('corrupt.xlsx');
+      expect(String(error.error)).toContain('Failed to extract XLSX');
+    });
+
     test('throws ExtractionError with stage xlsx when arrayBuffer read rejects', async () => {
       const file = xlsxFile('unreadable.xlsx');
       (file as File & { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer = async () => {
