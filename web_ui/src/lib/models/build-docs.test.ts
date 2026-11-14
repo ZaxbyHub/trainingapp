@@ -43,9 +43,12 @@ describe('web build/run docs tell the truth (issue #272 AC5)', () => {
     expect(standalone).toEqual([]);
   });
 
-  test('the block states that plain npm run build stages no weights', () => {
+  test('the block states that plain npm run build stages no weights AND that the browser LLM is required for in-browser chat unless --no-llm is passed', () => {
     const block = README.slice(README.indexOf('### Running the Web UI'), README.indexOf('### TypeScript API Client'));
     expect(block).toMatch(/plain `npm run build` stages no model weights/);
+    // Issue #272 AC5: the requirement statement must live in the ROOT run
+    // instructions too, not only the models README.
+    expect(block).toMatch(/browser LLM is required for in-browser chat unless `--no-llm`/);
   });
 
   test('the models README LLM layout line no longer calls the weight optional', () => {

@@ -984,8 +984,9 @@ npm test               # Run tests with vitest
 ```
 
 A plain `npm run build` stages no model weights (it compiles and bundles the
-app only); to run the UI with in-browser generation use `build:offline` after
-staging the weights, and pass `--no-llm` / `--no-reranker` / `--no-embedder`
+app only). The browser LLM is required for in-browser chat unless `--no-llm`
+is passed: run `build:offline` after staging the weights to include it, and
+pass `--no-llm` / `--no-reranker` / `--no-embedder`
 via `npm run build:offline -- --no-llm` when a model group is not wanted.
 
 ### TypeScript API Client

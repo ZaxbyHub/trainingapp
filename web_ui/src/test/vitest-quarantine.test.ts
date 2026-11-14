@@ -62,6 +62,7 @@ export function parseQuarantine(configText: string): QuarantineEntry[] {
   const entries: QuarantineEntry[] = [];
   const lines = configText.split('\n');
   let blockOwners: number[] = [];
+  let sawEntrySinceBlock = false;
   let inExclude = false;
 
   for (let i = 0; i < lines.length; i++) {
@@ -83,8 +84,14 @@ export function parseQuarantine(configText: string): QuarantineEntry[] {
     const comment = codeCommentSplit >= 0 ? raw.slice(codeCommentSplit + 2) : '';
 
     if (code.trim() === '' && comment.trim() !== '') {
-      // Pure comment line: part of the current comment block.
+      // Pure comment line: part of the current comment block — but a comment
+      // line that FOLLOWS an entry starts a NEW block (the previous block's
+      // association ended at the last entry it applied to). Issue #271 AC5.
+      if (sawEntrySinceBlock) {
+        blockOwners = [];
+      }
       blockOwners = blockOwners.concat(comment.match(/#(\d+)\b/g)?.map((t) => Number(t.slice(1))) ?? []);
+      sawEntrySinceBlock = false;
       continue;
     }
 
@@ -96,12 +103,14 @@ export function parseQuarantine(configText: string): QuarantineEntry[] {
         owners: inlineOwners.length > 0 ? inlineOwners : [...blockOwners],
         line: i + 1,
       });
+      sawEntrySinceBlock = true;
       continue;
     }
 
     // A plain code line (glob entry, boilerplate) starts a NEW block context.
     if (code.trim() !== '') {
       blockOwners = [];
+      sawEntrySinceBlock = false;
     }
   }
   return entries;
@@ -189,6 +198,21 @@ describe('vitest quarantine honesty (issue #271 AC5)', () => {
 
     const inlineEntries = parseQuarantine(inlineOverride).filter((e) => e.path.startsWith('src/'));
     expect(inlineEntries[0].owners).toEqual([348]);
+
+    // Block-boundary regression (final-critic counterexample): an entry under
+    // a NEW comment block that carries no owner must NOT inherit the previous
+    // block's owner.
+    const newBlock = `exclude: [
+      // Owned by issue #348.
+      'src/pages/Owned.test.tsx',
+      // New block: deliberately no owner.
+      'src/pages/Ownerless.test.tsx',
+    ],`;
+    const newBlockEntries = parseQuarantine(newBlock).filter((e) => e.path.startsWith('src/'));
+    expect(newBlockEntries[0].owners).toEqual([348]);
+    expect(newBlockEntries[1].owners).toEqual([]);
+    const newBlockProblems = validateQuarantine(newBlockEntries, QUARANTINE_OWNERS, FORBIDDEN_OWNERS, SELF_NUMBER);
+    expect(newBlockProblems.some((p) => p.includes('src/pages/Ownerless.test.tsx') && p.includes('no live owner'))).toBe(true);
   });
 
   test('controls: a closed #20-#26 owner and a self-citation are both rejected', () => {
