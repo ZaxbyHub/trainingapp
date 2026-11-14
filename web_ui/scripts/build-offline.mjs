@@ -14,6 +14,8 @@
  */
 
 import { spawnSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 
 const KNOWN_FLAGS = ['--no-llm', '--no-reranker', '--no-embedder'];
@@ -53,21 +55,6 @@ export function offlineSteps({ npm = 'npm', node = process.execPath, flags = [] 
 }
 
 /**
- * Run the steps with the injected spawn implementation. Stops the chain on
- * the first non-zero status and returns that status; returns 0 when all
- * steps succeed.
- */
-export function runSteps(spawnImpl) {
-  for (const step of spawnImpl.steps) {
-    const result = step.run();
-    if (result.status !== 0) {
-      return result.status;
-    }
-  }
-  return 0;
-}
-
-/**
  * Production orchestration entry (the path the frozen check drives): parses
  * argv, plans the steps, and spawns each one with the injected (or real)
  * spawnSync. Test doubles replace spawnSyncImpl; deleting the argument
@@ -102,7 +89,15 @@ export function main(argv = process.argv.slice(2), { spawnSyncImpl = spawnSync }
   return 0;
 }
 
-const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/').split('/').pop());
-if (isMain) {
+function isMain(metaUrl) {
+  if (process.argv[1] === undefined) return false;
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(metaUrl));
+  } catch {
+    return false;
+  }
+}
+
+if (isMain(import.meta.url)) {
   process.exit(main());
 }

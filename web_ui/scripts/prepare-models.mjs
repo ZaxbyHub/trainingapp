@@ -239,7 +239,7 @@ function prepareWllamaRuntime() {
 }
 
 // ---------------------------------------------------------------------------
-// 1d. Browser LLM weights (OPTIONAL): LiquidAI LFM2-1.2B-RAG GGUF (text-only,
+// 1d. Browser LLM weights (REQUIRED for in-browser chat; --no-llm skips and validate-build enforces): LiquidAI LFM2-1.2B-RAG GGUF (text-only,
 //     issue #156 — no mmproj projector). Large binary assembled at packaging
 //     time; absence is a warning so an embeddings-only build still succeeds.
 // ---------------------------------------------------------------------------

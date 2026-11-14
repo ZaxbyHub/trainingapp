@@ -160,7 +160,10 @@ describe('vitest quarantine honesty (issue #271 AC5)', () => {
         (l) => l.startsWith('import {') && l.includes(symbol),
       );
       expect(valueImports.length, `value import of ${symbol} in ${path}`).toBeGreaterThanOrEqual(1);
-      expect(text).not.toMatch(new RegExp(`vi\\.mock\\('./${symbol.replace(/extract/, '')}-extractor'\\)`));
+      // Match the real module specifier (case-sensitive, optional factory
+      // argument). The symbol-derived form was wrong ('DocxText-extractor').
+      const mod = symbol === 'extractDocxText' ? 'docx-extractor' : 'xlsx-extractor';
+      expect(text).not.toMatch(new RegExp(`vi\\.mock\\(\\s*['"]\\./${mod}['"]`));
     }
   });
 

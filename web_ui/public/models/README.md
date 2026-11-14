@@ -42,7 +42,7 @@ desktop app's GGUF policy). They are copied/converted into place at packaging ti
 
 ```bash
 cd web_ui
-npm run prepare-models      # copies embeddings + ORT wasm from the repo
+npm run prepare-models      # stages embeddings, reranker, ORT wasm, wllama runtime, and the LLM GGUF from the repo
 ```
 
 The build-time validation (validate-build.mjs) fails if a required file is
