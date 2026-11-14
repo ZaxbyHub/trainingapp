@@ -17,6 +17,18 @@ vi.mock('jszip', () => ({
 
 import JSZip from 'jszip';
 
+/**
+ * jsdom (this version) does not implement Blob.prototype.arrayBuffer, which
+ * pptx-extractor.ts:23 calls; provision it duck-typed on every test File
+ * (same pattern as pdf-extractor.test.ts). Issue #271 AC3.
+ */
+function withArrayBuffer(file: File): File {
+  const bytes = new TextEncoder().encode('x');
+  const withBuffer = file as File & { arrayBuffer: () => Promise<ArrayBuffer> };
+  withBuffer.arrayBuffer = async () => bytes.buffer.slice(0) as ArrayBuffer;
+  return file;
+}
+
 describe('PPTX Text Extraction', () => {
   let mockZip: {
     files: Record<string, { dir: boolean; async: (type: string) => Promise<string> }>;
@@ -78,9 +90,9 @@ describe('PPTX Text Extraction', () => {
         },
       };
 
-      const mockFile = new File(['PK...'], 'test.pptx', {
+      const mockFile = withArrayBuffer(new File(['PK...'], 'test.pptx', {
         type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      });
+      }));
 
       // Dynamically import to get fresh module with mocked JSZip
       const { extractPptxText } = await import('./pptx-extractor');
@@ -119,9 +131,9 @@ describe('PPTX Text Extraction', () => {
         'ppt/slides/slide1.xml': { dir: false, async: async () => slide1Xml },
       };
 
-      const mockFile = new File(['PK'], 'numerical.pptx', {
+      const mockFile = withArrayBuffer(new File(['PK'], 'numerical.pptx', {
         type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      });
+      }));
 
       const { extractPptxText } = await import('./pptx-extractor');
       const result = await extractPptxText(mockFile);
@@ -152,9 +164,9 @@ describe('PPTX Text Extraction', () => {
         'ppt/slides/slide2.xml': { dir: false, async: async () => textSlideXml },
       };
 
-      const mockFile = new File(['PK'], 'empty-slide.pptx', {
+      const mockFile = withArrayBuffer(new File(['PK'], 'empty-slide.pptx', {
         type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      });
+      }));
 
       const { extractPptxText } = await import('./pptx-extractor');
       const result = await extractPptxText(mockFile);
@@ -178,9 +190,9 @@ describe('PPTX Text Extraction', () => {
         'ppt/slides/slide2.xml': { dir: false, async: async () => corruptSlideXml },
       };
 
-      const mockFile = new File(['PK'], 'corrupt-xml.pptx', {
+      const mockFile = withArrayBuffer(new File(['PK'], 'corrupt-xml.pptx', {
         type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      });
+      }));
 
       const { extractPptxText } = await import('./pptx-extractor');
       const result = await extractPptxText(mockFile);
@@ -196,9 +208,9 @@ describe('PPTX Text Extraction', () => {
         '[Content_Types].xml': { dir: false, async: async () => '<Types/>' },
       };
 
-      const mockFile = new File(['PK'], 'no-slides.pptx', {
+      const mockFile = withArrayBuffer(new File(['PK'], 'no-slides.pptx', {
         type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      });
+      }));
 
       const { extractPptxText } = await import('./pptx-extractor');
       const result = await extractPptxText(mockFile);
@@ -211,9 +223,9 @@ describe('PPTX Text Extraction', () => {
 
     test('handles malformed PPTX - not a ZIP archive', async () => {
       // Arrange: File is not a ZIP
-      const mockFile = new File(['NOT A ZIP FILE AT ALL'], 'not-a-zip.pptx', {
+      const mockFile = withArrayBuffer(new File(['NOT A ZIP FILE AT ALL'], 'not-a-zip.pptx', {
         type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      });
+      }));
 
       (JSZip.loadAsync as ReturnType<typeof vi.fn>).mockRejectedValue(
         new Error('Invalid zip file: missing end of central directory')
@@ -229,9 +241,9 @@ describe('PPTX Text Extraction', () => {
 
     test('handles corrupt ZIP structure', async () => {
       // Arrange
-      const mockFile = new File(['PK...corrupt...'], 'corrupt.zip.pptx', {
+      const mockFile = withArrayBuffer(new File(['PK...corrupt...'], 'corrupt.zip.pptx', {
         type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      });
+      }));
 
       (JSZip.loadAsync as ReturnType<typeof vi.fn>).mockRejectedValue(
         new Error('Invalid archive: end of central directory not found')
@@ -247,9 +259,9 @@ describe('PPTX Text Extraction', () => {
 
     test('wraps unknown errors with generic message', async () => {
       // Arrange
-      const mockFile = new File(['content'], 'unknown-error.pptx', {
+      const mockFile = withArrayBuffer(new File(['content'], 'unknown-error.pptx', {
         type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      });
+      }));
 
       (JSZip.loadAsync as ReturnType<typeof vi.fn>).mockRejectedValue(
         new Error('Some random error that is not ZIP-related')
@@ -268,9 +280,9 @@ describe('PPTX Text Extraction', () => {
       // Arrange: Simulate an error that looks like ExtractionError
       // But since JSZip doesn't throw ExtractionError, we test the error detection logic
       // by checking that known error patterns are wrapped correctly
-      const mockFile = new File(['content'], 'test.pptx', {
+      const mockFile = withArrayBuffer(new File(['content'], 'test.pptx', {
         type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      });
+      }));
 
       (JSZip.loadAsync as ReturnType<typeof vi.fn>).mockRejectedValue({
         fileName: 'test.pptx',
@@ -309,9 +321,9 @@ describe('PPTX Text Extraction', () => {
         'ppt/slides/slide1.xml': { dir: false, async: async () => multiTextSlideXml },
       };
 
-      const mockFile = new File(['PK'], 'multi-text.pptx', {
+      const mockFile = withArrayBuffer(new File(['PK'], 'multi-text.pptx', {
         type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      });
+      }));
 
       const { extractPptxText } = await import('./pptx-extractor');
       const result = await extractPptxText(mockFile);
@@ -336,9 +348,9 @@ describe('PPTX Text Extraction', () => {
         'ppt/slides/slide2.xml': { dir: false, async: async () => slide2Xml },
       };
 
-      const mockFile = new File(['PK'], 'two-slides.pptx', {
+      const mockFile = withArrayBuffer(new File(['PK'], 'two-slides.pptx', {
         type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      });
+      }));
 
       const { extractPptxText } = await import('./pptx-extractor');
       const result = await extractPptxText(mockFile);
@@ -359,9 +371,9 @@ describe('PPTX Text Extraction', () => {
         'ppt/slides/slide1.xml': { dir: false, async: async () => slide1Xml },
       };
 
-      const mockFile = new File(['PK'], 'factory-test.pptx', {
+      const mockFile = withArrayBuffer(new File(['PK'], 'factory-test.pptx', {
         type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      });
+      }));
 
       const { extractDocument } = await import('./extractor-factory');
       const result = await extractDocument(mockFile);
@@ -371,9 +383,9 @@ describe('PPTX Text Extraction', () => {
     });
 
     test('extractDocument throws for unsupported extensions', async () => {
-      const mockFile = new File(['content'], 'unsupported.exe', {
+      const mockFile = withArrayBuffer(new File(['content'], 'unsupported.exe', {
         type: 'application/octet-stream',
-      });
+      }));
 
       const { extractDocument } = await import('./extractor-factory');
 
@@ -393,9 +405,9 @@ describe('PPTX Text Extraction', () => {
     test('jszip is listed in package.json dependencies', async () => {
       // This test verifies jszip dependency exists
       // We verify by checking that the mock was called correctly
-      const mockFile = new File(['PK'], 'dep-test.pptx', {
+      const mockFile = withArrayBuffer(new File(['PK'], 'dep-test.pptx', {
         type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      });
+      }));
 
       const slide1Xml = `<?xml version="1.0" encoding="UTF-8"?>
         <p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">

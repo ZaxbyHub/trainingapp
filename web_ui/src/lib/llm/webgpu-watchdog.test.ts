@@ -47,6 +47,17 @@ const mockCreateMLCEngine = vi.fn();
 
 vi.mock('@mlc-ai/web-llm', () => ({
   CreateMLCEngine: mockCreateMLCEngine,
+  // WebLLMService also reads prebuiltAppConfig from the module import
+  // (web-llm-service.ts:203) and passes it to CreateMLCEngine's appConfig;
+  // a factory without it fails every recovery-handler test that initializes
+  // the real service. Issue #271 AC4.
+  prebuiltAppConfig: {
+    model_list: [
+      { model_id: 'Llama-3.2-3B-Instruct-q4f16_1-MLC' },
+      { model_id: 'Llama-3.2-1B-Instruct-q4f16_1-MLC' },
+      { model_id: 'Hermes-3-Llama-3.2-3B-q4f16_1-MLC' },
+    ],
+  },
 }));
 
 // ---------------------------------------------------------------------------
@@ -587,19 +598,23 @@ describe('createRecoveryHandler', () => {
     // WebGPU available
     mockNvgpu.requestAdapter.mockResolvedValue(mockGpuAdapter);
 
-    // Set a known modelId via initialize
+    // Set a known modelId via initialize. The service's ALLOWED_MODEL_IDS
+    // allowlist (web-llm-service.ts) rejects arbitrary ids, so use an allowed
+    // one — the test's intent (getModelInfo feeds the recovery init) is
+    // unchanged. Issue #271 AC4.
+    const KNOWN_MODEL_ID = 'Llama-3.2-1B-Instruct-q4f16_1-MLC';
     const mockEngine = createMockEngine();
     mockCreateMLCEngine.mockResolvedValue(mockEngine);
 
     const service = WebLLMService.getInstance();
-    await service.initialize('MyCustomModel-Q4');
+    await service.initialize(KNOWN_MODEL_ID);
     vi.spyOn(service, 'initialize').mockResolvedValue(undefined);
 
     const handler = createRecoveryHandler(service);
     await handler('Context lost');
 
     // Should have re-initialized with the same model
-    expect(service.initialize).toHaveBeenCalledWith('MyCustomModel-Q4');
+    expect(service.initialize).toHaveBeenCalledWith(KNOWN_MODEL_ID);
   });
 
   test('createRecoveryHandler defaults to WEBLLM_DEFAULT_MODEL_ID when modelId is null', async () => {

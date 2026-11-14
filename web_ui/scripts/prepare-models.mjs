@@ -239,7 +239,7 @@ function prepareWllamaRuntime() {
 }
 
 // ---------------------------------------------------------------------------
-// 1d. Browser LLM weights (OPTIONAL): LiquidAI LFM2-1.2B-RAG GGUF (text-only,
+// 1d. Browser LLM weights (REQUIRED for in-browser chat; --no-llm skips and validate-build enforces): LiquidAI LFM2-1.2B-RAG GGUF (text-only,
 //     issue #156 — no mmproj projector). Large binary assembled at packaging
 //     time; absence is a warning so an embeddings-only build still succeeds.
 // ---------------------------------------------------------------------------
@@ -252,8 +252,8 @@ function prepareBrowserLLM() {
 
   if (!srcDir) {
     warn(
-      'browser LLM (LiquidAI LFM2-1.2B-RAG) source not found at models/lfm2-1.2b-rag/ (optional). ' +
-        'Browser wllama generation will be unavailable (an external model or the desktop app can still answer). ' +
+      'browser LLM (LiquidAI LFM2-1.2B-RAG) source not found at models/lfm2-1.2b-rag/ (REQUIRED for in-browser chat; pass --no-llm to build without it). ' +
+        'Without the GGUF the subsequent validate-build step fails the build (the manifest marks llm-group files required) unless --no-llm is passed. ' +
         'See PACKAGING.md to include model.gguf.'
     );
     return;

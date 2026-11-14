@@ -1,8 +1,8 @@
 /**
  * createRecoveryHandler x readiness cache (PRR-152-01).
  *
- * webgpu-watchdog.test.ts is excluded from the vitest run (see vitest.config.ts),
- * so this file pins the recovery handler's readiness-cache contract against the
+ * webgpu-watchdog.test.ts runs in the default vitest suite (un-excluded by
+ * PR #349), and this file pins the recovery handler's readiness-cache contract against the
  * real readiness-gate module with only the model checks mocked.
  */
 
