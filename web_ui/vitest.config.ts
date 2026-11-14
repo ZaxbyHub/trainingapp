@@ -47,32 +47,26 @@ export default defineConfig({
       // them and fail at import.
       'e2e/**',
       // Pre-existing behavioral failures (status-color and mode-switching
-      // assertions that don't match the component's actual behavior). Not owned
-      // by issue #25; left excluded pending a dedicated fix.
-      // settings-wiring-honesty: this file and the two marked below also still
-      // encode the browser API-server mode that trace removed (api mode outside
-      // Electron, the user-entered server URL, the old 'Local'/'API' toggle
-      // copy). Rework those cases before un-excluding them; they are not
-      // regressions of current behavior.
+      // assertions that don't match the component's actual behavior) plus the
+      // settings-wiring-honesty class: this file and the two marked below still
+      // encode the removed browser API-server mode (api mode outside Electron,
+      // the user-entered server URL, the old 'Local'/'API' toggle copy). Rework
+      // those cases before un-excluding them; they are not regressions of
+      // current behavior. Owned by issue #348.
       'src/components/InferenceModeToggle.test.tsx',
       // Depend on the unbuilt edgevec WASM snippet (node_modules artifact not
-      // present without a build step). Owned by RAG retrieval PR #22.
+      // present without a build step) AND content drift. Owned by issue #348
+      // (fix recipe: server.deps.inline edgevec + stub plugin, then un-exclude).
       'src/pages/ChatPage.test.tsx',
-      'src/pages/ChatPage.verification-3.3.test.tsx', // also encodes the removed browser API-server mode (see above)
+      'src/pages/ChatPage.verification-3.3.test.tsx', // also encodes the removed browser API-server mode (see above); owned by issue #348
       'src/pages/DocumentsPage.test.tsx',
       // Missing fake-timer setup + spy/mock-result drift in chat/streaming
-      // integration tests. Owned by chat engine PR #21.
+      // integration tests. Owned by issue #348.
       'src/pages/ChatPage.rag.test.tsx',
-      'src/lib/inference/InferenceModeContext.test.tsx', // also encodes the removed browser API-server mode (see above)
-      // Extractor return-shape drift (asserts string, code returns object) and
-      // stale model-id expectations. Owned by document-ingestion PR #23.
-      'src/lib/processing/docx-extractor.test.ts',
-      'src/lib/processing/xlsx-extractor.test.ts',
-      'src/lib/processing/pptx-extractor.test.ts',
-      'src/lib/llm/webgpu-watchdog.test.ts',
+      'src/lib/inference/InferenceModeContext.test.tsx', // also encodes the removed browser API-server mode (see above); owned by issue #348
       // Allocates multi-GB page fixtures for TextChunker stress/verification;
-      // exceeds the per-fork memory limit under the tuned pool. Owned by
-      // document-ingestion PR #23 (rework to stream fixtures).
+      // exceeds the per-fork memory limit under the tuned pool (rework to
+      // stream fixtures). Owned by issue #348.
       'src/test/verification/text-chunker.task44.test.ts',
     ],
   },
