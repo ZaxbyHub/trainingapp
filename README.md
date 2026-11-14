@@ -338,10 +338,11 @@ Model weights must be staged first — see [PACKAGING.md](PACKAGING.md) and
 ```powershell
 cd web_ui
 npm install
-npm run dev        # Development server
+npm run dev            # Development server
 npm run build:offline  # Self-contained offline archive (see PACKAGING.md)
-npm run typecheck  # TypeScript validation
-npm test           # Run tests with vitest
+npm run serve:offline  # Serve the built archive with isolation headers
+npm run typecheck      # TypeScript validation
+npm test               # Run tests with vitest
 ```
 
 ### Legacy Python harness (CI conformance)
@@ -975,11 +976,17 @@ Dark mode overrides via `[data-theme="dark"]` attribute on `<html>`.
 ```powershell
 cd web_ui
 npm install
-npm run dev      # Development server
-npm run build    # Production build
-npm run typecheck # TypeScript validation
-npm test         # Run tests with vitest
+npm run dev            # Development server
+npm run build:offline  # Production build (stages the packaged models, then validates)
+npm run start:offline  # Build, then serve the offline archive (takes no flags)
+npm run typecheck      # TypeScript validation
+npm test               # Run tests with vitest
 ```
+
+A plain `npm run build` stages no model weights (it compiles and bundles the
+app only); to run the UI with in-browser generation use `build:offline` after
+staging the weights, and pass `--no-llm` / `--no-reranker` / `--no-embedder`
+via `npm run build:offline -- --no-llm` when a model group is not wanted.
 
 ### TypeScript API Client
 

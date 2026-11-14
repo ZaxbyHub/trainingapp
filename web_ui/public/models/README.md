@@ -30,7 +30,7 @@ public/models/
 │   └── compat/                       # offline fallback for browsers w/o JSPI/Mem64
 │       ├── wllama.wasm
 │       └── wllama.js
-└── llm/                              # GGUF browser-LLM weight for wllama (optional, text-only)
+└── llm/                              # GGUF browser-LLM weight for wllama (required for in-browser chat unless --no-llm is passed; text-only)
     └── lfm2-1.2b-rag/
         └── model.gguf               # LiquidAI LFM2-1.2B-RAG Q4_K_M (730,894,048 bytes, ~0.73 GB; image input was removed with the #156 LFM swap)
 ```

@@ -252,8 +252,8 @@ function prepareBrowserLLM() {
 
   if (!srcDir) {
     warn(
-      'browser LLM (LiquidAI LFM2-1.2B-RAG) source not found at models/lfm2-1.2b-rag/ (optional). ' +
-        'Browser wllama generation will be unavailable (an external model or the desktop app can still answer). ' +
+      'browser LLM (LiquidAI LFM2-1.2B-RAG) source not found at models/lfm2-1.2b-rag/ (REQUIRED for in-browser chat; pass --no-llm to build without it). ' +
+        'Without the GGUF the subsequent validate-build step fails the build (the manifest marks llm-group files required) unless --no-llm is passed. ' +
         'See PACKAGING.md to include model.gguf.'
     );
     return;
