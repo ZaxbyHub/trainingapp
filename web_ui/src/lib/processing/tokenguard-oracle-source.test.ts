@@ -30,6 +30,17 @@ describe('tokenguard oracle reads a git-tracked fixture (issue #271 AC6)', () =>
   });
 
   test('the fixture is git-tracked (git ls-files --error-unmatch succeeds)', () => {
+    // Preconditions asserted explicitly (Copilot PR #349 review): this spec
+    // assumes a git checkout; a source archive without .git fails HERE with
+    // a named reason instead of an opaque execFileSync throw.
+    expect(existsSync(join(REPO_ROOT, '.git')), 'a git checkout is present (.git directory)').toBe(true);
+    let gitOk = true;
+    try {
+      execFileSync('git', ['--version'], { stdio: 'pipe' });
+    } catch {
+      gitOk = false;
+    }
+    expect(gitOk, 'the git CLI is available on PATH (required to verify tracking)').toBe(true);
     execFileSync('git', ['ls-files', '--error-unmatch', TRACKED_FIXTURE], {
       cwd: REPO_ROOT,
       stdio: 'pipe',
