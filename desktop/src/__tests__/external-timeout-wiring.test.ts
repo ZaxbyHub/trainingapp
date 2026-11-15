@@ -122,6 +122,42 @@ describe('#351 class B guardrail: the timeout keys are wired on every surface', 
     });
   });
 
+  it('the replay drop-and-retry is driven by the REAL validator error format (review tests-falsifiability-008)', async () => {
+    // The row above drives a FAKE apply() with a hand-written error string, so
+    // the producer/consumer seam (validate()'s message format -> the replay's
+    // error.split(':')[0] key recovery) was never exercised: a reworded
+    // validator message would silently disable the whole-batch drop while both
+    // rows stayed green. This row wires the replay to the PRODUCTION validator
+    // (LlamaEngine.applySettingsPatch) and keeps the same observable contract.
+    vi.resetModules();
+    const { replayExternalSnapshot } = await import('../../main/backend/external-store');
+    const engine = new LlamaEngine({
+      modelDir: fs.mkdtempSync(path.join(os.tmpdir(), 'wiring-replay-')),
+      llamaFactory: vi.fn(async () => { throw new Error('local model must not load'); }),
+      externalProvider: { secretStore: createMemorySecretStore() },
+    } as never);
+    const applied: Array<Record<string, unknown>> = [];
+    const wrapped = (patch: Record<string, unknown>) => {
+      applied.push(patch);
+      return engine.applySettingsPatch(patch) as { ok: true } | { ok: false; detail: string; errors?: string[] };
+    };
+    const snapshot = {
+      'external.enabled': true,
+      'external.protocol': 'openai',
+      'external.baseUrl': 'http://127.0.0.1:9',
+      'external.model': 'm1',
+      'external.firstByteTimeoutMs': 5,
+    };
+    expect(() => replayExternalSnapshot(snapshot, wrapped)).not.toThrow();
+    expect(applied.length, 'the real validator refuses the batch and a retry must happen').toBe(2);
+    expect(applied[1], 'the retry must be the survivors AS ONE BATCH (sibling enabled preserved)').toEqual({
+      'external.enabled': true,
+      'external.protocol': 'openai',
+      'external.baseUrl': 'http://127.0.0.1:9',
+      'external.model': 'm1',
+    });
+  });
+
   it('a failed save rolls the timeout mirrors back (capture/restore symmetry)', () => {
     const engine = new LlamaEngine({
       modelDir: fs.mkdtempSync(path.join(os.tmpdir(), 'wiring-rb-')),

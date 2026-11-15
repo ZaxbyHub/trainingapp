@@ -1001,17 +1001,19 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
           <Field label="Request timeouts (ms)" className="settings-field">
             {() => (
               <>
-            <div className="settings-row">
+            <div className="settings-row" aria-live="polite">
+              {/* No aria-label here on purpose (Copilot review, PR #352
+                  discussion_r4579528954, and the PRR-012 pattern): the visible
+                  text IS the accessible name, and a redundant aria-label would
+                  override it and hide the disclosed VALUE from screen readers. */}
               <span
                 data-testid="external-timeout-first-byte"
-                aria-label="First-byte timeout"
                 className="settings-text"
               >
                 First byte: {draft.firstByteTimeoutMs ?? 600000} ms
               </span>
               <span
                 data-testid="external-timeout-idle"
-                aria-label="Idle timeout"
                 className="settings-text"
               >
                 Idle: {draft.idleTimeoutMs ?? 120000} ms
@@ -1022,6 +1024,13 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
                 data-testid="external-first-byte-input"
                 type="number"
                 aria-label="First-byte timeout in milliseconds"
+                // Review finding ui-accessibility-i18n-003: the refusal message
+                // is announced through the section's assertive live region, but
+                // it was not ASSOCIATED with the offending control — a screen-
+                // reader user focusing the input heard nothing. Wire it the same
+                // way ui/Forms.tsx wires its Field errors (describedby + invalid).
+                aria-describedby="external-timeout-problem"
+                aria-invalid={timeoutDraft.first !== '' && timeoutValueOrNull(timeoutDraft.first) === undefined}
                 placeholder="600000"
                 min={1000}
                 max={2147483647}
@@ -1036,6 +1045,8 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
                 data-testid="external-idle-input"
                 type="number"
                 aria-label="Idle timeout in milliseconds"
+                aria-describedby="external-timeout-problem"
+                aria-invalid={timeoutDraft.idle !== '' && timeoutValueOrNull(timeoutDraft.idle) === undefined}
                 placeholder="120000"
                 min={1000}
                 max={2147483647}
@@ -1075,7 +1086,7 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
           </Banner>
         )}
       </div>
-      <div className="settings-live" aria-live="assertive" aria-atomic="true" data-testid="external-problem">
+      <div className="settings-live" aria-live="assertive" aria-atomic="true" data-testid="external-problem" id="external-timeout-problem">
         {problem !== null && (
           <Banner live={false} tone="danger" title={problemTitle()}>
             {problem}

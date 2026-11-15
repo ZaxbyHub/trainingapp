@@ -561,7 +561,14 @@ async function runGpuProbeCore(
       }
       if (code !== 0) {
         const how = signal !== null ? `signal ${signal}` : killRequested ? `terminated, exit code ${code}` : `exit code ${code}`;
-        const detail = stderr.trim().split('\n').slice(-1)[0] ?? '';
+        // Review finding security-trust-002 (Stage-B reviewer): the child's raw
+        // stderr line rode verbatim into the persisted verdict and the settings
+        // API. Same treatment as the child-report sinks: control characters
+        // stripped and the TAIL kept (the informative part of a native error
+        // line sits at the end), bounded.
+        const rawDetail = stderr.trim().split('\n').slice(-1)[0] ?? '';
+        // eslint-disable-next-line no-control-regex
+        const detail = rawDetail.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(-500);
         finish(cpuVerdict(`GPU probe did not complete cleanly (${how})${detail === '' ? '' : `: ${detail}`}`));
         return;
       }
@@ -585,14 +592,24 @@ async function runGpuProbeCore(
           // the fallback when the child gave none.
           const childReason = typeof report.reason === 'string' && report.reason !== ''
             // eslint-disable-next-line no-control-regex
-            ? report.reason.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 500)
+            ? report.reason.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(-500)
             : '';
           finish(cpuVerdict(childReason === '' ? 'GPU device query did not report a usable Vulkan adapter.' : childReason));
         }
         return;
       }
       if (report.ok !== true) {
-        const reason = typeof report.reason === 'string' && report.reason !== '' ? report.reason : 'GPU probe reported the device is not usable.';
+        // Review finding security-trust-002 (pre-existing asymmetry this PR
+        // introduced by sanitizing only the device-only leg): the full-probe
+        // sink now takes the SAME treatment — control characters stripped and
+        // the TAIL kept (the child's "Underlying cause: ..." text sits at the
+        // end, so a head-slice here would cut it off). Without it, native
+        // error text rode verbatim into the persisted verdict and the
+        // settings API response.
+        const rawReason = typeof report.reason === 'string' ? report.reason : '';
+        // eslint-disable-next-line no-control-regex
+        const sanitized = rawReason.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(-500);
+        const reason = sanitized !== '' ? sanitized : 'GPU probe reported the device is not usable.';
         finish({ backend: 'cpu', ok: false, reason, device: typeof report.device === 'string' ? report.device : null });
         return;
       }

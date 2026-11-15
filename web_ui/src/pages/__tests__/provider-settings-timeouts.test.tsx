@@ -125,6 +125,37 @@ describe('#351 AC6: browser-lane disclosure (localStorage effective values)', ()
     expect(loadExternalConfig().firstByteTimeoutMs, '999 must not persist').not.toBe(999);
     expect(loadExternalConfig().firstByteTimeoutMs ?? 600_000).toBe(600_000);
   });
+
+  test('an invalid typed value is REFUSED WITH THE PROBLEM MESSAGE on the browser lane too (review tests-falsifiability-007)', async () => {
+    // The PR body promises the range-problem message on BOTH lanes; until this
+    // row the browser lane asserted only non-persistence, so a refusal that
+    // silently did nothing (the exact final-critic C-3 failure mode) would pass.
+    render(<ExternalModelSection id="model-connection" />);
+    const region = panel();
+    fireEvent.change(region.querySelector('[data-testid="external-first-byte-input"]') as HTMLElement, {
+      target: { value: '999' },
+    });
+    fireEvent.click(within(region).getByRole('button', { name: /save/i }));
+    await act(async () => {});
+    const problem = region.querySelector('[data-testid="external-problem"]');
+    expect(problem, 'the browser lane must surface the range problem message').not.toBeNull();
+    expect(problem?.textContent ?? '', 'the message must name the valid range').toMatch(/1000/);
+    expect(problem?.textContent ?? '').toMatch(/2147483647/);
+    // The offending control is marked invalid and points at the message.
+    const input = region.querySelector('[data-testid="external-first-byte-input"]') as HTMLElement;
+    expect(input.getAttribute('aria-invalid'), 'the offending input must be aria-invalid').toBe('true');
+    expect(input.getAttribute('aria-describedby'), 'the input must reference the problem message').toBe('external-timeout-problem');
+    // The SIBLING control carries the same wiring (Stage-B test_engineer finding:
+    // only the first input was pinned).
+    const idle = region.querySelector('[data-testid="external-idle-input"]') as HTMLElement;
+    expect(idle.getAttribute('aria-describedby'), 'the idle input must reference the problem message too').toBe('external-timeout-problem');
+    // The disclosure row lives in a polite live region (ui-accessibility-i18n-001).
+    const live = region.querySelector('[aria-live="polite"]');
+    expect(live, 'the effective-timeout disclosure must sit in an aria-live region').not.toBeNull();
+    expect(live?.querySelector('[data-testid="external-timeout-first-byte"]'), 'the first-byte disclosure is inside the live region').not.toBeNull();
+    expect(live?.querySelector('[data-testid="external-timeout-idle"]'), 'the idle disclosure is inside the live region').not.toBeNull();
+    expect(loadExternalConfig().firstByteTimeoutMs ?? 600_000, 'still nothing persisted').toBe(600_000);
+  });
 });
 
 describe('#351 AC6: desktop-lane disclosure (GET /settings effective values, consumed)', () => {

@@ -519,8 +519,10 @@ export function evaluateGpuProbeSmokeRecord(record, { requireVulkan = false } = 
 
 // Issue #350 (AC7): host-leg strict GPU assertion (TRAININGAPP_REQUIRE_VULKAN=1
 // set by the AC7 head-record run on a Vulkan-capable machine). Never set by CI:
-// GPU-less runners keep the legacy transport-only step-8 contract.
-const appEnvStrictGpu = process.env.TRAININGAPP_REQUIRE_VULKAN === '1';
+// GPU-less runners keep the legacy transport-only step-8 contract. The flag is
+// read through main()'s injectable env seam (see strictGpu below) — the original
+// module-level process.env read let a programmatic caller inject it and still
+// get the legacy non-strict leg (review finding compatibility-delivery-002).
 
 const appEnv = (storePath, packsDir) => ({
   ...process.env,
@@ -779,6 +781,10 @@ async function closeElectronApp(app, log) {
 
 export async function main(argv, env, io) {
   const log = io.log;
+  // Issue #350 (AC7): the strict-GPU gate, read through the SAME injectable env
+  // seam as TRAININGAPP_SMOKE_EXE / TRAININGAPP_SMOKE_WATCHDOG_MS below, so a
+  // programmatic caller that injects it gets the strict leg it asked for.
+  const strictGpu = env.TRAININGAPP_REQUIRE_VULKAN === '1';
   const driver = parseDriver(argv);
   if (driver !== 'playwright' && driver !== 'cdp') {
     log(`SMOKE: INFRA - unknown driver '${driver}' (expected playwright or cdp)`);
@@ -1076,7 +1082,7 @@ export async function main(argv, env, io) {
     // GPU-less runners keep the legacy transport-only contract) additionally
     // requires a successful vulkan child selection AND the packaged backend's
     // /status/models gpu.backend 'vulkan' (the engine adopted the verdict).
-    const requireVulkan = appEnvStrictGpu === true;
+    const requireVulkan = strictGpu === true;
     const gpuJudged = gpuRecord === null
       ? { ok: false, detail: `no ${GPU_PROBE_SMOKE_RECORD} within 150s` }
       : evaluateGpuProbeSmokeRecord(gpuRecord, { requireVulkan });

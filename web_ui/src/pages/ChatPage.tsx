@@ -589,7 +589,13 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     // Create TokenStreamManager for this request
     const streamManager = new TokenStreamManager(
       desktopSession !== null
-        ? desktopFirstByteBudgetMs(externalFirstByteTimeoutMs)
+        // Review finding reliability-performance-001: the external first-byte
+        // setting describes the EXTERNAL endpoint's transport, so it may raise
+        // the watchdog only while the backend actually generates through that
+        // endpoint. On the local-model path (external off) the watchdog keeps
+        // its own 600000 ceiling — an endpoint knob must not govern a local
+        // hang for up to ~24.8 days.
+        ? desktopFirstByteBudgetMs(desktopExternal ? externalFirstByteTimeoutMs : undefined)
         : DEFAULT_FIRST_BYTE_TIMEOUT_MS,
     );
     tokenStreamManagerRef.current = streamManager;
@@ -891,7 +897,17 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
           // (Phase-4.5 review F-1; the failed/key-less/invalid contract keeps
           // the LAST SUCCESSFUL reading per the state block above.)
           if (tokenStreamManagerRef.current !== streamManager) return;
-          streamManager.setFirstByteTimeoutMs(desktopFirstByteBudgetMs(syncExternalFirstByteTimeout(settings)));
+          // Review finding reliability-performance-001: raise the watchdog only
+          // when the backend is generating through the external endpoint. The
+          // settings response always reports the effective first-byte value
+          // even when external.enabled is false, so an ungated read let an
+          // external transport limit govern the local-model watchdog. A failed
+          // read never reaches this sink at all, so the last-known contract
+          // (Phase-4.5 r2) is untouched.
+          const externalActive = (settings as Record<string, unknown> | null)?.['external.enabled'] === true;
+          streamManager.setFirstByteTimeoutMs(
+            desktopFirstByteBudgetMs(externalActive ? syncExternalFirstByteTimeout(settings) : undefined),
+          );
         });
         // Stopped, or superseded by a newer send, while the settings loaded.
         if (tokenStreamManagerRef.current !== streamManager) return;

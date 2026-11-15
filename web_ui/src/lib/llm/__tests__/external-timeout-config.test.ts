@@ -70,6 +70,37 @@ describe('#351 browser ExternalConfig timeout fields', () => {
       expect(cfg.idleTimeoutMs, `idleTimeoutMs=${String(bad)} must not persist`).not.toBe(bad);
     }
   });
+
+  test('an UNRELATED later save keeps the previously saved timeouts (review correctness-state-001)', () => {
+    // The defect: saveExternalConfig() rebuilt the stored blob field-by-field
+    // and never carried the timeouts forward, so saving the model / API key /
+    // protocol / rememberKey afterwards silently discarded them while the panel
+    // kept displaying the old numbers.
+    saveExternalConfig({ firstByteTimeoutMs: 900_000, idleTimeoutMs: 130_000 });
+    saveExternalConfig({ model: 'm2' });
+    const cfg = loadExternalConfig();
+    expect(cfg.firstByteTimeoutMs, 'an unrelated save must not drop the saved first-byte timeout').toBe(900_000);
+    expect(cfg.idleTimeoutMs, 'an unrelated save must not drop the saved idle timeout').toBe(130_000);
+    expect(cfg.model).toBe('m2');
+    const blob = JSON.parse(localStorage.getItem(EXTERNAL_CONFIG_KEY) ?? '{}') as Record<string, unknown>;
+    expect(blob.firstByteTimeoutMs).toBe(900_000);
+    expect(blob.idleTimeoutMs).toBe(130_000);
+  });
+
+  test('a one-field timeout save keeps the other saved timeout (review correctness-state-001)', () => {
+    saveExternalConfig({ firstByteTimeoutMs: 900_000, idleTimeoutMs: 130_000 });
+    saveExternalConfig({ firstByteTimeoutMs: 1_200_000 });
+    const cfg = loadExternalConfig();
+    expect(cfg.firstByteTimeoutMs).toBe(1_200_000);
+    expect(cfg.idleTimeoutMs, 'saving one timeout must not clear the other').toBe(130_000);
+  });
+
+  test('an invalid timeout patch keeps the previous saved value (comment now literally true)', () => {
+    saveExternalConfig({ firstByteTimeoutMs: 900_000, idleTimeoutMs: 130_000 });
+    saveExternalConfig({ firstByteTimeoutMs: 999 });
+    const cfg = loadExternalConfig();
+    expect(cfg.firstByteTimeoutMs, 'an out-of-range patch value is dropped, keeping the previous saved one').toBe(900_000);
+  });
 });
 
 describe('#351 createExternalLLMService forwards the timeouts into both providers', () => {

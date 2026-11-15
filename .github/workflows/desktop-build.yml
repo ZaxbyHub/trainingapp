@@ -116,6 +116,17 @@ jobs:
           TRAININGAPP_INSTALLER_MANIFEST_NOTE: 'MODE: fixture-models'
         run: npm --prefix desktop run desktop:build
 
+      # Issue #350 (review finding dependencies-build-release-001, critic-UPHELD
+      # and WIDENED): nothing tied the PACKAGED bytes to the vendored patch —
+      # PRISTINE.sha256 pins the UNPATCHED upstream hash, the dev-time drift row
+      # compares the INSTALLED file (not the archive), and a silently-dropped
+      # files[] remap would ship an app whose getLlama import fails while the
+      # GPU-less smoke still passes (the probe child posts ok:false, exits 0).
+      # Extract the remapped module from the packaged archive and byte-compare it
+      # with the repo copy; a missing entry or any byte difference fails the job.
+      - name: Verify the packaged vendored binding test matches the repo copy (issue #350)
+        run: node desktop/scripts/verify-packaged-vendored-binding.mjs
+
       # E1 (issue #84) AC5: the completeness gate — the build fails when any
       # staged file is unlisted or any listed file is missing (read-only
       # compare of the staged tree against the generated manifest).

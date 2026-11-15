@@ -19,11 +19,18 @@
     1000..2147483647; absent = the 600000/120000 defaults) flow `PUT /settings`
     -> `external.json` -> call time, are disclosed as EFFECTIVE numbers by
     `GET /settings`, persist across restarts (an out-of-range stored value is
-    dropped whole-batch while valid siblings still apply; a failed save rolls
-    back), and are configurable + disclosed in the Settings panel on both lanes
-    (browser localStorage, desktop PUT). The desktop renderer's chat watchdog
-    follows a raised first-byte limit (`desktopFirstByteBudgetMs`) instead of
-    clipping it at 600 s; the browser lane keeps its 30 s default.
+    dropped — exactly that key — while its valid siblings still apply, re-applied
+    as one batch; a failed save rolls back), and are configurable + disclosed in
+    the Settings panel on both lanes (browser localStorage, desktop PUT). The
+    desktop renderer's chat watchdog follows a raised first-byte limit
+    (`desktopFirstByteBudgetMs`) instead of clipping it at 600 s — but only while
+    the backend actually generates through the external endpoint; the browser
+    lane keeps its 30 s default.
+    Forward-only: the two new keys are written into the shared `external.json`
+    sidecar. A build from before #351 refuses that file wholesale as an unknown
+    setting and then disables the external endpoint (logged), so a downgrade
+    recipe applies — remove `external.firstByteTimeoutMs` and
+    `external.idleTimeoutMs` from `external.json` before running an older build.
 - **Follow-up batch #324/#325/#326/#328 (test determinism, coverage honesty, CI census, init/dispose race)**:
   - #324: the i320 pack-extract success-move census is composition-robust
     (identity-keyed instead of a net-growth count over the shared tmpdir);

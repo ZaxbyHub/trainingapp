@@ -275,9 +275,16 @@ export function saveExternalConfig(patch: Partial<ExternalConfig>): void {
     model: patch.model ?? prev.model,
     rememberKey: patch.rememberKey ?? prev.rememberKey,
     grounded: patch.grounded ?? prev.grounded,
+    // Review finding correctness-state-001: carry the previously saved timeouts
+    // forward so an UNRELATED save (model / API key / protocol / rememberKey /
+    // grounded, or a timeout save with only one field filled) cannot silently
+    // discard them while the panel keeps displaying the old numbers.
+    ...(prev.firstByteTimeoutMs !== undefined ? { firstByteTimeoutMs: prev.firstByteTimeoutMs } : {}),
+    ...(prev.idleTimeoutMs !== undefined ? { idleTimeoutMs: prev.idleTimeoutMs } : {}),
   };
-  // Issue #351: timeouts persist only when the patch carries a VALID value
-  // (an invalid patch value is dropped, keeping the previous saved one).
+  // Issue #351: a patch timeout persists only when it carries a VALID value
+  // (an invalid patch value is dropped, keeping the previous saved one — now
+  // literally true: the previous value is seeded into `next` above).
   const patchFirstByte = patch.firstByteTimeoutMs === undefined ? undefined : timeoutOrNull(patch.firstByteTimeoutMs);
   const patchIdle = patch.idleTimeoutMs === undefined ? undefined : timeoutOrNull(patch.idleTimeoutMs);
   if (patch.firstByteTimeoutMs !== undefined && patchFirstByte !== undefined) {

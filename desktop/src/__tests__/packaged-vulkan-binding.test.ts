@@ -22,6 +22,20 @@
 // tap), GREEN after the fix. The full packaged boot incl. app.asar extraction
 // and /status/models gpu.backend === "vulkan" is AC7 (NON-EXECUTABLE,
 // HOST_ONLY); see 02-reproduction.md.
+//
+// HOST-ADAPTIVE DESIGN (review finding tests-falsifiability-001, critic-UPHELD
+// HIGH; amendment v17): the two POSITIVE rows (groups A and B) originally
+// hard-asserted a successful Vulkan selection, which no GPU-less runner can
+// satisfy — the required CI job was red at head with 2/1913 failing while the
+// vendored module behaved CORRECTLY (refused, CPU fallback). The rows now gate
+// their positive expectations on vulkanHostCapable(), an INDEPENDENT probe that
+// drives the real addon directly (never the vendored module — a signal taken
+// from the code under test would make the rows prove themselves). On a
+// GPU-less host the same rows assert the REFUSAL path (false + CPU fallback +
+// the full native op sequence up to the mismatch), so the #350 core proof —
+// getLlama reaches the REMAPPED vendored module — still executes in CI. The
+// environment-independent rows (fake-addon groups C/D, the mismatch row, the
+// poison row, the drift pin, the yml remap rows) are unchanged.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -29,7 +43,7 @@ import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, afterEach, afterAll } from 'vitest';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(here, '..', '..'); // desktop/
@@ -46,6 +60,35 @@ const VENDOR_DEST_REL = 'node_modules/node-llama-cpp/dist/bindings/utils';
 const DIST_FILE_REL = 'testBindingBinary.js';
 
 const requireHere = createRequire(import.meta.url);
+
+/**
+ * Review finding tests-falsifiability-002: the group-B row overwrites a file
+ * inside the shared (gitignored) node_modules tree. Vitest's withTimeout
+ * rejects its OUTER promise without cancelling the pending test body, so a hung
+ * getLlama never reaches the in-test finally. This backup + afterEach is the
+ * timeout-safe net: the dependency file is restored even when the test body is
+ * abandoned (CI checks out fresh each run, but a local tree must not be left
+ * with a wrapper where the upstream module belongs — the drift row would then
+ * fail misleadingly on the NEXT run).
+ */
+let distBackup: string | null = null;
+afterEach(() => {
+  if (distBackup !== null) {
+    fs.writeFileSync(DIST_PATH, distBackup, 'utf8');
+    distBackup = null;
+  }
+});
+
+/** Review finding test-infrastructure-002: every fixture directory this spec
+ *  creates under os.tmpdir(), removed in afterAll (the original spec leaked
+ *  them on every run). */
+const tmpDirs: string[] = [];
+afterAll(() => {
+  for (const dir of tmpDirs) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  tmpDirs.length = 0;
+});
 
 function urlPath(p: string): string {
   return pathToFileURL(p).href;
@@ -95,6 +138,46 @@ function findVulkanBinding(): string {
     }
   }
   throw new Error('no .node under ' + VULKAN_BINS_ROOT);
+}
+
+/**
+ * Review finding tests-falsifiability-001 (swarm-pr-review run
+ * pr-review-pr352-20261115, critic-UPHELD HIGH): the frozen AC1 positive rows
+ * hard-asserted a successful Vulkan selection, which is IMPOSSIBLE on a
+ * GPU-less runner (the CI windows-latest host) — there the vendored in-process
+ * test correctly returns false and getLlama correctly falls back to CPU, so
+ * the required "Electron shell" check was red at head with 2/1913 failing.
+ *
+ * This probe is the INDEPENDENT capability signal the positive rows now gate
+ * on. It drives the REAL shipped addon directly and NEVER the vendored module:
+ * a capability signal taken from the code under test would make the rows prove
+ * themselves. A GPU-less host yields false, and the rows then assert the
+ * REFUSAL path — which still exercises the remapped module through getLlama —
+ * instead of skipping, so CI keeps the #350 core proof on every host.
+ */
+async function vulkanHostCapable(): Promise<boolean> {
+  try {
+    const bindingPath = findVulkanBinding();
+    const binding = requireHere(bindingPath) as {
+      setLoggerLogLevel?: (level: number) => void;
+      loadBackends: (p?: string) => void;
+      init: () => Promise<unknown>;
+      getGpuType: () => unknown;
+    };
+    // The upstream ladder (testBindingBinary.js:314-323): the default
+    // loadBackends() does not pick up the GPU backend on every host — the
+    // binding's OWN directory does. Mirror that, then init, then read the
+    // POST-init type, which is the same signal the vendored body's equality
+    // check uses.
+    binding.loadBackends();
+    if (binding.getGpuType() !== 'vulkan') {
+      binding.loadBackends(path.dirname(path.resolve(bindingPath)));
+    }
+    await binding.init();
+    return binding.getGpuType() === 'vulkan';
+  } catch {
+    return false;
+  }
 }
 
 function sha256(file: string): string {
@@ -177,6 +260,7 @@ const wrapped = (...args) => {
 export { wrapped as testBindingBinary };
 `;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tbl-wrapper-'));
+  tmpDirs.push(dir);
   const file = path.join(dir, 'testBindingBinary.wrapper.mjs');
   fs.writeFileSync(file, src, 'utf8');
   return file;
@@ -209,6 +293,7 @@ module.exports = {
 };
 `;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-addon-'));
+  tmpDirs.push(dir);
   const file = path.join(dir, 'fake-addon.cjs');
   fs.writeFileSync(file, src, 'utf8');
   return { path: file, ops: () => (globalThis.__fakeAddonOps as unknown as string[]) ?? [] };
@@ -241,14 +326,23 @@ async function captureErrors<T>(fn: () => Promise<T>): Promise<{ result: T; line
 }
 
 describe('#350 AC1 group B (FIRST: before any nlc-sibling import — the getLlama.js STATIC import of testBindingBinary.js binds at first module load, so the overwrite must precede every earlier group lazy Llama.js/config.js import): the remapped module IS what getLlama executes, under the utility host (in-process branch)', () => {
-  test('overwrite the installed dist file with the test-owned wrapper; getLlama (utility host) selects vulkan; invocation counted', async () => {
+  test('overwrite the installed dist file with the test-owned wrapper; getLlama (utility host) runs the remapped vendored test; invocation counted', async () => {
     expect(fs.existsSync(VENDOR_PATH), 'vendor file must exist').toBe(true);
     expect(fs.existsSync(DIST_PATH), 'installed nlc dist testBindingBinary must exist').toBe(true);
     const binding = findVulkanBinding();
     const wrapperFile = writeWrapperFile(VENDOR_PATH);
     const wrapperBytes = fs.readFileSync(wrapperFile, 'utf8');
     const backup = fs.readFileSync(DIST_PATH, 'utf8');
+    // Independent host capability (review tests-falsifiability-001) — computed
+    // before the overwrite so a probe failure can never leave the shared
+    // dependency tree modified.
+    const capable = await vulkanHostCapable();
     globalThis.__tblCalls = 0;
+    // Timeout-safe restore net (review tests-falsifiability-002): vitest's
+    // withTimeout rejects its OUTER promise without cancelling the pending
+    // test body, so a hung getLlama never reaches the in-test finally. The
+    // afterEach below restores from this backup in that case.
+    distBackup = backup;
     let llama: { gpu: unknown; dispose: () => Promise<void> } | null = null;
     try {
       // THE PACKAGER'S REMAP, performed in dev — but with the TEST-OWNED
@@ -260,25 +354,46 @@ describe('#350 AC1 group B (FIRST: before any nlc-sibling import — the getLlam
       // vendored file's in-process branch (runningInElectron && parentPort) is
       // the path getLlama's own test call takes — no fork, same process.
       llama = (await withUtilityHost(() => nlc.getLlama({ gpu: { type: 'auto', exclude: ['cuda'] }, build: 'never' }))) as never;
-      expect((llama as { gpu: unknown }).gpu, 'getLlama running the WRAPPER->vendored test must still select vulkan').toBe('vulkan');
+      // UNCONDITIONAL — the #350 core proof, host-independent: getLlama's OWN
+      // binding-test call reached the REMAPPED vendored module through the
+      // wrapper (the counter survives getLlama's require-cache eviction
+      // because the wrapper IS the file getLlama loads). On a GPU-less host
+      // the vendored in-process leg runs, refuses, and getLlama falls back to
+      // CPU — the CI stderr captured at the review head proved exactly this
+      // chain ("Failed to load a prebuilt ... Expected: vulkan, got: false"),
+      // so this assertion holds on every host.
       expect(
         (globalThis.__tblCalls ?? 0) >= 1,
         'the wrapper invocation counter must record getLlama reaching the vendored test (cache-eviction survivor)',
       ).toBe(true);
-      // init #2 EFFECT-PROOF: gpu==='vulkan' requires Llama._create's own
-      // _init to have succeeded on the real addon (non-patchable — residual).
+      // Host-dependent EFFECT: a Vulkan-capable host must select vulkan
+      // (init #2 EFFECT-PROOF — gpu==='vulkan' requires Llama._create's own
+      // _init to have succeeded on the real addon, non-patchable residual); a
+      // GPU-less host must fall back to CPU — never hang, never crash.
+      expect(
+        (llama as { gpu: unknown }).gpu,
+        capable
+          ? 'getLlama running the WRAPPER->vendored test must still select vulkan'
+          : 'on a host without a Vulkan device the remapped vendored test must refuse and getLlama must fall back to CPU',
+      ).toBe(capable ? 'vulkan' : false);
     } finally {
       fs.writeFileSync(DIST_PATH, backup, 'utf8'); // restore pristine bytes
+      distBackup = null;
       if (llama) await llama.dispose().catch(() => undefined);
     }
   }, 300_000);
 });
 
 describe('#350 AC1 group A: the complete native operation sequence via the facade (r6-F1/F4)', () => {
-  test('the vendored test performs the FULL ordered sequence incl. final getGpuType + support check, with exactly one init', async () => {
+  test('the vendored test performs the FULL ordered sequence (final getGpuType read +, on a capable host, the support check), with exactly one init', async () => {
     const mod = await vendored();
     const binding = findVulkanBinding();
     const log: string[] = [];
+    // Independent host capability (review tests-falsifiability-001): computed
+    // BEFORE the facade is installed so the probe's own native calls never
+    // land in the measured ops log (the "exactly one init" row counts only
+    // calls the facade recorded).
+    const capable = await vulkanHostCapable();
     const restore = seedFacade(binding, log);
     try {
       // NOTE: group B legitimately runs this same real addon first, so the
@@ -286,10 +401,22 @@ describe('#350 AC1 group A: the complete native operation sequence via the facad
       // facade ops log (below) is the proof the TEST itself drove the sequence.
       const addon = requireHere(binding) as { getGpuType: () => unknown };
       const ok = await withUtilityHost(() => mod.testBindingBinary(binding, undefined, 'vulkan'));
-      expect(ok, 'the vendored in-process test must accept the shipped vulkan prebuilt').toBe(true);
+      // Both outcomes are the CORRECT contract and both prove the body ran:
+      // a Vulkan-capable host must be ACCEPTED; a GPU-less host (the CI
+      // windows-latest runner) must be REFUSED — never crash, never hang.
+      expect(
+        ok,
+        capable
+          ? 'the vendored in-process test must accept the shipped vulkan prebuilt'
+          : 'on a host without a Vulkan device the vendored in-process test must refuse (return false), not crash or hang',
+      ).toBe(capable);
       // r6-F4: the COMPLETE upstream sequence, in order, INCLUDING the final
-      // getGpuType equality read and ensureGpuDeviceIsSupported.
-      const expected = ['loadBackends', 'getGpuType', 'init', 'getGpuVramInfo', 'getGpuDeviceInfo', 'getSystemMemoryInfo', 'getGpuType', 'ensureGpuDeviceIsSupported'];
+      // getGpuType equality read and — on a capable host — the support check.
+      // A GPU-less host throws the mismatch BEFORE ensureGpuDeviceIsSupported,
+      // so that op is expected only when the host can actually run the binary.
+      const expected = capable
+        ? ['loadBackends', 'getGpuType', 'init', 'getGpuVramInfo', 'getGpuDeviceInfo', 'getSystemMemoryInfo', 'getGpuType', 'ensureGpuDeviceIsSupported']
+        : ['loadBackends', 'getGpuType', 'init', 'getGpuVramInfo', 'getGpuDeviceInfo', 'getSystemMemoryInfo', 'getGpuType'];
       let cursor = 0;
       for (const op of expected) {
         const at = log.indexOf(op, cursor);
@@ -300,7 +427,9 @@ describe('#350 AC1 group A: the complete native operation sequence via the facad
         log.filter((op) => op === 'init').length,
         `exactly one init in the direct-test log (log=${JSON.stringify(log)})`,
       ).toBe(1);
-      expect(String(addon.getGpuType()), 'after the test the addon reports vulkan').toBe('vulkan');
+      if (capable) {
+        expect(String(addon.getGpuType()), 'after the test the addon reports vulkan').toBe('vulkan');
+      }
     } finally {
       restore();
     }
@@ -488,7 +617,7 @@ describe('#350 AC1: the drift pin matches the ACTUAL installed bytes', () => {
     expect(fs.existsSync(DIST_PATH), 'installed nlc dist file must exist').toBe(true);
     expect(
       sha256(DIST_PATH),
-      'drift: installed testBindingBinary.js bytes differ from the PRISTINE.sha256 pin — re-pin and re-verify the vendored patch on any nlc bump',
+      'drift: installed testBindingBinary.js bytes differ from the PRISTINE.sha256 pin — re-pin and re-verify the vendored patch on any nlc bump. If a group-B run was interrupted mid-overwrite, restore the pristine tree first: npm --prefix desktop ci',
     ).toBe(pinnedHash);
     const pkgVersion: string = JSON.parse(
       fs.readFileSync(path.join(desktopRoot, 'node_modules', 'node-llama-cpp', 'package.json'), 'utf8'),

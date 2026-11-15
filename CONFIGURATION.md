@@ -466,7 +466,12 @@ loopback); connects to the validated address with the lookup pinned; and follows
   `external.airgap` and the two timeouts as their EFFECTIVE numbers (the configured value or
   the default). The non-secret settings are saved in
   `<profile dir>/external.json`, not `settings.json`, so older app versions still load
-  `settings.json`. `POST /settings/external/test` tests a draft connection without saving.
+  `settings.json`. The sidecar is FORWARD-ONLY for the two timeout keys: a build from
+  before contract v2.7.0 refuses an `external.json` carrying them as an unknown setting and
+  then disables the external endpoint (logged), so the downgrade recipe is to remove
+  `external.firstByteTimeoutMs` and `external.idleTimeoutMs` from that file before running
+  an older build (the API key itself stays in the platform secret store and is unaffected).
+  `POST /settings/external/test` tests a draft connection without saving.
   A `settings.json` that still carries `external.*` keys (older build, hand edit, backup
   restore) is rewritten without them at startup — the external model does not apply from
   that file and no plaintext key is kept on disk from a file the app can parse. A file that

@@ -193,20 +193,27 @@ async function main(): Promise<void> {
     // same field-shaped line, and this child threads it into the report reason
     // (frozen C2 spec drives exactly this channel). Restored in finally.
     const capturedRejections: string[] = [];
+    // Review finding security-trust-001: the reason channel needs the ERROR
+    // MESSAGE, not the stack — a stack carries absolute install paths (on a
+    // user machine, the profile directory) into the persisted verdict, the
+    // settings UI and CI logs. Fall back to the stack only for a message-less
+    // error.
+    const lineOf = (a: unknown): string =>
+      a instanceof Error ? (a.message !== '' ? a.message : (a.stack ?? String(a))) : String(a);
     const origConsoleError = console.error;
     const origConsoleWarn = console.warn;
     const record = (...args: unknown[]): void => {
-      const line = args.map((a) => (a instanceof Error ? (a.stack ?? a.message) : String(a))).join(' ');
+      const line = args.map(lineOf).join(' ');
       if (/Failed to load a prebuilt|is not compatible/i.test(line)) {
         capturedRejections.push(line);
       }
       origConsoleError.call(console, ...args);
     };
     console.error = record;
-    console.warn = (...args: unknown[]) => {
+    console.warn = (...args: unknown[]): void => {
       // Warns ride the warn stream (unlike upstream getLlama's console.error
       // rejections); the regex match is shared so both shapes are captured.
-      const line = args.map((a) => (a instanceof Error ? (a.stack ?? a.message) : String(a))).join(' ');
+      const line = args.map(lineOf).join(' ');
       if (/Failed to load a prebuilt|is not compatible/i.test(line)) {
         capturedRejections.push(line);
       }
@@ -219,7 +226,16 @@ async function main(): Promise<void> {
       console.error = origConsoleError;
       console.warn = origConsoleWarn;
     }
-    const lastRejection = capturedRejections.at(-1);
+    // Review finding correctness-state-002: node-llama-cpp logs the SPECIFIC
+    // prebuilt rejection ("Failed to load a prebuilt ... Error: <cause>") and
+    // THEN its generic "is not compatible with the current system" warning —
+    // the generic line arrives LAST, so a plain .at(-1) kept the generic text
+    // and dropped the actionable cause (AC2's stated outcome failed on the
+    // real path, and the frozen spec passed only because its stub never emits
+    // the later generic line). Prefer the last SPECIFIC rejection; fall back
+    // to the last capture of any kind.
+    const specific = capturedRejections.filter((line) => /Failed to load a prebuilt/i.test(line));
+    const lastRejection = (specific.length > 0 ? specific : capturedRejections).at(-1);
     if (lastRejection !== undefined) {
       // Sanitized + bounded: control chars stripped, tail kept (the "Error:"
       // cause sits at the end of nlc's line), 500-char cap.

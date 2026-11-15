@@ -168,7 +168,19 @@ export async function buildDesktopHistorySnapshot(
   try {
     if (apiClient !== null && apiClient !== undefined && typeof apiClient.getSettings === 'function') {
       const settings = await apiClient.getSettings();
-      if (onSettings !== undefined) onSettings(settings);
+      // The sink is a BEST-EFFORT side effect (the renderer watchdog budget).
+      // Copilot review (PR #352 discussion_r4579528938): invoking it inside
+      // this try coupled its failure to the grounded-exclusion decision — a
+      // throwing sink would force excludeGrounded=true even though the
+      // settings read succeeded. Isolate it: its failure must not change the
+      // snapshot semantics.
+      if (onSettings !== undefined) {
+        try {
+          onSettings(settings);
+        } catch {
+          /* best-effort sink — never affects excludeGrounded */
+        }
+      }
       excludeGrounded = desktopSettingsExcludeGrounded(settings);
     }
   } catch {

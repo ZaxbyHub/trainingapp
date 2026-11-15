@@ -345,3 +345,37 @@ describe('F-012 (Stage B): desktop backend settings decide the grounded-answer f
     expect(contents(failing)).toEqual(['q1', 'plain']);
   });
 });
+
+describe('F-012 (Stage B): the onSettings sink is isolated from the grounded-exclusion decision', () => {
+  // Copilot review on PR #352 (discussion_r4579528938): the sink used to be
+  // invoked inside the try whose catch forces excludeGrounded=true, so a
+  // throwing sink coupled a best-effort side effect to the snapshot semantics.
+  const ext = { 'external.enabled': true, 'external.baseUrl': 'http://127.0.0.1:1/v1', 'external.model': 'm' };
+  const grounded = (content: string): ChatMessage => ({ ...assistant(content), grounding: 'grounded' });
+  const plain: ChatMessage = { ...assistant('plain'), grounding: 'general', sources: [], citations: [] };
+  const msgs = [user('q1'), grounded('G-ANSWER'), user('q2'), plain, user('now'), emptyAssistant()];
+  const contents = (turns: Array<{ content: string }>) => turns.map((t) => t.content);
+
+  test('a THROWING sink cannot force excludeGrounded=true (the grounded answer still threads)', async () => {
+    // The backend says grounded -> excludeGrounded=false -> the grounded answer
+    // threads. If the sink's throw reached the outer catch, excludeGrounded
+    // would flip to true and 'G-ANSWER' would be dropped.
+    const turns = await buildDesktopHistorySnapshot(
+      { getSettings: async () => ({ ...ext, 'external.grounded': true }) },
+      msgs,
+      () => { throw new Error('sink exploded'); },
+    );
+    expect(contents(turns)).toEqual(['q1', 'G-ANSWER', 'q2', 'plain']);
+  });
+
+  test('a throwing sink leaves an exclusion decision unchanged', async () => {
+    // The backend says ungrounded -> excludeGrounded=true -> the grounded
+    // answer is dropped; the sink's failure must not change that either.
+    const turns = await buildDesktopHistorySnapshot(
+      { getSettings: async () => ({ ...ext, 'external.grounded': false }) },
+      msgs,
+      () => { throw new Error('sink exploded'); },
+    );
+    expect(contents(turns)).toEqual(['q2', 'plain']);
+  });
+});

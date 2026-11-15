@@ -64,15 +64,37 @@ describe('#351 renderer desktop first-byte budget resolver', () => {
 });
 
 // ---------- behavioural wiring rows (critic r2: source sweeps are cheatable) ----------
-const captures = vi.hoisted(() => ({ budgets: [] as Array<number | undefined>, setterCalls: [] as number[] }));
+// Review finding tests-falsifiability-004 (critic-UPHELD MEDIUM): the mock
+// previously recorded only the constructor argument and the setter calls while
+// a Proxy turned startSSEStream into a no-op — so the load-bearing ORDERING
+// invariant (the fresh budget must be applied BEFORE the timer arms at
+// startSSEStream) was unobservable, and moving the setter after the stream
+// start would have kept every row GREEN while production silently reverted to
+// the #351 first-send clip. `events` now records the ordered lifecycle.
+const captures = vi.hoisted(() => ({
+  budgets: [] as Array<number | undefined>,
+  setterCalls: [] as number[],
+  events: [] as Array<[string, number | undefined]>,
+}));
 
 vi.mock('../../streaming', () => {
   class TokenStreamManager {
+    firstByteMs?: number;
     constructor(firstByteMs?: number) {
+      this.firstByteMs = firstByteMs;
       captures.budgets.push(firstByteMs);
+      captures.events.push(['construct', firstByteMs]);
     }
     setFirstByteTimeoutMs(ms: number): void {
+      this.firstByteMs = ms;
       captures.setterCalls.push(ms);
+      captures.events.push(['set', ms]);
+    }
+    startSSEStream(): void {
+      // The timer arms here in production (SSEStreamConsumer construction), so
+      // the budget IN EFFECT at this point is the observable that pins the
+      // ordering invariant.
+      captures.events.push(['start', this.firstByteMs]);
     }
   }
   return {
@@ -221,6 +243,7 @@ describe('#351 ChatPage uses the budget resolver at the desktop construction sit
     sessionStorage.clear();
     captures.budgets.length = 0;
     captures.setterCalls.length = 0;
+    captures.events.length = 0;
     mockContext('api');
     // The SSE transport: never resolves (the manager is constructed BEFORE the
     // stream; the budget is observable at construction time regardless).
@@ -406,6 +429,74 @@ describe('#351 ChatPage uses the budget resolver at the desktop construction sit
     expect(captures.budgets[1]).toBe(900_000);
   });
 
+  test('the fresh budget is applied BEFORE the timer arms at startSSEStream (ordering invariant, review tests-falsifiability-004)', async () => {
+    // The load-bearing invariant of the whole #351 renderer leg: the setter
+    // must run before startSSEStream builds the SSEStreamConsumer (which reads
+    // the budget). A setter moved after the stream start leaves the stale
+    // constructor budget armed and re-creates the first-send clip — and until
+    // this row existed, no test could see that.
+    desktopSessionWith(vi.fn(async () => ({
+      'external.enabled': true,
+      'external.protocol': 'openai',
+      'external.baseUrl': 'http://127.0.0.1:9',
+      'external.model': 'm1',
+      'external.firstByteTimeoutMs': 900_000,
+    })));
+    renderChat();
+    await sendOnce();
+    await waitFor(() => expect(captures.events.some(([kind]) => kind === 'start')).toBe(true), { timeout: 10_000 });
+    const kinds = captures.events.map(([kind]) => kind);
+    expect(kinds, `the setter must run before the stream starts (events: ${JSON.stringify(captures.events)})`).toContain('set');
+    expect(kinds.indexOf('set'), 'set must precede start').toBeLessThan(kinds.indexOf('start'));
+    const start = captures.events.find(([kind]) => kind === 'start');
+    expect(start?.[1], 'the budget IN EFFECT when the timer arms must be the configured 900000').toBe(900_000);
+  });
+
+  test('a raised reading does NOT outlive the external endpoint: once external is off, the local watchdog returns to 600000 (review reliability-performance-001)', async () => {
+    // The external first-byte setting describes the external endpoint's
+    // transport; responseFields() reports it even when external.enabled is
+    // false, so an ungated read let an endpoint knob govern the local-model
+    // watchdog for up to ~24.8 days. Both the construction path and the sink
+    // must now return to the 600000 ceiling.
+    desktopSessionWith(vi.fn()
+      .mockImplementationOnce(async () => ({
+        'external.enabled': true,
+        'external.protocol': 'openai',
+        'external.baseUrl': 'http://127.0.0.1:9',
+        'external.model': 'm1',
+        'external.firstByteTimeoutMs': 900_000,
+      }))
+      .mockImplementationOnce(async () => ({
+        'external.enabled': false,
+        'external.protocol': 'openai',
+        'external.baseUrl': 'http://127.0.0.1:9',
+        'external.model': 'm1',
+        'external.firstByteTimeoutMs': 900_000,
+      })));
+    renderChat();
+    await act(async () => {});
+    const input = screen.getByLabelText('Message input');
+    const send = screen.getByRole('button', { name: /send/i });
+    fireEvent.change(input, { target: { value: 'first question' } });
+    fireEvent.click(send);
+    await waitFor(() => expect(captures.setterCalls.length).toBe(1), { timeout: 10_000 });
+    expect(captures.setterCalls[0], 'send 1 (external active) raises the budget').toBe(900_000);
+    fireEvent.click(screen.getByRole('button', { name: 'Stop generation' }));
+    await act(async () => {});
+    fireEvent.change(input, { target: { value: 'second question' } });
+    fireEvent.click(send);
+    await waitFor(() => expect(captures.budgets.length).toBe(2), { timeout: 10_000 });
+    await act(async () => {});
+    expect(captures.setterCalls[1], 'send 2 (external off) must not raise the local watchdog').toBe(DESKTOP_FIRST_BYTE_TIMEOUT_MS);
+    // The EFFECTIVE budget is the setter's (it applies before startSSEStream
+    // arms the timer). The construction path is engine-gated — the loaded
+    // models still report 'external' until the next status fetch — so a
+    // transient constructor value is corrected by the sink above; a failed
+    // read never reaches the sink and keeps the last-known value, which is
+    // the pre-existing Phase-4.5 contract.
+    expect(captures.setterCalls.length, 'send 2 reached the sink').toBe(2);
+  });
+
   test('browser lane: the 30s browser default stays untouched (RAGOrchestrator-driven send)', async () => {
     vi.mocked(desktopSessionModule.isElectron).mockReturnValue(false);
     mockContext('browser-local');
@@ -424,7 +515,10 @@ describe('#351 ChatPage uses the budget resolver at the desktop construction sit
     // branch expression must pass desktopFirstByteBudgetMs(...) DIRECTLY as the
     // sole desktop-arm argument (balanced-paren extraction; the comma-operator
     // cheat — helper called then value discarded — fails the DIRECT-argument
-    // test: the argument token sequence must START with the call).
+    // test: the argument token sequence must START with the call). The arm is
+    // extracted with depth tracking so a nested ternary INSIDE the resolver
+    // call (review reliability-performance-001: the engine gate) cannot break
+    // the scan the way a naive split('?')/split(':') did.
     const src = readFileSync(
       path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'pages', 'ChatPage.tsx'),
       'utf8',
@@ -438,8 +532,23 @@ describe('#351 ChatPage uses the budget resolver at the desktop construction sit
       else if (src[i] === ')') { depth--; if (depth === 0) { end = i; break; } }
     }
     const call = src.slice(at + 'new TokenStreamManager('.length, end).trim();
-    const desktopArm = call.includes('?') ? call.split('?')[1].split(':')[0] : call;
-    expect(desktopArm.trim().startsWith('desktopFirstByteBudgetMs('), `desktop arm must BE the resolver call, got: ${desktopArm}`).toBe(true);
+    // Top-level '?' of the constructor's ternary, then its matching ':'.
+    const topLevel = (from: number, targets: string[]): number => {
+      let d = 0;
+      for (let i = from; i < call.length; i++) {
+        const ch = call[i];
+        if (ch === '(' || ch === '[' || ch === '{') d++;
+        else if (ch === ')' || ch === ']' || ch === '}') d--;
+        else if (d === 0 && targets.includes(ch)) return i;
+      }
+      return -1;
+    };
+    const q = topLevel(0, ['?']);
+    expect(q, 'the constructor call carries a desktop/browser ternary').toBeGreaterThanOrEqual(0);
+    const colon = topLevel(q + 1, [':']);
+    expect(colon, 'the ternary has a browser arm').toBeGreaterThan(q);
+    const desktopArm = call.slice(q + 1, colon).trim();
+    expect(desktopArm.startsWith('desktopFirstByteBudgetMs('), `desktop arm must BE the resolver call, got: ${desktopArm}`).toBe(true);
     expect(desktopArm, 'the resolver must receive the external first-byte timeout value (CHECK_WRONG: /i — the ChatPage state identifier capitalizes First)').toMatch(/firstByteTimeoutMs/i);
     expect(call, 'no bare desktop constant inside the constructor call').not.toMatch(/DESKTOP_FIRST_BYTE_TIMEOUT_MS/);
   });
