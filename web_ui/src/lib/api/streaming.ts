@@ -103,6 +103,38 @@ export const DESKTOP_FIRST_BYTE_TIMEOUT_MS = 600_000;
 export const DEFAULT_FIRST_BYTE_TIMEOUT_MS = 30_000;
 
 /**
+ * Issue #351 (renderer watchdog leg): the desktop chat first-byte budget is
+ * max(600000, configured external.firstByteTimeoutMs) — a RAISED backend limit
+ * must not be clipped at the renderer. At-or-below the floor, absent, NaN, or
+ * 0 inputs keep the 600000 default; the browser lane never goes through here
+ * (it keeps DEFAULT_FIRST_BYTE_TIMEOUT_MS).
+ */
+/** Issue #351: the backend-validated external-timeout range (the desktop/main
+ * external-provider EXTERNAL_TIMEOUT_MIN_MS/MAX_MS twins, [1000, 2147483647],
+ * the same bounds the OpenAPI schemas and the browser-lane persistence pin).
+ * The renderer watchdog applies the FULL validity range before trusting a
+ * settings value; an out-of-range response keeps the LAST SUCCESSFUL reading
+ * (the failed/key-less/invalid contract). */
+export const EXTERNAL_TIMEOUT_MIN_MS = 1_000;
+export const EXTERNAL_TIMEOUT_MAX_MS = 2_147_483_647;
+export function isValidExternalTimeoutValue(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) &&
+    value >= EXTERNAL_TIMEOUT_MIN_MS && value <= EXTERNAL_TIMEOUT_MAX_MS;
+}
+
+export function desktopFirstByteBudgetMs(configured?: number): number {
+  if (
+    typeof configured !== 'number' ||
+    !Number.isInteger(configured) ||
+    configured <= DESKTOP_FIRST_BYTE_TIMEOUT_MS
+  ) {
+    return DESKTOP_FIRST_BYTE_TIMEOUT_MS;
+  }
+  // Cap at Node's timer ceiling (values above clamp to 1 ms at runtime).
+  return Math.min(configured, 2_147_483_647);
+}
+
+/**
  * Callback type for receiving token events
  */
 type TokenCallback = (token: string) => void;

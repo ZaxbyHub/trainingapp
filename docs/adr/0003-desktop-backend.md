@@ -8,7 +8,7 @@
 
 The v1 plan assumed a "Node backend, no compatibility constraint" without packaging proof; the independent review that produced this roadmap slot rejected that premise and demanded a measured comparison before WS-B commits to a shape. By the time this spike executed, WS-B had already landed on the provisional Node default: #59 (Electron scaffold), #61 (backend host with BOTH a Node mode and a sidecar mode — `desktop/main/backend/sidecar-manager.ts` explicitly anticipates "ADR-0003's Python-sidecar option"), #62 (native LLM inference), #63 (store schema), #65/#66/#67. This ADR supplies the missing decision record and tests the assumption against a packaged, installed, measured comparison.
 
-Both slices load the A6-selected models (Quality `gemma-4-e2b-it` Q4_K_M, Fast `lfm2.5-vl-450m` Q4_K_M — ADR-0002) and the A5 embedding model (`bge-small-en-v1.5`, 384 dims) and answer the single frozen `POST /ask/stream` endpoint (contract v2.6.0, #51): SSE with CRLF separation, `{"token"}` frames, exactly one terminal event, `cancelled: true` on client disconnect, required `grounding`.
+Both slices load the A6-selected models (Quality `gemma-4-e2b-it` Q4_K_M, Fast `lfm2.5-vl-450m` Q4_K_M — ADR-0002) and the A5 embedding model (`bge-small-en-v1.5`, 384 dims) and answer the single frozen `POST /ask/stream` endpoint (contract v2.7.0, #51; #351) : SSE with CRLF separation, `{"token"}` frames, exactly one terminal event, `cancelled: true` on client disconnect, required `grounding`.
 
 > **Supersession note (2026-10-11):** the model lineup quoted in this paragraph is
 > historical. The ADR-0002 amendment by #156 replaced it — the desktop tiers are now

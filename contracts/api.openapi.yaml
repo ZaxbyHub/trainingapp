@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Document Q&A API
-  version: "2.6.0"
+  version: "2.7.0"
   description: |
     RAG-based document question answering API.
 
@@ -1199,6 +1199,11 @@ components:
         "external.apiKeyPersisted": { type: boolean, description: false when the OS offers no encryption and the key is kept for this session only (desktop only). }
         "external.apiKeyBoundOrigin": { type: string, description: Origin the saved key is bound to; empty when none (desktop only). }
         "external.airgap": { type: boolean, description: Air-gapped build — public endpoints refused (desktop only). }
+        # issue #351: user-configurable external-request transport timeouts.
+        # The RESPONSE discloses the EFFECTIVE numbers (configured value or the
+        # 600000/120000 defaults); integers in [1000, 2147483647] ms.
+        "external.firstByteTimeoutMs": { type: integer, minimum: 1000, maximum: 2147483647, description: First-byte timeout for external requests in ms (desktop only; default 600000). }
+        "external.idleTimeoutMs": { type: integer, minimum: 1000, maximum: 2147483647, description: Idle timeout between streamed chunks in ms (desktop only; default 120000). }
         # settings-openapi-parity (#280): OPTIONAL desktop-backend-only
         # inference settings, returned by the desktop engine's GET /settings
         # report (the Python backend omits them; the required set above is
@@ -1244,6 +1249,9 @@ components:
         "external.model": { type: string }
         "external.apiKey": { type: string, description: Write-only; '' clears the saved key. }
         "external.grounded": { type: boolean }
+        # issue #351: integer [1000, 2147483647] ms; absent = the defaults.
+        "external.firstByteTimeoutMs": { type: integer, minimum: 1000, maximum: 2147483647 }
+        "external.idleTimeoutMs": { type: integer, minimum: 1000, maximum: 2147483647 }
         # settings-openapi-parity (#280): desktop-backend-only inference
         # settings, validated by the desktop engine's accept switch (unknown
         # inference.* keys are rejected there; the Python backend rejects the

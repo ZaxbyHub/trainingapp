@@ -1782,8 +1782,9 @@ export class LlamaEngine implements EngineSurface {
         cancellationEvent: opts.cancellationEvent,
         airgap: this.external.airgap(),
         lookup: this.external.lookup,
-        firstByteTimeoutMs: this.external.firstByteTimeoutMs,
-        idleTimeoutMs: this.external.idleTimeoutMs,
+        // Issue #351: call-time read of the committed settings (defaults when unset).
+        firstByteTimeoutMs: this.external.firstByteTimeoutValueMs(),
+        idleTimeoutMs: this.external.idleTimeoutValueMs(),
       });
       const out: EngineQueryResult = {
         answer: result.answer,

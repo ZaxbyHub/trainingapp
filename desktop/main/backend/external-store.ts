@@ -87,6 +87,29 @@ export function replayExternalSnapshot(
   const first = apply(snapshot);
   if (first.ok) return;
   const reason = [first.detail, ...(first.errors ?? [])].join('; ');
+  // Issue #351 (r2 Critical #5A): whole-batch ATOMIC retry keyed by the refused
+  // batch's OWN error strings — drop ONLY the two known timeout keys when their
+  // per-key errors name them, and retry the survivors as ONE batch. This keeps
+  // the cross-field enabled+url+model rule intact (no per-key standalone
+  // validate, which would commit partially) and stops one out-of-range hand-
+  // edited timeout from disabling valid sibling settings.
+  const DROPPABLE_TIMEOUT_KEYS = ['external.firstByteTimeoutMs', 'external.idleTimeoutMs'];
+  const refusedKeys = new Set((first.errors ?? [])
+    .map((error) => error.split(':')[0]?.trim() ?? '')
+    .filter((key) => DROPPABLE_TIMEOUT_KEYS.includes(key)));
+  if (refusedKeys.size > 0) {
+    const survivors: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(snapshot)) {
+      if (!refusedKeys.has(key)) survivors[key] = value;
+    }
+    const retried = apply(survivors);
+    if (retried.ok) {
+      console.error(
+        `[trainingapp-backend] stored external timeout setting(s) ${[...refusedKeys].join(', ')} were out of range and were dropped (defaults now effective); the remaining settings applied`,
+      );
+      return;
+    }
+  }
   const withoutUrl: Record<string, unknown> = { ...snapshot, 'external.enabled': false };
   delete withoutUrl['external.baseUrl'];
   const second = apply(withoutUrl);

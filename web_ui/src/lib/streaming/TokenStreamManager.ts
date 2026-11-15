@@ -73,6 +73,17 @@ export class TokenStreamManager {
   }
 
   /**
+   * Issue #351: re-arm the first-byte budget from the send flow's OWN
+   * GET /settings response (F-012 reads the backend settings exactly once
+   * per send, so the fresh effective external.firstByteTimeoutMs reaches the
+   * CURRENT send through this setter before startSSEStream builds the
+   * consumer — a separate mount-time read would break the one-read pin).
+   */
+  setFirstByteTimeoutMs(ms: number): void {
+    this.firstByteTimeoutMs = ms;
+  }
+
+  /**
    * Register a callback for token events.
    * @param cb - Function called when tokens are flushed to the DOM
    */

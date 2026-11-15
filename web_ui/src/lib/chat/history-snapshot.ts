@@ -153,15 +153,23 @@ export function desktopSettingsExcludeGrounded(settings: unknown): boolean {
  * F-012: the history snapshot for a desktop /ask/stream request. Reads the
  * backend settings (GET /settings) once per send; any failure — no client,
  * a rejected request, a malformed answer — excludes grounded answers.
+ *
+ * Issue #351: the optional onSettings sink hands the SAME response to the
+ * renderer watchdog budget (TokenStreamManager.setFirstByteTimeoutMs) so the
+ * current send uses the fresh effective external.firstByteTimeoutMs without a
+ * second GET /settings — the one-read-per-send pin stays intact.
  */
 export async function buildDesktopHistorySnapshot(
   apiClient: { getSettings?: () => Promise<unknown> } | null | undefined,
   owningMessages: ChatMessage[],
+  onSettings?: (settings: unknown) => void,
 ): Promise<RAGHistoryTurn[]> {
   let excludeGrounded = true;
   try {
     if (apiClient !== null && apiClient !== undefined && typeof apiClient.getSettings === 'function') {
-      excludeGrounded = desktopSettingsExcludeGrounded(await apiClient.getSettings());
+      const settings = await apiClient.getSettings();
+      if (onSettings !== undefined) onSettings(settings);
+      excludeGrounded = desktopSettingsExcludeGrounded(settings);
     }
   } catch {
     excludeGrounded = true;

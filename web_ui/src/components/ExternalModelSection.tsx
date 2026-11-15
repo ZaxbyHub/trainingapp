@@ -65,6 +65,9 @@ interface Draft {
   apiKey: string;
   rememberKey: boolean;
   grounded: boolean;
+  /** Issue #351: ms or undefined (= effective default). integers [1000, 2147483647]. */
+  firstByteTimeoutMs?: number;
+  idleTimeoutMs?: number;
 }
 
 interface DesktopKeyState {
@@ -174,7 +177,7 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
   const desktop = isElectron();
   const [draft, setDraft] = useState<Draft>(() => {
     if (desktop) {
-      return { enabled: false, protocol: 'openai', baseUrl: '', model: '', apiKey: '', rememberKey: false, grounded: true };
+      return { enabled: false, protocol: 'openai', baseUrl: '', model: '', apiKey: '', rememberKey: false, grounded: true, firstByteTimeoutMs: undefined, idleTimeoutMs: undefined };
     }
     return loadExternalConfig();
   });
@@ -270,6 +273,10 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
       // Write-only key field: a typed, unsaved key stays only while the shown
       // URL is unchanged; saveTypedKey clears it once saved.
       apiKey: dropKey ? '' : prev.apiKey,
+      // Issue #351 (AC6): the EFFECTIVE limits from GET /settings (numbers,
+      // defaults when unset) — the disclosure + inputs render these.
+      firstByteTimeoutMs: typeof s['external.firstByteTimeoutMs'] === 'number' ? (s['external.firstByteTimeoutMs'] as number) : prev.firstByteTimeoutMs,
+      idleTimeoutMs: typeof s['external.idleTimeoutMs'] === 'number' ? (s['external.idleTimeoutMs'] as number) : prev.idleTimeoutMs,
     }));
     setKeyState({
       apiKeySet: s['external.apiKeySet'] === true,
@@ -331,6 +338,10 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
     async (patch: Partial<Draft>): Promise<boolean> => {
       if (!desktop) {
         saveExternalConfig(patch);
+        // Issue #351 (AC6): the persisted patch is the new truth — fold it into
+        // the draft so the timeout disclosure reflects the save immediately
+        // (invalid values were already dropped by the save normalization).
+        setDraft((prev) => ({ ...prev, ...patch }));
         if (patch.baseUrl !== undefined) setSavedBaseUrl(patch.baseUrl);
         setKeyVersion((v) => v + 1);
         return true;
@@ -345,6 +356,8 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
       if (patch.baseUrl !== undefined) body['external.baseUrl'] = patch.baseUrl.trim();
       if (patch.model !== undefined) body['external.model'] = patch.model.trim();
       if (patch.grounded !== undefined) body['external.grounded'] = patch.grounded;
+      if (patch.firstByteTimeoutMs !== undefined) body['external.firstByteTimeoutMs'] = patch.firstByteTimeoutMs;
+      if (patch.idleTimeoutMs !== undefined) body['external.idleTimeoutMs'] = patch.idleTimeoutMs;
       if (patch.apiKey !== undefined) body['external.apiKey'] = patch.apiKey;
       writeSeqRef.current += 1;
       const seq = writeSeqRef.current;
@@ -379,6 +392,52 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
     },
     [desktop, session, applyDesktopSettings],
   );
+
+  // Issue #351 (AC6): typed-but-unsaved timeout inputs (raw strings; invalid
+  // values are refused at save time by the same normalization the lanes use).
+  const [timeoutDraft, setTimeoutDraft] = useState<{ first: string; idle: string }>({ first: '', idle: '' });
+  const [timeoutSaving, setTimeoutSaving] = useState(false);
+
+  /** Parse an input string into a valid timeout integer, or undefined. */
+  const timeoutValueOrNull = (raw: string): number | undefined => {
+    if (raw.trim() === '') return undefined;
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value < 1000 || value > 2_147_483_647) return undefined;
+    return value;
+  };
+
+  /** Save the typed timeouts through the lane's own persist path. A value
+   *  that is present-but-invalid is refused (browser: silently dropped by the
+   *  save normalization; desktop: the backend's 422 surfaces as a problem). */
+  const persistTimeouts = useCallback(async (): Promise<void> => {
+    const firstRaw = timeoutDraft.first.trim();
+    const idleRaw = timeoutDraft.idle.trim();
+    const patch: Partial<Draft> = {};
+    let invalid = false;
+    if (firstRaw !== '') {
+      const v = timeoutValueOrNull(firstRaw);
+      if (v === undefined) invalid = true;
+      else patch.firstByteTimeoutMs = v;
+    }
+    if (idleRaw !== '') {
+      const v = timeoutValueOrNull(idleRaw);
+      if (v === undefined) invalid = true;
+      else patch.idleTimeoutMs = v;
+    }
+    if (invalid) {
+      setProblem('Timeouts must be whole numbers between 1000 and 2147483647 ms.');
+      return;
+    }
+    setTimeoutSaving(true);
+    try {
+      const ok = await persist(patch);
+      if (!ok && desktop) return; // persist() already surfaced the backend's refusal
+      setTimeoutDraft({ first: '', idle: '' });
+    } finally {
+      setTimeoutSaving(false);
+    }
+  }, [timeoutDraft, desktop, persist]);
+
 
   const update = (patch: Partial<Draft>) => {
     setStatus(null);
@@ -930,6 +989,77 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
             label="Use my documents (grounded)"
             description="On: answers use your documents, with citations. Off (Direct chat): questions go straight to the model without retrieval, and answers are labeled General knowledge."
           />
+
+          {/* Issue #351 (AC6): the ACTIVE external-request timeout limits, of the
+              lane the user is in — disclosed with human labels (the number is
+              meaningless alone) and configurable via the two inputs + Save. The
+              numbers are the EFFECTIVE values: the configured setting or the
+              defaults (600000 first byte / 120000 idle). Invalid input (below
+              1000, above 2147483647, non-integer) never persists: BOTH lanes
+              refuse it locally with the range problem message (final critic
+              C-3: a silent drop looked saved and did nothing). */}
+          <Field label="Request timeouts (ms)" className="settings-field">
+            {() => (
+              <>
+            <div className="settings-row">
+              <span
+                data-testid="external-timeout-first-byte"
+                aria-label="First-byte timeout"
+                className="settings-text"
+              >
+                First byte: {draft.firstByteTimeoutMs ?? 600000} ms
+              </span>
+              <span
+                data-testid="external-timeout-idle"
+                aria-label="Idle timeout"
+                className="settings-text"
+              >
+                Idle: {draft.idleTimeoutMs ?? 120000} ms
+              </span>
+            </div>
+            <div className="settings-row">
+              <input
+                data-testid="external-first-byte-input"
+                type="number"
+                aria-label="First-byte timeout in milliseconds"
+                placeholder="600000"
+                min={1000}
+                max={2147483647}
+                step={1000}
+                value={timeoutDraft.first}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  setTimeoutDraft((prev) => ({ ...prev, first: raw, idle: prev.idle }));
+                }}
+              />
+              <input
+                data-testid="external-idle-input"
+                type="number"
+                aria-label="Idle timeout in milliseconds"
+                placeholder="120000"
+                min={1000}
+                max={2147483647}
+                step={1000}
+                value={timeoutDraft.idle}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  setTimeoutDraft((prev) => ({ ...prev, first: prev.first, idle: raw }));
+                }}
+              />
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  void persistTimeouts();
+                }}
+                loading={timeoutSaving}
+                disabled={timeoutSaving}
+              >
+                Save timeout settings
+              </Button>
+            </div>
+            </>
+            )}
+          </Field>
 
         </SettingsSubsection>
       )}

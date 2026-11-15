@@ -578,7 +578,16 @@ async function runGpuProbeCore(
         if (report.ok === true && report.backend === 'vulkan' && dev !== null) {
           finish({ backend: 'vulkan', ok: true, reason: 'GPU device query identified the adapter.', device: dev });
         } else {
-          finish(cpuVerdict('GPU device query did not report a usable Vulkan adapter.'));
+          // Issue #350 (AC2): carry the child report's OWN reason into the
+          // verdict (sanitized + bounded) instead of dropping it for a generic
+          // rewrite — the child's reason now carries the underlying nlc
+          // rejection line (frozen C2 parent leg). The generic string remains
+          // the fallback when the child gave none.
+          const childReason = typeof report.reason === 'string' && report.reason !== ''
+            // eslint-disable-next-line no-control-regex
+            ? report.reason.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 500)
+            : '';
+          finish(cpuVerdict(childReason === '' ? 'GPU device query did not report a usable Vulkan adapter.' : childReason));
         }
         return;
       }
