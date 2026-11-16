@@ -11,7 +11,7 @@
  * this function on first open after the upgrade.
  */
 
-// Issue #324 AC3 (decision requested on #281, comment 6857107430): the
+// Issue #324 AC3 (decision recorded on #324, 2026-11-16: enumeration normative): the
 // SIX-CODE-POINT enumeration below is the normative Default_Ignorable
 // contract — NOT the full Unicode property. The property adds directional
 // marks (U+200E/U+200F), bidi controls (U+202A-202E, U+2066-2069), variation

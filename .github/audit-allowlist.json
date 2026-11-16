@@ -6,7 +6,7 @@
       "package": "sharp",
       "reason": "libvips inheritance; the only fix is @huggingface/transformers 4.x (semver-major)",
       "owner": "zaxbysauce",
-      "owner_issue": "https://github.com/ZaxbyHub/trainingapp/issues/284",
+      "owner_issue": "https://github.com/ZaxbyHub/trainingapp/issues/354",
       "expiry": "2027-02-04"
     },
     {
@@ -14,7 +14,7 @@
       "package": "sharp",
       "reason": "libvips inheritance; the only fix is @huggingface/transformers 4.x (semver-major)",
       "owner": "zaxbysauce",
-      "owner_issue": "https://github.com/ZaxbyHub/trainingapp/issues/284",
+      "owner_issue": "https://github.com/ZaxbyHub/trainingapp/issues/354",
       "expiry": "2027-02-04"
     },
     {
@@ -22,7 +22,7 @@
       "package": "sharp",
       "reason": "libvips inheritance; the only fix is @huggingface/transformers 4.x (semver-major)",
       "owner": "zaxbysauce",
-      "owner_issue": "https://github.com/ZaxbyHub/trainingapp/issues/284",
+      "owner_issue": "https://github.com/ZaxbyHub/trainingapp/issues/354",
       "expiry": "2027-02-04"
     },
     {
@@ -30,7 +30,7 @@
       "package": "tinypool",
       "reason": "the only fix is vitest 5.x (semver-major); devDependency in all three packages",
       "owner": "zaxbysauce",
-      "owner_issue": "https://github.com/ZaxbyHub/trainingapp/issues/284",
+      "owner_issue": "https://github.com/ZaxbyHub/trainingapp/issues/354",
       "expiry": "2027-02-04"
     },
     {
@@ -38,7 +38,7 @@
       "package": "tinypool",
       "reason": "the only fix is vitest 5.x (semver-major); devDependency in all three packages",
       "owner": "zaxbysauce",
-      "owner_issue": "https://github.com/ZaxbyHub/trainingapp/issues/284",
+      "owner_issue": "https://github.com/ZaxbyHub/trainingapp/issues/354",
       "expiry": "2027-02-04"
     }
   ]
