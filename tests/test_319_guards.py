@@ -107,7 +107,7 @@ PIN_MERGE_WITHOUT_UPDATE = re.compile(
 )
 NEGATED_WAVE_REQUIREMENT = re.compile(
     r"\b(?:does\s+not|doesn't|need\s+not|not\s+required|may\s+skip)\s+"
-    r"(?:\w+\s+){0,2}(?:require|verify|record|pass|gate)\b",
+    r"(?:\w+\s+){0,2}(?:require|verify|record|pass|gate|direct)\b",
     re.IGNORECASE,
 )
 STAY_OPEN = re.compile(r"stay open|stays open|remain open|remains open", re.IGNORECASE)
@@ -545,6 +545,10 @@ def _check_wave_section(section: str) -> None:
     assert re.search(
         r"good to merge / needs work /", collapsed
     ), "the wave exception must name the review-and-disposition verdict form"
+    assert re.search(r"that explicitly directs review-and-disposition", collapsed), (
+        "the instruction must EXPLICITLY DIRECT review-and-disposition "
+        "(affirmative verb bound)"
+    )
     assert re.search(
         r"wave-mode exception", collapsed
     ), "the subsection must name the wave-mode exception"
@@ -703,6 +707,22 @@ def test_wave_section_rejects_requirement_without_its_verb():
         "each merge can proceed without a head CI rollup",
     )
     assert "head CI rollup that is non-empty" in re.sub(
+        r"\s+", " ", mutated
+    ), "mutation lost the phrase"
+    with pytest.raises(AssertionError):
+        _check_wave_section(mutated)
+
+
+def test_wave_section_rejects_negated_direction():
+    """Reviewer round-5 falsifier: 'that does not explicitly direct'
+    keeps the actor, batch-scope and verdict-form phrases while removing
+    the explicit-direction condition, and dodged the negation regex
+    before 'direct' joined its verb set."""
+    mutated = _WAVE_EXEMPLAR.replace(
+        "that explicitly directs",
+        "that does not explicitly direct",
+    )
+    assert "review-and-disposition" in re.sub(
         r"\s+", " ", mutated
     ), "mutation lost the phrase"
     with pytest.raises(AssertionError):
