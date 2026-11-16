@@ -96,6 +96,11 @@ document and the baked-key trust anchor would carry over.
    verified in-app before a notice is shown), HTTPS-only transport, and the E1 integrity manifest
    for the installed payload. **Decision owner: zaxbysauce (maintainer).** Revisit when an EV
    certificate budget exists (`signtool verify /pa` then becomes the acceptance proof).
+   Recorded fact (2026-11-16, #283 declined): Microsoft's code-signing options page priced
+   Microsoft Artifact Signing (the service formerly called Trusted Signing) at about
+   US$9.99/month with no immediate SmartScreen-reputation advantage over an EV certificate
+   (retrieved 2026-11-02, INFERENCE — re-check before any purchase); the maintainer declined
+   to create an account while the app is in active development.
 6. **App-binary rollback:** in-place NSIS upgrades replace the binary and do not retain the prior
    version. Named mechanism: **prior-installer retention + manual reinstall runbook** — the
    operator keeps (or re-downloads, sha256-verified) the previous installer and reinstalls;

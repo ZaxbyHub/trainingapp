@@ -105,6 +105,11 @@ PIN_MERGE_WITHOUT_UPDATE = re.compile(
     r"\b(?:may|can)\s+merge\b|\bmerge[sd]?\s+without\s+(?:a\s+|the\s+)?pins\.json",
     re.IGNORECASE,
 )
+NEGATED_WAVE_REQUIREMENT = re.compile(
+    r"\b(?:does\s+not|doesn't|need\s+not|not\s+required|may\s+skip)\s+"
+    r"(?:\w+\s+){0,2}(?:require|verify|record|pass|gate|direct)\b",
+    re.IGNORECASE,
+)
 STAY_OPEN = re.compile(r"stay open|stays open|remain open|remains open", re.IGNORECASE)
 
 
@@ -500,3 +505,294 @@ def test_contributing_md_dependabot_triage_policy():
     )
 
     _check_policy(section)
+
+    # PIN authority clarification (2026-11-16 wave follow-through): repairing the
+    # pins.json prerequisite is not itself merge authorization.
+    assert re.search(r"not itself merge authorization", section, re.IGNORECASE), (
+        "the PIN block must state that repairing the pins.json prerequisite "
+        "is not itself merge authorization"
+    )
+
+
+def _extract_wave_section(text: str) -> str:
+    heading = "### Wave merges (explicit maintainer instruction only)"
+    wave_at = text.index(heading)
+    tail = text[wave_at + len(heading) :]
+    next_heading = re.search(r"^#{1,3} ", tail, flags=re.MULTILINE)
+    return tail if next_heading is None else tail[: next_heading.start()]
+
+
+def _check_wave_section(section: str) -> None:
+    """The wave-merge subsection pins (2026-11-16): bind the LOAD-BEARING
+    phrases themselves, not adjacent keywords - removing the requirement a
+    keyword describes must fail here (review round 1 on PR #355)."""
+    collapsed = re.sub(r"\s+", " ", section)
+
+    # Authorization shape: an explicit, batch-scoped maintainer instruction
+    # naming the review-and-disposition verdict form.
+    assert re.search(
+        r"batch-scoped instruction", collapsed
+    ), "the wave exception must be gated on an explicit batch-scoped instruction"
+    assert re.search(
+        r"When the maintainer issues", collapsed
+    ), "the wave exception's authorizing actor must be the maintainer"
+    # Reversed requirements keep every phrase above: reject negated-requirement
+    # shapes outright (the same idiom as NEGATED_CLOSE on the triage classes).
+    assert NEGATED_WAVE_REQUIREMENT.search(collapsed) is None, (
+        "the wave subsection negates one of its own requirements "
+        f"(matched {NEGATED_WAVE_REQUIREMENT.search(collapsed).group(0)!r})"
+    )
+    assert re.search(
+        r"good to merge / needs work /", collapsed
+    ), "the wave exception must name the review-and-disposition verdict form"
+    assert re.search(r"that explicitly directs review-and-disposition", collapsed), (
+        "the instruction must EXPLICITLY DIRECT review-and-disposition "
+        "(affirmative verb bound)"
+    )
+    assert re.search(
+        r"wave-mode exception", collapsed
+    ), "the subsection must name the wave-mode exception"
+
+    # Class bounds: T4 minors/patches plus repaired PIN; never T1/T2/T3/T5.
+    assert re.search(
+        r"T4 minor/patch/digest PRs only", collapsed
+    ), "the wave exception must allow T4 minor/patch/digest PRs only"
+    assert re.search(r"prerequisite has been repaired in the same PR", collapsed), (
+        "the wave exception must require the PIN prerequisite HAS BEEN "
+        "repaired in the same PR (affirmative verb bound)"
+    )
+    assert re.search(
+        r"never covers T1, T2, T3 or T5", collapsed
+    ), "the wave exception must name its class bounds (never T1/T2/T3/T5)"
+
+    # Acceptance evidence: the rollup properties attach to the rollup phrase
+    # itself, and post-merge verification is a compensating control.
+    assert re.search(
+        r"each merge requires a head CI rollup that is non-empt"
+        r"y, fully completed \(zero pending\), and failure-free",
+        collapsed,
+    ), (
+        "wave merges must REQUIRE a non-empty, zero-pending, "
+        "failure-free head CI rollup (verb bound to subject)"
+    )
+    assert re.search(
+        r"agent verifies post-merge CI on master", collapsed
+    ), "wave merges must VERIFY post-merge CI on master (verb bound to subject)"
+    assert re.search(
+        r"compensating control, never a\s+substitute for the pre-merge rollup",
+        collapsed,
+    ), "post-merge green must be stated as a compensating control, not a substitute"
+
+    # Authorization record: the ledger records the instruction verbatim and
+    # every merge's SHA + acceptance evidence; PIN repair is not authority.
+    assert re.search(
+        r"wave ledger records the instruction's verbatim t"
+        r"ext and every merge's SHA \+ acceptance evidence",
+        collapsed,
+    ), (
+        "the wave ledger MUST RECORD (verb bound to subject) the instruction "
+        "verbatim and every merge's SHA + evidence"
+    )
+    assert re.search(
+        r"not merge authorization", collapsed
+    ), "the subsection must restate that PIN repair is not merge authorization"
+    assert re.search(
+        r"exception dies with the instruction", collapsed
+    ), "the wave-mode exception must die with its instruction (one instruction, one batch)"
+    assert re.search(
+        r"never carries forward as standing permission", collapsed
+    ), "a prior wave must never carry forward as standing permission"
+
+
+_WAVE_EXEMPLAR = """
+### Wave merges (explicit maintainer instruction only)
+
+The triage defaults above govern agent behavior when no maintainer instruction is in force.
+When the maintainer issues a single, batch-scoped instruction that explicitly directs
+review-and-disposition of Dependabot PRs (verdicts of the form "good to merge / needs work /
+can be closed"), the executing agent may merge the PRs that instruction covers under this
+wave-mode exception, bounded by ALL of:
+
+- **Class bounds**: T4 minor/patch/digest PRs only, plus PIN-class PRs whose pins.json
+  prerequisite has been repaired in the same PR. The exception never covers T1, T2, T3 or
+  T5 - those stay exactly as their classes dictate, wave or no wave.
+- **Acceptance evidence**: each merge requires a head CI rollup that is non-empty, fully
+  completed (zero pending), and failure-free; the agent verifies post-merge CI on master
+  before recording the disposition. Post-merge green is the compensating control, never a
+  substitute for the pre-merge rollup.
+- **Authorization record**: the executing agent's wave ledger records the instruction's
+  verbatim text and every merge's SHA + acceptance evidence. Satisfying the PIN
+  prerequisite is a repair, not merge authorization; merge authority comes from the
+  instruction alone.
+- **Scope**: one instruction, one batch. The exception dies with the instruction; the next
+  batch needs its own. Satisfying PIN by itself does not create merge authority, and a
+  prior wave never carries forward as standing permission.
+"""
+
+
+def test_wave_section_exemplar_passes():
+    _check_wave_section(_WAVE_EXEMPLAR)
+
+
+def test_wave_section_rejects_missing_rollup_requirement():
+    mutated = _WAVE_EXEMPLAR.replace(
+        "a head CI rollup that is non-empty, fully\n  completed (zero pending), and failure-free;",
+        "a green build;",
+    )
+    assert "head CI rollup that is non-empty" not in re.sub(
+        r"\s+", " ", mutated
+    ), "mutation did not apply"
+    with pytest.raises(AssertionError):
+        _check_wave_section(mutated)
+
+
+def test_wave_section_rejects_missing_ledger_evidence():
+    mutated = _WAVE_EXEMPLAR.replace(
+        "records the instruction's\n  verbatim text and every merge's SHA + acceptance evidence.",
+        "records that a wave happened.",
+    )
+    assert "every merge's SHA" not in re.sub(
+        r"\s+", " ", mutated
+    ), "mutation did not apply"
+    with pytest.raises(AssertionError):
+        _check_wave_section(mutated)
+
+
+def test_wave_section_rejects_implicit_authorization():
+    mutated = _WAVE_EXEMPLAR.replace(
+        "a single, batch-scoped instruction", "any maintainer conversation"
+    )
+    assert "batch-scoped instruction" not in mutated, "mutation did not apply"
+    with pytest.raises(AssertionError):
+        _check_wave_section(mutated)
+
+
+def test_wave_section_rejects_reserved_class_coverage():
+    mutated = _WAVE_EXEMPLAR.replace(
+        "The exception never covers T1, T2, T3 or\n  T5",
+        "The exception may also cover T5 majors",
+    )
+    assert "never covers T1, T2, T3 or" not in re.sub(
+        r"\s+", " ", mutated
+    ), "mutation did not apply"
+    with pytest.raises(AssertionError):
+        _check_wave_section(mutated)
+
+
+def test_wave_section_rejects_actor_swap():
+    """Reviewer round-2 falsifier: 'When anyone issues' keeps every phrase
+    match while reversing who authorizes."""
+    mutated = _WAVE_EXEMPLAR.replace("When the maintainer issues", "When anyone issues")
+    assert "When the maintainer issues" not in mutated, "mutation did not apply"
+    assert "batch-scoped instruction" in mutated, "mutation lost the phrase"
+    with pytest.raises(AssertionError):
+        _check_wave_section(mutated)
+
+
+def test_wave_section_rejects_negated_rollup_requirement():
+    """Reviewer round-2 falsifier: 'does not require a head CI rollup' keeps
+    the rollup phrase while reversing the requirement."""
+    mutated = _WAVE_EXEMPLAR.replace(
+        "each merge requires a head CI rollup",
+        "each merge does not require a head CI rollup",
+    )
+    assert "head CI rollup that is non-empty" in re.sub(
+        r"\s+", " ", mutated
+    ), "mutation lost the phrase"
+    with pytest.raises(AssertionError):
+        _check_wave_section(mutated)
+
+
+def test_wave_section_rejects_requirement_without_its_verb():
+    """Reviewer round-3 falsifier: 'can proceed without a head CI rollup'
+    preserves the rollup phrase while deleting the requires-relationship."""
+    mutated = _WAVE_EXEMPLAR.replace(
+        "each merge requires a head CI rollup",
+        "each merge can proceed without a head CI rollup",
+    )
+    assert "head CI rollup that is non-empty" in re.sub(
+        r"\s+", " ", mutated
+    ), "mutation lost the phrase"
+    with pytest.raises(AssertionError):
+        _check_wave_section(mutated)
+
+
+def test_wave_section_rejects_optional_ledger():
+    """Reviewer round-6 falsifier: 'wave ledger optionally records'
+    preserves the entire asserted substring while making the
+    authorization record optional."""
+    mutated = _WAVE_EXEMPLAR.replace(
+        "wave ledger records the instruction's",
+        "wave ledger optionally records the instruction's",
+    )
+    assert "every merge's SHA + acceptance evidence" in re.sub(
+        r"\s+", " ", mutated
+    ), "mutation lost the evidence phrase"
+    with pytest.raises(AssertionError):
+        _check_wave_section(mutated)
+
+
+def test_wave_section_rejects_negated_direction():
+    """Reviewer round-5 falsifier: 'that does not explicitly direct'
+    keeps the actor, batch-scope and verdict-form phrases while removing
+    the explicit-direction condition, and dodged the negation regex
+    before 'direct' joined its verb set."""
+    mutated = _WAVE_EXEMPLAR.replace(
+        "that explicitly directs",
+        "that does not explicitly direct",
+    )
+    assert "review-and-disposition" in re.sub(
+        r"\s+", " ", mutated
+    ), "mutation lost the phrase"
+    with pytest.raises(AssertionError):
+        _check_wave_section(mutated)
+
+
+def test_wave_section_rejects_negated_pin_repair():
+    """Reviewer round-4 falsifier: 'need not be repaired in the same PR'
+    keeps the trailing phrase while deleting the affirmative repair
+    requirement (and dodges NEGATED_WAVE_REQUIREMENT - 'repaired' is not
+    one of its requirement verbs)."""
+    mutated = _WAVE_EXEMPLAR.replace(
+        "prerequisite has been repaired in the same PR",
+        "prerequisite need not be repaired in the same PR",
+    )
+    assert "repaired in the same PR" in re.sub(
+        r"\s+", " ", mutated
+    ), "mutation lost the trailing phrase"
+    with pytest.raises(AssertionError):
+        _check_wave_section(mutated)
+
+
+def test_wave_section_rejects_postmerge_verb_swap():
+    """Reviewer round-3 falsifier: 'ignores post-merge CI on master'
+    preserves the post-merge phrase while deleting the verifies-relationship."""
+    mutated = _WAVE_EXEMPLAR.replace(
+        "the agent verifies post-merge CI on master",
+        "the agent ignores post-merge CI on master",
+    )
+    assert "post-merge CI on master" in mutated, "mutation lost the phrase"
+    with pytest.raises(AssertionError):
+        _check_wave_section(mutated)
+
+
+def test_contributing_md_wave_mode_exception():
+    """The wave-merge subsection (added 2026-11-16 after two maintainer-directed
+    waves falsified the T4 default) is pinned by _check_wave_section (exemplar +
+    mutation legs above); this leg binds the LIVE document and the ordering of
+    the defaults above it."""
+    text = _strip_non_prose(CONTRIBUTING.read_text(encoding="utf-8"))
+    heading = "### Wave merges (explicit maintainer instruction only)"
+    assert heading in text, "CONTRIBUTING.md has no wave-merge subsection"
+
+    _check_wave_section(_extract_wave_section(text))
+
+    # The triage section (with its no-agent-merge T4 default) still sits ABOVE
+    # the wave subsection, so the defaults remain the no-instruction behavior.
+    wave_at = text.index(heading)
+    triage_at = text.index(TRIAGE_HEADING)
+    assert triage_at < wave_at, "the wave subsection must follow the triage section"
+    triage_body = text[triage_at:wave_at]
+    assert T4_NO_MERGE_NO_CLOSE.search(
+        triage_body
+    ), "the T4 no-merge default must remain in force above the wave subsection"
