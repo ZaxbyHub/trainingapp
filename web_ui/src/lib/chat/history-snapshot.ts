@@ -153,15 +153,35 @@ export function desktopSettingsExcludeGrounded(settings: unknown): boolean {
  * F-012: the history snapshot for a desktop /ask/stream request. Reads the
  * backend settings (GET /settings) once per send; any failure — no client,
  * a rejected request, a malformed answer — excludes grounded answers.
+ *
+ * Issue #351: the optional onSettings sink hands the SAME response to the
+ * renderer watchdog budget (TokenStreamManager.setFirstByteTimeoutMs) so the
+ * current send uses the fresh effective external.firstByteTimeoutMs without a
+ * second GET /settings — the one-read-per-send pin stays intact.
  */
 export async function buildDesktopHistorySnapshot(
   apiClient: { getSettings?: () => Promise<unknown> } | null | undefined,
   owningMessages: ChatMessage[],
+  onSettings?: (settings: unknown) => void,
 ): Promise<RAGHistoryTurn[]> {
   let excludeGrounded = true;
   try {
     if (apiClient !== null && apiClient !== undefined && typeof apiClient.getSettings === 'function') {
-      excludeGrounded = desktopSettingsExcludeGrounded(await apiClient.getSettings());
+      const settings = await apiClient.getSettings();
+      // The sink is a BEST-EFFORT side effect (the renderer watchdog budget).
+      // Copilot review (PR #352 discussion_r4579528938): invoking it inside
+      // this try coupled its failure to the grounded-exclusion decision — a
+      // throwing sink would force excludeGrounded=true even though the
+      // settings read succeeded. Isolate it: its failure must not change the
+      // snapshot semantics.
+      if (onSettings !== undefined) {
+        try {
+          onSettings(settings);
+        } catch {
+          /* best-effort sink — never affects excludeGrounded */
+        }
+      }
+      excludeGrounded = desktopSettingsExcludeGrounded(settings);
     }
   } catch {
     excludeGrounded = true;

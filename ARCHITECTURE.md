@@ -108,7 +108,7 @@ cancelled `done`), `/ingest`, `/ingest/file`, `/ingest/batch`, `/documents`,
 50 MiB. Unknown paths 404; known paths with a wrong method 405; a missing
 model answers the contract 503, never a crash. The table mirrors
 [contracts/api.openapi.yaml](contracts/api.openapi.yaml) (OpenAPI 3.1,
-version 2.6.0), authoritative for both backends; conformance is verified by
+version 2.7.0 — issue #351 added the external.* timeout keys), authoritative for both backends; conformance is verified by
 [contracts/tests/run_conformance.py](contracts/tests/run_conformance.py).
 
 **Host selection** — [desktop/main/backend/index.ts](desktop/main/backend/index.ts)

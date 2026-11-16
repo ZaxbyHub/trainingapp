@@ -521,6 +521,24 @@ describe('desktop app', () => {
       await within(panel()).findByText('Your saved key is for https://api.openai.com. Enter the key for this server to use it.'),
     ).toBeInTheDocument();
   });
+
+  test('issue #351 final-critic C-3: an out-of-range timeout input is refused on the DESKTOP lane with the range problem (no silent drop)', async () => {
+    installDesktopBridgeStub();
+    const { s, updateSettings } = session({
+      'external.enabled': true,
+      'external.protocol': 'openai',
+      'external.baseUrl': 'http://127.0.0.1:9',
+      'external.model': 'm1',
+      'external.firstByteTimeoutMs': 900_000,
+    });
+    renderDesktop(s);
+    const q = within(panel());
+    const first = q.getByTestId('external-first-byte-input') as HTMLInputElement;
+    fireEvent.change(first, { target: { value: '999' } });
+    fireEvent.click(q.getByRole('button', { name: /save timeout settings/i }));
+    await waitFor(() => expect(q.getByTestId('external-problem')).toHaveTextContent(/Timeouts must be whole numbers between 1000 and 2147483647/));
+    expect(updateSettings.mock.calls.some(([body]) => 'external.firstByteTimeoutMs' in body)).toBe(false);
+  });
 });
 
 // Review round 1 (F2): browser key-origin binding, end to end through the

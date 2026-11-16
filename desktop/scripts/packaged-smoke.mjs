@@ -474,7 +474,7 @@ const GPU_PROBE_FALLBACK_MARKERS = [
  * A GPU-less runner passes too (its child reports ok:false and exits 0) —
  * the leg proves the transport, not the hardware.
  */
-export function evaluateGpuProbeSmokeRecord(record) {
+export function evaluateGpuProbeSmokeRecord(record, { requireVulkan = false } = {}) {
   if (record === null || typeof record !== 'object') return { ok: false, detail: 'no record' };
   if (typeof record.error === 'string') return { ok: false, detail: `leg threw: ${record.error}` };
   const transport = record.transport;
@@ -495,10 +495,34 @@ export function evaluateGpuProbeSmokeRecord(record) {
   if (!reportShaped) return { ok: false, detail: `no structured child report (${detail})` };
   if (!exitedClean) return { ok: false, detail: `child exit not observed as code 0 (${detail})` };
   if (fallback !== undefined) return { ok: false, detail: `verdict is the parent fallback '${fallback}' (${detail})` };
+  // Issue #350 (AC7 strict mode, TRAININGAPP_REQUIRE_VULKAN=1): the legacy
+  // transport-only contract passes a REAL ok:false cpu report (GPU-less runners
+  // intentionally do). Strict mode additionally requires a REAL, successful
+  // vulkan child report with a named device — the packaged-boot outcome itself.
+  if (requireVulkan) {
+    const vulkanSelected =
+      report.ok === true &&
+      report.backend === 'vulkan' &&
+      typeof report.device === 'string' &&
+      report.device !== '';
+    if (!vulkanSelected) {
+      return {
+        ok: false,
+        detail: `strict (REQUIRE_VULKAN): the child report is not a successful vulkan selection with a device (${detail})`,
+      };
+    }
+  }
   return { ok: true, detail };
 }
 
 // ---- app environment -------------------------------------------------------
+
+// Issue #350 (AC7): host-leg strict GPU assertion (TRAININGAPP_REQUIRE_VULKAN=1
+// set by the AC7 head-record run on a Vulkan-capable machine). Never set by CI:
+// GPU-less runners keep the legacy transport-only step-8 contract. The flag is
+// read through main()'s injectable env seam (see strictGpu below) — the original
+// module-level process.env read let a programmatic caller inject it and still
+// get the legacy non-strict leg (review finding compatibility-delivery-002).
 
 const appEnv = (storePath, packsDir) => ({
   ...process.env,
@@ -757,6 +781,10 @@ async function closeElectronApp(app, log) {
 
 export async function main(argv, env, io) {
   const log = io.log;
+  // Issue #350 (AC7): the strict-GPU gate, read through the SAME injectable env
+  // seam as TRAININGAPP_SMOKE_EXE / TRAININGAPP_SMOKE_WATCHDOG_MS below, so a
+  // programmatic caller that injects it gets the strict leg it asked for.
+  const strictGpu = env.TRAININGAPP_REQUIRE_VULKAN === '1';
   const driver = parseDriver(argv);
   if (driver !== 'playwright' && driver !== 'cdp') {
     log(`SMOKE: INFRA - unknown driver '${driver}' (expected playwright or cdp)`);
@@ -1050,10 +1078,44 @@ export async function main(argv, env, io) {
         await new Promise((resolve) => setTimeout(resolve, 2_000));
       }
     }
+    // Issue #350 (AC7): TRAININGAPP_REQUIRE_VULKAN=1 (host leg only — CI
+    // GPU-less runners keep the legacy transport-only contract) additionally
+    // requires a successful vulkan child selection AND the packaged backend's
+    // /status/models gpu.backend 'vulkan' (the engine adopted the verdict).
+    const requireVulkan = strictGpu === true;
     const gpuJudged = gpuRecord === null
       ? { ok: false, detail: `no ${GPU_PROBE_SMOKE_RECORD} within 150s` }
-      : evaluateGpuProbeSmokeRecord(gpuRecord);
-    check(8, 'GPU probe utilityProcess child posted a structured report and exited 0', gpuJudged.ok, gpuJudged.detail);
+      : evaluateGpuProbeSmokeRecord(gpuRecord, { requireVulkan });
+    let gpuDetail = gpuJudged.detail;
+    let gpuOk = gpuJudged.ok;
+    if (gpuOk && requireVulkan) {
+      const statusProbe = await evaluate(async () => {
+        try {
+          const info = await window.desktopApi.getBackendInfo();
+          const token = await window.desktopApi.getAuthToken();
+          const deadline = Date.now() + 60_000;
+          let last = null;
+          while (Date.now() < deadline) {
+            const res = await fetch(`${info.url}/status/models`, { headers: { 'X-Desktop-Token': token }, signal: AbortSignal.timeout(10_000) });
+            if (res.status === 200) {
+              const body = await res.json();
+              last = body?.gpu ?? null;
+              if (body?.gpu?.backend === 'vulkan') return { status: 200, gpu: last };
+            }
+            await new Promise((resolve) => setTimeout(resolve, 2_000));
+          }
+          return { status: 200, gpu: last };
+        } catch (err) {
+          return { status: 0, gpu: null, error: String(err) };
+        }
+      });
+      const backend = statusProbe?.gpu?.backend;
+      gpuOk = statusProbe?.status === 200 && backend === 'vulkan';
+      gpuDetail = `${gpuDetail} /status/models gpu=${JSON.stringify(statusProbe?.gpu ?? null).slice(0, 200)}`;
+    }
+    check(8, requireVulkan
+      ? 'GPU probe selected vulkan (strict) and /status/models gpu.backend is vulkan'
+      : 'GPU probe utilityProcess child posted a structured report and exited 0', gpuOk, gpuDetail);
 
     await session.close();
 

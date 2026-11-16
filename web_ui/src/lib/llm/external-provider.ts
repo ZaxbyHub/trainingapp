@@ -74,6 +74,13 @@ export interface ExternalConfig {
   rememberKey: boolean;
   /** true (default) = answers go through retrieval; false = ungrounded Direct chat. */
   grounded: boolean;
+  /**
+   * Issue #351: browser-lane external-request transport timeouts (ms).
+   * undefined = the provider defaults (600000 first byte / 120000 idle).
+   * Integers in [1000, 2147483647]; out-of-range values never persist.
+   */
+  firstByteTimeoutMs?: number;
+  idleTimeoutMs?: number;
 }
 
 export const DEFAULT_EXTERNAL_CONFIG: ExternalConfig = {
@@ -120,7 +127,19 @@ function readStored(): StoredConfig {
     rememberKey: parsed.rememberKey === true,
     // Direct chat is never the silent default: only an explicit false opts out.
     grounded: parsed.grounded !== false,
+    // Issue #351: timeouts persist only when a VALID integer in
+    // [1000, 2147483647] was saved (invalid values never persist).
+    ...(timeoutOrNull(parsed.firstByteTimeoutMs) !== undefined ? { firstByteTimeoutMs: timeoutOrNull(parsed.firstByteTimeoutMs) } : {}),
+    ...(timeoutOrNull(parsed.idleTimeoutMs) !== undefined ? { idleTimeoutMs: timeoutOrNull(parsed.idleTimeoutMs) } : {}),
   };
+}
+
+/** Issue #351: valid external timeout integer, else undefined (never persists
+ *  an out-of-range/non-integer value). */
+function timeoutOrNull(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isInteger(value)) return undefined;
+  if (value < 1000 || value > 2_147_483_647) return undefined;
+  return value;
 }
 
 /**
@@ -256,7 +275,24 @@ export function saveExternalConfig(patch: Partial<ExternalConfig>): void {
     model: patch.model ?? prev.model,
     rememberKey: patch.rememberKey ?? prev.rememberKey,
     grounded: patch.grounded ?? prev.grounded,
+    // Review finding correctness-state-001: carry the previously saved timeouts
+    // forward so an UNRELATED save (model / API key / protocol / rememberKey /
+    // grounded, or a timeout save with only one field filled) cannot silently
+    // discard them while the panel keeps displaying the old numbers.
+    ...(prev.firstByteTimeoutMs !== undefined ? { firstByteTimeoutMs: prev.firstByteTimeoutMs } : {}),
+    ...(prev.idleTimeoutMs !== undefined ? { idleTimeoutMs: prev.idleTimeoutMs } : {}),
   };
+  // Issue #351: a patch timeout persists only when it carries a VALID value
+  // (an invalid patch value is dropped, keeping the previous saved one — now
+  // literally true: the previous value is seeded into `next` above).
+  const patchFirstByte = patch.firstByteTimeoutMs === undefined ? undefined : timeoutOrNull(patch.firstByteTimeoutMs);
+  const patchIdle = patch.idleTimeoutMs === undefined ? undefined : timeoutOrNull(patch.idleTimeoutMs);
+  if (patch.firstByteTimeoutMs !== undefined && patchFirstByte !== undefined) {
+    next.firstByteTimeoutMs = patchFirstByte;
+  }
+  if (patch.idleTimeoutMs !== undefined && patchIdle !== undefined) {
+    next.idleTimeoutMs = patchIdle;
+  }
   try {
     localStorage.setItem(EXTERNAL_CONFIG_KEY, JSON.stringify(next));
   } catch {
@@ -294,7 +330,15 @@ export function isExternalActive(cfg: ExternalConfig): boolean {
  */
 export function createExternalLLMService(cfg: ExternalConfig): LLMService | null {
   if (!isExternalActive(cfg)) return null;
-  const opts = { baseUrl: cfg.baseUrl, model: cfg.model, apiKey: cfg.apiKey };
+  // Issue #351: the configured timeouts forward into both provider classes
+  // (their constructors already accept the seams and default to 600s/120s).
+  const opts = {
+    baseUrl: cfg.baseUrl,
+    model: cfg.model,
+    apiKey: cfg.apiKey,
+    ...(cfg.firstByteTimeoutMs !== undefined ? { firstByteTimeoutMs: cfg.firstByteTimeoutMs } : {}),
+    ...(cfg.idleTimeoutMs !== undefined ? { idleTimeoutMs: cfg.idleTimeoutMs } : {}),
+  };
   return cfg.protocol === 'anthropic' ? new AnthropicCompatChatService(opts) : new OpenAICompatChatService(opts);
 }
 

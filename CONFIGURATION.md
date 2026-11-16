@@ -445,7 +445,12 @@ loopback); connects to the validated address with the lookup pinned; and follows
 
 - **Timeouts:** 10 minutes for the first byte (cold model loads and long prompt evaluation
   legitimately take minutes) and 2 minutes of silence between streamed chunks. Stop cancels the
-  request.
+  request. Both limits are configurable (issue #351): `PUT /settings` accepts
+  `external.firstByteTimeoutMs` and `external.idleTimeoutMs` — integers between 1000 and
+  2147483647 ms; absent keys keep the defaults, and the desktop renderer's chat watchdog
+  follows a raised first-byte limit instead of clipping it. The Settings → Model & connection
+  panel discloses the active limits and lets you save them (browser mode stores them with the
+  rest of the connection; desktop mode PUTs them like the other external settings).
 - **Certificates:** Node's bundled CAs plus the operating system's certificate store are
   trusted; `NODE_EXTRA_CA_CERTS` is also honoured, which is the way to trust a corporate or
   private CA.
@@ -453,11 +458,20 @@ loopback); connects to the validated address with the lookup pinned; and follows
   HTTP proxy will not work; loopback and LAN endpoints are never proxied.
 - **Settings channel:** `PUT /settings` accepts `external.enabled`, `external.protocol`
   (`openai` or `anthropic`), `external.baseUrl`, `external.model`, `external.apiKey`
-  (write-only; an empty string clears it) and `external.grounded`. `GET /settings` returns the
-  same fields without the key, plus `external.apiKeySet`, `external.apiKeyPersisted`,
-  `external.apiKeyBoundOrigin` and `external.airgap`. The non-secret settings are saved in
+  (write-only; an empty string clears it), `external.grounded` and, since contract v2.7.0
+  (issue #351), `external.firstByteTimeoutMs` / `external.idleTimeoutMs` (integer ms; an
+  out-of-range value is refused with 422 and, at boot replay, dropped while its valid
+  siblings still apply). `GET /settings` returns the same fields without the key, plus
+  `external.apiKeySet`, `external.apiKeyPersisted`, `external.apiKeyBoundOrigin`,
+  `external.airgap` and the two timeouts as their EFFECTIVE numbers (the configured value or
+  the default). The non-secret settings are saved in
   `<profile dir>/external.json`, not `settings.json`, so older app versions still load
-  `settings.json`. `POST /settings/external/test` tests a draft connection without saving.
+  `settings.json`. The sidecar is FORWARD-ONLY for the two timeout keys: a build from
+  before contract v2.7.0 refuses an `external.json` carrying them as an unknown setting and
+  then disables the external endpoint (logged), so the downgrade recipe is to remove
+  `external.firstByteTimeoutMs` and `external.idleTimeoutMs` from that file before running
+  an older build (the API key itself stays in the platform secret store and is unaffected).
+  `POST /settings/external/test` tests a draft connection without saving.
   A `settings.json` that still carries `external.*` keys (older build, hand edit, backup
   restore) is rewritten without them at startup — the external model does not apply from
   that file and no plaintext key is kept on disk from a file the app can parse. A file that

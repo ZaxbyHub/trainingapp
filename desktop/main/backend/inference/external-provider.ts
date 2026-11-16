@@ -38,6 +38,7 @@
 // (fail closed) until a key is saved or cleared successfully.
 import { validateEndpointUrl } from '../../security/endpoint-policy.js';
 import type { SecretStore } from '../../security/secret-store.js';
+import { FIRST_BYTE_TIMEOUT_MS, IDLE_TIMEOUT_MS } from '../net/guarded-request.js';
 import type { DnsLookup } from '../net/guarded-request.js';
 import { originOf, type ExternalEndpointConfig, type ExternalProtocol } from './external-generator.js';
 
@@ -52,7 +53,16 @@ export const EXTERNAL_SETTING_KEYS = [
   'external.model',
   'external.apiKey',
   'external.grounded',
+  // Issue #351 (AC1): user-configurable external-request transport timeouts.
+  // Integers in [1000, 2147483647] ms — the floor avoids degenerate timers, the
+  // ceiling is Node's MAX_TIMER_MS (values above it clamp to 1 ms at runtime).
+  'external.firstByteTimeoutMs',
+  'external.idleTimeoutMs',
 ] as const;
+
+/** Shared bounds for the two external timeout settings (issue #351). */
+export const EXTERNAL_TIMEOUT_MIN_MS = 1000;
+export const EXTERNAL_TIMEOUT_MAX_MS = 2_147_483_647;
 
 /** LlamaEngine `externalProvider` option (frozen by the trace harness). */
 export interface ExternalProviderOptions {
@@ -76,6 +86,8 @@ export interface ExternalSnapshot {
 }
 
 interface Values {
+  firstByteTimeoutMs?: number;
+  idleTimeoutMs?: number;
   enabled: boolean;
   protocol: ExternalProtocol;
   baseUrl: string;
@@ -93,6 +105,9 @@ export interface ExternalProviderSettingsState {
   readonly sessionKey: { readonly key: string; readonly origin: string | null } | null;
   /** The SecretStore entries; null when the store could not be read (restore then leaves it alone). */
   readonly secrets: { readonly key: string | null; readonly origin: string | null } | null;
+  /** Issue #351 rollback symmetry: the SETTING mirrors (not the constructor seams). */
+  readonly firstByteTimeoutSetting: number | undefined;
+  readonly idleTimeoutSetting: number | undefined;
 }
 
 const MAX_MODEL_CHARS = 512;
@@ -148,6 +163,11 @@ export class ExternalProviderState {
   readonly firstByteTimeoutMs: number | undefined;
   readonly idleTimeoutMs: number | undefined;
   readonly probeTimeoutMs: number | undefined;
+  // Issue #351: SETTING-driven timeout values (validate/commit/reset). The
+  // readonly fields above stay constructor-injection seams for tests; the
+  // effective value at call time is setting ?? seam ?? guarded-request default.
+  private firstByteTimeoutSetting: number | undefined = undefined;
+  private idleTimeoutSetting: number | undefined = undefined;
   /** Session-only key + origin when secure storage refused (never written to disk). */
   private sessionKey: { key: string; origin: string | null } | null = null;
   /**
@@ -170,6 +190,17 @@ export class ExternalProviderState {
   /** Airgap: the configured flag, tightened (never loosened) by TRAININGAPP_AIRGAP=1 at call time. */
   airgap(): boolean {
     return this.airgapOption === true || process.env.TRAININGAPP_AIRGAP === '1';
+  }
+
+  /** Issue #351: the EFFECTIVE first-byte timeout at call time
+   *  (setting ?? constructor seam ?? guarded-request default). */
+  firstByteTimeoutValueMs(): number {
+    return this.values.firstByteTimeoutMs ?? this.firstByteTimeoutMs ?? FIRST_BYTE_TIMEOUT_MS;
+  }
+
+  /** Issue #351: the EFFECTIVE idle timeout at call time. */
+  idleTimeoutValueMs(): number {
+    return this.values.idleTimeoutMs ?? this.idleTimeoutMs ?? IDLE_TIMEOUT_MS;
   }
 
   /** True while external generation replaces the local model. */
@@ -229,6 +260,21 @@ export class ExternalProviderState {
           if (typeof value !== 'boolean') errors.push(`${key}: expected a boolean`);
           else next.grounded = value;
           break;
+        case 'external.firstByteTimeoutMs':
+        case 'external.idleTimeoutMs':
+          if (
+            typeof value !== 'number' ||
+            !Number.isInteger(value) ||
+            value < EXTERNAL_TIMEOUT_MIN_MS ||
+            value > EXTERNAL_TIMEOUT_MAX_MS
+          ) {
+            errors.push(`${key}: expected an integer between ${EXTERNAL_TIMEOUT_MIN_MS} and ${EXTERNAL_TIMEOUT_MAX_MS}`);
+          } else if (key === 'external.firstByteTimeoutMs') {
+            next.firstByteTimeoutMs = value;
+          } else {
+            next.idleTimeoutMs = value;
+          }
+          break;
         default:
           errors.push(`${key}: unknown setting`);
       }
@@ -246,6 +292,16 @@ export class ExternalProviderState {
    * caller restores a captureState() snapshot and reports the failure.
    */
   commit(patch: Record<string, unknown>): void {
+    // Issue #351: the timeout settings are part of the committed state (they
+    // flow to guardedRequest at CALL time via firstByteTimeoutValueMs()).
+    if (typeof patch['external.firstByteTimeoutMs'] === 'number') {
+      this.values.firstByteTimeoutMs = patch['external.firstByteTimeoutMs'];
+      this.firstByteTimeoutSetting = patch['external.firstByteTimeoutMs'];
+    }
+    if (typeof patch['external.idleTimeoutMs'] === 'number') {
+      this.values.idleTimeoutMs = patch['external.idleTimeoutMs'];
+      this.idleTimeoutSetting = patch['external.idleTimeoutMs'];
+    }
     if (typeof patch['external.enabled'] === 'boolean') this.values.enabled = patch['external.enabled'];
     if (patch['external.protocol'] === 'openai' || patch['external.protocol'] === 'anthropic') {
       this.values.protocol = patch['external.protocol'];
@@ -288,6 +344,14 @@ export class ExternalProviderState {
           break;
         case 'external.grounded':
           this.values.grounded = true;
+          break;
+        case 'external.firstByteTimeoutMs':
+          this.values.firstByteTimeoutMs = undefined;
+          this.firstByteTimeoutSetting = undefined;
+          break;
+        case 'external.idleTimeoutMs':
+          this.values.idleTimeoutMs = undefined;
+          this.idleTimeoutSetting = undefined;
           break;
         default:
           break;
@@ -379,6 +443,11 @@ export class ExternalProviderState {
       // Copied: bindOrigin() mutates the live session key in place.
       sessionKey: this.sessionKey === null ? null : { ...this.sessionKey },
       secrets,
+      // Issue #351 (r2 Critical #5B): the timeout settings participate in the
+      // rollback symmetry — a failed SecretStore commit reverts a partial
+      // timeout change along with everything else.
+      firstByteTimeoutSetting: this.firstByteTimeoutSetting,
+      idleTimeoutSetting: this.idleTimeoutSetting,
     };
   }
 
@@ -397,6 +466,9 @@ export class ExternalProviderState {
   restoreState(snapshot: ExternalProviderSettingsState): void {
     this.values = { ...snapshot.values };
     this.sessionKey = snapshot.sessionKey === null ? null : { ...snapshot.sessionKey };
+    // Issue #351: restore the timeout mirrors alongside the values.
+    this.firstByteTimeoutSetting = snapshot.firstByteTimeoutSetting;
+    this.idleTimeoutSetting = snapshot.idleTimeoutSetting;
     const want = snapshot.secrets;
     if (want === null) return;
     try {
@@ -442,6 +514,10 @@ export class ExternalProviderState {
       'external.baseUrl': this.values.baseUrl,
       'external.model': this.values.model,
       'external.grounded': this.values.grounded,
+      // Issue #351 (AC3/AC6): the EFFECTIVE limits are always disclosed
+      // (configured value or the guarded-request defaults).
+      'external.firstByteTimeoutMs': this.firstByteTimeoutValueMs(),
+      'external.idleTimeoutMs': this.idleTimeoutValueMs(),
       'external.apiKeySet': this.keyFor(this.values.baseUrl) !== null,
       // A key is persisted only when it went to a store that survives restarts:
       // not a session-only fallback key, and not a memory store (headless dev-server).
@@ -452,13 +528,22 @@ export class ExternalProviderState {
   }
 
   snapshot(): ExternalSnapshot {
-    return {
+    // Issue #351: the timeouts persist ONLY when set (an absent key => the
+    // effective default), so a snapshot never carries stale defaults.
+    const snapshot: ExternalSnapshot & Record<string, unknown> = {
       'external.enabled': this.values.enabled,
       'external.protocol': this.values.protocol,
       'external.baseUrl': this.values.baseUrl,
       'external.model': this.values.model,
       'external.grounded': this.values.grounded,
     };
+    if (this.values.firstByteTimeoutMs !== undefined) {
+      snapshot['external.firstByteTimeoutMs'] = this.values.firstByteTimeoutMs;
+    }
+    if (this.values.idleTimeoutMs !== undefined) {
+      snapshot['external.idleTimeoutMs'] = this.values.idleTimeoutMs;
+    }
+    return snapshot;
   }
 
   /** Human-readable backend description for /stats (never the key). */

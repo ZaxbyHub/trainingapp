@@ -141,6 +141,25 @@ paragraph states verified facts only and makes no assertion about any pending ba
 
 ## Vendored third-party code
 
+### `node-llama-cpp` 3.22.3 — vendored patch of one dist file (issue #350)
+
+- **Artifact:** `desktop/vendor/node-llama-cpp/testBindingBinary.js` (a patched copy of
+  `node_modules/node-llama-cpp/dist/bindings/utils/testBindingBinary.js`), shipped at that
+  ORIGINAL dist path inside the packaged app by an electron-builder `files[]` remap
+  (`desktop/electron-builder.yml`), plus `desktop/vendor/node-llama-cpp/PRISTINE.sha256`,
+  which pins the UNPATCHED upstream file's SHA-256 and version so any node-llama-cpp bump
+  fails the drift row loudly.
+- **Provenance:** upstream `node-llama-cpp` 3.22.3, MIT licensed
+  (<https://github.com/withcatai/node-llama-cpp>); the patch adds ONE surgical capability
+  (running the upstream child-leg binding-test body in-process when already inside a
+  disposable Electron utility process) and is documented in the file's own header. The
+  packaged bytes are verified against this vendored copy on every CI desktop build
+  (`desktop/scripts/verify-packaged-vendored-binding.mjs`).
+- **License type:** MIT (upstream); the patch is repository-authored.
+- **Required notices:** the upstream MIT notice applies to the vendored copy; the
+  modification is disclosed here and in the file header.
+- **Restrictions:** none beyond the standard MIT grant.
+
 ### SheetJS `xlsx` 0.20.3 (issue #276)
 
 - **Artifact:** `vendor/sheetjs/xlsx-0.20.3.tgz` (2,409,319 bytes), consumed by

@@ -18,7 +18,7 @@ import { useInferenceMode } from '../lib/inference';
 import { InferenceModeToggle } from '../components/InferenceModeToggle';
 import { registerClearHandler } from '../lib/session/session-clear';
 import { TokenStreamManager } from '../lib/streaming';
-import { DESKTOP_FIRST_BYTE_TIMEOUT_MS, DEFAULT_FIRST_BYTE_TIMEOUT_MS } from '../lib/api/streaming';
+import { desktopFirstByteBudgetMs, isValidExternalTimeoutValue, DEFAULT_FIRST_BYTE_TIMEOUT_MS } from '../lib/api/streaming';
 import { RAGOrchestrator } from '../lib/rag/rag-orchestrator';
 import { buildDesktopHistorySnapshot, buildHistorySnapshot } from '../lib/chat/history-snapshot';
 import { getLLMService } from '../lib/llm/llm-factory';
@@ -193,6 +193,35 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // first-run model gate. Both are inert outside Electron (session null,
   // predicate false).
   const { session: desktopSession, models: desktopModels } = useDesktopSession();
+  // Issue #351: the desktop chat first-byte budget follows the backend's
+  // effective external.firstByteTimeoutMs (a raised limit must not be clipped
+  // at the renderer). Refreshed from the send flow's OWN GET /settings
+  // response (F-012 reads the backend settings exactly once per send — a
+  // separate mount-time read broke that pin, so the earlier mount effect was
+  // removed). Failed-read contract (Phase-4.5 round 2): a failed or key-less
+  // read keeps the LAST SUCCESSFULLY-read budget (the last true reading of
+  // the backend's effective limit; floor-clipping it on a transient read
+  // failure would re-create the #350-era clipping bug) — with no successful
+  // read yet, the 600000 floor (desktopFirstByteBudgetMs). Only the ACTIVE
+  // send publishes (identity-gated sink): a stopped/superseded send's late
+  // response never seeds the state.
+  const [externalFirstByteTimeoutMs, setExternalFirstByteTimeoutMs] = useState<number | undefined>(undefined);
+  // Mirror of the last SUCCESSFULLY-read budget (the sink's read source for the
+  // failed/key-less contract — a ref so the callback stays referentially
+  // stable and never reads stale closure state; Phase-4.5 r3 F-1).
+  const externalFirstByteTimeoutRef = useRef<number | undefined>(undefined);
+  const syncExternalFirstByteTimeout = useCallback((settings: unknown): number | undefined => {
+    const raw = (settings as Record<string, unknown> | null)?.['external.firstByteTimeoutMs'];
+    if (isValidExternalTimeoutValue(raw)) {
+      externalFirstByteTimeoutRef.current = raw;
+      setExternalFirstByteTimeoutMs(raw);
+      return raw;
+    }
+    // Failed/key-less/invalid response: keep the LAST SUCCESSFUL reading —
+    // floor-clipping it (or resetting to the floor) on a transient bad read
+    // would re-create the #350-era clipping bug this feature exists to fix.
+    return externalFirstByteTimeoutRef.current;
+  }, []);
   // universal-provider-settings-overhaul: an enabled external endpoint
   // replaces the GENERATOR (retrieval stays local). Desktop app: the backend
   // generates through it and reports engine 'external' — chat then always
@@ -560,7 +589,13 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     // Create TokenStreamManager for this request
     const streamManager = new TokenStreamManager(
       desktopSession !== null
-        ? DESKTOP_FIRST_BYTE_TIMEOUT_MS
+        // Review finding reliability-performance-001: the external first-byte
+        // setting describes the EXTERNAL endpoint's transport, so it may raise
+        // the watchdog only while the backend actually generates through that
+        // endpoint. On the local-model path (external off) the watchdog keeps
+        // its own 600000 ceiling — an endpoint knob must not govern a local
+        // hang for up to ~24.8 days.
+        ? desktopFirstByteBudgetMs(desktopExternal ? externalFirstByteTimeoutMs : undefined)
         : DEFAULT_FIRST_BYTE_TIMEOUT_MS,
     );
     tokenStreamManagerRef.current = streamManager;
@@ -852,7 +887,28 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         // must not ride along to the external endpoint. The backend's own
         // settings are read fresh for every send; a failed read excludes
         // them (fail closed).
-        const history = await buildDesktopHistorySnapshot(session.apiClient, owningMessages);
+        const history = await buildDesktopHistorySnapshot(session.apiClient, owningMessages, (settings) => {
+          // Issue #351: the SAME one-per-send settings read feeds the renderer
+          // watchdog budget (F-012 pin); the fresh number applies to THIS send
+          // via the setter (the timer arms later, at startSSEStream). Only the
+          // ACTIVE send may publish: a superseded send's late response must
+          // not seed externalFirstByteTimeoutMs ahead of a real reading (that
+          // seed would masquerade as last-known data for later sends).
+          // (Phase-4.5 review F-1; the failed/key-less/invalid contract keeps
+          // the LAST SUCCESSFUL reading per the state block above.)
+          if (tokenStreamManagerRef.current !== streamManager) return;
+          // Review finding reliability-performance-001: raise the watchdog only
+          // when the backend is generating through the external endpoint. The
+          // settings response always reports the effective first-byte value
+          // even when external.enabled is false, so an ungated read let an
+          // external transport limit govern the local-model watchdog. A failed
+          // read never reaches this sink at all, so the last-known contract
+          // (Phase-4.5 r2) is untouched.
+          const externalActive = (settings as Record<string, unknown> | null)?.['external.enabled'] === true;
+          streamManager.setFirstByteTimeoutMs(
+            desktopFirstByteBudgetMs(externalActive ? syncExternalFirstByteTimeout(settings) : undefined),
+          );
+        });
         // Stopped, or superseded by a newer send, while the settings loaded.
         if (tokenStreamManagerRef.current !== streamManager) return;
         try {
@@ -1051,7 +1107,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         }
       })();
     }
-  }, [mode, desktopSession, desktopModels, browserEngine, ragPreset, onSaveConversation, setModelLoadingProgress, currentConversationId, setMessages]);
+  }, [mode, desktopSession, desktopModels, browserEngine, ragPreset, onSaveConversation, setModelLoadingProgress, currentConversationId, setMessages, externalFirstByteTimeoutMs, syncExternalFirstByteTimeout]);
 
   const handleSend = useCallback(async (text: string) => {
     // Prevent overlapping streams

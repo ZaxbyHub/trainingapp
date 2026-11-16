@@ -183,9 +183,68 @@ async function main(): Promise<void> {
   }
 
   let llama: Nlc.Llama;
+  let nlcRejection: string | null = null;
   try {
-    const nlc = await import('node-llama-cpp');
-    llama = await nlc.getLlama(PROBE_LLAMA_OPTIONS);
+    // Issue #350 (AC2): tap console.error/warn around getLlama — node-llama-cpp
+    // logs the REAL prebuilt rejection there (getLlama.js:462-472 "Failed to
+    // load a prebuilt ... Error: <cause>" / :456-459 "not compatible") while it
+    // silently falls back to CPU. The tap is the SINGLE reason channel: the
+    // vendored testBindingBinary's in-process failure path console.errors the
+    // same field-shaped line, and this child threads it into the report reason
+    // (frozen C2 spec drives exactly this channel). Restored in finally.
+    const capturedRejections: string[] = [];
+    // Review finding security-trust-001: the reason channel needs the ERROR
+    // MESSAGE, not the stack — a stack carries absolute install paths (on a
+    // user machine, the profile directory) into the persisted verdict, the
+    // settings UI and CI logs. Fall back to the stack only for a message-less
+    // error.
+    const lineOf = (a: unknown): string =>
+      a instanceof Error ? (a.message !== '' ? a.message : (a.stack ?? String(a))) : String(a);
+    const origConsoleError = console.error;
+    const origConsoleWarn = console.warn;
+    const record = (...args: unknown[]): void => {
+      const line = args.map(lineOf).join(' ');
+      if (/Failed to load a prebuilt|is not compatible/i.test(line)) {
+        capturedRejections.push(line);
+      }
+      origConsoleError.call(console, ...args);
+    };
+    console.error = record;
+    console.warn = (...args: unknown[]): void => {
+      // Warns ride the warn stream (unlike upstream getLlama's console.error
+      // rejections); the regex match is shared so both shapes are captured.
+      const line = args.map(lineOf).join(' ');
+      if (/Failed to load a prebuilt|is not compatible/i.test(line)) {
+        capturedRejections.push(line);
+      }
+      origConsoleWarn.call(console, ...args);
+    };
+    try {
+      const nlc = await import('node-llama-cpp');
+      llama = await nlc.getLlama(PROBE_LLAMA_OPTIONS);
+    } finally {
+      console.error = origConsoleError;
+      console.warn = origConsoleWarn;
+    }
+    // Review finding correctness-state-002: node-llama-cpp logs the SPECIFIC
+    // prebuilt rejection ("Failed to load a prebuilt ... Error: <cause>") and
+    // THEN its generic "is not compatible with the current system" warning —
+    // the generic line arrives LAST, so a plain .at(-1) kept the generic text
+    // and dropped the actionable cause (AC2's stated outcome failed on the
+    // real path, and the frozen spec passed only because its stub never emits
+    // the later generic line). Prefer the last SPECIFIC rejection; fall back
+    // to the last capture of any kind.
+    const specific = capturedRejections.filter((line) => /Failed to load a prebuilt/i.test(line));
+    const lastRejection = (specific.length > 0 ? specific : capturedRejections).at(-1);
+    if (lastRejection !== undefined) {
+      // Sanitized + bounded: control chars stripped, tail kept (the "Error:"
+      // cause sits at the end of nlc's line), 500-char cap.
+      const joined = lastRejection
+        // eslint-disable-next-line no-control-regex
+        .replace(/[\x00-\x1f\x7f]/g, '')
+        .trim();
+      nlcRejection = joined.length > 500 ? joined.slice(-500) : joined;
+    }
   } catch (err) {
     await fail(`GPU probe: no usable GPU backend (${err instanceof Error ? err.message : String(err)}).`);
     return;
@@ -204,7 +263,12 @@ async function main(): Promise<void> {
   const selected = llama.gpu;
   if (selected !== 'vulkan') {
     await llama.dispose().catch(() => {});
-    await fail(`GPU probe: this host selected "${String(selected)}" rather than a usable Vulkan device.`, probeAdapterDevice);
+    // Issue #350 (AC2): the underlying nlc rejection line (captured by the
+    // console tap above) is appended to the reason — sanitized and bounded —
+    // so a field report shows WHY the prebuilt was rejected, not only the
+    // generic "selected false".
+    const cause = nlcRejection === null ? '' : ` Underlying cause: ${nlcRejection}`;
+    await fail(`GPU probe: this host selected "${String(selected)}" rather than a usable Vulkan device.${cause}`, probeAdapterDevice);
     return;
   }
 

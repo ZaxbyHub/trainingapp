@@ -26,6 +26,24 @@ files:
   # installs it on an x64 machine and electron-builder ships it (measured 22 MB).
   # Leaving it in while removing 510 MB of CUDA applied the weight rule unevenly.
   - '!**/node_modules/@node-llama-cpp/win-arm64/**'
+  # issue #350 (trace 350-351-packaged-gpu-fuse-external-timeouts): the vendored
+  # testBindingBinary patch replaces the upstream file at its ORIGINAL dist path
+  # so getLlama's static import loads the patched module. The pristine upstream
+  # bytes are excluded and the patched copy (desktop/vendor/node-llama-cpp/,
+  # drift-pinned by PRISTINE.sha256 + desktop/src/__tests__/packaged-vulkan-
+  # binding.test.ts) is mapped in at package time. The FileSet remap is a
+  # DIRECTORY-level copy with a one-file filter: electron-builder WALKS each
+  # files[] FileSet's `from` (a single-file `from` yields an empty file set and
+  # is silently dropped — proven by the AC7 asar extraction on this trace),
+  # so `from` names the vendor dir and `filter` the one file. In-repo
+  # node_modules stays untouched (gitignored dev tree); AC7's packaged evidence
+  # extracts THIS file from app.asar and compares it byte-for-byte with the
+  # vendor copy.
+  - '!**/node_modules/node-llama-cpp/dist/bindings/utils/testBindingBinary.js'
+  - from: vendor/node-llama-cpp
+    to: node_modules/node-llama-cpp/dist/bindings/utils
+    filter:
+      - testBindingBinary.js
 # The desktop:build script copies web_ui/dist into renderer/ before packaging
 # (stage-installer-resources.mjs excludes the weight files duplicated into
 # installer-resources); the main process serves it from <resourcesPath>/web_ui

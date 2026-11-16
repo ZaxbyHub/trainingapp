@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+- **Packaged GPU selection + configurable external-request timeouts (issues #350/#351, contract v2.7.0)**:
+  - #350: the packaged app no longer silently falls back to CPU on Vulkan-capable
+    Windows hosts. node-llama-cpp's pre-load binding test forks a test process,
+    which the packaged runAsNode fuse (a deliberate security boundary, unchanged)
+    refuses inside a utility process; the fix ships a drift-pinned vendor patch
+    (`desktop/vendor/node-llama-cpp/`, `PRISTINE.sha256` + frozen spec) remapped
+    into the package by electron-builder, so the binding test runs in-process
+    (exact upstream child-leg body) when already inside a disposable utility
+    process. The GPU probe now surfaces the underlying nlc rejection line (child
+    report AND parent verdict) instead of the generic `selected "false"`, and
+    `packaged-smoke` gains an opt-in `TRAININGAPP_REQUIRE_VULKAN=1` strict mode
+    (child report + `/status/models` gpu.backend evidence) for the AC7 host leg.
+  - #351: external-request transport timeouts become settings, not constants:
+    `external.firstByteTimeoutMs` / `external.idleTimeoutMs` (integer ms,
+    1000..2147483647; absent = the 600000/120000 defaults) flow `PUT /settings`
+    -> `external.json` -> call time, are disclosed as EFFECTIVE numbers by
+    `GET /settings`, persist across restarts (an out-of-range stored value is
+    dropped — exactly that key — while its valid siblings still apply, re-applied
+    as one batch; a failed save rolls back), and are configurable + disclosed in
+    the Settings panel on both lanes (browser localStorage, desktop PUT). The
+    desktop renderer's chat watchdog follows a raised first-byte limit
+    (`desktopFirstByteBudgetMs`) instead of clipping it at 600 s — but only while
+    the backend actually generates through the external endpoint; the browser
+    lane keeps its 30 s default.
+    Forward-only: the two new keys are written into the shared `external.json`
+    sidecar. A build from before #351 refuses that file wholesale as an unknown
+    setting and then disables the external endpoint (logged), so a downgrade
+    recipe applies — remove `external.firstByteTimeoutMs` and
+    `external.idleTimeoutMs` from `external.json` before running an older build.
 - **Follow-up batch #324/#325/#326/#328 (test determinism, coverage honesty, CI census, init/dispose race)**:
   - #324: the i320 pack-extract success-move census is composition-robust
     (identity-keyed instead of a net-growth count over the shared tmpdir);

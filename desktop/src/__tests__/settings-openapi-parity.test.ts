@@ -208,6 +208,25 @@ describe("C19: both schemas declare the engine's inference.* keys with the switc
     expect(REQUEST_ENTRIES.has('reset')).toBe(true);
   });
 
+  // Issue #351: the two external timeout keys must be declared in BOTH schemas
+  // (contract v2.7.0) — merge-blocking pin, mirrors the inference.* pattern.
+  it('issue #351: both schemas declare the external timeout keys with the contract bounds', () => {
+    for (const key of ['external.firstByteTimeoutMs', 'external.idleTimeoutMs']) {
+      expect(RESPONSE_ENTRIES.has(key), `SettingsResponse must declare ${key}`).toBe(true);
+      expect(REQUEST_ENTRIES.has(key), `SettingsUpdateRequest must declare ${key}`).toBe(true);
+    }
+    // The Map value is the inline schema text; both sides must carry the
+    // integer domain with the contract bounds (1000 / 2147483647).
+    for (const [entries, label] of [[RESPONSE_ENTRIES, 'response'], [REQUEST_ENTRIES, 'request']] as const) {
+      for (const key of ['external.firstByteTimeoutMs', 'external.idleTimeoutMs']) {
+        const schemaText = entries.get(key) ?? '';
+        expect(schemaText, `${label} ${key} must be typed integer`).toContain('integer');
+        expect(schemaText, `${label} ${key} must carry minimum 1000`).toContain('minimum: 1000');
+        expect(schemaText, `${label} ${key} must carry maximum 2147483647`).toContain('maximum: 2147483647');
+      }
+    }
+  });
+
   it('every inference.* key the engine reports is declared in BOTH schemas — and neither declares one the engine lacks', () => {
     const snapshot = engineSnapshot(makeEngine());
     expect(Object.keys(snapshot).sort()).toEqual([...INFERENCE_KEYS].sort());

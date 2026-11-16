@@ -190,7 +190,12 @@ land on an address that was not checked.
   it out of the renderer entirely.
 - **Settings channel and compatibility.** Non-secret external settings are stored in
   `<profile dir>/external.json`, not `settings.json`, so older app versions still load
-  `settings.json`. A refused URL is a 422 whose message names the rule.
+  `settings.json`. A refused URL is a 422 whose message names the rule. Issue #351
+  (contract v2.7.0) widens the channel with `external.firstByteTimeoutMs` /
+  `external.idleTimeoutMs` (integer ms, [1000, 2147483647]; absent = the 600000/120000
+  defaults); a boot replay that refuses an out-of-range timeout drops exactly that key and
+  still applies its valid siblings, and the desktop renderer's chat watchdog follows a
+  raised first-byte limit.
 - **No local model required.** With the external model on, the desktop app does not need the
   local GGUF model files and `GET /status/models` reports engine `external`.
 - **Distinct errors.** Authentication (401/403), unknown model (404 or not in the list),
