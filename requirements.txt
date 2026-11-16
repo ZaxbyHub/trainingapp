@@ -19,7 +19,7 @@ sqlite-vec==0.1.9
 llama-cpp-python>=0.2.72,<1.0.0
 
 # Web server (for API mode)
-fastapi>=0.109.1,<1.0.0
+fastapi>=0.162.2,<1.0.0
 uvicorn>=0.27.0,<1.0.0
 sse-starlette>=2.0.0,<4.0.0  # required: /ask/stream route is gated on HAS_SSE
 PyYAML>=6.0.3,<7.0  # contracts route-drift check in contracts/tests/run_conformance.py
