@@ -198,6 +198,9 @@ names the contract it applies.
   new @sha is not recorded in `.github/workflows/pins.json` must add the pins.json entry in
   the same PR; otherwise close with a comment naming the pin-record contract
   (`.github/workflows/pins.json`, enforced by `acceptance-precision-contract.test.ts`).
+  Adding the entry repairs the prerequisite; it is not itself merge authorization — merge
+  authority comes from this policy's default disposition or from an explicit maintainer
+  instruction (see Wave merges below).
 - **T5, any other semver-major with no owning epic decision — electron, typescript,
   toolchain majors → stay open.** Class comment and label `deps:major-review`. No epic-#284
   decision owns these (ASK 6 covers only the transformers and vitest families). The
@@ -209,6 +212,29 @@ names the contract it applies.
 Recurrence: `.github/dependabot.yml` updates the three npm directories independently, so
 Dependabot recreates single-sided twin bumps after every close. Close-with-comment each time
 is the standing mechanism; an `ignore` rule cannot express "only if all three lockfiles move".
+
+### Wave merges (explicit maintainer instruction only)
+
+The triage defaults above govern agent behavior when no maintainer instruction is in force.
+When the maintainer issues a single, batch-scoped instruction that explicitly directs
+review-and-disposition of Dependabot PRs (verdicts of the form "good to merge / needs work /
+can be closed"), the executing agent may merge the PRs that instruction covers under this
+wave-mode exception, bounded by ALL of:
+
+- **Class bounds**: T4 minor/patch/digest PRs only, plus PIN-class PRs whose pins.json
+  prerequisite has been repaired in the same PR. The exception never covers T1, T2, T3 or
+  T5 — those stay exactly as their classes dictate, wave or no wave.
+- **Acceptance evidence**: each merge requires a head CI rollup that is non-empty, fully
+  completed (zero pending), and failure-free; the agent verifies post-merge CI on master
+  before recording the disposition. Post-merge green is the compensating control, never a
+  substitute for the pre-merge rollup.
+- **Authorization record**: the executing agent's wave ledger records the instruction's
+  verbatim text and every merge's SHA + acceptance evidence. Satisfying the PIN
+  prerequisite is a repair, not merge authorization; merge authority comes from the
+  instruction alone.
+- **Scope**: one instruction, one batch. The exception dies with the instruction; the next
+  batch needs its own. Satisfying PIN by itself does not create merge authority, and a
+  prior wave never carries forward as standing permission.
 
 ## Trace evidence and acceptance-check conventions
 

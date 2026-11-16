@@ -500,3 +500,73 @@ def test_contributing_md_dependabot_triage_policy():
     )
 
     _check_policy(section)
+
+    # PIN authority clarification (2026-11-16 wave follow-through): repairing the
+    # pins.json prerequisite is not itself merge authorization.
+    assert re.search(r"not itself merge authorization", section, re.IGNORECASE), (
+        "the PIN block must state that repairing the pins.json prerequisite "
+        "is not itself merge authorization"
+    )
+
+
+def test_contributing_md_wave_mode_exception():
+    """The wave-merge subsection (added 2026-11-16 after two maintainer-directed
+    waves falsified the T4 default) is pinned: bounded to T4 + repaired PIN under
+    an explicit instruction, with the acceptance-evidence and ledger safeguards,
+    and the triage defaults stay intact above it."""
+    text = _strip_non_prose(CONTRIBUTING.read_text(encoding="utf-8"))
+    heading = "### Wave merges (explicit maintainer instruction only)"
+    assert heading in text, "CONTRIBUTING.md has no wave-merge subsection"
+
+    wave_at = text.index(heading)
+    tail = text[wave_at + len(heading) :]
+    next_heading = re.search(r"^#{1,3} ", tail, flags=re.MULTILINE)
+    section = tail if next_heading is None else tail[: next_heading.start()]
+
+    # Bounded classes: T4 minors/patches plus repaired PIN; never T1/T2/T3/T5.
+    assert re.search(
+        r"never covers T1, T2, T3 or\s+T5", section
+    ), "the wave-mode exception must name its class bounds (never T1/T2/T3/T5)"
+    assert re.search(
+        r"repaired in the same PR", section
+    ), "the wave-mode exception must require the PIN prerequisite repaired in the same PR"
+
+    # Acceptance-evidence safeguards.
+    assert re.search(
+        r"non-empty", section
+    ), "wave merges must require a non-empty head CI rollup"
+    assert re.search(
+        r"zero pending", section
+    ), "wave merges must require a fully completed head CI rollup"
+    assert re.search(
+        r"failure-free", section
+    ), "wave merges must require a failure-free head CI rollup"
+    assert re.search(
+        r"post-merge", section
+    ), "wave merges must verify post-merge CI as the compensating control"
+    assert re.search(
+        r"never a\s+substitute for the pre-merge rollup", section
+    ), "post-merge green must be stated as a compensating control, not a substitute"
+
+    # Authorization record and scope bounds.
+    assert re.search(
+        r"verbatim text", section
+    ), "the wave ledger must record the instruction's verbatim text"
+    assert re.search(
+        r"not merge authorization", section
+    ), "the wave subsection must restate that PIN repair is not merge authorization"
+    assert re.search(
+        r"exception dies with the instruction", section
+    ), "the wave-mode exception must die with its instruction (one instruction, one batch)"
+    assert re.search(
+        r"never carries forward as standing permission", section
+    ), "a prior wave must never carry forward as standing permission"
+
+    # The triage section (with its no-agent-merge T4 default) still sits ABOVE
+    # the wave subsection, so the defaults remain the no-instruction behavior.
+    triage_at = text.index(TRIAGE_HEADING)
+    assert triage_at < wave_at, "the wave subsection must follow the triage section"
+    triage_body = text[triage_at:wave_at]
+    assert T4_NO_MERGE_NO_CLOSE.search(
+        triage_body
+    ), "the T4 no-merge default must remain in force above the wave subsection"
