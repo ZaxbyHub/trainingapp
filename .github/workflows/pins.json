@@ -28,8 +28,8 @@
     },
     {
       "action": "codecov/codecov-action",
-      "sha": "1e68e06f1dbfde0e4cefc87efeba9e4643565303",
-      "versions": ["v5.1.2"]
+      "sha": "303a32d7a59b442fa8d48b6a1cc6825c09c847a5",
+      "versions": ["v7", "v7.1.1"]
     },
     {
       "action": "softprops/action-gh-release",
