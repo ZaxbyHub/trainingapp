@@ -105,6 +105,11 @@ PIN_MERGE_WITHOUT_UPDATE = re.compile(
     r"\b(?:may|can)\s+merge\b|\bmerge[sd]?\s+without\s+(?:a\s+|the\s+)?pins\.json",
     re.IGNORECASE,
 )
+NEGATED_WAVE_REQUIREMENT = re.compile(
+    r"\b(?:does\s+not|doesn't|need\s+not|not\s+required|may\s+skip)\s+"
+    r"(?:\w+\s+){0,2}(?:require|verify|record|pass|gate)\b",
+    re.IGNORECASE,
+)
 STAY_OPEN = re.compile(r"stay open|stays open|remain open|remains open", re.IGNORECASE)
 
 
@@ -529,6 +534,15 @@ def _check_wave_section(section: str) -> None:
         r"batch-scoped instruction", collapsed
     ), "the wave exception must be gated on an explicit batch-scoped instruction"
     assert re.search(
+        r"When the maintainer issues", collapsed
+    ), "the wave exception's authorizing actor must be the maintainer"
+    # Reversed requirements keep every phrase above: reject negated-requirement
+    # shapes outright (the same idiom as NEGATED_CLOSE on the triage classes).
+    assert NEGATED_WAVE_REQUIREMENT.search(collapsed) is None, (
+        "the wave subsection negates one of its own requirements "
+        f"(matched {NEGATED_WAVE_REQUIREMENT.search(collapsed).group(0)!r})"
+    )
+    assert re.search(
         r"good to merge / needs work /", collapsed
     ), "the wave exception must name the review-and-disposition verdict form"
     assert re.search(
@@ -648,6 +662,30 @@ def test_wave_section_rejects_reserved_class_coverage():
     assert "never covers T1, T2, T3 or" not in re.sub(
         r"\s+", " ", mutated
     ), "mutation did not apply"
+    with pytest.raises(AssertionError):
+        _check_wave_section(mutated)
+
+
+def test_wave_section_rejects_actor_swap():
+    """Reviewer round-2 falsifier: 'When anyone issues' keeps every phrase
+    match while reversing who authorizes."""
+    mutated = _WAVE_EXEMPLAR.replace("When the maintainer issues", "When anyone issues")
+    assert "When the maintainer issues" not in mutated, "mutation did not apply"
+    assert "batch-scoped instruction" in mutated, "mutation lost the phrase"
+    with pytest.raises(AssertionError):
+        _check_wave_section(mutated)
+
+
+def test_wave_section_rejects_negated_rollup_requirement():
+    """Reviewer round-2 falsifier: 'does not require a head CI rollup' keeps
+    the rollup phrase while reversing the requirement."""
+    mutated = _WAVE_EXEMPLAR.replace(
+        "each merge requires a head CI rollup",
+        "each merge does not require a head CI rollup",
+    )
+    assert "head CI rollup that is non-empty" in re.sub(
+        r"\s+", " ", mutated
+    ), "mutation lost the phrase"
     with pytest.raises(AssertionError):
         _check_wave_section(mutated)
 
