@@ -553,9 +553,10 @@ def _check_wave_section(section: str) -> None:
     assert re.search(
         r"T4 minor/patch/digest PRs only", collapsed
     ), "the wave exception must allow T4 minor/patch/digest PRs only"
-    assert re.search(
-        r"repaired in the same PR", collapsed
-    ), "the wave exception must require the PIN prerequisite repaired in the same PR"
+    assert re.search(r"prerequisite has been repaired in the same PR", collapsed), (
+        "the wave exception must require the PIN prerequisite HAS BEEN "
+        "repaired in the same PR (affirmative verb bound)"
+    )
     assert re.search(
         r"never covers T1, T2, T3 or T5", collapsed
     ), "the wave exception must name its class bounds (never T1/T2/T3/T5)"
@@ -704,6 +705,22 @@ def test_wave_section_rejects_requirement_without_its_verb():
     assert "head CI rollup that is non-empty" in re.sub(
         r"\s+", " ", mutated
     ), "mutation lost the phrase"
+    with pytest.raises(AssertionError):
+        _check_wave_section(mutated)
+
+
+def test_wave_section_rejects_negated_pin_repair():
+    """Reviewer round-4 falsifier: 'need not be repaired in the same PR'
+    keeps the trailing phrase while deleting the affirmative repair
+    requirement (and dodges NEGATED_WAVE_REQUIREMENT - 'repaired' is not
+    one of its requirement verbs)."""
+    mutated = _WAVE_EXEMPLAR.replace(
+        "prerequisite has been repaired in the same PR",
+        "prerequisite need not be repaired in the same PR",
+    )
+    assert "repaired in the same PR" in re.sub(
+        r"\s+", " ", mutated
+    ), "mutation lost the trailing phrase"
     with pytest.raises(AssertionError):
         _check_wave_section(mutated)
 
