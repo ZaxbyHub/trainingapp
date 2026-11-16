@@ -563,12 +563,16 @@ def _check_wave_section(section: str) -> None:
     # Acceptance evidence: the rollup properties attach to the rollup phrase
     # itself, and post-merge verification is a compensating control.
     assert re.search(
-        r"head CI rollup that is non-empty, fully completed \(zero pending\), and failure-free",
+        r"each merge requires a head CI rollup that is non-empt"
+        r"y, fully completed \(zero pending\), and failure-free",
         collapsed,
-    ), "wave merges must require a non-empty, zero-pending, failure-free head CI rollup"
+    ), (
+        "wave merges must REQUIRE a non-empty, zero-pending, "
+        "failure-free head CI rollup (verb bound to subject)"
+    )
     assert re.search(
-        r"post-merge CI on master", collapsed
-    ), "wave merges must verify post-merge CI on master"
+        r"agent verifies post-merge CI on master", collapsed
+    ), "wave merges must VERIFY post-merge CI on master (verb bound to subject)"
     assert re.search(
         r"compensating control, never a\s+substitute for the pre-merge rollup",
         collapsed,
@@ -686,6 +690,32 @@ def test_wave_section_rejects_negated_rollup_requirement():
     assert "head CI rollup that is non-empty" in re.sub(
         r"\s+", " ", mutated
     ), "mutation lost the phrase"
+    with pytest.raises(AssertionError):
+        _check_wave_section(mutated)
+
+
+def test_wave_section_rejects_requirement_without_its_verb():
+    """Reviewer round-3 falsifier: 'can proceed without a head CI rollup'
+    preserves the rollup phrase while deleting the requires-relationship."""
+    mutated = _WAVE_EXEMPLAR.replace(
+        "each merge requires a head CI rollup",
+        "each merge can proceed without a head CI rollup",
+    )
+    assert "head CI rollup that is non-empty" in re.sub(
+        r"\s+", " ", mutated
+    ), "mutation lost the phrase"
+    with pytest.raises(AssertionError):
+        _check_wave_section(mutated)
+
+
+def test_wave_section_rejects_postmerge_verb_swap():
+    """Reviewer round-3 falsifier: 'ignores post-merge CI on master'
+    preserves the post-merge phrase while deleting the verifies-relationship."""
+    mutated = _WAVE_EXEMPLAR.replace(
+        "the agent verifies post-merge CI on master",
+        "the agent ignores post-merge CI on master",
+    )
+    assert "post-merge CI on master" in mutated, "mutation lost the phrase"
     with pytest.raises(AssertionError):
         _check_wave_section(mutated)
 
