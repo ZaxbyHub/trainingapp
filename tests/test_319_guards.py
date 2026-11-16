@@ -586,9 +586,13 @@ def _check_wave_section(section: str) -> None:
     # Authorization record: the ledger records the instruction verbatim and
     # every merge's SHA + acceptance evidence; PIN repair is not authority.
     assert re.search(
-        r"records the instruction's verbatim text and every merge's SHA \+ acceptance evidence",
+        r"wave ledger records the instruction's verbatim t"
+        r"ext and every merge's SHA \+ acceptance evidence",
         collapsed,
-    ), "the wave ledger must record the instruction verbatim and every merge's SHA + evidence"
+    ), (
+        "the wave ledger MUST RECORD (verb bound to subject) the instruction "
+        "verbatim and every merge's SHA + evidence"
+    )
     assert re.search(
         r"not merge authorization", collapsed
     ), "the subsection must restate that PIN repair is not merge authorization"
@@ -709,6 +713,21 @@ def test_wave_section_rejects_requirement_without_its_verb():
     assert "head CI rollup that is non-empty" in re.sub(
         r"\s+", " ", mutated
     ), "mutation lost the phrase"
+    with pytest.raises(AssertionError):
+        _check_wave_section(mutated)
+
+
+def test_wave_section_rejects_optional_ledger():
+    """Reviewer round-6 falsifier: 'wave ledger optionally records'
+    preserves the entire asserted substring while making the
+    authorization record optional."""
+    mutated = _WAVE_EXEMPLAR.replace(
+        "wave ledger records the instruction's",
+        "wave ledger optionally records the instruction's",
+    )
+    assert "every merge's SHA + acceptance evidence" in re.sub(
+        r"\s+", " ", mutated
+    ), "mutation lost the evidence phrase"
     with pytest.raises(AssertionError):
         _check_wave_section(mutated)
 
