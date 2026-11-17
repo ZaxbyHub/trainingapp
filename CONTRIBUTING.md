@@ -236,6 +236,18 @@ wave-mode exception, bounded by ALL of:
   batch needs its own. Satisfying PIN by itself does not create merge authority, and a
   prior wave never carries forward as standing permission.
 
+### Local quality harness
+
+`node scripts/quality-harness.mjs` runs the repo's health gates in dependency
+order (packtool build, the two web_ui typechecks, the contract battery, the
+store-interop battery, the desktop suite, the web_ui suite) and emits a
+per-gate verdict + duration JSON report with `--report <path>`. It fail-fasts
+at the first red gate and names it in the report; `--list` prints the roster;
+`--only`/`--fail-at` exist for scoped runs and testability. This is the LOCAL
+twin of what CI's required checks already enforce — it adds no gates CI does
+not run, and it is the expected pre-merge command for any local validation
+claim.
+
 ## Trace evidence and acceptance-check conventions
 
 Two conventions govern how this repository keeps issue-tracer evidence honest
