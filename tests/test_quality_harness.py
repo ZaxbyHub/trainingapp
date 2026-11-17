@@ -49,7 +49,20 @@ def test_harness_exists_and_roster_is_ordered() -> None:
 
 
 def test_fail_at_stops_at_the_named_gate_and_reports_nonzero() -> None:
-    r = _run(["--fail-at", "contract-battery", "--report", ".quality-guard-smoke.json"])
+    """Dependency-free legs: --only contract-battery keeps the guard off the
+    install-dependent gates (CI's test job has no packtool/web_ui installs -
+    the first CI run caught stoppedAt=packtool-build honestly failing there)."""
+    # fail leg: simulate the failure at the only rostered gate
+    r = _run(
+        [
+            "--only",
+            "contract-battery",
+            "--fail-at",
+            "contract-battery",
+            "--report",
+            ".quality-guard-smoke.json",
+        ]
+    )
     assert (
         r.returncode == 1
     ), f"expected exit 1 on simulated failure, got {r.returncode}"
@@ -58,13 +71,23 @@ def test_fail_at_stops_at_the_named_gate_and_reports_nonzero() -> None:
     report_path.unlink()  # the guard leaves no litter behind
     assert report["stoppedAt"] == "contract-battery"
     assert report["allGreen"] is False
-    gates = {g["name"]: g["status"] for g in report["gates"]}
-    # fail-fast: the gates BEFORE the simulated one ran and passed; later ones never ran
-    assert gates.get("packtool-build") == "pass"
-    assert "desktop-suite" not in gates
-    assert all(g["name"] != "desktop-suite" for g in report["gates"])
+    assert len(report["gates"]) == 1
+    assert report["gates"][0]["name"] == "contract-battery"
+    assert report["gates"][0]["status"] == "failed"
     for extra in ("durationMs", "status", "name", "cmd"):
         assert extra in report["gates"][0], f"report gate missing {extra}"
+
+
+def test_pass_shape_on_a_dependency_free_gate() -> None:
+    """The pass-entry shape from a real run of the pytest-only gate."""
+    r = _run(["--only", "contract-battery", "--report", ".quality-guard-pass.json"])
+    assert r.returncode == 0, r.stdout[-2000:]
+    report_path = REPO / ".quality-guard-pass.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report_path.unlink()
+    assert report["allGreen"] is True and report["stoppedAt"] is None
+    gates = {g["name"]: g["status"] for g in report["gates"]}
+    assert gates == {"contract-battery": "pass"}
 
 
 def test_fail_at_rejects_unknown_gate() -> None:
