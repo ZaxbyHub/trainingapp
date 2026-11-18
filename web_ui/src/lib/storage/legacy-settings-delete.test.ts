@@ -139,6 +139,30 @@ describe('legacy doc-qa-settings boot delete (#367 RC4-02)', () => {
     vi.unstubAllGlobals();
   });
 
+  it('a BLOCKED delete request is non-fatal: the onblocked path never throws (boot-delete)', async () => {
+    await seedLegacyStore();
+    const factory = indexedDB as unknown as { deleteDatabase: (name: string) => IDBOpenDBRequest };
+    const orig = factory.deleteDatabase;
+    factory.deleteDatabase = () => {
+      const req = {
+        onerror: null as unknown,
+        onblocked: null as unknown,
+        onsuccess: null as unknown,
+      } as unknown as IDBOpenDBRequest;
+      setTimeout(() => {
+        (req.onblocked as unknown as ((e: unknown) => void) | null)?.(new Event('blocked'));
+      }, 0);
+      return req;
+    };
+    try {
+      expect(deleteLegacySettingsStore().requested).toBe(true);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(true).toBe(true); // no throw surfaced through the blocked path
+    } finally {
+      factory.deleteDatabase = orig;
+    }
+  });
+
   it('the seeded legacy store carries the plaintext shapes #367 deletes (boot-delete)', async () => {
     // Provenance leg: the seeded fixture mirrors the historical store shape
     // (serverUrl/theme/model at key 'user-preferences') that motivates the

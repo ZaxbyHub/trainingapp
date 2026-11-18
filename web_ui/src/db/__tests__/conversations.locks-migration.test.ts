@@ -288,13 +288,18 @@ describe('RC4-01 lock-stack battery (#367)', () => {
     const { db, migrationReady, __resetMigrationStatesForTests } = await freshModules();
     __resetMigrationStatesForTests();
     await db.conversations.bulkPut([plainRow('m1', 'one') as never, plainRow('m2', 'two') as never]);
-    const { clearAllConversationsInDb } = await import('../../db/conv-protocol');
     const cryptoMod = await import('../../lib/storage/db-crypto');
     const encSpy = vi.spyOn(cryptoMod, 'encryptRow').mockImplementation(async (conv, secret, prefix) => {
       // The clear lands AFTER the phase-1 read tx closed (crypto phase),
-      // BEFORE the write tx (review F1).
+      // BEFORE the write tx (review F1). It comes from ANOTHER TAB, so it
+      // does NOT share this tab's in-tab serializer: its storage effect is
+      // performed directly (clear + epoch bump), bypassing the wrapper.
       encSpy.mockRestore();
-      await clearAllConversationsInDb('lockm8t');
+      await db.transaction('rw', [db.conversations, db.meta], async () => {
+        await db.conversations.clear();
+        const epochRow = await db.meta.get('epoch');
+        await db.meta.put({ key: 'epoch', value: (((epochRow?.value as number) ?? 0) + 1) });
+      });
       return cryptoMod.encryptRow(conv, secret, prefix);
     });
     await expect(migrationReady(db.name)).rejects.toThrow(/superseded/);
@@ -356,6 +361,79 @@ describe('RC4-01 lock-stack battery (#367)', () => {
     const { decryptRowOrPlain } = await import('../../lib/storage/db-crypto');
     const conv = (await decryptRowOrPlain(row, 'lockm10t')) as { title: string };
     expect(conv.title).toBe('Legacy one');
+  });
+
+
+  it('T11: create binds the gate and the envelope to the SAME secret (key/operation)', async () => {
+    localStorage.setItem(PROFILE_KEY, 'lockm11t');
+    // A manager whose request() swaps the secret map BEFORE the critical
+    // section runs: a secret change landing while create waits on the lock.
+    const { PROFILE_SECRET_KEY: PSK } = await import('../../lib/storage/persisted-keys');
+    const mapA = JSON.stringify({ lockm11t: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64') });
+    const mapB = JSON.stringify({ lockm11t: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64') });
+    localStorage.setItem(PSK, mapA);
+    Object.defineProperty(navigator, 'locks', {
+      configurable: true,
+      value: {
+        request: (_n: string, _o: unknown, cb: () => Promise<unknown>): Promise<unknown> => {
+          if (localStorage.getItem(PSK) === mapA) localStorage.setItem(PSK, mapB);
+          return cb();
+        },
+      },
+    });
+    const { createConversation, getConversation } = await import('../../db/conversations');
+    await createConversation(plainRow('k1', 'bound secret') as never);
+    const stored = await getConversation('k1');
+    expect(stored, 'the persisted envelope must be readable under the post-swap secret').toBeDefined();
+    expect(stored?.title).toBe('bound secret');
+  });
+
+  it('T12: re-adoption refuses to copy under a swapped secret (wrong-key fail-closed; span placement enforced in-code)', async () => {
+    localStorage.setItem(PROFILE_KEY, 'lockm12t');
+    const { PROFILE_SECRET_KEY: PSK } = await import('../../lib/storage/persisted-keys');
+    const { encryptRow, getOrCreateSecret } = await import('../../lib/storage/db-crypto');
+    const secretA = await getOrCreateSecret('lockm12t');
+    const { DocQADatabase } = await import('../../db/index');
+    const d = new DocQADatabase('lockm12t-doc-qa-conversations');
+    // The target legitimately holds ONE envelope encrypted under secret A.
+    await d.conversations.bulkPut([await encryptRow(plainRow('own', 'own row') as never, secretA, 'lockm12t')]);
+    // A DIFFERENT valid secret B replaces A in the map.
+    const mapB = JSON.stringify({ lockm12t: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64') });
+    localStorage.setItem(PSK, mapB);
+    // A legacy db row waits for re-adoption; the done marker routes to the
+    // re-adoption fast path (PRR-111).
+    localStorage.setItem('doc-qa-legacy-migration-done', '1');
+    await new Promise<void>((resolve, reject) => {
+      const req = indexedDB.open('docqa_conversations', 2);
+      req.onupgradeneeded = () => {
+        const conn = req.result;
+        const store = conn.createObjectStore('conversations', { keyPath: 'id' });
+        store.createIndex('updatedAt', 'updatedAt', { unique: false });
+        store.createIndex('createdAt', 'createdAt', { unique: false });
+        store.createIndex('title', 'title', { unique: false });
+        conn.createObjectStore('meta', { keyPath: 'key' });
+      };
+      req.onsuccess = () => {
+        const conn = req.result;
+        const tx = conn.transaction('conversations', 'readwrite');
+        tx.objectStore('conversations').put({
+          id: 'leg-x', title: 'Legacy re', messages: [{ id: 'leg-x-u1', role: 'user', content: 'x', timestamp: 1 }],
+          createdAt: 1, updatedAt: 1, mode: 'server', modelUsed: 'legacy',
+        });
+        tx.oncomplete = () => { conn.close(); resolve(); };
+        tx.onerror = () => reject(tx.error);
+      };
+      req.onerror = () => reject(req.error);
+    });
+    // The key-state gate sees secret B against an A-encrypted store and
+    // REFUSES before any copy: the adoption call rejects and the re-adopt
+    // copy must NOT have happened. (The probe-inside-the-span placement is
+    // enforced by the RC6-01 span in code; this leg pins the OUTCOME.)
+    await expect(
+      import('../../db/conv-protocol').then((m) => m.adoptLegacyConversations('lockm12t')),
+    ).rejects.toThrow(/authenticate|FAIL_WRONG_KEY/);
+    const rows = await rawRowsOf('lockm12t-doc-qa-conversations');
+    expect(rows, 're-adopt copy must be refused under the swapped secret').toHaveLength(1);
   });
 
 describe('gate-level key-state matrix (#367 review F5a): requireKeyForWrite drives the REAL gate', () => {

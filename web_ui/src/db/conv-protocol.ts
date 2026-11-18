@@ -53,6 +53,10 @@ import {
   readEpochOf,
   requireKeyForWrite,
 } from './index';
+import { withExclusiveLock } from '../lib/storage/exclusive-lock';
+
+/** The shared conv-write lock name (must equal index.ts's CONV_WRITE_LOCK). */
+const CONV_WRITE_LOCK_NAME = 'docqa-conv-write';
 
 // ============================================================================
 // Web Locks wrappers
@@ -93,18 +97,21 @@ export function hasWebLocks(): boolean {
  * the clear itself) runs inside this. Without Web Locks it degrades to a
  * direct call (single-tab semantics).
  *
- * Deliberately divergent from the shared `exclusive-lock.ts` helper
- * (#275-C): that helper's no-Web-Locks fallback serializes work in an
- * in-tab promise chain, which is NOT this function's documented contract —
- * conv-write critical sections are synchronous-or-direct by design and
- * serializing them in-tab would change mutation ordering. This function
- * therefore keeps its direct-call degrade and does not route through the
- * helper.
+ * #367 RC6-01: routes through the shared `exclusive-lock.ts` helper — the
+ * no-Web-Locks fallback is the in-tab promise chain (previously this
+ * function degraded to a direct call; the approved plan supersedes that
+ * #275-C divergence so every migration-serialized path shares one
+ * serializer in both modes).
  */
 export function withConversationWriteLock<T>(fn: () => T | Promise<T>): Promise<T> {
-  const locks = locksManager();
-  if (locks === undefined) return Promise.resolve(fn());
-  return locks.request('docqa-conv-write', {}, () => fn());
+  // #367 RC6-01 (approved plan): NO migration-serialized path keeps the
+  // legacy direct-call degrade — every conv-write critical section runs
+  // through the shared serializer (Web-Locks preferred, genuine in-tab
+  // promise-chain fallback), so create/delete/clear/adoption/migration and
+  // update serialize identically with AND without Web Locks. This
+  // deliberately supersedes the pre-#367 #275-C divergence note (in-tab
+  // serialization is now the documented contract).
+  return withExclusiveLock(CONV_WRITE_LOCK_NAME, fn);
 }
 
 /** A held lock handle; release() is idempotent. */

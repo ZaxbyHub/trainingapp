@@ -623,7 +623,11 @@ storage.
 
 Performance note: deriving the per-profile key (PBKDF2, 210,000 iterations) happens once per
 profile per app session, and the first app start after the upgrade spends a short extra moment
-re-encrypting existing history once. Rolling back to an older release afterwards leaves the
+re-encrypting existing history once. Writes re-probe the stored history's key state before
+persisting, which reads the store and trial-decrypts its envelopes (proportional to history size
+per write); a search enumerates the store's keys up front (bodies stop at the match budget, and
+cancellation halts both phases). If a stored row ever fails authentication, writes are refused
+until the store is repaired — fail-closed by design rather than writing beside a corrupt row. Rolling back to an older release afterwards leaves the
 stored history unreadable to that older release (the rows are opaque to it); installing this
 release again restores the history unchanged.
 
