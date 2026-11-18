@@ -192,24 +192,59 @@ test.describe('inactivity auto-clear across two tabs (issue #279)', () => {
   });
 });
 
-/** Read one conversation's message list straight from the profile db. */
-function readStoredMessages(this: void, opts: { name: string; id: string }): Promise<Array<{ role: string; content: string }> | undefined> {
-  return new Promise((resolve, reject) => {
-    const r = indexedDB.open(opts.name);
-    r.onerror = () => reject(r.error);
-    r.onsuccess = () => {
-      const db = r.result;
-      const t = db.transaction('conversations', 'readonly');
-      const get = t.objectStore('conversations').get(opts.id);
-      get.onsuccess = () => {
-        const row = get.result as { messages?: Array<{ role: string; content: string }> } | undefined;
-        db.close();
-        resolve(row?.messages);
+/**
+ * Read one conversation's message list straight from the profile db —
+ * DECRYPTING when the row is an at-rest envelope (issue #367): the raw store
+ * no longer holds plaintext `messages`, so the page-side reader mirrors
+ * db-crypto (PBKDF2-SHA256 over the custody secret, AES-GCM with the
+ * canonical AAD tuple) using the secret from the localStorage custody map.
+ * The KDF app-salt constant is pinned to src/lib/storage/db-crypto.ts.
+ */
+async function readStoredMessages(
+  this: void,
+  opts: { name: string; id: string },
+): Promise<Array<{ role: string; content: string }> | undefined> {
+  const r = indexedDB.open(opts.name);
+  const row: { messages?: Array<{ role: string; content: string }>; v?: number; e?: { iv: string; ct: string }; createdAt?: number; updatedAt?: number } | undefined =
+    await new Promise((resolve, reject) => {
+      r.onerror = () => reject(r.error);
+      r.onsuccess = () => {
+        const db = r.result;
+        const t = db.transaction('conversations', 'readonly');
+        const get = t.objectStore('conversations').get(opts.id);
+        get.onsuccess = () => {
+          const got = get.result as typeof row;
+          db.close();
+          resolve(got);
+        };
+        get.onerror = () => {
+          db.close();
+          reject(get.error);
+        };
       };
-      get.onerror = () => {
-        db.close();
-        reject(get.error);
-      };
-    };
-  });
+    });
+  if (row === undefined) return undefined;
+  if (row.messages) return row.messages; // plaintext (pre-#367 shape)
+  if (!row.e) return undefined;
+  // Page-side decrypt of the envelope (issue #367 at-rest shape).
+  const prefix = localStorage.getItem('doc-qa-profile-id') ?? '';
+  const secretB64 = ((JSON.parse(localStorage.getItem('doc-qa-profile-secret') ?? '{}') as Record<string, string>)[prefix]) ?? '';
+  if (!secretB64) throw new Error('custody secret missing for prefix ' + prefix);
+  const raw = atob(secretB64);
+  const secretBytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i += 1) secretBytes[i] = raw.charCodeAt(i);
+  const baseKey = await crypto.subtle.importKey('raw', secretBytes, 'PBKDF2', false, ['deriveKey']);
+  const key = await crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: new TextEncoder().encode('trainingapp-db-crypto-v1|' + prefix), iterations: 210_000, hash: 'SHA-256' },
+    baseKey,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['decrypt'],
+  );
+  const aad = new TextEncoder().encode(JSON.stringify([row.v, opts.id, row['createdAt'], row['updatedAt']]));
+  const ivBytes = Uint8Array.from(atob(row.e.iv), (c) => c.charCodeAt(0));
+  const ctBytes = Uint8Array.from(atob(row.e.ct), (c) => c.charCodeAt(0));
+  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: ivBytes, additionalData: aad }, key, ctBytes);
+  const parsed = JSON.parse(new TextDecoder().decode(plain)) as { messages: Array<{ role: string; content: string }> };
+  return parsed.messages;
 }
