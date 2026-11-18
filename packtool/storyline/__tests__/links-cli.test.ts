@@ -227,9 +227,10 @@ describe('links CLI verb (D4, issue #80)', () => {
     // vectors shifted and one slide's cosine against the doc chunk is now
     // negative at threshold 0. This is the intended, documented consequence
     // (plan Impact Analysis + runbook "relinks after rebuild"); the test's
-    // discrimination is candidates > top, which the strengthened
-    // unclamped > clamped assertion below pins without overfitting the
-    // exact count (>= 2 keeps it non-vacuous).
+    // discrimination is candidates > top; the M5 mutant (dropped clamp)
+    // kills the count pin, and the unclamped > clamped comparison below
+    // documents that intent (it follows from the >= 2 assertion and adds
+    // no additional strength).
     const docPack = await stageDocPack({ id: 'd4-cli-top1-doc' });
     const allExit = await runLinks(['links', '--pack', docPack, '--training', join(root, 'training-pack.zip'), '--threshold', '0']);
     expect(allExit).toBe(0);

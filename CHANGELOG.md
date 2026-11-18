@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 - **Citable chunk headers + real prompt-token diagnostics (issues #360/#364, frontier-audit ASK-9)**:
+  The estimate covers the non-context channels reserved by the budget; the real count covers the evaluated prompt, including retrieved context and template tokens.
   - #360 (E5): every slide-document chunk produced by packtool now carries a
     deterministic first-line header `<section_title> > <slide_title>`
     (whitespace-collapsed; blank title falls back to the slide id; the
