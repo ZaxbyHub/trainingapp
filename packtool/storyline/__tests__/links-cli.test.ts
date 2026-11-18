@@ -217,18 +217,32 @@ describe('links CLI verb (D4, issue #80)', () => {
   });
 
   it('honors --top 1 even when more candidates exist above the threshold', { timeout: 60_000 }, async () => {
-    // Discriminating construction (--threshold 0 makes ALL 3 slides score
-    // above the floor, so default topK=3 would return 3 rows; --top 1 must
-    // return exactly 1). A fixture-matched default would hide a dropped
-    // topK option (conditional-spread blind spot — see PR review PRR fix).
+    // Discriminating construction (--threshold 0 admits every slide with a
+    // NON-NEGATIVE cosine, so the unclamped run yields MULTIPLE candidates
+    // and --top 1 must clamp to exactly 1). A fixture-matched default would
+    // hide a dropped topK option (conditional-spread blind spot — see PR
+    // review PRR fix).
+    // #360 note: the count is 2, not the pre-header 3 — the section-title
+    // header is part of the embedded chunk text, so hash-embedder slide
+    // vectors shifted and one slide's cosine against the doc chunk is now
+    // negative at threshold 0. This is the intended, documented consequence
+    // (plan Impact Analysis + runbook "relinks after rebuild"); the test's
+    // discrimination is candidates > top. The M5 mutant (dropped clamp ->
+    // topK=Infinity) was caught at CLI INPUT VALIDATION before the clamp
+    // check ran (see the trace M5 log); the clamp discrimination itself is
+    // REASONED — toHaveLength(1) below fails if the clamp were dropped —
+    // and the unclamped > clamped comparison documents that intent (it
+    // follows from the >= 2 assertion and adds no additional strength).
     const docPack = await stageDocPack({ id: 'd4-cli-top1-doc' });
     const allExit = await runLinks(['links', '--pack', docPack, '--training', join(root, 'training-pack.zip'), '--threshold', '0']);
     expect(allExit).toBe(0);
-    expect(linkRowsFor(docPack).length).toBeGreaterThanOrEqual(3);
+    const unclamped = linkRowsFor(docPack).length;
+    expect(unclamped).toBeGreaterThanOrEqual(2);
     const topExit = await runLinks(['links', '--pack', docPack, '--training', join(root, 'training-pack.zip'), '--threshold', '0', '--top', '1']);
     expect(topExit).toBe(0);
     const rows = linkRowsFor(docPack);
     expect(rows).toHaveLength(1);
+    expect(1).toBeLessThan(unclamped);
     expect(rows[0]?.rank).toBe(1);
   });
 

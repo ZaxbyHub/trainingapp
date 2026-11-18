@@ -670,6 +670,21 @@ export class RAGOrchestrator {
     }
     contextChunks = budgeted;
 
+    // #364 (E10): drop-conditional browser budget diagnostics — the twin of
+    // the desktop '[RAG] budget' drop record (backend/engine.ts). The browser
+    // has no LLM tokenizer (wllama/webllm expose none), so every number here
+    // is an ESTIMATE and the record labels itself: estimated: true.
+    // NUMBERS ONLY — never prompt or chunk content (redaction-safe: the
+    // #256 twins' quoted-value rules do not fire on numeric values).
+    if (droppedForBudget > 0) {
+      console.info('[RAG] budget-parity', {
+        estimated: true,
+        reservedTokens,
+        contextBudgetChars,
+        droppedForBudget,
+      });
+    }
+
     // C5 (issue #72): grounded/general provenance. Stamped AFTER the F11
     // budget trim and BEFORE the abstention check so every complete event
     // (abstain short-circuit included) carries the same decision the

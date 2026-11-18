@@ -133,6 +133,20 @@ add('content-bearing-object-denylist', {
 add('denylist-prefixed-keys', {
   args: ['[RAG] gap', { userText: 'what is the onboarding password policy?', answer: 'rotate monthly', response: 'ok', context: 'web', message: 'docx style named List Paragraph' }],
 }, clean);
+// #364 (E10) naming-mutant guardrail: the dual-report records carry ONLY
+// numbers, so their token-suffixed keys (estimatedPromptTokens,
+// realPromptTokens, reservedTokens) must survive the twins — the KV-secret
+// rule redacts a token-suffixed key only when its value is QUOTED, and the
+// content-denylist is SUFFIX-based (contextBudgetChars ends in Chars, not
+// context; estimatedPromptTokens ends in Tokens, not prompt). If a rename ever
+// makes one of these keys land on a denylist suffix, the persisted form flips
+// from raw to redacted and this vector fails — the record stays observable.
+add('token-budget-record-numeric', {
+  args: ['[RAG] token-budget', { profile: 'quality', estimatedPromptTokens: 142, promptChars: 568, realPromptTokens: 112233 }],
+}, clean);
+add('budget-parity-record-numeric', {
+  args: ['[RAG] budget-parity', { estimated: true, reservedTokens: 608, contextBudgetChars: 30336, droppedForBudget: 1 }],
+}, clean);
 
 const doc = {
   _comment:

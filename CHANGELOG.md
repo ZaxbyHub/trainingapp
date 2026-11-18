@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+- **Citable chunk headers + real prompt-token diagnostics (issues #360/#364, frontier-audit ASK-9)**:
+  The estimate covers the non-context channels reserved by the budget; the real count covers the evaluated prompt, including retrieved context and template tokens.
+  - #360 (E5): every slide-document chunk produced by packtool now carries a
+    deterministic first-line header `<section_title> > <slide_title>`
+    (whitespace-collapsed; blank title falls back to the slide id; the
+    `<unassigned>` sentinel passes through), added after chunking and before
+    embedding/identity derivation so chunk ids, content hashes, and
+    embeddings cover it — answers can cite `Treatment > Dosage` style paths
+    instead of anonymous chunks. The shared chunker stays byte-identical to
+    its desktop twin (the divergence is compose-layer only, pinned by
+    `packtool/docs/__tests__/build-section-title.test.ts`; goldens and
+    outline/plain-doc chunks untouched). Pre-existing packs keep their
+    anonymous chunks until rebuilt (runbook rebuild note + Step 6 links
+    recompute — header-bearing chunks re-score doc-to-slide links).
+  - #364 (E10): desktop diagnostics now DUAL-REPORT prompt budgeting — the
+    existing chars-class `estimateTokens` figure and the REAL evaluated
+    prompt-token count from the inference sequence's tokenMeter (chat
+    template control tokens included; null when the engine exposes no
+    meter) ride a per-query `[RAG] token-budget` record, profile-scoped,
+    numbers only. Recorded parity decision: MEASURE-ONLY — the estimate
+    remains the sole retrieval-budget input; adopting real counts as the
+    budget input is gated on issue #362's hardware A/B. The browser runtime
+    (no LLM tokenizer in wllama/webllm) keeps its chars/4 estimate and now
+    LABELS it: a drop-conditional `[RAG] budget-parity` record carries
+    `estimated: true` plus the reserved-token and context-budget figures,
+    mirroring the desktop drop-observability twin. Redaction corpus extended
+    (numeric payloads pinned non-redacted).
 - **Packaged GPU selection + configurable external-request timeouts (issues #350/#351, contract v2.7.0)**:
   - #350: the packaged app no longer silently falls back to CPU on Vulkan-capable
     Windows hosts. node-llama-cpp's pre-load binding test forks a test process,
