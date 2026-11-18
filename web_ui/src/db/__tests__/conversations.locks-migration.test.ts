@@ -144,12 +144,12 @@ describe('RC4-01 lock-stack battery (#367)', () => {
     const { updateConversation, getConversation } = await import('../../db/conversations');
 
     let calls = 0;
-    const spy = vi.spyOn(db.conversations, 'get').mockImplementation(async () => {
+    const spy = vi.spyOn(db.conversations, 'get').mockImplementation((async () => {
       calls += 1;
       // Call 2 is phase 3's re-read: the winner committed between phases.
       // Calls 3+ (the retry's phase 1 and phase 3) see the winner's row too.
       return calls >= 2 ? E1 : E0;
-    });
+    }) as never);
     try {
       expect(await updateConversation('t2', { title: 'renamed title' }, { stateEpoch: 0 })).toBe(true);
     } finally {
@@ -173,12 +173,12 @@ describe('RC4-01 lock-stack battery (#367)', () => {
     const { updateConversation } = await import('../../db/conversations');
 
     let calls = 2;
-    const spy = vi.spyOn(db.conversations, 'get').mockImplementation(async () => {
+    const spy = vi.spyOn(db.conversations, 'get').mockImplementation((async () => {
       calls += 1;
       // Every re-read after phase 1 sees a FRESH envelope (new iv each time):
       // the optimistic guard can never match, so all attempts conflict.
       return await encryptRow(plainRow('t3', 'x') as never, secret, P.t3);
-    });
+    }) as never);
     try {
       await expect(
         updateConversation('t3', { title: 'never lands' }, { stateEpoch: 0 }),
@@ -236,9 +236,9 @@ describe('RC4-01 lock-stack battery (#367)', () => {
     const { db, migrationReady, __resetMigrationStatesForTests } = await freshModules();
     __resetMigrationStatesForTests();
     await db.conversations.bulkPut([plainRow('c1', 'one') as never, plainRow('c2', 'two') as never]);
-    const putSpy = vi.spyOn(db.conversations, 'put').mockImplementationOnce(async () => {
+    const putSpy = vi.spyOn(db.conversations, 'put').mockImplementationOnce((async () => {
       throw new Error('disk full');
-    });
+    }) as never);
     await expect(migrationReady(db.name)).rejects.toThrow('disk full');
     putSpy.mockRestore();
     await migrationReady(db.name); // retry completes
