@@ -99,14 +99,17 @@ vi.mock('node-llama-cpp', () => {
 });
 
 /** Capture console.info lines emitted by the inference path. */
-function captureConsoleInfo(): { lines: string[]; restore: () => void } {
+function captureConsoleInfo(): { lines: string[]; calls: unknown[][]; restore: () => void } {
   const lines: string[] = [];
+  const calls: unknown[][] = [];
   const original = console.info;
   console.info = (...args: unknown[]): void => {
     lines.push(args.map((a) => String(a)).join(' '));
+    calls.push(args);
   };
   return {
     lines,
+    calls,
     restore: (): void => {
       console.info = original;
     },
@@ -412,10 +415,22 @@ describe('issue #154: the desktop local inference path', () => {
     // The mock delivers 4 batches of 2 tokens, so the counter must read 8.
     expect(metrics[0]).toMatch(/answer_tokens=8\b/);
     expect(metrics[0]).toMatch(/outcome=ok/);
-    // #364 (E10): exactly one dual-report record per successful query
-    // (payload shape/real-count equality is pinned by the frozen C6 spec).
+    // #364 (E10): exactly one dual-report record per successful query, and
+    // its payload carries the PRODUCTION makeBackend meter-delta path: the
+    // NLC mock charges 41 usedInputTokens per prompt, so the sequence
+    // tokenMeter delta must report realPromptTokens=41 (mutant: remove the
+    // delta computation or the accessor => null here => RED) alongside a
+    // positive estimate (payload object, not the stringified line).
     const budgets = seen.lines.filter((l) => l.includes('[RAG] token-budget'));
     expect(budgets).toHaveLength(1);
+    const budgetPayload = seen.calls.find((c) => c[0] === '[RAG] token-budget')?.[1] as
+      | { profile?: unknown; estimatedPromptTokens?: unknown; promptChars?: unknown; realPromptTokens?: unknown }
+      | undefined;
+    expect(budgetPayload, 'token-budget record carries an object payload').toBeDefined();
+    expect(budgetPayload?.realPromptTokens, 'real count flows from the sequence tokenMeter delta (mock charges 41)').toBe(41);
+    expect(typeof budgetPayload?.estimatedPromptTokens).toBe('number');
+    expect((budgetPayload?.estimatedPromptTokens as number) > 0).toBe(true);
+    expect(budgetPayload?.profile).toBe('quality');
   });
 
   it('still emits exactly one metrics line when the session constructor throws', async () => {
