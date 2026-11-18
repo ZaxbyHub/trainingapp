@@ -382,8 +382,11 @@ describe('RC4-01 lock-stack battery (#367)', () => {
     Object.defineProperty(navigator, 'locks', {
       configurable: true,
       value: {
-        request: (_n: string, _o: unknown, cb: () => Promise<unknown>): Promise<unknown> => {
-          if (localStorage.getItem(PSK) === mapA) localStorage.setItem(PSK, mapB);
+        request: (n: string, _o: unknown, cb: () => Promise<unknown>): Promise<unknown> => {
+          // Swap ONLY on the conv-write lock: the secret-map lock is taken
+          // by the pre-gate encryption path, and swapping there would mask
+          // the very race this leg pins.
+          if (n === 'docqa-conv-write' && localStorage.getItem(PSK) === mapA) localStorage.setItem(PSK, mapB);
           return cb();
         },
       },
