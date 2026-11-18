@@ -178,11 +178,18 @@ describe('RC4-01 lock-stack battery (#367)', () => {
     const { updateConversation } = await import('../../db/conversations');
 
     let calls = 2;
+    // Pre-build a pool of DISTINCT envelopes OUTSIDE every transaction: the
+    // spy must never await crypto inside the Dexie tx (PC-06 applies to the
+    // harness too - on slower CI runners an in-tx await trips
+    // PrematureCommitError instead of the typed conflict).
+    const pool = await Promise.all(
+      Array.from({ length: 16 }, () => encryptRow(plainRow('t3', 'x') as never, secret, P.t3)),
+    );
     const spy = vi.spyOn(db.conversations, 'get').mockImplementation((async () => {
       calls += 1;
-      // Every re-read after phase 1 sees a FRESH envelope (new iv each time):
+      // Every re-read after phase 1 sees a DIFFERENT pre-built envelope:
       // the optimistic guard can never match, so all attempts conflict.
-      return await encryptRow(plainRow('t3', 'x') as never, secret, P.t3);
+      return pool[calls % pool.length];
     }) as never);
     try {
       await expect(
