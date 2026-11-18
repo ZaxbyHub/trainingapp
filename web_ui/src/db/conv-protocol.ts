@@ -94,8 +94,9 @@ export function hasWebLocks(): boolean {
 
 /**
  * Origin-wide write serialization (R4-3): every conversation mutation (and
- * the clear itself) runs inside this. Without Web Locks it degrades to a
- * direct call (single-tab semantics).
+ * the clear itself) runs inside this — through the shared exclusive-lock
+ * helper since #367 RC6-01 (Web-Locks preferred; the in-tab chain is the
+ * no-Web-Locks fallback, with the helper's 60 s acquisition bound).
  *
  * #367 RC6-01: routes through the shared `exclusive-lock.ts` helper — the
  * no-Web-Locks fallback is the in-tab promise chain (previously this
