@@ -107,6 +107,14 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+        env:
+          # onnxruntime-node's postinstall downloads its CUDA binaries from
+          # microsoft/onnxruntime releases; the v1.21.0 linux-x64-gpu asset
+          # 404s upstream (2026-11-18), breaking every fresh install. CI has
+          # no GPU and the test lane uses the hash embedder, so skip the CUDA
+          # EP download (the library's own sanctioned flag) until the asset
+          # is restored.
+          npm_config_onnxruntime_node_install_cuda: skip
 
       # Acceptance #1: `npx tsc --noEmit` (app source) exits 0.
       - name: Typecheck (app source)
@@ -231,6 +239,14 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+        env:
+          # onnxruntime-node's postinstall downloads its CUDA binaries from
+          # microsoft/onnxruntime releases; the v1.21.0 linux-x64-gpu asset
+          # 404s upstream (2026-11-18), breaking every fresh install. CI has
+          # no GPU and the test lane uses the hash embedder, so skip the CUDA
+          # EP download (the library's own sanctioned flag) until the asset
+          # is restored.
+          npm_config_onnxruntime_node_install_cuda: skip
 
       # Firefox is a supported, CI-verified browser (PRR-151-030): `npm run test:e2e` below runs
       # the same e2e specs under the chromium AND firefox Playwright projects. Safari/WebKit is
@@ -300,6 +316,14 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+        env:
+          # onnxruntime-node's postinstall downloads its CUDA binaries from
+          # microsoft/onnxruntime releases; the v1.21.0 linux-x64-gpu asset
+          # 404s upstream (2026-11-18), breaking every fresh install. CI has
+          # no GPU and the test lane uses the hash embedder, so skip the CUDA
+          # EP download (the library's own sanctioned flag) until the asset
+          # is restored.
+          npm_config_onnxruntime_node_install_cuda: skip
 
       - name: Install Playwright chromium
         run: npx playwright install chromium
