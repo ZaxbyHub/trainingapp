@@ -107,6 +107,16 @@ copied byte-for-byte under `assets/player/`, slide-aware chunking, and a
 prebuilt `index.sqlite` (embeddings + FTS5, schema and sqlite-vec stamps
 from `contracts/store.schema.sql`) so installation re-embeds nothing.
 
+#360 (E5) rebuild note: every slide chunk now carries a deterministic
+first-line header `<section_title> > <slide_title>` (see
+[pack-authoring-guide.md](pack-authoring-guide.md)). Because the header is
+part of the embedded, hashed chunk text, any pack built before this change
+keeps its old anonymous chunk text until it is REBUILT with the current
+packtool — retrieval behavior of installed pre-#360 packs is unchanged
+until then, and the first rebuild shifts every slide chunk id, embedding,
+and doc-to-slide link score, so always follow with the Step 6 links
+recompute and a `--version` bump.
+
 ## Step 4 — Verify the pack
 
 ```bash

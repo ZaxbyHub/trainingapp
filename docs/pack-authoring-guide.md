@@ -186,9 +186,18 @@ chunk_id    = sha256(doc_sha256 + ":" + chunk_index + ":" + normalized_text)
 ```
 
 Consequences: re-publishing a course whose slides did not change keeps
-every chunk id stable; unchanged docs at the same manifest path keep their
-chunks across an upgrade (delete-before-reingest touches only changed
-docs).
+every chunk id stable (for an unchanged packtool version); unchanged docs
+at the same manifest path keep their chunks across an upgrade
+(delete-before-reingest touches only changed docs).
+
+Issue #360 (E5) caveat: every CHUNK of a slide document is stored with a
+deterministic first-line header — `<section_title> > <slide_title>`
+(whitespace runs collapsed to single spaces; blank title falls back to the
+slide id; the `<unassigned>` sentinel passes through). The header is part
+of the stored chunk text, so it participates in the normalized_text above:
+rebuilding the same course with a packtool version that CHANGES the header
+format re-derives every slide chunk id. Outline and plain-doc (non-slide)
+chunks carry no header.
 
 Pack lifecycle (PackManager, both Python and Node twins; policy recorded
 in ADR-0004):

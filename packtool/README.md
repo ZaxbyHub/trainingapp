@@ -152,6 +152,13 @@ re-embedding.
   chunker semantics apply (256 words / 100 overlap, sentence-aware, CJK char
   fallback). Parity with `desktop/main/backend/ingest/text-chunker.ts` is
   pinned by goldens in `storyline/__tests__/build-chunker.test.ts`.
+  Issue #360 (E5) DELIBERATE divergence: every slide-document chunk is
+  stored with a deterministic first-line header
+  `<section_title> > <slide_title>` — added AFTER chunking, before
+  embedding/identity derivation, so chunk ids and content hashes cover the
+  header; the shared chunker stays byte-identical to its desktop twin (the
+  goldens are untouched). Outline and plain-doc chunks carry no header.
+  Pinned by `docs/__tests__/build-section-title.test.ts`.
 - **Determinism / reproducibility**: with fixed inputs the emitted docs and
   chunk identities are content hashes (stable); `--published-at` fixes the
   one volatile timestamp (and the zip entry dates), making two builds

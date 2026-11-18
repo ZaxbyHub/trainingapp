@@ -67,6 +67,24 @@ interface DocBuild {
   entry: PackDocEntry;
   docId: string;
   chunkText: string;
+  /** Issue #360 (E5): deterministic section-title header prepended to EVERY
+   * chunk of this (slide) document; undefined = no header (outline doc and
+   * plain-doc packs). Format: `<section> > <slide title, else slide id>` with
+   * each whitespace run collapsed to one space (mirror of the UI path
+   * convention, web_ui/src/components/PinnedSlideContext.tsx). */
+  headerLine?: string;
+}
+
+/** Collapse any whitespace run (incl. newlines) to one space; trim. */
+function headerPart(raw: string | undefined): string {
+  return (raw ?? '').replace(/\s+/g, ' ').trim();
+}
+
+/** The #360 header line for one slide document (blank title -> slide id). */
+function slideHeaderLine(slide: SlideDoc): string {
+  const section = headerPart(slide.section_title);
+  const title = headerPart(slide.slide_title) || headerPart(slide.slide_id);
+  return `${section} > ${title}`;
 }
 
 function moduleDir(): string {
@@ -169,6 +187,7 @@ export async function buildStorylinePack(options: BuildStorylineOptions): Promis
         },
         docId,
         chunkText: slideChunkText(slide),
+        headerLine: slideHeaderLine(slide),
       });
     }
 
@@ -234,17 +253,24 @@ export async function buildStorylinePack(options: BuildStorylineOptions): Promis
     }> = [];
     for (const build of docBuilds) {
       const chunks = chunkSlideText(build.chunkText);
-      const texts = chunks.map((chunk) => chunk.text);
+      // #360: the header is part of the stored chunk text BEFORE embedding
+      // and BEFORE identity derivation — chunk ids/content hashes derive from
+      // the header-included text, matching the desktop install-time
+      // re-derivation guard (pack-manager.ts re-derives from stored text).
+      const texts = chunks.map((chunk) =>
+        build.headerLine === undefined ? chunk.text : `${build.headerLine}\n${chunk.text}`,
+      );
       const vectors = texts.length > 0 ? await embedder.embed(texts) : [];
       chunks.forEach((chunk, i) => {
-        const normalized = normalizedText(chunk.text);
+        const text = texts[i]!;
+        const normalized = normalizedText(text);
         const vector = vectors[i];
         if (vector === undefined) throw new Error(`embedder returned no vector for a chunk of ${build.entry.path}`);
         chunkRows.push({
           chunkId: chunkIdFor(build.docId, chunk.chunkIndex, normalized),
           docId: build.docId,
           chunkIndex: chunk.chunkIndex,
-          text: chunk.text,
+          text,
           contentHash: contentHashFor(normalized),
           vector,
         });

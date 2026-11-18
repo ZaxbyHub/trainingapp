@@ -100,6 +100,15 @@ export interface LlamaEngineBackend {
       temperature?: number;
     },
   ): Promise<{ answer: string; cancelled: boolean }>;
+  /**
+   * Issue #364 (E10): the REAL number of prompt tokens evaluated by the LAST
+   * generate() call (chat-template control tokens included — the sequence's
+   * tokenMeter delta), or null when the backend exposes no meter / none has
+   * completed. Diagnostics only: the chars-class estimate remains the sole
+   * budget input (adoption of real counts is gated on issue #362's hardware
+   * A/B). Optional so every existing test double compiles unchanged.
+   */
+  realPromptTokenCount?(): number | null;
   dispose(): Promise<void>;
 }
 
@@ -264,6 +273,7 @@ import { CONTEXT_SIZE } from './prompt-budget.js';
 import {
   MAX_HISTORY_BUDGET_TOKENS,
   capHistoryByEstimatedTokens,
+  estimateTokens,
   groundedContextBudgetChars,
 } from './prompt-budget.js';
 const CANCEL_POLL_MS = 20;
@@ -287,14 +297,16 @@ const MAX_HISTORY_TURNS = 12;
 // than imported because that file is drift-locked to a byte-identical browser
 // twin by external-prompts.drift.test.ts; folding this prompt into it would add
 // a second property to maintain under that lock for no benefit.
-const SYSTEM_PROMPT =
+// #364: exported (visibility-only) so the frozen dual-report spec pins the
+// estimate against the EXACT channel string the budget charges.
+export const SYSTEM_PROMPT =
   "You are TrainingApp's local assistant. Answer the user's question directly and concisely. " +
   'When retrieved context is provided, answer only from that context and say when it does not contain the answer.';
 
 // Issue #157: one constant shared by the grounded-prompt assembly and the
 // context budget's reserved-token estimate (the estimate must charge exactly
 // the instruction the assembly places in the window).
-const GROUNDED_INSTRUCTION = 'Answer the question using the retrieved context when relevant.';
+export const GROUNDED_INSTRUCTION = 'Answer the question using the retrieved context when relevant.';
 
 // Issue #154 investigated bounding the repeat-penalty lookback, on the premise
 // that node-llama-cpp applies it to prompt+generated tokens and was therefore
@@ -563,8 +575,14 @@ function makeBackend(
   nlc: typeof import('node-llama-cpp'),
 ): LlamaEngineBackend {
   let disposed = false;
+  // #364 (E10): input-token delta of the LAST completed generate() prompt,
+  // measured on the sequence's tokenMeter (the same meter LlamaChat
+  // snapshots for its per-evaluation tokenUsage). Reset per request so a
+  // cancelled/failed call can never reuse the previous request's count.
+  let lastPromptDelta: number | null = null;
   return {
     async generate(question, genOpts) {
+      lastPromptDelta = null;
       // #154 AC2: exactly one metrics line per request, including the two
       // pre-flight exits below and any throw, so the emission is opened here
       // and closed in a single place rather than only inside the try/finally.
@@ -686,6 +704,10 @@ function makeBackend(
         });
         const seededHistory = historyToChatHistory(genOpts.history);
         if (seededHistory.length > 0) session.setChatHistory(seededHistory);
+        // #364: meter snapshots around the evaluation; the delta is the REAL
+        // prompt-token count (template control tokens included). Optional
+        // chaining keeps injected doubles without a meter working (null).
+        const meterPre = sequence.tokenMeter?.getState?.().usedInputTokens ?? null;
         const rawAnswer = await session.prompt(question, {
           onTextChunk(chunk: string) {
             surface(chunk);
@@ -705,6 +727,9 @@ function makeBackend(
             temperature: genOpts.temperature,
           }),
         });
+        const meterPost = sequence.tokenMeter?.getState?.().usedInputTokens ?? null;
+        lastPromptDelta =
+          meterPre !== null && meterPost !== null && meterPost >= meterPre ? meterPost - meterPre : null;
         outcome = genOpts.cancellationEvent?.isSet() ? 'cancelled' : 'ok';
         let answer = rawAnswer;
         if (reasoning && answer.startsWith(reasoning.responsePrefix)) {
@@ -758,6 +783,9 @@ function makeBackend(
         // clean (the sequence KV is re-evaluated from the fresh history).
         session?.resetChatHistory();
       }
+    },
+    realPromptTokenCount() {
+      return lastPromptDelta;
     },
     async dispose() {
       if (disposed) return;
@@ -1713,6 +1741,20 @@ export class LlamaEngine implements EngineSurface {
             ? { maxTokens: opts.maxTokens }
             : {}),
           ...(overrides.temperature !== undefined ? { temperature: overrides.temperature } : {}),
+        });
+        // #364 (E10): dual-report the chars-class estimate AND the real
+        // evaluated prompt-token count (sequence tokenMeter delta, template
+        // tokens included; null when the backend exposes none). Measure-only:
+        // the estimate above remains the sole budget input — adoption of real
+        // counts is gated on issue #362's hardware A/B. NUMBERS ONLY — the
+        // record never carries prompt text.
+        const budgetChannels =
+          SYSTEM_PROMPT + GROUNDED_INSTRUCTION + question + seededTurns.map((turn) => turn.content).join('\n');
+        console.info('[RAG] token-budget', {
+          profile,
+          estimatedPromptTokens: estimateTokens(budgetChannels),
+          promptChars: budgetChannels.length,
+          realPromptTokens: entry.backend.realPromptTokenCount?.() ?? null,
         });
         const out: EngineQueryResult = {
           answer: result.answer,

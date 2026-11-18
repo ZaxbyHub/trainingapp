@@ -306,6 +306,44 @@
         "desktop": "raw",
         "renderer": "raw"
       }
+    },
+    {
+      "name": "token-budget-record-numeric",
+      "input": {
+        "args": [
+          "[RAG] token-budget",
+          {
+            "profile": "quality",
+            "estimatedPromptTokens": 142,
+            "promptChars": 568,
+            "realPromptTokens": 112233
+          }
+        ]
+      },
+      "persisted": "[RAG] token-budget {\"profile\":\"quality\",\"estimatedPromptTokens\":142,\"promptChars\":568,\"realPromptTokens\":112233}",
+      "console": {
+        "desktop": "raw",
+        "renderer": "raw"
+      }
+    },
+    {
+      "name": "budget-parity-record-numeric",
+      "input": {
+        "args": [
+          "[RAG] budget-parity",
+          {
+            "estimated": true,
+            "reservedTokens": 608,
+            "contextBudgetChars": 30336,
+            "droppedForBudget": 1
+          }
+        ]
+      },
+      "persisted": "[RAG] budget-parity {\"estimated\":true,\"reservedTokens\":608,\"contextBudgetChars\":30336,\"droppedForBudget\":1}",
+      "console": {
+        "desktop": "raw",
+        "renderer": "raw"
+      }
     }
   ]
 }
