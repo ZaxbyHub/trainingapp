@@ -1,5 +1,16 @@
 import Dexie, { type Table } from 'dexie';
 import { getStorageDbNames } from '../lib/storage/profile';
+import { withExclusiveLock } from '../lib/storage/exclusive-lock';
+import {
+  ConversationDecryptError,
+  classifyRows,
+  encryptRow,
+  getOrCreateSecret,
+  keyStateMatrix,
+  prefixOfDbName,
+  probeKeyState,
+  type EncryptedRow,
+} from '../lib/storage/db-crypto';
 import type { Conversation } from './conversations';
 
 /**
@@ -14,6 +25,15 @@ import type { Conversation } from './conversations';
  * version 2 directly; no upgrade path is needed from a version-1 schema
  * because the version-1 name (`docqa_conversations`) was the LEGACY shared
  * database, which is adopted separately (db/conv-protocol.ts, R7-1).
+ *
+ * Version 3 (issue #367): bumps the schema stamp for PROFILE databases only
+ * — the LEGACY shared db (adoption SOURCE, known-plaintext) must never run
+ * the encryption ladder (plan PC-03: one ladder for every instance would
+ * upgrade the source out from under the adoption reader). The migration of
+ * pre-#367 plaintext rows to envelopes is NOT a Dexie `.upgrade()` callback
+ * (async WebCrypto inside a versionchange transaction auto-commits it —
+ * PC-06); it runs as the first conversation-lock critical section via
+ * migrationReady() below.
  */
 /**
  * `meta` rows: the clear `epoch` (number) and the legacy-adoption claim
@@ -26,22 +46,221 @@ export type ConversationMetaRow = {
   value: number | { target: string; phase: 'copying' | 'done'; epoch?: number };
 };
 
+/**
+ * Raw stored row shape (issue #367): encrypted envelopes; pre-migration
+ * plaintext Conversation rows are only ever observable on the LEGACY db and
+ * transiently in a profile db whose migration has not completed (the public
+ * gate prevents that window from being read).
+ */
+export type ConversationRow = Conversation | EncryptedRow;
+
+/** Origin-wide conversation serialization lock name (RC5-01): every
+ * migration-serialized path acquires it via withExclusiveLock — the legacy
+ * direct-call wrapper (conv-protocol withConversationWriteLock) must not
+ * carry multi-phase crypto read-merge-write sequences. */
+export const CONV_WRITE_LOCK = 'docqa-conv-write';
+
+/** The legacy SHARED conversations database name (pre-profile builds).
+ * Declared before the class: the constructor references it (a TDZ read
+ * would throw during the module-level `db` construction below). */
+export const LEGACY_CONVERSATIONS_DB_NAME = 'docqa_conversations';
+
 export class DocQADatabase extends Dexie {
-  conversations!: Table<Conversation, string>;
+  conversations!: Table<ConversationRow, string>;
   meta!: Table<ConversationMetaRow, string>;
 
   constructor(name?: string) {
     // The name parameter is a test seam: production derives it from the
     // active profile prefix; tests open isolated per-profile databases.
-    super(name ?? getStorageDbNames().conversations);
+    const dbName = name ?? getStorageDbNames().conversations;
+    super(dbName);
     this.version(2).stores({
       conversations: 'id, updatedAt, createdAt, title',
       meta: 'key',
     });
+    if (dbName !== LEGACY_CONVERSATIONS_DB_NAME) {
+      // Same stores; the version bump marks the at-rest-encryption schema
+      // stamp. The row migration runs post-open (see migrationReady).
+      this.version(3).stores({
+        conversations: 'id, updatedAt, createdAt, title',
+        meta: 'key',
+      });
+    }
   }
 }
 
 export const db = new DocQADatabase();
 
-/** The legacy SHARED conversations database name (pre-profile builds). */
-export const LEGACY_CONVERSATIONS_DB_NAME = 'docqa_conversations';
+// ==========================================================================
+// Issue #367: first-open row migration + matrix-gated encryption
+// ==========================================================================
+
+const EPOCH_META_KEY = 'epoch';
+
+/**
+ * The conversations db's monotonic epoch (clear protocol, #34): read via the
+ * meta store. Moved here from conv-protocol (#367 review) so migrateUnderLock
+ * can epoch-guard its write without an index->conv-protocol import cycle;
+ * conv-protocol re-exports it for its own callers.
+ */
+export async function readEpochOf(target: DocQADatabase): Promise<number> {
+  try {
+    // Fast guard: without IndexedDB (jsdom test environments) the epoch is
+    // unreadable — resolve 0 immediately instead of waking Dexie's open
+    // machinery (which can involve timers and would slow every gated call).
+    if (typeof indexedDB === 'undefined') return 0;
+    const row = await target.meta.get(EPOCH_META_KEY);
+    const value = row?.value;
+    return typeof value === 'number' ? value : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Per-database-name migration state (RC3-02/PC-05: never one global promise
+ * across profiles). Rejected entries are DELETED so a corrected key or a
+ * transient failure can be retried by a later call.
+ */
+const migrationStates = new Map<string, Promise<void>>();
+
+function openDbByName(name: string): DocQADatabase {
+  if (name === db.name) return db;
+  return new DocQADatabase(name);
+}
+
+/**
+ * Run the plaintext->envelope migration assuming the caller ALREADY holds
+ * the conversation write lock (RC5-01: never re-acquire the non-reentrant
+ * lock). Three-phase (read-tx / crypto / write-tx): no WebCrypto await ever
+ * runs inside an IndexedDB transaction; every waiter re-reads the stored
+ * rows AFTER acquiring the lock so a stale snapshot cannot overwrite a
+ * migrated row (RC3-02).
+ */
+export async function migrateUnderLock(target: DocQADatabase): Promise<void> {
+  // Phase 1: read every stored row AND the epoch (short read tx). The epoch
+  // is re-checked in the write tx below (review F1: a clear that lands
+  // between the phases must not be resurrected by the migration's writes).
+  let phase1Epoch = 0;
+  const rows = await target.transaction('r', [target.conversations, target.meta], async () => {
+    phase1Epoch = await readEpochOf(target);
+    return target.conversations.toArray();
+  });
+  const prefix = prefixOfDbName(target.name);
+  const data = classifyRows(rows);
+  const key = await probeKeyState(rows, prefix);
+  const decision = keyStateMatrix(data, key);
+  switch (decision) {
+    case 'PROCEED':
+    case 'EMPTY_PROCEED':
+      // Fully encrypted (usable key) or empty: nothing to migrate. An empty
+      // db does NOT mint here — the first write mints through the same
+      // matrix on demand.
+      return;
+    case 'MIGRATE_THEN_PROCEED':
+    case 'MINT_THEN_MIGRATE_THEN_PROCEED': {
+      // AC3 (issue #367): ANY stored plaintext row migrates on first open —
+      // not only MIXED stores (a PLAINTEXT_ONLY legacy upgrade is the normal
+      // rollout path and MUST encrypt here, not on some later write). Key:
+      // VALID authenticates already (probeKeyState); ABSENT mints now (the
+      // matrix's MINT row exists precisely because first-open migration of
+      // existing plaintext is the rollout path; C3 pins it).
+      const secret = await getOrCreateSecret(prefix);
+      const plaintextRows = (rows as Conversation[]).filter((row) => !('e' in row));
+      // Crypto outside any tx (PC-06).
+      const envelopes = await Promise.all(plaintextRows.map((row) => encryptRow(row, secret, prefix)));
+      // Phase 3: write back inside a short rw tx (serialized against every
+      // other conversation mutation by the held lock). The epoch recheck
+      // aborts the write when a clear landed between the phases — the
+      // migration throws (the gate's rejection clears the memo, so the next
+      // public operation re-migrates the post-clear state).
+      let superseded = false;
+      await target.transaction('rw', [target.conversations, target.meta], async () => {
+        const epoch = await readEpochOf(target);
+        if (epoch !== phase1Epoch) {
+          superseded = true;
+          return;
+        }
+        for (const envelope of envelopes) await target.conversations.put(envelope);
+      });
+      if (superseded) {
+        throw new ConversationDecryptError(
+          'first-open migration was superseded by a concurrent clear — the next open re-runs it',
+        );
+      }
+      return;
+    }
+    case 'FAIL_NO_KEY':
+      throw new ConversationDecryptError(
+        'encrypted conversations exist but the profile secret is unavailable — refusing to open for reads/writes (lost profile = lost data)',
+      );
+    case 'FAIL_WRONG_KEY':
+      throw new ConversationDecryptError(
+        'existing envelopes do not authenticate under the current profile secret — refusing to read or rewrite',
+      );
+    case 'FAIL_INVALID':
+      throw new ConversationDecryptError('unrecognized row shape in the conversations store — failing closed');
+  }
+}
+
+/**
+ * Public entry gate: await before ANY conversation-table touch (read or
+ * write). Runs the first-open migration under the origin-wide conversation
+ * lock; later callers hit the memoized settled promise (rejections are
+ * cleared for retry). Callers that will take CONV_WRITE_LOCK themselves for
+ * a mutation must await this BEFORE acquiring (no nested reacquisition of
+ * the non-reentrant lock — RC5-01).
+ */
+export function migrationReady(name: string = db.name): Promise<void> {
+  const existing = migrationStates.get(name);
+  if (existing !== undefined) return existing;
+  const run = withExclusiveLock(CONV_WRITE_LOCK, async () => {
+    await migrateUnderLock(openDbByName(name));
+  });
+  const tracked = run.then(
+    () => undefined,
+    (error: unknown) => {
+      // Drop the rejected entry so the next attempt re-probes (corrected key).
+      if (migrationStates.get(name) === tracked) migrationStates.delete(name);
+      throw error;
+    },
+  );
+  migrationStates.set(name, tracked);
+  return tracked;
+}
+
+/**
+ * Write-path key gate (plan matrix rows): encryption-requiring writes must
+ * NOT silently mint over an encrypted store. When the profile secret is
+ * absent and the store already holds envelopes, fail closed. (Cheap fast
+ * path: secret present => zero extra reads.)
+ */
+export async function requireKeyForWrite(target: DocQADatabase): Promise<void> {
+  const prefix = prefixOfDbName(target.name);
+  // NO fast path (review F2): secret PRESENCE is not authentication — a
+  // swapped/wrong secret must fail the write through a fresh matrix probe,
+  // otherwise a write under a wrong secret poisons the store with a row no
+  // future secret can decrypt. The gate reads the rows fresh each time
+  // (create/update/adoption frequency — not a per-keystroke path).
+  const rows = await target.transaction('r', target.conversations, () =>
+    target.conversations.toArray(),
+  );
+  const data = classifyRows(rows);
+  const key = await probeKeyState(rows, prefix);
+  const decision = keyStateMatrix(data, key);
+  if (
+    decision === 'FAIL_NO_KEY' ||
+    decision === 'FAIL_WRONG_KEY' ||
+    decision === 'FAIL_INVALID'
+  ) {
+    throw new ConversationDecryptError(
+      `write refused under key-state decision ${decision} for database ${target.name}`,
+    );
+  }
+  if (decision === 'MINT_THEN_MIGRATE_THEN_PROCEED') await getOrCreateSecret(prefix);
+}
+
+/** Test seam: forget memoized migration state (fresh gate per spec file). */
+export function __resetMigrationStatesForTests(): void {
+  migrationStates.clear();
+}

@@ -44,7 +44,19 @@ import {
   LEGACY_CONV_MIGRATION_DONE_KEY,
 } from '../lib/storage/persisted-keys';
 import { getProfilePrefix } from '../lib/storage/profile';
-import { db, DocQADatabase, LEGACY_CONVERSATIONS_DB_NAME } from './index';
+import { encryptRow, getOrCreateSecret, prefixOfDbName } from '../lib/storage/db-crypto';
+import {
+  db,
+  DocQADatabase,
+  LEGACY_CONVERSATIONS_DB_NAME,
+  migrationReady,
+  readEpochOf,
+  requireKeyForWrite,
+} from './index';
+import { withExclusiveLock } from '../lib/storage/exclusive-lock';
+
+/** The shared conv-write lock name (must equal index.ts's CONV_WRITE_LOCK). */
+const CONV_WRITE_LOCK_NAME = 'docqa-conv-write';
 
 // ============================================================================
 // Web Locks wrappers
@@ -82,21 +94,25 @@ export function hasWebLocks(): boolean {
 
 /**
  * Origin-wide write serialization (R4-3): every conversation mutation (and
- * the clear itself) runs inside this. Without Web Locks it degrades to a
- * direct call (single-tab semantics).
+ * the clear itself) runs inside this — through the shared exclusive-lock
+ * helper since #367 RC6-01 (Web-Locks preferred; the in-tab chain is the
+ * no-Web-Locks fallback, with the helper's 60 s acquisition bound).
  *
- * Deliberately divergent from the shared `exclusive-lock.ts` helper
- * (#275-C): that helper's no-Web-Locks fallback serializes work in an
- * in-tab promise chain, which is NOT this function's documented contract —
- * conv-write critical sections are synchronous-or-direct by design and
- * serializing them in-tab would change mutation ordering. This function
- * therefore keeps its direct-call degrade and does not route through the
- * helper.
+ * #367 RC6-01: routes through the shared `exclusive-lock.ts` helper — the
+ * no-Web-Locks fallback is the in-tab promise chain (previously this
+ * function degraded to a direct call; the approved plan supersedes that
+ * #275-C divergence so every migration-serialized path shares one
+ * serializer in both modes).
  */
 export function withConversationWriteLock<T>(fn: () => T | Promise<T>): Promise<T> {
-  const locks = locksManager();
-  if (locks === undefined) return Promise.resolve(fn());
-  return locks.request('docqa-conv-write', {}, () => fn());
+  // #367 RC6-01 (approved plan): NO migration-serialized path keeps the
+  // legacy direct-call degrade — every conv-write critical section runs
+  // through the shared serializer (Web-Locks preferred, genuine in-tab
+  // promise-chain fallback), so create/delete/clear/adoption/migration and
+  // update serialize identically with AND without Web Locks. This
+  // deliberately supersedes the pre-#367 #275-C divergence note (in-tab
+  // serialization is now the documented contract).
+  return withExclusiveLock(CONV_WRITE_LOCK_NAME, fn);
 }
 
 /** A held lock handle; release() is idempotent. */
@@ -207,19 +223,10 @@ export interface LegacyAdoptClaim {
 
 type DocQaDb = DocQADatabase;
 
-async function readEpochOf(target: DocQaDb): Promise<number> {
-  try {
-    // Fast guard: without IndexedDB (jsdom test environments) the epoch is
-    // unreadable — resolve 0 immediately instead of waking Dexie's open
-    // machinery (which can involve timers and would slow every gated call).
-    if (typeof indexedDB === 'undefined') return 0;
-    const row = await target.meta.get(EPOCH_META_KEY);
-    const value = row?.value;
-    return typeof value === 'number' ? value : 0;
-  } catch {
-    return 0;
-  }
-}
+// #367: readEpochOf moved to index.ts (next to the meta-table accessor it
+// reads, and to serve migrateUnderLock without an index->conv-protocol
+// import cycle); re-exported here for the public seam conversations.ts uses.
+export { readEpochOf };
 
 /** The active profile's conversations-db epoch (0 when unreadable/fresh). */
 export async function readConversationEpoch(): Promise<number> {
@@ -564,12 +571,26 @@ const LEGACY_ADOPT_PAGE = 500;
  * Idempotent by row id (bulkPut), so re-copying pages a
  * crashed run already wrote is safe. Returns the number of rows copied.
  */
-async function copyLegacyRowsIntoProfile(
+/**
+ * The copy itself, WITHOUT lock acquisition (review round 2 finding 1: the
+ * conv-write lock is NON-reentrant — the primary adoption's span already
+ * holds it, and a nested same-name request would queue behind itself
+ * forever). Callers either hold the lock (primary adoption) or take it here
+ * (re-adoption via the public wrapper above).
+ */
+async function copyLegacyRowsIntoProfileUnlocked(
   legacy: DocQaDb,
   profileDb: DocQaDb,
   boundEpoch: number,
 ): Promise<number> {
-  return withConversationWriteLock(async () => {
+  // #367: the target db post-migration is envelope-only (or empty) — the
+  // copied plaintext legacy rows are encrypted under the TARGET profile's
+  // key (prefixOfDbName, never the active profile's) with ONE secret minted
+  // for the whole copy. Crypto runs OUTSIDE every transaction (PC-06): each
+  // page is fully encrypted before its rw transaction opens.
+  const targetPrefix = prefixOfDbName(profileDb.name);
+  const secret = await getOrCreateSecret(targetPrefix);
+  return (async () => {
     let offset = 0;
     let copied = 0;
     for (;;) {
@@ -579,19 +600,22 @@ async function copyLegacyRowsIntoProfile(
         .limit(LEGACY_ADOPT_PAGE)
         .toArray();
       if (page.length === 0) break;
+      const envelopes = await Promise.all(
+        page.map((row) => encryptRow(row as { id: string; createdAt: number; updatedAt: number }, secret, targetPrefix)),
+      );
       await profileDb.transaction('rw', [profileDb.conversations, profileDb.meta], async () => {
         const now = await readEpochOf(profileDb);
         if (now !== boundEpoch) {
           // A clear moved the target db during the adoption: superseded.
           throw new AdoptRefusal('superseded');
         }
-        await profileDb.conversations.bulkPut(page);
+        await profileDb.conversations.bulkPut(envelopes);
       });
       offset += page.length;
       copied += page.length;
     }
     return copied;
-  });
+  })();
 }
 
 /**
@@ -608,14 +632,23 @@ async function deleteLegacyDbAfterReadopt(target: string): Promise<void> {
     const remaining = await legacy.conversations.count();
     if (remaining > 0) {
       const targetName = conversationsDbNameFor(target);
+      // #367: gate on the target's migration before re-copying (same plan-d
+      // sequencing as the primary adoption path).
+      await migrationReady(targetName);
       const profileDb = targetName === db.name ? db : openProfileDb(target);
       try {
-        // Reviewer round 2 F3: the re-adopt copy is epoch-bound too (a clear
-        // racing the re-adopt aborts it instead of resurrecting rows); the
-        // binding is read fresh here — the target legitimately holds rows of
-        // its own at this point, so emptiness is no signal at all.
-        const boundEpoch = await readEpochOf(profileDb);
-        await copyLegacyRowsIntoProfile(legacy, profileDb, boundEpoch);
+        // #367 review rounds 2-3: the re-adoption copy gates on a FRESH
+        // key-state matrix INSIDE the conversation lock (probe and copy are
+        // one serialized operation), then reads the epoch binding.
+        await withConversationWriteLock(async () => {
+          await requireKeyForWrite(profileDb);
+          // Reviewer round 2 F3: the re-adopt copy is epoch-bound too (a
+          // clear racing the re-adopt aborts it instead of resurrecting
+          // rows); the binding is read fresh here — the target legitimately
+          // holds rows of its own at this point, so emptiness is no signal.
+          const boundEpoch = await readEpochOf(profileDb);
+          return copyLegacyRowsIntoProfileUnlocked(legacy, profileDb, boundEpoch);
+        });
       } finally {
         if (profileDb !== db) profileDb.close();
       }
@@ -649,7 +682,7 @@ async function deleteLegacyDbAfterReadopt(target: string): Promise<void> {
  * Then: copy the legacy rows page-by-page into the profile db (PRR-121) under
  * the origin-wide write lock, EPOCH-BOUND to the claim (reviewer round 2 F3:
  * the mid-copy emptiness re-check is replaced by a per-page in-transaction
- * epoch check — see copyLegacyRowsIntoProfile), flip the claim to 'done',
+ * epoch check — see copyLegacyRowsIntoProfileUnlocked), flip the claim to 'done',
  * write the localStorage done-marker (fast path only), delete the legacy db.
  * The legacy db is deleted only after the done phase.
  */
@@ -663,14 +696,48 @@ export async function adoptLegacyConversations(target: string): Promise<AdoptRes
     return { outcome: 'already-done' };
   }
 
+  const targetDbName = conversationsDbNameFor(target);
+  // #367 (plan d): the target's first-open migration completes BEFORE the
+  // claim transaction and the copy — the copy encrypts under a key whose
+  // state the migration just established, and a claim can never be written
+  // for a target that cannot actually receive rows.
+  await migrationReady(targetDbName);
   const legacy = new DocQADatabase(LEGACY_CONVERSATIONS_DB_NAME);
   // Reviewer round 2 F-b (same class as PRR-103): resolve the target by
   // NAME — never the module-bound singleton's import-time binding.
-  const profileDb = conversationsDbNameFor(target) === db.name ? db : openProfileDb(target);
+  const profileDb = targetDbName === db.name ? db : openProfileDb(target);
+  // #367 (PC-06 family, executed probe — see the adoption spec): the claim
+  // transaction awaits profileDb reads inside its scope. If the first of
+  // those awaits triggers profileDb's OPEN (a v2->v3 upgrade on a fresh
+  // target), the macrotask gap lets the legacy IndexedDB transaction
+  // auto-commit (TransactionInactiveError) BEFORE the claim decides.
+  // Pre-opening both databases makes every in-tx read resolve within the
+  // same microtask chain, and the claim keeps its legacy-side atomicity.
+  await legacy.open();
+  await profileDb.open();
   try {
     // ONE rw transaction over BOTH legacy stores decides the claim (PRR-101)
     // and resolves to the epoch the copy is bound to.
-    const boundEpoch = await legacy.transaction(
+    // #367 (PC-06): the target-db reads (profileCount / epoch) happen BEFORE
+    // the claim tx — an await on ANOTHER database inside a transaction scope
+    // lets that transaction auto-commit during the foreign open/await gap
+    // (executed probe: TransactionInactiveError on a fresh target). The
+    // legacy-side atomicity is unchanged: the claim decision (claim row +
+    // legacy count + claim write) still runs in ONE transaction over both
+    // legacy stores; the profile-side guards keep their own serialization
+    // (the copy is still epoch-bound per page, so a clear that lands after
+    // these pre-reads supersedes the copy exactly as before).
+    // #367 review F4: the target-emptiness decision, the claim and the copy
+    // run under the SAME Web-Locks name as every conversation mutation, so a
+    // create cannot land between the count and the copy (locks present).
+    // Without Web Locks the degrade is the wrapper's documented direct call;
+    // the copy's per-page epoch gate plus the legacy-id/uuid collision
+    // residual stay disclosed in the PR body.
+    const copied = await withConversationWriteLock(async () => {
+      await requireKeyForWrite(profileDb); // fresh matrix gate (review F2)
+      const profileCount = await profileDb.conversations.count();
+      const profileEpoch = await readEpochOf(profileDb);
+      const boundEpoch = await legacy.transaction(
       'rw',
       [legacy.conversations, legacy.meta],
       async (): Promise<number> => {
@@ -694,28 +761,29 @@ export async function adoptLegacyConversations(target: string): Promise<AdoptRes
           });
           return rebound;
         }
-        // Fresh claim: the emptiness guards run INSIDE this transaction, so a
-        // racing adopter cannot pass them and write a claim of its own.
+        // Fresh claim: the emptiness guards — legacy emptiness INSIDE the tx
+        // (racing adopters cannot pass it and write a claim of their own);
+        // profile emptiness/epoch pre-read OUTSIDE (PC-06, re-verified
+        // page-by-page by the copy's epoch gate).
         const legacyCount = await legacy.conversations.count();
         if (legacyCount === 0) {
           throw new AdoptRefusal('nothing');
         }
-        const profileCount = await profileDb.conversations.count();
         if (profileCount > 0) {
           throw new AdoptRefusal('profile-not-empty');
         }
-        const epoch = await readEpochOf(profileDb);
         await legacy.meta.put({
           key: LEGACY_CLAIM_META_KEY,
-          value: { target, phase: 'copying', epoch },
+          value: { target, phase: 'copying', epoch: profileEpoch },
         });
-        return epoch;
+        return profileEpoch;
       },
     );
 
-    // Copy (PRR-106/PRR-121 + reviewer round 2 F3): under the write lock,
-    // page-by-page, every page gated on the claim-bound epoch.
-    const copied = await copyLegacyRowsIntoProfile(legacy, profileDb, boundEpoch);
+      // Copy (PRR-106/PRR-121 + reviewer round 2 F3): page-by-page, every
+      // page gated on the claim-bound epoch.
+      return await copyLegacyRowsIntoProfileUnlocked(legacy, profileDb, boundEpoch);
+    });
 
     // Flip the claim to done, then marker, then delete.
     await legacy.transaction('rw', legacy.meta, async () => {

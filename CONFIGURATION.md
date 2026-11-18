@@ -12,6 +12,7 @@ Comprehensive guide to configuring the Document Q&A Assistant, including environ
 4. [External model (OpenAI- and Anthropic-compatible endpoints)](#external-model-openai--and-anthropic-compatible-endpoints)
 5. [App Settings (desktop and browser app)](#app-settings-desktop-and-browser-app)
    - [Browser app: Knowledge Packs and course player](#browser-app-knowledge-packs-and-course-player)
+   - [Chat history encryption (browser app)](#chat-history-encryption-browser-app)
 6. [Diagnostics Logging](#diagnostics-logging)
 7. [LLM Backend Configuration](#llm-backend-configuration)
 8. [RAG Pipeline Configuration](#rag-pipeline-configuration)
@@ -591,13 +592,53 @@ diagnostics choice), and the browser app's installed Knowledge Packs and
 courses. It keeps your chat history (conversations, stored separately from the
 document library) and the internal bookkeeping keys (the profile id, the registered-profiles
 registry, the conversation-clear-protocol record, the legacy-adoption done marker, the migration
-marker and the re-index notice flag), then
+marker, the re-index notice flag and the chat-history encryption secret), then
 reloads the page. Orphaned namespaces from unregistered profiles are no longer touched by Clear
 Cache — that data is managed explicitly under Settings → Profile data (Adopt or Delete). The
 desktop app removes the same browser-side data from its app window (the
 browser-side document and index databases, downloaded browser-model files and saved settings);
 it also keeps chat history and does **not** touch documents or settings stored by the desktop
 backend — remove those documents from the Documents page.
+
+### Chat history encryption (browser app)
+
+The browser app stores chat history (each conversation's title and messages) in this browser
+profile's IndexedDB **encrypted at rest** (AES-GCM; each registered profile uses its own key).
+New history is encrypted as it is written; history that predates this feature is encrypted the
+first time the app opens it after the upgrade. The key secret for each profile is 32 random
+bytes kept in the browser profile's local storage (`doc-qa-profile-secret`), together with the
+other internal bookkeeping keys — Clear Cache keeps it, so history survives Clear Cache.
+Removing a profile under Settings → Profile data deletes that profile's history but leaves its
+former secret entry behind; the leftover is inert once the stores are gone (a fresh profile mints
+its own secret). Note deletion can be blocked while a connection is open — until a blocked
+deletion completes, the leftover secret still unlocks the stores that still exist.
+
+What this protects: the stored history against casual inspection of browser storage and against
+one registered profile reading another profile's history on a shared workstation. What it does
+not protect against: someone (or some software) with full access to the browser profile itself —
+the secret lives in the same browser profile as the encrypted history, so full-profile access
+defeats it. It also does not apply to the document library, its search indexes, Knowledge Packs,
+your saved settings, or anything stored by the desktop backend — those keep their existing
+storage.
+
+Performance note: deriving the per-profile key (PBKDF2, 210,000 iterations) happens once per
+profile per app session, and the first app start after the upgrade spends a short extra moment
+re-encrypting existing history once. Writes re-probe the stored history's key state before
+persisting, which reads the store and trial-decrypts its envelopes (proportional to history size
+per write); a search enumerates the store's keys up front (bodies stop at the match budget, and
+cancellation halts both phases). If a stored row ever fails authentication, writes are refused
+until the store is repaired — fail-closed by design rather than writing beside a corrupt row. Rolling back to an older release afterwards leaves the
+stored history unreadable to that older release (the rows are opaque to it); installing this
+release again restores the history unchanged.
+
+If the secret entry is lost or corrupted, the encrypted history cannot be
+recovered — this fails closed by design rather than falling back to plaintext. The design
+protects confidentiality of stored history; it does NOT provide tamper-evidence or anti-rollback:
+an older envelope restored into storage still authenticates, and history ordering can be replayed
+undetected.
+
+Also on boot, the app deletes the obsolete `doc-qa-settings` IndexedDB store, a leftover of a
+pre-profile settings design that no release reads anymore.
 
 ### Browser app: Knowledge Packs and course player
 

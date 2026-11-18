@@ -7,36 +7,33 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Conversation } from './conversations';
 
-const store = vi.hoisted(() => ({ rows: [] as Array<Record<string, unknown>>, reads: 0 }));
+const store = vi.hoisted(() => ({ rows: [] as Array<Record<string, unknown>>, reads: 0, visits: 0 }));
 
 /**
- * Lazy stand-in for Dexie's Collection: like a real IndexedDB cursor it reads
- * rows one at a time (counted in store.reads), applies `until` before reading a
- * row's match, then `filter`, and stops once `limit` rows were ACCEPTED, which
- * is Dexie's documented filter-then-limit order.
+ * In-memory stand-in for the Dexie table (issue #367 re-plan: the search is a
+ * PER-ROW cursor — primaryKeys newest-first, then one `get` per row, each get
+ * counted in store.reads). `list` keeps the offset/limit chain semantics.
+ * `migrationReady`/`requireKeyForWrite` are no-ops: this suite pins QUERY
+ * semantics over plaintext rows, not the crypto boundary (C1-C3 own that).
  */
-vi.mock('./index', () => {
+vi.mock('./index', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./index')>();
   type Row = Record<string, unknown>;
   interface Plan {
     source: () => Row[];
     offset: number;
     limit: number;
-    until?: (r: Row) => boolean;
-    filters: Array<(r: Row) => boolean>;
+    until?: (row: Row) => boolean;
   }
   const collection = (plan: Plan) => ({
     reverse: () => collection({ ...plan, source: () => [...plan.source()].reverse() }),
+    until: (pred: (row: Row) => boolean) => collection({ ...plan, until: pred }),
     offset: (n: number) => collection({ ...plan, offset: n }),
     limit: (n: number) => collection({ ...plan, limit: n }),
-    until: (fn: (r: Row) => boolean) => collection({ ...plan, until: fn }),
-    filter: (fn: (r: Row) => boolean) => collection({ ...plan, filters: [...plan.filters, fn] }),
     toArray: async () => {
       const out: Row[] = [];
       let skipped = 0;
       for (const row of plan.source()) {
-        if (plan.until && plan.until(row)) break;
-        store.reads += 1;
-        if (!plan.filters.every((f) => f(row))) continue;
         if (skipped < plan.offset) {
           skipped += 1;
           continue;
@@ -46,18 +43,35 @@ vi.mock('./index', () => {
       }
       return out;
     },
+    primaryKeys: async () => {
+      const out: Array<Row['id']> = [];
+      for (const row of plan.source()) {
+        store.visits += 1;
+        if (plan.until && plan.until(row)) break;
+        out.push(row['id']);
+      }
+      return out;
+    },
   });
   return {
+    ...actual,
+    migrationReady: async () => undefined,
+    requireKeyForWrite: async () => undefined,
     db: {
+      // prefixOfDbName(db.name) derives the crypto prefix from this name.
+      name: 'mock0001-doc-qa-conversations',
       conversations: {
         orderBy: (key: string) =>
           collection({
             source: () => [...store.rows].sort((a, b) => (a[key] as number) - (b[key] as number)),
             offset: 0,
             limit: Infinity,
-            filters: [],
           }),
         count: async () => store.rows.length,
+        get: async (key: unknown) => {
+          store.reads += 1;
+          return store.rows.find((row) => row['id'] === key) ?? undefined;
+        },
       },
     },
   };
@@ -95,6 +109,7 @@ function seed(n: number): void {
 beforeEach(() => {
   seed(120);
   store.reads = 0;
+  store.visits = 0;
 });
 
 describe('listConversations (offset paging)', () => {
@@ -148,19 +163,36 @@ describe('searchConversations (all conversations, not the loaded page)', () => {
   it('a broad query stops reading once it has limit + 1 matches (filter, then limit)', async () => {
     await searchConversations('conversation');
     expect(store.reads).toBe(CONVERSATION_SEARCH_LIMIT + 1);
+    // The key scan itself is a full upfront enumeration (PC-06 residual:
+    // bodies cannot be evaluated inside the cursor transaction).
+    expect(store.visits).toBe(120);
   });
 
   it('a no-match query reads the whole store, once', async () => {
     await searchConversations('zzz-nothing');
     expect(store.reads).toBe(120);
+    expect(store.visits).toBe(120);
   });
 
-  it('a superseded search stops early: the cursor halts once isCancelled() turns true', async () => {
+  it('a superseded search stops during the KEY SCAN: visits halt and zero bodies are read', async () => {
     let checks = 0;
-    // Cancellation lands after 20 rows (a newer keystroke started a new search).
+    // Cancellation lands after 20 scan visits (a newer keystroke started a
+    // new search). The scan halts at the first cancellation observation and
+    // no body is fetched afterwards (#367 review F3: scan-level cancellation).
     const result = await searchConversations('zzz-nothing', { isCancelled: () => ++checks > 20 });
-    expect(store.reads).toBe(20);
+    expect(store.visits).toBe(20);
+    expect(store.reads).toBe(0);
     expect(store.reads).toBeLessThan(store.rows.length);
+    expect(result).toEqual({ matches: [], truncated: false });
+  });
+
+  it('a superseded search stops during the BODY phase: gets halt at the cancellation', async () => {
+    // Cancellation lands once 20 bodies are fetched — the scan itself is
+    // never cancelled, so it completes (120 visits), then the body loop
+    // stops at the first check past the 20th get.
+    const result = await searchConversations('zzz-nothing', { isCancelled: () => store.reads >= 20 });
+    expect(store.reads).toBe(20);
+    expect(store.visits).toBe(120);
     expect(result).toEqual({ matches: [], truncated: false });
   });
 
