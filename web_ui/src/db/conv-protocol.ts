@@ -44,7 +44,13 @@ import {
   LEGACY_CONV_MIGRATION_DONE_KEY,
 } from '../lib/storage/persisted-keys';
 import { getProfilePrefix } from '../lib/storage/profile';
-import { db, DocQADatabase, LEGACY_CONVERSATIONS_DB_NAME } from './index';
+import { encryptRow, getOrCreateSecret, prefixOfDbName } from '../lib/storage/db-crypto';
+import {
+  db,
+  DocQADatabase,
+  LEGACY_CONVERSATIONS_DB_NAME,
+  migrationReady,
+} from './index';
 
 // ============================================================================
 // Web Locks wrappers
@@ -207,7 +213,7 @@ export interface LegacyAdoptClaim {
 
 type DocQaDb = DocQADatabase;
 
-async function readEpochOf(target: DocQaDb): Promise<number> {
+export async function readEpochOf(target: DocQaDb): Promise<number> {
   try {
     // Fast guard: without IndexedDB (jsdom test environments) the epoch is
     // unreadable — resolve 0 immediately instead of waking Dexie's open
@@ -569,6 +575,13 @@ async function copyLegacyRowsIntoProfile(
   profileDb: DocQaDb,
   boundEpoch: number,
 ): Promise<number> {
+  // #367: the target db post-migration is envelope-only (or empty) — the
+  // copied plaintext legacy rows are encrypted under the TARGET profile's
+  // key (prefixOfDbName, never the active profile's) with ONE secret minted
+  // for the whole copy. Crypto runs OUTSIDE every transaction (PC-06): each
+  // page is fully encrypted before its rw transaction opens.
+  const targetPrefix = prefixOfDbName(profileDb.name);
+  const secret = await getOrCreateSecret(targetPrefix);
   return withConversationWriteLock(async () => {
     let offset = 0;
     let copied = 0;
@@ -579,13 +592,16 @@ async function copyLegacyRowsIntoProfile(
         .limit(LEGACY_ADOPT_PAGE)
         .toArray();
       if (page.length === 0) break;
+      const envelopes = await Promise.all(
+        page.map((row) => encryptRow(row as { id: string; createdAt: number; updatedAt: number }, secret, targetPrefix)),
+      );
       await profileDb.transaction('rw', [profileDb.conversations, profileDb.meta], async () => {
         const now = await readEpochOf(profileDb);
         if (now !== boundEpoch) {
           // A clear moved the target db during the adoption: superseded.
           throw new AdoptRefusal('superseded');
         }
-        await profileDb.conversations.bulkPut(page);
+        await profileDb.conversations.bulkPut(envelopes);
       });
       offset += page.length;
       copied += page.length;
@@ -608,6 +624,9 @@ async function deleteLegacyDbAfterReadopt(target: string): Promise<void> {
     const remaining = await legacy.conversations.count();
     if (remaining > 0) {
       const targetName = conversationsDbNameFor(target);
+      // #367: gate on the target's migration before re-copying (same plan-d
+      // sequencing as the primary adoption path).
+      await migrationReady(targetName);
       const profileDb = targetName === db.name ? db : openProfileDb(target);
       try {
         // Reviewer round 2 F3: the re-adopt copy is epoch-bound too (a clear
@@ -663,13 +682,39 @@ export async function adoptLegacyConversations(target: string): Promise<AdoptRes
     return { outcome: 'already-done' };
   }
 
+  const targetDbName = conversationsDbNameFor(target);
+  // #367 (plan d): the target's first-open migration completes BEFORE the
+  // claim transaction and the copy — the copy encrypts under a key whose
+  // state the migration just established, and a claim can never be written
+  // for a target that cannot actually receive rows.
+  await migrationReady(targetDbName);
   const legacy = new DocQADatabase(LEGACY_CONVERSATIONS_DB_NAME);
   // Reviewer round 2 F-b (same class as PRR-103): resolve the target by
   // NAME — never the module-bound singleton's import-time binding.
-  const profileDb = conversationsDbNameFor(target) === db.name ? db : openProfileDb(target);
+  const profileDb = targetDbName === db.name ? db : openProfileDb(target);
+  // #367 (PC-06 family, executed probe — see the adoption spec): the claim
+  // transaction awaits profileDb reads inside its scope. If the first of
+  // those awaits triggers profileDb's OPEN (a v2->v3 upgrade on a fresh
+  // target), the macrotask gap lets the legacy IndexedDB transaction
+  // auto-commit (TransactionInactiveError) BEFORE the claim decides.
+  // Pre-opening both databases makes every in-tx read resolve within the
+  // same microtask chain, and the claim keeps its legacy-side atomicity.
+  await legacy.open();
+  await profileDb.open();
   try {
     // ONE rw transaction over BOTH legacy stores decides the claim (PRR-101)
     // and resolves to the epoch the copy is bound to.
+    // #367 (PC-06): the target-db reads (profileCount / epoch) happen BEFORE
+    // the claim tx — an await on ANOTHER database inside a transaction scope
+    // lets that transaction auto-commit during the foreign open/await gap
+    // (executed probe: TransactionInactiveError on a fresh target). The
+    // legacy-side atomicity is unchanged: the claim decision (claim row +
+    // legacy count + claim write) still runs in ONE transaction over both
+    // legacy stores; the profile-side guards keep their own serialization
+    // (the copy is still epoch-bound per page, so a clear that lands after
+    // these pre-reads supersedes the copy exactly as before).
+    const profileCount = await profileDb.conversations.count();
+    const profileEpoch = await readEpochOf(profileDb);
     const boundEpoch = await legacy.transaction(
       'rw',
       [legacy.conversations, legacy.meta],
@@ -694,22 +739,22 @@ export async function adoptLegacyConversations(target: string): Promise<AdoptRes
           });
           return rebound;
         }
-        // Fresh claim: the emptiness guards run INSIDE this transaction, so a
-        // racing adopter cannot pass them and write a claim of its own.
+        // Fresh claim: the emptiness guards — legacy emptiness INSIDE the tx
+        // (racing adopters cannot pass it and write a claim of their own);
+        // profile emptiness/epoch pre-read OUTSIDE (PC-06, re-verified
+        // page-by-page by the copy's epoch gate).
         const legacyCount = await legacy.conversations.count();
         if (legacyCount === 0) {
           throw new AdoptRefusal('nothing');
         }
-        const profileCount = await profileDb.conversations.count();
         if (profileCount > 0) {
           throw new AdoptRefusal('profile-not-empty');
         }
-        const epoch = await readEpochOf(profileDb);
         await legacy.meta.put({
           key: LEGACY_CLAIM_META_KEY,
-          value: { target, phase: 'copying', epoch },
+          value: { target, phase: 'copying', epoch: profileEpoch },
         });
-        return epoch;
+        return profileEpoch;
       },
     );
 

@@ -10,33 +10,28 @@ import type { Conversation } from './conversations';
 const store = vi.hoisted(() => ({ rows: [] as Array<Record<string, unknown>>, reads: 0 }));
 
 /**
- * Lazy stand-in for Dexie's Collection: like a real IndexedDB cursor it reads
- * rows one at a time (counted in store.reads), applies `until` before reading a
- * row's match, then `filter`, and stops once `limit` rows were ACCEPTED, which
- * is Dexie's documented filter-then-limit order.
+ * In-memory stand-in for the Dexie table (issue #367 re-plan: the search is a
+ * PER-ROW cursor — primaryKeys newest-first, then one `get` per row, each get
+ * counted in store.reads). `list` keeps the offset/limit chain semantics.
+ * `migrationReady`/`requireKeyForWrite` are no-ops: this suite pins QUERY
+ * semantics over plaintext rows, not the crypto boundary (C1-C3 own that).
  */
-vi.mock('./index', () => {
+vi.mock('./index', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./index')>();
   type Row = Record<string, unknown>;
   interface Plan {
     source: () => Row[];
     offset: number;
     limit: number;
-    until?: (r: Row) => boolean;
-    filters: Array<(r: Row) => boolean>;
   }
   const collection = (plan: Plan) => ({
     reverse: () => collection({ ...plan, source: () => [...plan.source()].reverse() }),
     offset: (n: number) => collection({ ...plan, offset: n }),
     limit: (n: number) => collection({ ...plan, limit: n }),
-    until: (fn: (r: Row) => boolean) => collection({ ...plan, until: fn }),
-    filter: (fn: (r: Row) => boolean) => collection({ ...plan, filters: [...plan.filters, fn] }),
     toArray: async () => {
       const out: Row[] = [];
       let skipped = 0;
       for (const row of plan.source()) {
-        if (plan.until && plan.until(row)) break;
-        store.reads += 1;
-        if (!plan.filters.every((f) => f(row))) continue;
         if (skipped < plan.offset) {
           skipped += 1;
           continue;
@@ -46,18 +41,27 @@ vi.mock('./index', () => {
       }
       return out;
     },
+    primaryKeys: async () => plan.source().map((row) => row['id']),
   });
   return {
+    ...actual,
+    migrationReady: async () => undefined,
+    requireKeyForWrite: async () => undefined,
     db: {
+      // prefixOfDbName(db.name) derives the crypto prefix from this name.
+      name: 'mock0001-doc-qa-conversations',
       conversations: {
         orderBy: (key: string) =>
           collection({
             source: () => [...store.rows].sort((a, b) => (a[key] as number) - (b[key] as number)),
             offset: 0,
             limit: Infinity,
-            filters: [],
           }),
         count: async () => store.rows.length,
+        get: async (key: unknown) => {
+          store.reads += 1;
+          return store.rows.find((row) => row['id'] === key) ?? undefined;
+        },
       },
     },
   };

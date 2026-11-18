@@ -21,11 +21,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../../db/index', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../db/index')>();
   const fake = await import('../../test/fake-dexie');
-  return {
-    ...actual,
-    DocQADatabase: fake.FakeDocQADatabase,
-    db: new fake.FakeDocQADatabase(),
-  };
+  // Issue #367: only migrationReady is re-routed (its real closure targets
+  // the real Dexie singleton); migrateUnderLock / requireKeyForWrite and the
+  // key-state matrix stay REAL over the fake tables.
+  const { fakeDbIndexModule } = await import('../../test/fake-db-gates');
+  return fakeDbIndexModule(actual, new fake.FakeDocQADatabase());
 });
 
 import { clearAllConversationsInDb, readClearRecord, readConversationEpoch } from '../../db/conv-protocol';

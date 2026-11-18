@@ -9,11 +9,22 @@ import App from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { maybeRegisterServiceWorker } from './lib/offline/sw-registration';
 import { startBrowserTraining } from './lib/packs/browser-training';
+import { deleteLegacySettingsStore } from './lib/storage/legacy-settings-delete';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
   throw new Error('Root element not found');
 }
+
+// Issue #367 (WI6 residual / plan RC4-02 contract): the ABANDONED legacy
+// settings database is deleted at EVERY boot — unconditionally, no
+// done-marker (an absent store makes deleteDatabase a cheap no-op, and
+// every-boot execution also covers a database a rolled-back build
+// recreated). Failure is non-fatal and retries next boot. Runs in BOTH
+// runtimes (browser + Electron renderer — same bundle, same origin store),
+// after the profile prefix exists (db/index module init) and never blocks
+// mounting.
+deleteLegacySettingsStore();
 
 // Lumen component gallery (dev only): `vite` + `/?gallery`. `import.meta.env.DEV`
 // is the literal `false` in production builds, so the dynamic import below is

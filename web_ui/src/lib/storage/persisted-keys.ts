@@ -85,6 +85,16 @@ export const SESSION_SETTING_KEYS: readonly string[] = [EXTERNAL_API_KEY_KEY, EX
 
 /** Stable profile id that names this browser profile's storage namespace. */
 export const PROFILE_KEY = 'doc-qa-profile-id';
+/**
+ * Per-profile at-rest encryption secret map (issue #367): JSON object
+ * {<profilePrefix>: base64(32 random bytes)} driving the PBKDF2->AES-GCM
+ * key for the conversations store. FROZEN CUSTODY CONTRACT (spec C2): this
+ * key must live OUTSIDE IndexedDB (any store) — a copied database without
+ * the profile must be inert. Internal bookkeeping; Clear Cache keeps it
+ * (the store itself is emptied at the same time and the secret remains the
+ * only handle on any not-yet-purged rows).
+ */
+export const PROFILE_SECRET_KEY = 'doc-qa-profile-secret';
 /** Marker that the one-time orphan-namespace migration ran. */
 export const MIGRATION_KEY = 'doc-qa-profile-migrated';
 /** One-time "re-add your documents" notice flag (vector index version change). */
@@ -122,6 +132,7 @@ export const LEGACY_CONV_MIGRATION_DONE_KEY = 'docqa_conv_migration_done';
  */
 export const INTERNAL_KEYS: readonly string[] = [
   PROFILE_KEY,
+  PROFILE_SECRET_KEY,
   MIGRATION_KEY,
   REINDEX_FLAG_KEY,
   REGISTERED_PROFILES_KEY,

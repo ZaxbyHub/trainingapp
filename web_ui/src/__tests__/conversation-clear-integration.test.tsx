@@ -19,11 +19,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../db/index', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../db/index')>();
   const fake = await import('../test/fake-dexie');
-  return {
-    ...actual,
-    DocQADatabase: fake.FakeDocQADatabase,
-    db: new fake.FakeDocQADatabase(),
-  };
+  // Issue #367: only migrationReady is re-routed (its real closure targets
+  // the real Dexie singleton); migrateUnderLock / requireKeyForWrite and the
+  // key-state matrix stay REAL over the fake tables.
+  const { fakeDbIndexModule } = await import('../test/fake-db-gates');
+  return fakeDbIndexModule(actual, new fake.FakeDocQADatabase());
 });
 
 import { db } from '../db/index';
@@ -283,10 +283,11 @@ describe('epoch gate (cross-tab stale writes)', () => {
 
   it('PRR-105: a genuine CRUD write failure rejects instead of resolving false', async () => {
     await seed(1);
+    // Issue #367 amendment: updateConversation is now three-phase and its
+    // write op is `put(envelope)` (the legacy `update` call is gone), so the
+    // genuine-failure spy targets the write the implementation performs.
     const conversationsTable = db.conversations;
-    const spy = vi.spyOn(conversationsTable, 'update').mockImplementation(() => {
-      throw new Error('quota exceeded');
-    });
+    const spy = vi.spyOn(conversationsTable, 'put').mockRejectedValue(new Error('quota exceeded'));
     try {
       await expect(
         updateConversation('conv-000', { title: 'x' }, { stateEpoch: await readConversationEpoch() }),

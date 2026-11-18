@@ -161,6 +161,16 @@ export class FakeDocQADatabase {
   }
 
   /**
+   * Dexie-parity no-op (issue #367): conv-protocol pre-opens the legacy and
+   * profile connections before the adoption claim (TransactionInactiveError
+   * fix); the fake connection is always "open". (close() already exists
+   * below — shared-state no-op.)
+   */
+  async open(): Promise<this> {
+    return this;
+  }
+
+  /**
    * The default (no-argument) instance resolves the CURRENT profile's
    * conversations name on every access — the mock singleton is created at
    * import time, before tests pin the profile prefix.

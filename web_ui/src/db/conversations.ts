@@ -1,12 +1,21 @@
-import { db } from './index';
-import { readConversationEpoch, withConversationWriteLock, withEpochGate } from './conv-protocol';
+import { db, CONV_WRITE_LOCK, migrationReady, requireKeyForWrite } from './index';
+import { readConversationEpoch, readEpochOf, withConversationWriteLock, withEpochGate } from './conv-protocol';
 import { CONVERSATION_QUERY_MAX_LENGTH } from './conversation-query';
+import {
+  ConversationConflictError,
+  decryptRowOrPlain,
+  encryptRow,
+  prefixOfDbName,
+} from '../lib/storage/db-crypto';
+import { withExclusiveLock } from '../lib/storage/exclusive-lock';
 
 export { CONVERSATION_QUERY_MAX_LENGTH };
 import type { ChatMessage } from '../types/chat';
 
 /**
- * Conversation entity stored in IndexedDB via Dexie.
+ * Conversation entity stored in IndexedDB via Dexie. AT REST (issue #367):
+ * every row is persisted as an encrypted envelope (db-crypto) — the object
+ * shape below is the DECRYPTED form the public API returns.
  */
 export interface Conversation {
   id: string;
@@ -31,13 +40,20 @@ export interface ConversationMutationOptions {
   stateEpoch?: number;
 }
 
+/** The active profile db's prefix (key derivation is per-database, #367). */
+function activePrefix(): string {
+  return prefixOfDbName(db.name);
+}
+
 /**
  * Run `mutate` under the origin-wide write lock with the epoch gate applied.
- * Returns true when the mutation was applied, false ONLY when the gate
- * aborted a stale write (the caller discards its stale state instead of
- * surfacing an error). A GENUINE write failure propagates (PRR-105, PR #264
- * review): the old catch-all returned false for real errors too, flattening
- * base's user-visible save/delete/rename failure banners into silent no-ops.
+ * Used for the SINGLE-TRANSACTION mutations (create/delete): atomic at the
+ * IndexedDB level with no read-merge-write window, so the legacy wrapper's
+ * documented direct-call degrade stays correct for them (RC5-01 scopes the
+ * multi-phase update to withExclusiveLock below). Returns true when the
+ * mutation was applied, false ONLY when the gate aborted a stale write (the
+ * caller discards its stale state instead of surfacing an error). A GENUINE
+ * write failure propagates (PRR-105, PR #264 review).
  */
 async function gatedMutation(
   options: ConversationMutationOptions | undefined,
@@ -48,7 +64,7 @@ async function gatedMutation(
 }
 
 /**
- * Create a new conversation.
+ * Create a new conversation (persisted encrypted, issue #367).
  *
  * @param conversation - Full conversation object to persist
  * @param options - Epoch gating (see ConversationMutationOptions)
@@ -59,7 +75,12 @@ export async function createConversation(
   options?: ConversationMutationOptions,
 ): Promise<boolean> {
   try {
-    return await gatedMutation(options, () => db.conversations.add(conversation));
+    await migrationReady(db.name);
+    await requireKeyForWrite(db);
+    // Crypto OUTSIDE the transaction (PC-06): the envelope is fully built
+    // before the epoch-gated add opens.
+    const envelope = await encryptRow(conversation, undefined, activePrefix());
+    return await gatedMutation(options, () => db.conversations.add(envelope));
   } catch (error) {
     console.error('[conversations] Failed to create conversation:', error);
     throw error;
@@ -67,22 +88,52 @@ export async function createConversation(
 }
 
 /**
- * Retrieve a single conversation by ID.
+ * Retrieve a single conversation by ID (transparently decrypted, #367).
+ * Fail-closed: a missing profile secret or a failed authentication THROWS
+ * (ConversationDecryptError) — there is no plaintext fallback.
  *
  * @param id - Conversation identifier
  * @returns The conversation if found, otherwise undefined
  */
 export async function getConversation(id: string): Promise<Conversation | undefined> {
   try {
-    return await db.conversations.get(id);
+    await migrationReady(db.name);
+    const row = await db.conversations.get(id);
+    if (row === undefined) return undefined;
+    return await decryptRowOrPlain<Conversation>(row, activePrefix());
   } catch (error) {
     console.error('[conversations] Failed to get conversation:', error);
     throw error;
   }
 }
 
+/** Bound on the optimistic three-phase retries (RC4-01); exhaustion surfaces
+ *  a typed conflict instead of silently dropping either change. */
+const UPDATE_MAX_ATTEMPTS = 5;
+
 /**
- * Partially update an existing conversation.
+ * Storage-identity byte compare for the phase-3 optimistic guard: two stored
+ * rows are "the same" iff their serialized bytes match (envelopes compare by
+ * iv+ct+index fields — no decryption; plaintext legacy rows compare whole).
+ * Deterministic key order: both shapes are produced by this module's own
+ * writers with stable key insertion order.
+ */
+function sameStoredRow(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * Partially update an existing conversation (issue #367 three-phase path).
+ *
+ * The envelope turns every update into read-merge-write, so the WHOLE
+ * sequence runs inside withExclusiveLock(CONV_WRITE_LOCK) — Web-Locks
+ * preferred with a real in-tab chain (RC4-01: the legacy direct-call
+ * degrade would let a same-tab rename and message-append lose one update).
+ * Phases: (1) tx{epoch check + read current row}, (2) decrypt/merge/encrypt
+ * OUTSIDE any transaction, (3) tx{epoch recheck + envelope byte-compare +
+ * write}; a guard mismatch restarts from phase 1 with a FRESH read/decrypt
+ * (bounded; exhaustion throws ConversationConflictError). The epoch recheck
+ * retains withEpochGate's exact-equality stale-write semantics.
  *
  * @param id - Conversation identifier
  * @param changes - Fields to merge into the existing record
@@ -95,7 +146,62 @@ export async function updateConversation(
   options?: ConversationMutationOptions
 ): Promise<boolean> {
   try {
-    return await gatedMutation(options, () => db.conversations.update(id, changes));
+    await migrationReady(db.name);
+    await requireKeyForWrite(db);
+    const prefix = activePrefix();
+    const stateEpoch = options?.stateEpoch ?? (await readConversationEpoch());
+    return await withExclusiveLock(CONV_WRITE_LOCK, async () => {
+      for (let attempt = 0; attempt < UPDATE_MAX_ATTEMPTS; attempt += 1) {
+        // Phase 1: epoch-gated read of the current stored row.
+        let snapshot: unknown;
+        let phase1Applied = false;
+        await db.transaction('rw', [db.conversations, db.meta], async () => {
+          const current = await readEpochOf(db);
+          if (current !== stateEpoch) return;
+          snapshot = await db.conversations.get(id);
+          phase1Applied = true;
+        });
+        if (!phase1Applied) return false; // stale epoch: gate aborts the write
+        if (snapshot === undefined) {
+          // Base semantics: Dexie's partial update of a missing id no-ops
+          // and the mutation still counts as applied (no row to merge into).
+          return true;
+        }
+
+        // Phase 2: decrypt/merge/encrypt OUTSIDE every transaction (PC-06 —
+        // a WebCrypto await inside the write tx would auto-commit it). The
+        // envelope is fully built here; phase 3 only byte-compares and puts.
+        const currentConv = await decryptRowOrPlain<Conversation>(snapshot, prefix);
+        const merged: Conversation = {
+          ...currentConv,
+          ...changes,
+          // The primary key cannot change; the envelope binds it via AAD.
+          id,
+        };
+        const envelope = await encryptRow(merged, undefined, prefix);
+
+        // Phase 3: tx{epoch recheck + optimistic byte-compare + write}. No
+        // async crypto inside this scope — every statement is IDB work.
+        let conflict = false;
+        let written = false;
+        await db.transaction('rw', [db.conversations, db.meta], async () => {
+          const current = await readEpochOf(db);
+          if (current !== stateEpoch) return; // stale: gate aborts (false)
+          const nowStored = await db.conversations.get(id);
+          if (!sameStoredRow(nowStored, snapshot)) {
+            // RC4-01: another writer committed between phase 1 and here.
+            conflict = true;
+            return;
+          }
+          await db.conversations.put(envelope);
+          written = true;
+        });
+        if (conflict) continue; // fresh phase-1 read on the next attempt
+        if (!written) return false; // stale epoch aborted in phase 3
+        return true;
+      }
+      throw new ConversationConflictError(id);
+    });
   } catch (error) {
     console.error('[conversations] Failed to update conversation:', error);
     throw error;
@@ -103,7 +209,8 @@ export async function updateConversation(
 }
 
 /**
- * Delete a conversation permanently.
+ * Delete a conversation permanently. Deletes need no key (plan matrix:
+ * destructive paths serialize but never decrypt/mint).
  *
  * @param id - Conversation identifier
  * @param options - Epoch gating (see ConversationMutationOptions)
@@ -114,6 +221,7 @@ export async function deleteConversation(
   options?: ConversationMutationOptions
 ): Promise<boolean> {
   try {
+    await migrationReady(db.name);
     return await gatedMutation(options, () => db.conversations.delete(id));
   } catch (error) {
     console.error('[conversations] Failed to delete conversation:', error);
@@ -122,7 +230,8 @@ export async function deleteConversation(
 }
 
 /**
- * List conversations in descending order by updatedAt with pagination.
+ * List conversations in descending order by updatedAt with pagination
+ * (transparently decrypted, #367).
  *
  * The first argument is an ITEM offset, which is what the only caller
  * (useConversations: initial page at 0, "Load more" at the number already
@@ -138,12 +247,15 @@ export async function listConversations(
   pageSize: number = 50
 ): Promise<Conversation[]> {
   try {
-    return await db.conversations
+    await migrationReady(db.name);
+    const rows = await db.conversations
       .orderBy('updatedAt')
       .reverse()
       .offset(offset)
       .limit(pageSize)
       .toArray();
+    const prefix = activePrefix();
+    return await Promise.all(rows.map((row) => decryptRowOrPlain<Conversation>(row, prefix)));
   } catch (error) {
     console.error('[conversations] Failed to list conversations:', error);
     throw error;
@@ -151,12 +263,15 @@ export async function listConversations(
 }
 
 /**
- * Total count of stored conversations.
+ * Total count of stored conversations. Counting needs NO key (plan matrix:
+ * the count rides the plaintext index fields), which is exactly what the
+ * frozen C2 wrong-key leg asserts (the ciphertext row stays countable).
  *
  * @returns Total number of conversations
  */
 export async function countConversations(): Promise<number> {
   try {
+    await migrationReady(db.name);
     return await db.conversations.count();
   } catch (error) {
     console.error('[conversations] Failed to count conversations:', error);
@@ -224,23 +339,25 @@ export interface ConversationSearchOptions {
   /** Maximum matches to return (default CONVERSATION_SEARCH_LIMIT). */
   limit?: number;
   /**
-   * Checked once per stored conversation as the cursor walks (Dexie `until`,
-   * which sees each record after it has been read and deserialised): once it
-   * returns true the cursor stops, so a search superseded by a newer keystroke
-   * reads at most one more conversation instead of the rest of the store.
+   * Checked once PER ROW before that row is read+decrypted (the per-row
+   * cursor of the #367 re-plan; the old Dexie `until` callback ran at the
+   * same boundary): once true the scan stops, so a search superseded by a
+   * newer keystroke reads nothing further. A cancelled search resolves with
+   * whatever it had found; callers discard it.
    */
   isCancelled?: () => boolean;
 }
 
 /**
  * Search ALL stored conversations, not just a loaded page (Lumen phase 3,
- * sidebar search). Walks the updatedAt index newest-first in IndexedDB and
- * stops after `limit + 1` matches or on cancellation, so the newest `limit`
- * matches are returned and `truncated` says whether more exist. Conversations
- * live only in this renderer's IndexedDB in both the browser and the Electron
+ * sidebar search). #367 re-plan (RC4/PC2-08): PER-ROW cursor iteration over
+ * the updatedAt-descending key order — every visited row is read
+ * individually and decrypted (typed decrypt failures PROPAGATE, never skip)
+ * — stopping at `limit + 1` MATCHES or store exhaustion, preserving the old
+ * filter-then-limit visit contract on encrypted rows. Conversations live
+ * only in this renderer's IndexedDB in both the browser and the Electron
  * app (the desktop backend stores documents, not chat history), so this one
- * query serves both. A cancelled search resolves with whatever it had found;
- * callers discard it.
+ * query serves both.
  */
 export async function searchConversations(
   query: string,
@@ -250,13 +367,28 @@ export async function searchConversations(
   const needle = normalizeConversationQuery(query);
   if (needle === '') return { matches: [], truncated: false };
   try {
-    let collection = db.conversations.orderBy('updatedAt').reverse();
-    if (isCancelled) collection = collection.until(() => isCancelled());
-    const found = await collection
-      .filter((c) => conversationMatches(c, needle))
-      .limit(limit + 1)
-      .toArray();
-    return { matches: found.slice(0, limit), truncated: found.length > limit };
+    await migrationReady(db.name);
+    const prefix = activePrefix();
+    // Key-only scan: the updatedAt-descending primary keys (cheap, plaintext
+    // index fields). Row BODIES are fetched one at a time below so the
+    // visit/decrypt/stop accounting stays exactly the old cursor's.
+    const keys = await db.conversations.orderBy('updatedAt').reverse().primaryKeys();
+    const matches: Conversation[] = [];
+    let truncated = false;
+    for (const key of keys) {
+      if (isCancelled?.() === true) break;
+      const row = await db.conversations.get(key);
+      if (row === undefined) continue; // deleted mid-scan
+      const conversation = await decryptRowOrPlain<Conversation>(row, prefix);
+      if (conversationMatches(conversation, needle)) {
+        matches.push(conversation);
+        if (matches.length > limit) {
+          truncated = true;
+          break;
+        }
+      }
+    }
+    return { matches: matches.slice(0, limit), truncated };
   } catch (error) {
     console.error('[conversations] Failed to search conversations:', error);
     throw error;
