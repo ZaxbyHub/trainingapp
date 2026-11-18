@@ -299,6 +299,19 @@ export async function encryptRow<T extends EnvelopeFields>(
 ): Promise<EncryptedRow> {
   const resolvedPrefix = requirePrefix(prefix);
   const resolvedSecret = secret ?? (await getOrCreateSecret(resolvedPrefix));
+  // Secret-stability re-check (PR #371 review F-A1): when THIS call acquired
+  // the secret itself, re-read the custody map right before encrypting — a
+  // concurrent tab's overwrite (no-Web-Locks deployments) must surface as a
+  // visible refused write instead of persisting rows encrypted under a
+  // secret that no longer exists in the map (silently undecryptable).
+  if (secret === undefined) {
+    const current = readSecretMap()[resolvedPrefix];
+    if (current !== resolvedSecret) {
+      throw new ConversationDecryptError(
+        'profile secret changed while it was being acquired — refusing to encrypt (the retried write will use the stored secret)',
+      );
+    }
+  }
   const key = await deriveKey(resolvedPrefix, resolvedSecret);
   const iv = new Uint8Array(12);
   crypto.getRandomValues(iv);

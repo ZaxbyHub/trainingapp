@@ -455,6 +455,47 @@ describe('RC4-01 lock-stack battery (#367)', () => {
     expect(rows, 're-adopt copy must be refused under the swapped secret').toHaveLength(1);
   });
 
+  it('T13: encrypt refuses when the custody secret changes during acquisition (F-A1, no silent orphan)', async () => {
+    localStorage.setItem(PROFILE_KEY, 'lockm13t');
+    const { migrationReady, __resetMigrationStatesForTests } = await freshModules();
+    __resetMigrationStatesForTests();
+    await migrationReady(dbNameFor('lockm13t'));
+    const { PROFILE_SECRET_KEY: PSK } = await import('../../db/../lib/storage/persisted-keys');
+    const { createConversation } = await import('../../db/conversations');
+    const secretA = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64');
+    const secretB = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64');
+    localStorage.setItem(PSK, JSON.stringify({ lockm13t: secretA }));
+    const origGet = Storage.prototype.getItem;
+    let custodyReads = 0;
+    const reads: string[] = [];
+    const getSpy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: unknown, key: string) {
+      const value = origGet.call(this, key);
+      if (key === PSK) {
+        custodyReads += 1;
+        reads.push(`#${custodyReads}:${String(value).length}`);
+        if (custodyReads === 3) {
+          localStorage.setItem(PSK, JSON.stringify({ lockm13t: secretB }));
+          reads.push('SWAPPED-AFTER-3');
+        }
+      }
+      return value;
+    });
+    let outcome = 'resolved';
+    try {
+      const res = await createConversation(plainRow('k13', 'stable secret') as never);
+      outcome = `resolved ${res}`;
+    } catch (e) {
+      outcome = `REJECTED ${(e as Error).message.slice(0, 48)}`;
+    } finally {
+      getSpy.mockRestore();
+    }
+    console.log('T13-TRACE:', JSON.stringify({ reads, outcome }));
+    const { DocQADatabase: TargetDb } = await import('../../db/index');
+    const target = new TargetDb('lockm13t-doc-qa-conversations');
+    expect(await target.conversations.toArray()).toHaveLength(0);
+    expect(await createConversation(plainRow('k13', 'stable secret') as never)).toBe(true);
+  });
+
 describe('gate-level key-state matrix (#367 review F5a): requireKeyForWrite drives the REAL gate', () => {
   it('G1 EMPTY+ABSENT resolves without minting; G2 PLAINTEXT+ABSENT mints and resolves', async () => {
     localStorage.setItem(PROFILE_KEY, 'gatet1');
