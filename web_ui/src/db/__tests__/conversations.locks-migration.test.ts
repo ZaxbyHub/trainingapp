@@ -354,7 +354,7 @@ describe('RC4-01 lock-stack battery (#367)', () => {
     const row = await target.conversations.get('leg-1');
     expect(row, 'copied envelope readable via the target db').toBeDefined();
     const { decryptRowOrPlain } = await import('../../lib/storage/db-crypto');
-    const conv = await decryptRowOrPlain(row, 'lockm10t');
+    const conv = (await decryptRowOrPlain(row, 'lockm10t')) as { title: string };
     expect(conv.title).toBe('Legacy one');
   });
 
