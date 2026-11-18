@@ -80,7 +80,15 @@ export async function createConversation(
     // Crypto OUTSIDE the transaction (PC-06): the envelope is fully built
     // before the epoch-gated add opens.
     const envelope = await encryptRow(conversation, undefined, activePrefix());
-    return await gatedMutation(options, () => db.conversations.add(envelope));
+    // Gate INSIDE the lock (review round 2 finding 3): the probe and the
+    // write are one serialized operation when Web Locks exist. Deletes stay
+    // keyless (matrix: destructive paths never probe), so create inlines the
+    // gated mutation instead of the shared keyless helper.
+    const stateEpoch = options?.stateEpoch ?? (await readConversationEpoch());
+    return withConversationWriteLock(async () => {
+      await requireKeyForWrite(db);
+      return withEpochGate(stateEpoch, () => db.conversations.add(envelope));
+    });
   } catch (error) {
     console.error('[conversations] Failed to create conversation:', error);
     throw error;
@@ -147,10 +155,12 @@ export async function updateConversation(
 ): Promise<boolean> {
   try {
     await migrationReady(db.name);
-    await requireKeyForWrite(db);
     const prefix = activePrefix();
     const stateEpoch = options?.stateEpoch ?? (await readConversationEpoch());
     return await withExclusiveLock(CONV_WRITE_LOCK, async () => {
+      // Gate INSIDE the lock (review round 2 finding 3): a fresh matrix
+      // probe immediately governs this write's retry loop.
+      await requireKeyForWrite(db);
       for (let attempt = 0; attempt < UPDATE_MAX_ATTEMPTS; attempt += 1) {
         // Phase 1: epoch-gated read of the current stored row.
         let snapshot: unknown;

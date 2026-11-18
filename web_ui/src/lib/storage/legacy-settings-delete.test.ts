@@ -106,6 +106,33 @@ describe('legacy doc-qa-settings boot delete (#367 RC4-02)', () => {
     expect(await waitGone()).toBe(true); // no store created, nothing thrown
   });
 
+  it('an ASYNC delete error is non-fatal: the onerror path never throws synchronously (boot-delete)', async () => {
+    await seedLegacyStore();
+    const factory = indexedDB as unknown as {
+      deleteDatabase: (name: string) => IDBOpenDBRequest;
+    };
+    const orig = factory.deleteDatabase;
+    // A request whose onerror fires ASYNC (the real handler shape).
+    factory.deleteDatabase = () => {
+      const req = {
+        onerror: null as unknown,
+        onblocked: null as unknown,
+        onsuccess: null as unknown,
+      } as unknown as IDBOpenDBRequest;
+      setTimeout(() => {
+        (req.onerror as unknown as ((e: unknown) => void) | null)?.(new Event('error'));
+      }, 0);
+      return req;
+    };
+    try {
+      expect(deleteLegacySettingsStore().requested).toBe(true);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(true).toBe(true); // no synchronous or unhandled throw surfaced
+    } finally {
+      factory.deleteDatabase = orig;
+    }
+  });
+
   it('an indexedDB-less environment reports unavailable and never throws (boot-delete)', () => {
     vi.stubGlobal('indexedDB', undefined);
     expect(deleteLegacySettingsStore()).toEqual({ requested: false, outcome: 'unavailable' });

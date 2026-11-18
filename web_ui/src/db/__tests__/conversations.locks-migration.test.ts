@@ -47,6 +47,7 @@ function plainRow(id: string, title: string): Record<string, unknown> {
 async function freshModules(): Promise<{
   db: import('../../db/index').DocQADatabase;
   migrationReady: (name?: string) => Promise<void>;
+  requireKeyForWrite: (target: import('../../db/index').DocQADatabase) => Promise<void>;
   __resetMigrationStatesForTests: () => void;
   DocQADatabase: typeof import('../../db/index').DocQADatabase;
 }> {
@@ -302,6 +303,54 @@ describe('RC4-01 lock-stack battery (#367)', () => {
     const { getConversation } = await import('../../db/conversations');
     expect(await getConversation('m1')).toBeUndefined();
   });
+  it('T10: adoption completes under Web Locks PRESENT (nested conv-write deadlock pin)', async () => {
+    localStorage.setItem(PROFILE_KEY, 'lockm10t');
+    const chains = new Map<string, Promise<unknown>>();
+    Object.defineProperty(navigator, 'locks', {
+      configurable: true,
+      value: {
+        request: (name: string, _opts: unknown, cb: () => Promise<unknown>): Promise<unknown> => {
+          const prev = chains.get(name) ?? Promise.resolve();
+          const next = prev.then(cb, cb);
+          chains.set(name, next.catch(() => undefined));
+          return next;
+        },
+      },
+    });
+    const { adoptLegacyConversations } = await import('../../db/conv-protocol');
+    // Seed the legacy shared db (native v2 schema, one plaintext row).
+    await new Promise<void>((resolve, reject) => {
+      const req = indexedDB.open('docqa_conversations', 2);
+      req.onupgradeneeded = () => {
+        const conn = req.result;
+        const store = conn.createObjectStore('conversations', { keyPath: 'id' });
+        store.createIndex('updatedAt', 'updatedAt', { unique: false });
+        store.createIndex('createdAt', 'createdAt', { unique: false });
+        store.createIndex('title', 'title', { unique: false });
+        conn.createObjectStore('meta', { keyPath: 'key' });
+      };
+      req.onsuccess = () => {
+        const conn = req.result;
+        const tx = conn.transaction('conversations', 'readwrite');
+        tx.objectStore('conversations').put({
+          id: 'leg-1', title: 'Legacy one',
+          messages: [{ id: 'leg-1-u1', role: 'user', content: 'legacy q', timestamp: 1 }],
+          createdAt: 1, updatedAt: 1, mode: 'server', modelUsed: 'legacy',
+        });
+        tx.oncomplete = () => { conn.close(); resolve(); };
+        tx.onerror = () => reject(tx.error);
+      };
+      req.onerror = () => reject(req.error);
+    });
+    const result = await adoptLegacyConversations('lockm10t');
+    expect(result.outcome).toBe('adopted');
+    const rows = await rawRowsOf('lockm10t-doc-qa-conversations');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!['v']).toBe(1);
+    const { getConversation } = await import('../../db/conversations');
+    expect((await getConversation('leg-1'))?.title).toBe('Legacy one');
+  });
+
 describe('gate-level key-state matrix (#367 review F5a): requireKeyForWrite drives the REAL gate', () => {
   it('G1 EMPTY+ABSENT resolves without minting; G2 PLAINTEXT+ABSENT mints and resolves', async () => {
     localStorage.setItem(PROFILE_KEY, 'gatet1');

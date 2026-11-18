@@ -112,9 +112,10 @@ test('a genuine v2 plaintext store upgrades, migrates to ciphertext at rest, and
   // plaintext rows via raw IndexedDB at document start.
   await page.addInitScript(async () => {
     localStorage.setItem('doc-qa-profile-id', 'atrestv2');
+    if (localStorage.getItem('e2e-atrest-seeded') === '1') return;
     const DB = 'atrestv2-doc-qa-conversations';
-    const seed = (resolve, reject) => {
-      const req = indexedDB.open(DB, 2);
+    const seed = (resolve: () => void, reject: (e: unknown) => void) => {
+      const req = indexedDB.open(DB, 20);
       req.onupgradeneeded = () => {
         const conn = req.result;
         if (!conn.objectStoreNames.contains('conversations')) {
@@ -158,7 +159,8 @@ test('a genuine v2 plaintext store upgrades, migrates to ciphertext at rest, and
       };
       req.onerror = () => reject(req.error);
     };
-    await new Promise(seed);
+    await new Promise<void>(seed);
+    localStorage.setItem('e2e-atrest-seeded', '1');
   });
 
   // The app boots against the EXISTING v2 database: schema upgrade to the
@@ -171,8 +173,8 @@ test('a genuine v2 plaintext store upgrades, migrates to ciphertext at rest, and
   await expect(page.getByRole('button', { name: 'AtRestE2E Title Charlie', exact: false })).toBeVisible({ timeout: 30_000 });
 
   // (2) RAW storage holds ciphertext envelopes - no plaintext at rest.
-  const stored = await page.evaluate(async () => {
-    const db = await new Promise((res, rej) => {
+  const stored = (await page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((res, rej) => {
       const r = indexedDB.open('atrestv2-doc-qa-conversations');
       r.onsuccess = () => res(r.result);
       r.onerror = () => rej(r.error);
@@ -185,7 +187,7 @@ test('a genuine v2 plaintext store upgrades, migrates to ciphertext at rest, and
     });
     db.close();
     return rows;
-  });
+  })) as Array<Record<string, unknown>>;
   expect(stored).toHaveLength(2);
   const rawJson = JSON.stringify(stored);
   for (const marker of ['AtRestE2E Title Alfa', 'AtRestE2E message bravo', 'AtRestE2E Title Charlie', 'AtRestE2E message delta']) {

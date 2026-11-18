@@ -281,7 +281,7 @@ describe('inner/outer identity (#367 review F5): re-wrapped divergent envelopes 
     // the inner/outer identity check can catch it.
     const forged = await encryptWithAadForTests(
       plain,
-      { id: conv.id, createdAt: conv.createdAt, updatedAt: conv.updatedAt + 5 },
+      { id: conv.id as string, createdAt: conv.createdAt as number, updatedAt: (conv.updatedAt as number) + 5 },
       secret,
       PREFIX,
     );
@@ -295,7 +295,7 @@ describe('inner/outer identity (#367 review F5): re-wrapped divergent envelopes 
     const secret = await getOrCreateSecret(PREFIX);
     const forged = await encryptWithAadForTests(
       JSON.stringify(conv),
-      { id: 'ident-2-forged', createdAt: conv.createdAt, updatedAt: conv.updatedAt },
+      { id: 'ident-2-forged', createdAt: conv.createdAt as number, updatedAt: conv.updatedAt as number },
       secret,
       PREFIX,
     );

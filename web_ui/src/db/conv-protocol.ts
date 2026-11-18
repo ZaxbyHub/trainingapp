@@ -568,6 +568,25 @@ async function copyLegacyRowsIntoProfile(
   profileDb: DocQaDb,
   boundEpoch: number,
 ): Promise<number> {
+  // Public copy entry: takes the conversation write lock itself (review R2:
+  // the re-adoption caller runs OUTSIDE the primary adoption's span).
+  return withConversationWriteLock(() =>
+    copyLegacyRowsIntoProfileUnlocked(legacy, profileDb, boundEpoch),
+  );
+}
+
+/**
+ * The copy itself, WITHOUT lock acquisition (review round 2 finding 1: the
+ * conv-write lock is NON-reentrant — the primary adoption's span already
+ * holds it, and a nested same-name request would queue behind itself
+ * forever). Callers either hold the lock (primary adoption) or take it here
+ * (re-adoption via the public wrapper above).
+ */
+async function copyLegacyRowsIntoProfileUnlocked(
+  legacy: DocQaDb,
+  profileDb: DocQaDb,
+  boundEpoch: number,
+): Promise<number> {
   // #367: the target db post-migration is envelope-only (or empty) — the
   // copied plaintext legacy rows are encrypted under the TARGET profile's
   // key (prefixOfDbName, never the active profile's) with ONE secret minted
@@ -575,7 +594,7 @@ async function copyLegacyRowsIntoProfile(
   // page is fully encrypted before its rw transaction opens.
   const targetPrefix = prefixOfDbName(profileDb.name);
   const secret = await getOrCreateSecret(targetPrefix);
-  return withConversationWriteLock(async () => {
+  return (async () => {
     let offset = 0;
     let copied = 0;
     for (;;) {
@@ -600,7 +619,7 @@ async function copyLegacyRowsIntoProfile(
       copied += page.length;
     }
     return copied;
-  });
+  })();
 }
 
 /**
@@ -622,6 +641,11 @@ async function deleteLegacyDbAfterReadopt(target: string): Promise<void> {
       await migrationReady(targetName);
       const profileDb = targetName === db.name ? db : openProfileDb(target);
       try {
+        // #367 review round 2 finding 3: the re-adoption copy gates on a
+        // FRESH key-state matrix too — a secret replaced after the memoized
+        // migration must refuse the re-copy instead of writing envelopes
+        // under a wrong key.
+        await requireKeyForWrite(profileDb);
         // Reviewer round 2 F3: the re-adopt copy is epoch-bound too (a clear
         // racing the re-adopt aborts it instead of resurrecting rows); the
         // binding is read fresh here — the target legitimately holds rows of
@@ -761,7 +785,7 @@ export async function adoptLegacyConversations(target: string): Promise<AdoptRes
 
       // Copy (PRR-106/PRR-121 + reviewer round 2 F3): page-by-page, every
       // page gated on the claim-bound epoch.
-      return await copyLegacyRowsIntoProfile(legacy, profileDb, boundEpoch);
+      return await copyLegacyRowsIntoProfileUnlocked(legacy, profileDb, boundEpoch);
     });
 
     // Flip the claim to done, then marker, then delete.
