@@ -266,4 +266,88 @@ describe('RC4-01 lock-stack battery (#367)', () => {
     other = await rawRowsOf(OTHER_DB);
     expect(other[0]!['v']).toBe(1);
   });
+
+  it('T9: search composes until+primaryKeys over REAL Dexie and returns decrypted matches newest-first', async () => {
+    localStorage.setItem(PROFILE_KEY, 'lockmat9');
+    const { db, migrationReady, __resetMigrationStatesForTests } = await freshModules();
+    __resetMigrationStatesForTests();
+    await migrationReady(db.name);
+    const { createConversation, searchConversations } = await import('../../db/conversations');
+    // Deliberately unsorted seeding: updatedAt 1,3,2 — the index orders.
+    await createConversation(plainRow('s1', 'Alpha needle') as never);
+    await createConversation({ ...plainRow('s2', 'Beta needle'), updatedAt: 3 } as never);
+    await createConversation({ ...plainRow('s3', 'Gamma needle'), updatedAt: 2 } as never);
+    const { matches } = await searchConversations('needle');
+    expect(matches.map((c) => c.id)).toEqual(['s2', 's3', 's1']); // updatedAt 3,2,1
+  });
+});
+
+  it('T8: a clear landing mid-migration is not resurrected (epoch-guarded write)', async () => {
+    localStorage.setItem(PROFILE_KEY, 'lockm8t');
+    const { db, migrationReady, __resetMigrationStatesForTests } = await freshModules();
+    __resetMigrationStatesForTests();
+    await db.conversations.bulkPut([plainRow('m1', 'one') as never, plainRow('m2', 'two') as never]);
+    const { clearAllConversationsInDb } = await import('../../db/conv-protocol');
+    const cryptoMod = await import('../../lib/storage/db-crypto');
+    const encSpy = vi.spyOn(cryptoMod, 'encryptRow').mockImplementation(async (conv, secret, prefix) => {
+      // The clear lands AFTER the phase-1 read tx closed (crypto phase),
+      // BEFORE the write tx (review F1).
+      encSpy.mockRestore();
+      await clearAllConversationsInDb('lockm8t');
+      return cryptoMod.encryptRow(conv, secret, prefix);
+    });
+    await expect(migrationReady(db.name)).rejects.toThrow(/superseded/);
+    await migrationReady(db.name); // retry: post-clear store -> EMPTY_PROCEED
+    expect(await rawRowsOf(db.name)).toHaveLength(0);
+    const { getConversation } = await import('../../db/conversations');
+    expect(await getConversation('m1')).toBeUndefined();
+  });
+describe('gate-level key-state matrix (#367 review F5a): requireKeyForWrite drives the REAL gate', () => {
+  it('G1 EMPTY+ABSENT resolves without minting; G2 PLAINTEXT+ABSENT mints and resolves', async () => {
+    localStorage.setItem(PROFILE_KEY, 'gatet1');
+    const { DocQADatabase, requireKeyForWrite, __resetMigrationStatesForTests } = await freshModules();
+    __resetMigrationStatesForTests();
+    const d = new DocQADatabase('gatet1-doc-qa-conversations');
+    await requireKeyForWrite(d); // G1
+    const { PROFILE_SECRET_KEY } = await import('../../lib/storage/persisted-keys');
+    expect(localStorage.getItem(PROFILE_SECRET_KEY)).toBeNull();
+    await d.conversations.bulkPut([plainRow('g-row', 'plain') as never]);
+    await requireKeyForWrite(d); // G2
+    expect(localStorage.getItem(PROFILE_SECRET_KEY)).not.toBeNull();
+  });
+
+  it('G3 ENVELOPE+ABSENT refuses (no-key); ENVELOPE+WRONG refuses (wrong-key)', async () => {
+    localStorage.setItem(PROFILE_KEY, 'gatet3');
+    const { DocQADatabase, requireKeyForWrite, __resetMigrationStatesForTests } = await freshModules();
+    __resetMigrationStatesForTests();
+    const d = new DocQADatabase('gatet3-doc-qa-conversations');
+    const { encryptRow, getOrCreateSecret, ConversationDecryptError } = await import('../../lib/storage/db-crypto');
+    const real = await getOrCreateSecret('gatet3');
+    const wrong = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64');
+    await d.conversations.bulkPut([await encryptRow(plainRow('g3', 'x') as never, real, 'gatet3')]);
+    localStorage.removeItem(PROFILE_SECRET_KEY);
+    await expect(requireKeyForWrite(d)).rejects.toThrow(ConversationDecryptError);
+    localStorage.setItem(PROFILE_SECRET_KEY, JSON.stringify({ gatet3: wrong }));
+    await expect(requireKeyForWrite(d)).rejects.toThrow(/FAIL_WRONG_KEY/);
+  });
+
+  it('G4 MIXED+ABSENT refuses; MIXED+VALID resolves; INVALID refuses', async () => {
+    localStorage.setItem(PROFILE_KEY, 'gatet4');
+    const { DocQADatabase, requireKeyForWrite, __resetMigrationStatesForTests } = await freshModules();
+    __resetMigrationStatesForTests();
+    const d = new DocQADatabase('gatet4-doc-qa-conversations');
+    const { encryptRow, getOrCreateSecret, ConversationDecryptError } = await import('../../lib/storage/db-crypto');
+    const secret = await getOrCreateSecret('gatet4');
+    await d.conversations.bulkPut([
+      await encryptRow(plainRow('g4-e', 'env') as never, secret, 'gatet4'),
+      plainRow('g4-p', 'plain') as never,
+    ]);
+    localStorage.removeItem(PROFILE_SECRET_KEY);
+    await expect(requireKeyForWrite(d)).rejects.toThrow(/FAIL_NO_KEY/); // MIXED+ABSENT
+    const { PROFILE_SECRET_KEY: PSK } = await import('../../lib/storage/persisted-keys');
+    localStorage.setItem(PSK, JSON.stringify({ gatet4: secret }));
+    await requireKeyForWrite(d); // secret restored -> MIXED+VALID resolves
+    await d.conversations.bulkPut([{ id: 'bad', v: 9, e: { iv: 'AA', ct: 'BB' }, createdAt: 1, updatedAt: 1 } as never]);
+    await expect(requireKeyForWrite(d)).rejects.toThrow(/FAIL_INVALID/);
+  });
 });

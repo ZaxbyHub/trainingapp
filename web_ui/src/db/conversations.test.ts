@@ -7,7 +7,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Conversation } from './conversations';
 
-const store = vi.hoisted(() => ({ rows: [] as Array<Record<string, unknown>>, reads: 0 }));
+const store = vi.hoisted(() => ({ rows: [] as Array<Record<string, unknown>>, reads: 0, visits: 0 }));
 
 /**
  * In-memory stand-in for the Dexie table (issue #367 re-plan: the search is a
@@ -23,9 +23,11 @@ vi.mock('./index', async (importOriginal) => {
     source: () => Row[];
     offset: number;
     limit: number;
+    until?: (row: Row) => boolean;
   }
   const collection = (plan: Plan) => ({
     reverse: () => collection({ ...plan, source: () => [...plan.source()].reverse() }),
+    until: (pred: (row: Row) => boolean) => collection({ ...plan, until: pred }),
     offset: (n: number) => collection({ ...plan, offset: n }),
     limit: (n: number) => collection({ ...plan, limit: n }),
     toArray: async () => {
@@ -41,7 +43,15 @@ vi.mock('./index', async (importOriginal) => {
       }
       return out;
     },
-    primaryKeys: async () => plan.source().map((row) => row['id']),
+    primaryKeys: async () => {
+      const out: Array<Row['id']> = [];
+      for (const row of plan.source()) {
+        store.visits += 1;
+        if (plan.until && plan.until(row)) break;
+        out.push(row['id']);
+      }
+      return out;
+    },
   });
   return {
     ...actual,
@@ -99,6 +109,7 @@ function seed(n: number): void {
 beforeEach(() => {
   seed(120);
   store.reads = 0;
+  store.visits = 0;
 });
 
 describe('listConversations (offset paging)', () => {
@@ -152,19 +163,36 @@ describe('searchConversations (all conversations, not the loaded page)', () => {
   it('a broad query stops reading once it has limit + 1 matches (filter, then limit)', async () => {
     await searchConversations('conversation');
     expect(store.reads).toBe(CONVERSATION_SEARCH_LIMIT + 1);
+    // The key scan itself is a full upfront enumeration (PC-06 residual:
+    // bodies cannot be evaluated inside the cursor transaction).
+    expect(store.visits).toBe(120);
   });
 
   it('a no-match query reads the whole store, once', async () => {
     await searchConversations('zzz-nothing');
     expect(store.reads).toBe(120);
+    expect(store.visits).toBe(120);
   });
 
-  it('a superseded search stops early: the cursor halts once isCancelled() turns true', async () => {
+  it('a superseded search stops during the KEY SCAN: visits halt and zero bodies are read', async () => {
     let checks = 0;
-    // Cancellation lands after 20 rows (a newer keystroke started a new search).
+    // Cancellation lands after 20 scan visits (a newer keystroke started a
+    // new search). The scan halts at the first cancellation observation and
+    // no body is fetched afterwards (#367 review F3: scan-level cancellation).
     const result = await searchConversations('zzz-nothing', { isCancelled: () => ++checks > 20 });
-    expect(store.reads).toBe(20);
+    expect(store.visits).toBe(20);
+    expect(store.reads).toBe(0);
     expect(store.reads).toBeLessThan(store.rows.length);
+    expect(result).toEqual({ matches: [], truncated: false });
+  });
+
+  it('a superseded search stops during the BODY phase: gets halt at the cancellation', async () => {
+    // Cancellation lands once 20 bodies are fetched — the scan itself is
+    // never cancelled, so it completes (120 visits), then the body loop
+    // stops at the first check past the 20th get.
+    const result = await searchConversations('zzz-nothing', { isCancelled: () => store.reads >= 20 });
+    expect(store.reads).toBe(20);
+    expect(store.visits).toBe(120);
     expect(result).toEqual({ matches: [], truncated: false });
   });
 

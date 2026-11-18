@@ -198,6 +198,36 @@ async function deriveKey(prefix: string, secretB64: string): Promise<CryptoKey> 
 }
 
 /**
+ * TEST SEAM (#367 review F5): encrypt raw plaintext bound to a DELIBERATELY
+ * divergent AAD tuple — the only way to construct the inner/outer mismatch
+ * an attacker-with-the-key could produce. Used by the matrix spec to pin the
+ * decryptRow identity check. Not used by production code paths.
+ */
+export async function encryptWithAadForTests(
+  plain: string,
+  aadTuple: { id: string; createdAt: number; updatedAt: number },
+  secret: string,
+  prefix: string,
+): Promise<EncryptedRow> {
+  const key = await deriveKey(prefix, secret);
+  const iv = new Uint8Array(12);
+  crypto.getRandomValues(iv);
+  const rowShape: EncryptedRow = {
+    id: aadTuple.id,
+    createdAt: aadTuple.createdAt,
+    updatedAt: aadTuple.updatedAt,
+    v: ENVELOPE_VERSION,
+    e: { iv: '', ct: '' },
+  };
+  const ct = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv, additionalData: aadBytes(rowShape) },
+    key,
+    new TextEncoder().encode(plain),
+  );
+  return { ...rowShape, e: { iv: toBase64(iv), ct: toBase64(new Uint8Array(ct)) } };
+}
+
+/**
  * Canonical AAD (RC3-07): UTF-8 bytes of the JSON tuple
  * [v, id, createdAt, updatedAt]. Frozen encoding — no delimiter
  * ambiguity; collision-focused test lives in the implementation spec.
@@ -316,9 +346,15 @@ export async function decryptRow<T>(row: unknown, prefix?: string): Promise<T> {
     throw new ConversationDecryptError('authentication failed (wrong key, tampered ct, or foreign envelope)');
   }
   const parsed = JSON.parse(new TextDecoder().decode(plain)) as T & EnvelopeFields;
-  // Inner/outer consistency: the plaintext id must agree with the indexed id.
+  // Inner/outer consistency (#367 review F5): the plaintext identity fields
+  // must agree with the authenticated (AAD-bound) envelope fields — a
+  // re-wrapped envelope whose inner row disagrees with its outer index
+  // fields fails closed instead of decrypting to a mis-attributed row.
   if (parsed.id !== row.id) {
     throw new ConversationDecryptError('inner id does not match the envelope id');
+  }
+  if (parsed.createdAt !== row.createdAt || parsed.updatedAt !== row.updatedAt) {
+    throw new ConversationDecryptError('inner timestamps do not match the envelope fields');
   }
   return parsed;
 }

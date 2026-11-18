@@ -105,62 +105,111 @@ async function rawRows(page: Page): Promise<Array<Record<string, unknown>>> {
   }, `${prefix}-doc-qa-conversations`);
 }
 
-test('plaintext rows migrate to ciphertext at rest; reads render and persist across reload', async ({ page }) => {
-  // Boot: profile id minted, Dexie schema created (empty store).
+test('a genuine v2 plaintext store upgrades, migrates to ciphertext at rest, and persists', async ({ page, context }) => {
+  // Plan item 8 fixture (review F6): the plaintext v2 database EXISTS at the
+  // native version the pre-encryption build declared (2) BEFORE the app ever
+  // opens it - pinned profile id in the init script, seeded v2 schema and
+  // plaintext rows via raw IndexedDB at document start.
+  await page.addInitScript(async () => {
+    localStorage.setItem('doc-qa-profile-id', 'atrestv2');
+    const DB = 'atrestv2-doc-qa-conversations';
+    const seed = (resolve, reject) => {
+      const req = indexedDB.open(DB, 2);
+      req.onupgradeneeded = () => {
+        const conn = req.result;
+        if (!conn.objectStoreNames.contains('conversations')) {
+          const store = conn.createObjectStore('conversations', { keyPath: 'id' });
+          store.createIndex('updatedAt', 'updatedAt', { unique: false });
+          store.createIndex('createdAt', 'createdAt', { unique: false });
+          store.createIndex('title', 'title', { unique: false });
+        }
+        if (!conn.objectStoreNames.contains('meta')) {
+          conn.createObjectStore('meta', { keyPath: 'key' });
+        }
+      };
+      req.onsuccess = () => {
+        const conn = req.result;
+        const tx = conn.transaction('conversations', 'readwrite');
+        const store = tx.objectStore('conversations');
+        for (const row of [
+          {
+            id: 'v2-a',
+            title: 'AtRestE2E Title Alfa',
+            messages: [{ id: 'v2-a-u1', role: 'user', content: 'AtRestE2E message bravo', timestamp: 1 }],
+            createdAt: 1,
+            updatedAt: 1,
+            mode: 'wllama',
+            modelUsed: 'legacy',
+          },
+          {
+            id: 'v2-b',
+            title: 'AtRestE2E Title Charlie',
+            messages: [{ id: 'v2-b-u1', role: 'user', content: 'AtRestE2E message delta', timestamp: 2 }],
+            createdAt: 2,
+            updatedAt: 2,
+            mode: 'wllama',
+            modelUsed: 'legacy',
+          },
+        ]) {
+          store.put(row);
+        }
+        tx.oncomplete = () => { conn.close(); resolve(); };
+        tx.onerror = () => reject(tx.error);
+      };
+      req.onerror = () => reject(req.error);
+    };
+    await new Promise(seed);
+  });
+
+  // The app boots against the EXISTING v2 database: schema upgrade to the
+  // current ladder + first-open migration on the first public operation.
   await page.goto('/');
   await waitReady(page);
 
-  // (0) The upgrade fixture: plaintext rows on disk.
-  await seedPlaintextRows(page, [
-    { id: 'atrest-a', title: TITLE_A, content: MSG_A },
-    { id: 'atrest-b', title: TITLE_B, content: MSG_B },
-  ]);
-  const seeded = await rawRows(page);
-  expect(seeded).toHaveLength(2);
-  const seededJson = JSON.stringify(seeded);
-  for (const marker of MARKERS) {
-    expect(seededJson, `fixture sanity: ${marker} plaintext on disk`).toContain(marker);
-  }
+  // (1) Public reads render the migrated originals.
+  await expect(page.getByRole('button', { name: 'AtRestE2E Title Alfa', exact: false })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('button', { name: 'AtRestE2E Title Charlie', exact: false })).toBeVisible({ timeout: 30_000 });
 
-  // (1) Reload: the first public operation migrates the store (C3 wording:
-  // raw rows ciphertext after the first public operation returns).
-  await page.reload();
-  await waitReady(page);
-
-  // (2) Public reads render the originals.
-  await expect(page.getByRole('button', { name: TITLE_A, exact: false })).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByRole('button', { name: TITLE_B, exact: false })).toBeVisible({ timeout: 30_000 });
-
-  // (3) RAW storage holds ciphertext envelopes — no plaintext at rest.
-  const stored = await rawRows(page);
+  // (2) RAW storage holds ciphertext envelopes - no plaintext at rest.
+  const stored = await page.evaluate(async () => {
+    const db = await new Promise((res, rej) => {
+      const r = indexedDB.open('atrestv2-doc-qa-conversations');
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+    const rows = await new Promise((res, rej) => {
+      const t = db.transaction('conversations', 'readonly');
+      const g = t.objectStore('conversations').getAll();
+      g.onsuccess = () => res(g.result ?? []);
+      g.onerror = () => rej(g.error);
+    });
+    db.close();
+    return rows;
+  });
   expect(stored).toHaveLength(2);
   const rawJson = JSON.stringify(stored);
-  for (const marker of MARKERS) {
+  for (const marker of ['AtRestE2E Title Alfa', 'AtRestE2E message bravo', 'AtRestE2E Title Charlie', 'AtRestE2E message delta']) {
     expect(rawJson, `raw rows must not leak ${marker}`).not.toContain(marker);
   }
   for (const row of stored) {
     expect(row['v']).toBe(1);
-    const e = row['e'] as Record<string, unknown>;
-    expect(typeof e['iv']).toBe('string');
-    expect(typeof e['ct']).toBe('string');
+    expect(typeof (row['e'] as Record<string, unknown>)['iv']).toBe('string');
+    expect(typeof (row['e'] as Record<string, unknown>)['ct']).toBe('string');
   }
 
-  // (4) Custody: the per-prefix secret lives in the localStorage map.
-  const custody = await page.evaluate((key: string) => {
-    const raw = localStorage.getItem(key);
-    const prefix = localStorage.getItem('doc-qa-profile-id') ?? '';
-    if (raw === null) return { hasPrefix: false, byteLen: 0 };
-    const map = JSON.parse(raw) as Record<string, string>;
-    const secret = map[prefix];
-    if (typeof secret !== 'string') return { hasPrefix: false, byteLen: 0 };
-    return { hasPrefix: true, byteLen: atob(secret).length };
-  }, SECRET_MAP_KEY);
-  expect(custody.hasPrefix, 'secret map carries the active prefix').toBe(true);
-  expect(custody.byteLen).toBe(32);
+  // (3) Custody: the per-prefix 32-byte secret lives in the localStorage map.
+  const custody = await page.evaluate(() => {
+    const raw = localStorage.getItem('doc-qa-profile-secret');
+    if (raw === null) return 0;
+    const secret = (JSON.parse(raw) as Record<string, string>)['atrestv2'];
+    return typeof secret === 'string' ? atob(secret).length : 0;
+  });
+  expect(custody).toBe(32);
 
-  // (5) Reload persists: the envelopes authenticate under the persisted secret.
+  // (4) Reload persists: the same envelopes authenticate under the secret.
   await page.reload();
   await waitReady(page);
-  await expect(page.getByRole('button', { name: TITLE_A, exact: false })).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByRole('button', { name: TITLE_B, exact: false })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('button', { name: 'AtRestE2E Title Alfa', exact: false })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('button', { name: 'AtRestE2E Title Charlie', exact: false })).toBeVisible({ timeout: 30_000 });
+  void context;
 });

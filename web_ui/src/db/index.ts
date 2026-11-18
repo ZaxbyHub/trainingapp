@@ -6,7 +6,6 @@ import {
   classifyRows,
   encryptRow,
   getOrCreateSecret,
-  hasProfileSecret,
   keyStateMatrix,
   prefixOfDbName,
   probeKeyState,
@@ -96,6 +95,28 @@ export const db = new DocQADatabase();
 // Issue #367: first-open row migration + matrix-gated encryption
 // ==========================================================================
 
+const EPOCH_META_KEY = 'epoch';
+
+/**
+ * The conversations db's monotonic epoch (clear protocol, #34): read via the
+ * meta store. Moved here from conv-protocol (#367 review) so migrateUnderLock
+ * can epoch-guard its write without an index->conv-protocol import cycle;
+ * conv-protocol re-exports it for its own callers.
+ */
+export async function readEpochOf(target: DocQADatabase): Promise<number> {
+  try {
+    // Fast guard: without IndexedDB (jsdom test environments) the epoch is
+    // unreadable — resolve 0 immediately instead of waking Dexie's open
+    // machinery (which can involve timers and would slow every gated call).
+    if (typeof indexedDB === 'undefined') return 0;
+    const row = await target.meta.get(EPOCH_META_KEY);
+    const value = row?.value;
+    return typeof value === 'number' ? value : 0;
+  } catch {
+    return 0;
+  }
+}
+
 /**
  * Per-database-name migration state (RC3-02/PC-05: never one global promise
  * across profiles). Rejected entries are DELETED so a corrected key or a
@@ -117,10 +138,14 @@ function openDbByName(name: string): DocQADatabase {
  * migrated row (RC3-02).
  */
 export async function migrateUnderLock(target: DocQADatabase): Promise<void> {
-  // Phase 1: read every stored row (short read tx).
-  const rows = await target.transaction('r', target.conversations, () =>
-    target.conversations.toArray(),
-  );
+  // Phase 1: read every stored row AND the epoch (short read tx). The epoch
+  // is re-checked in the write tx below (review F1: a clear that lands
+  // between the phases must not be resurrected by the migration's writes).
+  let phase1Epoch = 0;
+  const rows = await target.transaction('r', [target.conversations, target.meta], async () => {
+    phase1Epoch = await readEpochOf(target);
+    return target.conversations.toArray();
+  });
   const prefix = prefixOfDbName(target.name);
   const data = classifyRows(rows);
   const key = await probeKeyState(rows, prefix);
@@ -145,10 +170,24 @@ export async function migrateUnderLock(target: DocQADatabase): Promise<void> {
       // Crypto outside any tx (PC-06).
       const envelopes = await Promise.all(plaintextRows.map((row) => encryptRow(row, secret, prefix)));
       // Phase 3: write back inside a short rw tx (serialized against every
-      // other conversation mutation by the held lock).
-      await target.transaction('rw', target.conversations, async () => {
+      // other conversation mutation by the held lock). The epoch recheck
+      // aborts the write when a clear landed between the phases — the
+      // migration throws (the gate's rejection clears the memo, so the next
+      // public operation re-migrates the post-clear state).
+      let superseded = false;
+      await target.transaction('rw', [target.conversations, target.meta], async () => {
+        const epoch = await readEpochOf(target);
+        if (epoch !== phase1Epoch) {
+          superseded = true;
+          return;
+        }
         for (const envelope of envelopes) await target.conversations.put(envelope);
       });
+      if (superseded) {
+        throw new ConversationDecryptError(
+          'first-open migration was superseded by a concurrent clear — the next open re-runs it',
+        );
+      }
       return;
     }
     case 'FAIL_NO_KEY':
@@ -198,7 +237,11 @@ export function migrationReady(name: string = db.name): Promise<void> {
  */
 export async function requireKeyForWrite(target: DocQADatabase): Promise<void> {
   const prefix = prefixOfDbName(target.name);
-  if (hasProfileSecret(prefix)) return;
+  // NO fast path (review F2): secret PRESENCE is not authentication — a
+  // swapped/wrong secret must fail the write through a fresh matrix probe,
+  // otherwise a write under a wrong secret poisons the store with a row no
+  // future secret can decrypt. The gate reads the rows fresh each time
+  // (create/update/adoption frequency — not a per-keystroke path).
   const rows = await target.transaction('r', target.conversations, () =>
     target.conversations.toArray(),
   );

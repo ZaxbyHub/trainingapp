@@ -131,9 +131,10 @@ describe('AAD canonical encoding + field-tamper matrix (#367 RC3-07)', () => {
     (flipped['e'] as Record<string, string>)['ct'] =
       ct[at] === 'A' ? `${ct.slice(0, at)}B${ct.slice(at + 1)}` : `${ct.slice(0, at)}A${ct.slice(at + 1)}`;
     await expect(decryptRow(flipped, PREFIX)).rejects.toThrow(ConversationDecryptError);
-    // Canonical AAD encoding has no delimiter ambiguity: a forged row whose
-    // concatenated fields read identically still fails (JSON tuple is
-    // unambiguous).
+    // AAD injectivity (review F5b): the canonical AAD is the JSON array
+    // encoding of the four fields - total and injective (distinct tuples
+    // never serialize identically), so a delimiter-collision pair is
+    // unconstructible by design; the forged quoted/comma id still fails.
     const ambiguous = tamper('id', '1",2');
     await expect(decryptRow(ambiguous, PREFIX)).rejects.toThrow(ConversationDecryptError);
     void e;
@@ -266,4 +267,38 @@ beforeEach(() => {
   vi.stubGlobal('indexedDB', new IDBFactory());
   localStorage.clear();
   sessionStorage.clear();
+});
+
+describe('inner/outer identity (#367 review F5): re-wrapped divergent envelopes fail closed', () => {
+  it('an envelope whose AAD-bound outer timestamps disagree with its inner row throws (identity)', async () => {
+    pinPrefix(PREFIX);
+    const conv = plainConv('ident-1', 'Identity target');
+    const { encryptWithAadForTests, decryptRow, ConversationDecryptError } = await import('./db-crypto');
+    const secret = await getOrCreateSecret(PREFIX);
+    const plain = JSON.stringify(conv);
+    // Attacker-with-key wraps the ORIGINAL plaintext under a FUTURE outer
+    // updatedAt — authentication passes (AAD is self-consistent), so only
+    // the inner/outer identity check can catch it.
+    const forged = await encryptWithAadForTests(
+      plain,
+      { id: conv.id, createdAt: conv.createdAt, updatedAt: conv.updatedAt + 5 },
+      secret,
+      PREFIX,
+    );
+    await expect(decryptRow(forged, PREFIX)).rejects.toThrow(/timestamps do not match/);
+  });
+
+  it('an envelope whose outer id disagrees with its inner id throws (identity)', async () => {
+    pinPrefix(PREFIX);
+    const conv = plainConv('ident-2', 'Identity id');
+    const { encryptWithAadForTests, decryptRow, ConversationDecryptError } = await import('./db-crypto');
+    const secret = await getOrCreateSecret(PREFIX);
+    const forged = await encryptWithAadForTests(
+      JSON.stringify(conv),
+      { id: 'ident-2-forged', createdAt: conv.createdAt, updatedAt: conv.updatedAt },
+      secret,
+      PREFIX,
+    );
+    await expect(decryptRow(forged, PREFIX)).rejects.toThrow(/inner id does not match/);
+  });
 });

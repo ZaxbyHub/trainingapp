@@ -50,6 +50,8 @@ import {
   DocQADatabase,
   LEGACY_CONVERSATIONS_DB_NAME,
   migrationReady,
+  readEpochOf,
+  requireKeyForWrite,
 } from './index';
 
 // ============================================================================
@@ -213,19 +215,10 @@ export interface LegacyAdoptClaim {
 
 type DocQaDb = DocQADatabase;
 
-export async function readEpochOf(target: DocQaDb): Promise<number> {
-  try {
-    // Fast guard: without IndexedDB (jsdom test environments) the epoch is
-    // unreadable — resolve 0 immediately instead of waking Dexie's open
-    // machinery (which can involve timers and would slow every gated call).
-    if (typeof indexedDB === 'undefined') return 0;
-    const row = await target.meta.get(EPOCH_META_KEY);
-    const value = row?.value;
-    return typeof value === 'number' ? value : 0;
-  } catch {
-    return 0;
-  }
-}
+// #367: readEpochOf moved to index.ts (next to the meta-table accessor it
+// reads, and to serve migrateUnderLock without an index->conv-protocol
+// import cycle); re-exported here for the public seam conversations.ts uses.
+export { readEpochOf };
 
 /** The active profile's conversations-db epoch (0 when unreadable/fresh). */
 export async function readConversationEpoch(): Promise<number> {
@@ -713,9 +706,17 @@ export async function adoptLegacyConversations(target: string): Promise<AdoptRes
     // legacy stores; the profile-side guards keep their own serialization
     // (the copy is still epoch-bound per page, so a clear that lands after
     // these pre-reads supersedes the copy exactly as before).
-    const profileCount = await profileDb.conversations.count();
-    const profileEpoch = await readEpochOf(profileDb);
-    const boundEpoch = await legacy.transaction(
+    // #367 review F4: the target-emptiness decision, the claim and the copy
+    // run under the SAME Web-Locks name as every conversation mutation, so a
+    // create cannot land between the count and the copy (locks present).
+    // Without Web Locks the degrade is the wrapper's documented direct call;
+    // the copy's per-page epoch gate plus the legacy-id/uuid collision
+    // residual stay disclosed in the PR body.
+    const copied = await withConversationWriteLock(async () => {
+      await requireKeyForWrite(profileDb); // fresh matrix gate (review F2)
+      const profileCount = await profileDb.conversations.count();
+      const profileEpoch = await readEpochOf(profileDb);
+      const boundEpoch = await legacy.transaction(
       'rw',
       [legacy.conversations, legacy.meta],
       async (): Promise<number> => {
@@ -758,9 +759,10 @@ export async function adoptLegacyConversations(target: string): Promise<AdoptRes
       },
     );
 
-    // Copy (PRR-106/PRR-121 + reviewer round 2 F3): under the write lock,
-    // page-by-page, every page gated on the claim-bound epoch.
-    const copied = await copyLegacyRowsIntoProfile(legacy, profileDb, boundEpoch);
+      // Copy (PRR-106/PRR-121 + reviewer round 2 F3): page-by-page, every
+      // page gated on the claim-bound epoch.
+      return await copyLegacyRowsIntoProfile(legacy, profileDb, boundEpoch);
+    });
 
     // Flip the claim to done, then marker, then delete.
     await legacy.transaction('rw', legacy.meta, async () => {

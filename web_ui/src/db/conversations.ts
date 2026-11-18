@@ -369,10 +369,28 @@ export async function searchConversations(
   try {
     await migrationReady(db.name);
     const prefix = activePrefix();
-    // Key-only scan: the updatedAt-descending primary keys (cheap, plaintext
-    // index fields). Row BODIES are fetched one at a time below so the
-    // visit/decrypt/stop accounting stays exactly the old cursor's.
-    const keys = await db.conversations.orderBy('updatedAt').reverse().primaryKeys();
+    // Cancellation is honored at BOTH phases (RC3-05): the key-only scan
+    // stops at the first cancellation observation (collection.until — the
+    // base cursor's own early-stop seam), and the body-read loop checks
+    // before each get. PC-06 forces bodies out of the cursor transaction
+    // (no awaitable crypto inside it), so matches can only be evaluated
+    // outside it: a query that matches broadly still enumerates the store's
+    // keys up front — the disclosed residual vs the base design, recorded
+    // in the trace 08.
+    if (isCancelled?.() === true) return { matches: [], truncated: false };
+    let scanCancelled = false;
+    const keys = await db.conversations
+      .orderBy('updatedAt')
+      .reverse()
+      .until(() => {
+        if (isCancelled?.() === true) {
+          scanCancelled = true;
+          return true;
+        }
+        return false;
+      })
+      .primaryKeys();
+    if (scanCancelled) return { matches: [], truncated: false };
     const matches: Conversation[] = [];
     let truncated = false;
     for (const key of keys) {

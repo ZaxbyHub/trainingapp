@@ -59,13 +59,18 @@ function seedLegacyStore(): Promise<void> {
   });
 }
 
-async function deleteAndWait(): Promise<boolean> {
-  return new Promise((resolve) => {
-    const req = indexedDB.deleteDatabase(LEGACY_SETTINGS_DB_NAME);
-    req.onsuccess = () => resolve(true);
-    req.onerror = () => resolve(false);
-    req.onblocked = () => resolve(false);
-  });
+/**
+ * Observe the PRODUCTION deletion's completion by polling the factory's
+ * database list (review F7: a second self-issued deleteDatabase would mask
+ * a production failure that only reported `requested`).
+ */
+async function waitGone(timeoutMs = 2000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (!(await databaseNames()).includes(LEGACY_SETTINGS_DB_NAME)) return true;
+    if (Date.now() > deadline) return false;
+    await new Promise((r) => setTimeout(r, 25));
+  }
 }
 
 beforeEach(() => {
@@ -82,29 +87,23 @@ describe('legacy doc-qa-settings boot delete (#367 RC4-02)', () => {
     const second = deleteLegacySettingsStore();
     expect(first).toEqual({ requested: true, outcome: 'requested' });
     expect(second).toEqual({ requested: true, outcome: 'requested' });
-    // Let the requests settle, then confirm the store is gone.
-    await deleteAndWait();
-    expect(await databaseNames()).not.toContain(LEGACY_SETTINGS_DB_NAME);
+    expect(await waitGone()).toBe(true); // the production request removed it
   });
 
   it('a recreated store is removed by the NEXT boot attempt (rollback coverage) (boot-delete)', async () => {
-    await deleteAndWait();
-    expect(await databaseNames()).not.toContain(LEGACY_SETTINGS_DB_NAME);
     // A rolled-back build recreates the store after a successful delete.
     await seedLegacyStore();
     expect(await databaseNames()).toContain(LEGACY_SETTINGS_DB_NAME);
-    // The next boot's unconditional attempt removes it again.
+    // The next boot's unconditional attempt removes it again — observed via
+    // the production request, not a self-issued delete.
     expect(deleteLegacySettingsStore().requested).toBe(true);
-    await deleteAndWait();
-    expect(await databaseNames()).not.toContain(LEGACY_SETTINGS_DB_NAME);
+    expect(await waitGone()).toBe(true);
   });
 
   it('an absent store makes the attempt a harmless no-op (boot-delete)', async () => {
     expect(await databaseNames()).not.toContain(LEGACY_SETTINGS_DB_NAME);
     expect(deleteLegacySettingsStore().requested).toBe(true);
-    // Settling the delete request must not throw or create the store.
-    await deleteAndWait();
-    expect(await databaseNames()).not.toContain(LEGACY_SETTINGS_DB_NAME);
+    expect(await waitGone()).toBe(true); // no store created, nothing thrown
   });
 
   it('an indexedDB-less environment reports unavailable and never throws (boot-delete)', () => {
@@ -123,3 +122,17 @@ describe('legacy doc-qa-settings boot delete (#367 RC4-02)', () => {
     void storeExists;
   });
 });
+
+  it('a failing delete request is non-fatal (boot-delete)', async () => {
+    await seedLegacyStore();
+    const factory = indexedDB as unknown as { deleteDatabase: (name: string) => IDBOpenDBRequest };
+    const orig = factory.deleteDatabase;
+    factory.deleteDatabase = () => {
+      throw new Error('boom');
+    };
+    try {
+      expect(() => deleteLegacySettingsStore()).not.toThrow();
+    } finally {
+      factory.deleteDatabase = orig;
+    }
+  });

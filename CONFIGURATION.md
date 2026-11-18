@@ -609,7 +609,9 @@ first time the app opens it after the upgrade. The key secret for each profile i
 bytes kept in the browser profile's local storage (`doc-qa-profile-secret`), together with the
 other internal bookkeeping keys — Clear Cache keeps it, so history survives Clear Cache.
 Removing a profile under Settings → Profile data deletes that profile's history but leaves its
-former secret entry behind; the leftover unlocks nothing (a fresh profile mints its own secret).
+former secret entry behind; the leftover is inert once the stores are gone (a fresh profile mints
+its own secret). Note deletion can be blocked while a connection is open — until a blocked
+deletion completes, the leftover secret still unlocks the stores that still exist.
 
 What this protects: the stored history against casual inspection of browser storage and against
 one registered profile reading another profile's history on a shared workstation. What it does
@@ -624,6 +626,12 @@ profile per app session, and the first app start after the upgrade spends a shor
 re-encrypting existing history once. Rolling back to an older release afterwards leaves the
 stored history unreadable to that older release (the rows are opaque to it); installing this
 release again restores the history unchanged.
+
+If the secret entry is lost or corrupted, the encrypted history cannot be
+recovered — this fails closed by design rather than falling back to plaintext. The design
+protects confidentiality of stored history; it does NOT provide tamper-evidence or anti-rollback:
+an older envelope restored into storage still authenticates, and history ordering can be replayed
+undetected.
 
 Also on boot, the app deletes the obsolete `doc-qa-settings` IndexedDB store, a leftover of a
 pre-profile settings design that no release reads anymore.
