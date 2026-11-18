@@ -731,6 +731,10 @@ function makeBackend(
         lastPromptDelta =
           meterPre !== null && meterPost !== null && meterPost >= meterPre ? meterPost - meterPre : null;
         outcome = genOpts.cancellationEvent?.isSet() ? 'cancelled' : 'ok';
+        // #364 review F1: a cancelled query never reports a real prompt-token
+        // count — the delta of an interrupted evaluation is not a trustworthy
+        // "prompt as evaluated" figure and must not be cached for reuse.
+        if (outcome === 'cancelled') lastPromptDelta = null;
         let answer = rawAnswer;
         if (reasoning && answer.startsWith(reasoning.responsePrefix)) {
           answer = answer.slice(reasoning.responsePrefix.length);
