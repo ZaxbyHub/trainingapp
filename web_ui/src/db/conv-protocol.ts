@@ -563,18 +563,6 @@ const LEGACY_ADOPT_PAGE = 500;
  * Idempotent by row id (bulkPut), so re-copying pages a
  * crashed run already wrote is safe. Returns the number of rows copied.
  */
-async function copyLegacyRowsIntoProfile(
-  legacy: DocQaDb,
-  profileDb: DocQaDb,
-  boundEpoch: number,
-): Promise<number> {
-  // Public copy entry: takes the conversation write lock itself (review R2:
-  // the re-adoption caller runs OUTSIDE the primary adoption's span).
-  return withConversationWriteLock(() =>
-    copyLegacyRowsIntoProfileUnlocked(legacy, profileDb, boundEpoch),
-  );
-}
-
 /**
  * The copy itself, WITHOUT lock acquisition (review round 2 finding 1: the
  * conv-write lock is NON-reentrant — the primary adoption's span already
@@ -641,17 +629,18 @@ async function deleteLegacyDbAfterReadopt(target: string): Promise<void> {
       await migrationReady(targetName);
       const profileDb = targetName === db.name ? db : openProfileDb(target);
       try {
-        // #367 review round 2 finding 3: the re-adoption copy gates on a
-        // FRESH key-state matrix too — a secret replaced after the memoized
-        // migration must refuse the re-copy instead of writing envelopes
-        // under a wrong key.
-        await requireKeyForWrite(profileDb);
-        // Reviewer round 2 F3: the re-adopt copy is epoch-bound too (a clear
-        // racing the re-adopt aborts it instead of resurrecting rows); the
-        // binding is read fresh here — the target legitimately holds rows of
-        // its own at this point, so emptiness is no signal at all.
-        const boundEpoch = await readEpochOf(profileDb);
-        await copyLegacyRowsIntoProfile(legacy, profileDb, boundEpoch);
+        // #367 review rounds 2-3: the re-adoption copy gates on a FRESH
+        // key-state matrix INSIDE the conversation lock (probe and copy are
+        // one serialized operation), then reads the epoch binding.
+        await withConversationWriteLock(async () => {
+          await requireKeyForWrite(profileDb);
+          // Reviewer round 2 F3: the re-adopt copy is epoch-bound too (a
+          // clear racing the re-adopt aborts it instead of resurrecting
+          // rows); the binding is read fresh here — the target legitimately
+          // holds rows of its own at this point, so emptiness is no signal.
+          const boundEpoch = await readEpochOf(profileDb);
+          return copyLegacyRowsIntoProfileUnlocked(legacy, profileDb, boundEpoch);
+        });
       } finally {
         if (profileDb !== db) profileDb.close();
       }
@@ -685,7 +674,7 @@ async function deleteLegacyDbAfterReadopt(target: string): Promise<void> {
  * Then: copy the legacy rows page-by-page into the profile db (PRR-121) under
  * the origin-wide write lock, EPOCH-BOUND to the claim (reviewer round 2 F3:
  * the mid-copy emptiness re-check is replaced by a per-page in-transaction
- * epoch check — see copyLegacyRowsIntoProfile), flip the claim to 'done',
+ * epoch check — see copyLegacyRowsIntoProfileUnlocked), flip the claim to 'done',
  * write the localStorage done-marker (fast path only), delete the legacy db.
  * The legacy db is deleted only after the done phase.
  */

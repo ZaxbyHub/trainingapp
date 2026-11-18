@@ -79,14 +79,16 @@ export async function createConversation(
     await requireKeyForWrite(db);
     // Crypto OUTSIDE the transaction (PC-06): the envelope is fully built
     // before the epoch-gated add opens.
-    const envelope = await encryptRow(conversation, undefined, activePrefix());
-    // Gate INSIDE the lock (review round 2 finding 3): the probe and the
-    // write are one serialized operation when Web Locks exist. Deletes stay
-    // keyless (matrix: destructive paths never probe), so create inlines the
-    // gated mutation instead of the shared keyless helper.
+    // Gate INSIDE the lock, and the ENVELOPE BUILT inside it too (review
+    // round 3: a secret change while waiting on the lock must not let a
+    // gate under the new secret persist an envelope encrypted under the
+    // old one). Deletes stay keyless (matrix: destructive paths never
+    // probe), so create inlines the gated mutation instead of the shared
+    // keyless helper.
     const stateEpoch = options?.stateEpoch ?? (await readConversationEpoch());
     return withConversationWriteLock(async () => {
       await requireKeyForWrite(db);
+      const envelope = await encryptRow(conversation, undefined, activePrefix());
       return withEpochGate(stateEpoch, () => db.conversations.add(envelope));
     });
   } catch (error) {

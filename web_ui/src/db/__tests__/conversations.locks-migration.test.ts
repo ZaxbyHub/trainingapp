@@ -347,8 +347,15 @@ describe('RC4-01 lock-stack battery (#367)', () => {
     const rows = await rawRowsOf('lockm10t-doc-qa-conversations');
     expect(rows).toHaveLength(1);
     expect(rows[0]!['v']).toBe(1);
-    const { getConversation } = await import('../../db/conversations');
-    expect((await getConversation('leg-1'))?.title).toBe('Legacy one');
+    // Read through the TARGET-named instance (the module-bound singleton
+    // resolved its name at import time, before this test pinned the prefix).
+    const { DocQADatabase: TargetDb } = await import('../../db/index');
+    const target = new TargetDb('lockm10t-doc-qa-conversations');
+    const row = await target.conversations.get('leg-1');
+    expect(row, 'copied envelope readable via the target db').toBeDefined();
+    const { decryptRowOrPlain } = await import('../../lib/storage/db-crypto');
+    const conv = await decryptRowOrPlain(row, 'lockm10t');
+    expect(conv.title).toBe('Legacy one');
   });
 
 describe('gate-level key-state matrix (#367 review F5a): requireKeyForWrite drives the REAL gate', () => {

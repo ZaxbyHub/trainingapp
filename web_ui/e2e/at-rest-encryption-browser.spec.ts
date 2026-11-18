@@ -110,58 +110,86 @@ test('a genuine v2 plaintext store upgrades, migrates to ciphertext at rest, and
   // native version the pre-encryption build declared (2) BEFORE the app ever
   // opens it - pinned profile id in the init script, seeded v2 schema and
   // plaintext rows via raw IndexedDB at document start.
-  await page.addInitScript(async () => {
+  // Deterministic pre-app seed (review R3-4): the FIRST navigation is
+  // fulfilled by a minimal helper document (NO app scripts), the v2 fixture
+  // is seeded AND VERIFIED on the app origin, then the route is dropped and
+  // the real application boots against the existing database.
+  await page.route('**/', (route) =>
+    route.fulfill({
+      contentType: 'text/html',
+      body: '<!doctype html><html><body>seed-helper</body></html>',
+    }),
+  );
+  await page.goto('/');
+  const seededCount = await page.evaluate(async () => {
     localStorage.setItem('doc-qa-profile-id', 'atrestv2');
-    if (localStorage.getItem('e2e-atrest-seeded') === '1') return;
     const DB = 'atrestv2-doc-qa-conversations';
-    const seed = (resolve: () => void, reject: (e: unknown) => void) => {
-      const req = indexedDB.open(DB, 20);
-      req.onupgradeneeded = () => {
-        const conn = req.result;
-        if (!conn.objectStoreNames.contains('conversations')) {
-          const store = conn.createObjectStore('conversations', { keyPath: 'id' });
-          store.createIndex('updatedAt', 'updatedAt', { unique: false });
-          store.createIndex('createdAt', 'createdAt', { unique: false });
-          store.createIndex('title', 'title', { unique: false });
-        }
-        if (!conn.objectStoreNames.contains('meta')) {
-          conn.createObjectStore('meta', { keyPath: 'key' });
-        }
-      };
-      req.onsuccess = () => {
-        const conn = req.result;
-        const tx = conn.transaction('conversations', 'readwrite');
-        const store = tx.objectStore('conversations');
-        for (const row of [
-          {
-            id: 'v2-a',
-            title: 'AtRestE2E Title Alfa',
-            messages: [{ id: 'v2-a-u1', role: 'user', content: 'AtRestE2E message bravo', timestamp: 1 }],
-            createdAt: 1,
-            updatedAt: 1,
-            mode: 'wllama',
-            modelUsed: 'legacy',
-          },
-          {
-            id: 'v2-b',
-            title: 'AtRestE2E Title Charlie',
-            messages: [{ id: 'v2-b-u1', role: 'user', content: 'AtRestE2E message delta', timestamp: 2 }],
-            createdAt: 2,
-            updatedAt: 2,
-            mode: 'wllama',
-            modelUsed: 'legacy',
-          },
-        ]) {
-          store.put(row);
-        }
-        tx.oncomplete = () => { conn.close(); resolve(); };
-        tx.onerror = () => reject(tx.error);
-      };
-      req.onerror = () => reject(req.error);
+    const req = indexedDB.open(DB, 20);
+    req.onupgradeneeded = () => {
+      const conn = req.result;
+      if (!conn.objectStoreNames.contains('conversations')) {
+        const store = conn.createObjectStore('conversations', { keyPath: 'id' });
+        store.createIndex('updatedAt', 'updatedAt', { unique: false });
+        store.createIndex('createdAt', 'createdAt', { unique: false });
+        store.createIndex('title', 'title', { unique: false });
+      }
+      if (!conn.objectStoreNames.contains('meta')) {
+        conn.createObjectStore('meta', { keyPath: 'key' });
+      }
     };
-    await new Promise<void>(seed);
-    localStorage.setItem('e2e-atrest-seeded', '1');
+    const conn = await new Promise<IDBDatabase>((resolve, reject) => {
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const tx = conn.transaction('conversations', 'readwrite');
+      const store = tx.objectStore('conversations');
+      for (const row of [
+        {
+          id: 'v2-a',
+          title: 'AtRestE2E Title Alfa',
+          messages: [{ id: 'v2-a-u1', role: 'user', content: 'AtRestE2E message bravo', timestamp: 1 }],
+          createdAt: 1,
+          updatedAt: 1,
+          mode: 'wllama',
+          modelUsed: 'legacy',
+        },
+        {
+          id: 'v2-b',
+          title: 'AtRestE2E Title Charlie',
+          messages: [{ id: 'v2-b-u1', role: 'user', content: 'AtRestE2E message delta', timestamp: 2 }],
+          createdAt: 2,
+          updatedAt: 2,
+          mode: 'wllama',
+          modelUsed: 'legacy',
+        },
+      ]) {
+        store.put(row);
+      }
+      tx.oncomplete = () => {
+        conn.close();
+        resolve();
+      };
+      tx.onerror = () => reject(tx.error);
+    });
+    const verify = await new Promise<number>((resolve, reject) => {
+      const r2 = indexedDB.open(DB);
+      r2.onsuccess = () => {
+        const c2 = r2.result;
+        const tx2 = c2.transaction('conversations', 'readonly');
+        const g = tx2.objectStore('conversations').getAll();
+        g.onsuccess = () => {
+          c2.close();
+          resolve((g.result ?? []).length);
+        };
+        g.onerror = () => reject(g.error);
+      };
+      r2.onerror = () => reject(r2.error);
+    });
+    return verify;
   });
+  expect(seededCount).toBe(2); // fixture verified BEFORE the app ever runs
+  await page.unroute('**/');
 
   // The app boots against the EXISTING v2 database: schema upgrade to the
   // current ladder + first-open migration on the first public operation.
