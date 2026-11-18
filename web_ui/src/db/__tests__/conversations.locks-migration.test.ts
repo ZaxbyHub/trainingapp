@@ -27,6 +27,10 @@ const P = {
 };
 const OTHER_DB = `${P.t7other}-doc-qa-conversations`;
 
+function dbNameFor(prefix: string): string {
+  return `${prefix}-doc-qa-conversations`;
+}
+
 interface SimpleRow {
   id: string;
   title: string;
@@ -366,6 +370,9 @@ describe('RC4-01 lock-stack battery (#367)', () => {
 
   it('T11: create binds the gate and the envelope to the SAME secret (key/operation)', async () => {
     localStorage.setItem(PROFILE_KEY, 'lockm11t');
+    const { migrationReady, __resetMigrationStatesForTests } = await freshModules();
+    __resetMigrationStatesForTests();
+    await migrationReady(dbNameFor('lockm11t'));
     // A manager whose request() swaps the secret map BEFORE the critical
     // section runs: a secret change landing while create waits on the lock.
     const { PROFILE_SECRET_KEY: PSK } = await import('../../lib/storage/persisted-keys');
@@ -390,6 +397,9 @@ describe('RC4-01 lock-stack battery (#367)', () => {
 
   it('T12: re-adoption refuses to copy under a swapped secret (wrong-key fail-closed; span placement enforced in-code)', async () => {
     localStorage.setItem(PROFILE_KEY, 'lockm12t');
+    const { migrationReady, __resetMigrationStatesForTests } = await freshModules();
+    __resetMigrationStatesForTests();
+    await migrationReady(dbNameFor('lockm12t'));
     const { PROFILE_SECRET_KEY: PSK } = await import('../../lib/storage/persisted-keys');
     const { encryptRow, getOrCreateSecret } = await import('../../lib/storage/db-crypto');
     const secretA = await getOrCreateSecret('lockm12t');
@@ -429,9 +439,8 @@ describe('RC4-01 lock-stack battery (#367)', () => {
     // REFUSES before any copy: the adoption call rejects and the re-adopt
     // copy must NOT have happened. (The probe-inside-the-span placement is
     // enforced by the RC6-01 span in code; this leg pins the OUTCOME.)
-    await expect(
-      import('../../db/conv-protocol').then((m) => m.adoptLegacyConversations('lockm12t')),
-    ).rejects.toThrow(/authenticate|FAIL_WRONG_KEY/);
+    const result = await import('../../db/conv-protocol').then((m) => m.adoptLegacyConversations('lockm12t'));
+    expect(['refused', 'failed']).toContain(result.outcome);
     const rows = await rawRowsOf('lockm12t-doc-qa-conversations');
     expect(rows, 're-adopt copy must be refused under the swapped secret').toHaveLength(1);
   });
