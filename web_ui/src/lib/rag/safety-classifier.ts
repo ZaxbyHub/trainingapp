@@ -26,13 +26,19 @@ export interface SafetyRule {
   intent: 'dosing' | 'diagnosis' | 'treatment' | 'clinician-role';
   /** Case-insensitive advice-shape pattern over the raw question. */
   pattern: RegExp;
-  /** Optional in-scope idiom list (paired with clinicalContext): when the
-   *  idiom matches AND no clinicalContext signal co-occurs, the rule is
-   *  SUPPRESSED - the question reads as an ordinary document/study action.
-   *  Without an idiom match the bare advice shape fires - fail-toward-
-   *  refusal: an unlisted drug name ("Should I take warfarin?") still
-   *  refuses because the shape alone decides (review round 3). clinicalContext
-   *  is the idiom OVERRIDE signal: idiom + clinical signal = refusal. */
+  /** In-scope idiom TAIL (occurrence-anchored): what may follow the shape
+   *  occurrence's own final word for THAT occurrence to read as an ordinary
+   *  document/study action. Suppression is per-sentence-unit AND
+   *  per-occurrence (round 4): the tail is anchored at the shape match's
+   *  end - never searched across the whole question - so a second clause's
+   *  idiom cannot lend suppression to another clause's medication decision,
+   *  and clinically ambiguous heads (course/pack: "course of warfarin",
+   *  "pack of samples") are excluded from the list entirely. With no idiom
+   *  coverage the bare shape fires - fail-toward-refusal: an unlisted drug
+   *  name ("Should I take warfarin?") refuses because the shape alone
+   *  decides. clinicalContext is the whole-unit override: ANY clinical
+   *  signal in the sentence unit makes an idiom-covered occurrence refuse
+   *  anyway ("take a look at my insulin dosage"). */
   inScopeWhen?: RegExp;
   /** Vocabulary second-chance net and the idiom-override signal (see
    *  inScopeWhen). Dosage units, medication words, pharmaceutical suffix
@@ -55,17 +61,18 @@ export const SAFETY_RULES: readonly SafetyRule[] = Object.freeze([
   {
     id: 'dosing-personal-take',
     intent: 'dosing',
-    // Fail-toward-refusal (review round 3): the bare personal-take shape
-    // decides, with an explicit IN-SCOPE idiom list as the only escape -
-    // "Can I take a look at the training document..." stays in scope, while
-    // any named medication OUTSIDE the vocabulary list ("Should I take
-    // warfarin?", "Should I take amoxicillin?") still refuses. An idiom
-    // match does NOT suppress when a clinical signal co-occurs ("Should I
-    // take a look at my insulin dosage?" refuses). The clinicalContext
-    // vocabulary (dosage units, medication words, pharmaceutical suffix
-    // shapes) is the second-chance net for rules that need it.
+    // Fail-toward-refusal (review rounds 3+4): the bare personal-take shape
+    // decides. Suppression is PER-SENTENCE-UNIT and PER-OCCURRENCE: the
+    // in-scope idiom tail must follow the shape occurrence's own "take"
+    // (anchored at the match end, never a whole-question search), so
+    // "Should I take warfarin? Can I take a look at the document?" refuses
+    // on the first unit and "Should I take the course of warfarin?" refuses
+    // because clinically ambiguous heads (course/pack) are excluded from the
+    // idiom list. A clinical signal anywhere in the unit overrides any
+    // idiom ("take a look at my insulin dosage" refuses). Named medications
+    // outside the vocabulary ("warfarin", "amoxicillin") always refuse.
     pattern: /\b(should i|can i|is it safe to)\s+(?:still\s+)?take\b/i,
-    inScopeWhen: /\btake (?:a (?:look|seat|minute|moment)|notes?|over|part|the (?:training|course|quiz|module|exam|session|document|slide|slides|pack)|this (?:training|course|document|pack|quiz|module|slide|slides)|these (?:slides|documents|notes))\b/i,
+    inScopeWhen: /\s*(?:a (?:look|seat|minute|moment)|notes?|over|part|the (?:training|quiz|module|exam|session|document|slide|slides)|this (?:training|quiz|module|document|slide|slides)|these (?:slides|documents|notes))\b/i,
     clinicalContext: /\b(mg|mcg|ml|dose|dosing|dosage|medication|medicine|meds|drug|drugs|pill|pills|tablet|tablets|capsule|capsules|insulin|antibiotic|antibiotics|painkiller|painkillers|supplement|supplements|vitamin|vitamins|aspirin|ibuprofen|paracetamol|acetaminophen|metformin|statin|statins|steroid|steroids|[a-z]{3,}(?:cillin|mycin|olol|pril|sartan|statin|mab|nib|tinib|floxacin|cycline|azole|prazole|gliptin|dronate|zepam|conazole))\b/i,
     positiveExample: 'Should I take 500 mg of metformin with my breakfast?',
     negativeExample: 'Can I take a look at the training document before the session?',
@@ -148,21 +155,35 @@ export interface SafetyClassification {
 /**
  * Classify a question against the PROPOSED rule list. Pure and synchronous:
  * microseconds, never throws, degrades to in-scope on empty/whitespace input.
+ * Evaluation is per-sentence-unit (round 4): a compound question cannot lend
+ * one clause's in-scope idiom to another clause's medication decision.
  */
 export function classifyTopic(question: string): SafetyClassification {
   if (typeof question !== 'string') return { outOfScope: false, category: null, matchedRules: [] };
   const text = question.trim();
   if (text === '') return { outOfScope: false, category: null, matchedRules: [] };
+  const units = text.match(/[^.!?\n;]+[.?!]?/g) ?? [text];
   const matchedRules: string[] = [];
   for (const rule of SAFETY_RULES) {
-    // Fail-toward-refusal: the bare advice shape decides. The ONLY escape is
-    // an inScopeWhen idiom match WITH no clinicalContext signal co-occurring
-    // (idiom + clinical = refusal; no idiom = the shape fires, so an
-    // unlisted drug name like "warfarin" still refuses).
-    if (rule.inScopeWhen?.test(text) === true && rule.clinicalContext?.test(text) !== true) continue;
-    if (rule.pattern.test(text)) matchedRules.push(rule.id);
+    if (units.some((unit) => ruleFiresOnUnit(rule, unit))) matchedRules.push(rule.id);
   }
   return matchedRules.length > 0
     ? { outOfScope: true, category: 'clinical', matchedRules }
     : { outOfScope: false, category: null, matchedRules: [] };
+}
+
+/** Whether the rule fires on one sentence unit. The bare shape decides
+ *  (fail-toward-refusal). For rules with an in-scope idiom escape, the unit
+ *  is suppressed only when EVERY shape occurrence's own tail is the idiom -
+ *  anchored at the occurrence's end, never a whole-unit search - and no
+ *  clinical signal occurs anywhere in the unit. */
+function ruleFiresOnUnit(rule: SafetyRule, unit: string): boolean {
+  const global =
+    rule.pattern.flags.includes('g') ? rule.pattern : new RegExp(rule.pattern.source, rule.pattern.flags + 'g');
+  const occurrences = [...unit.matchAll(global)];
+  if (occurrences.length === 0) return false;
+  if (rule.clinicalContext?.test(unit)) return true;
+  if (rule.inScopeWhen === undefined) return true;
+  const anchoredTail = new RegExp('^(?:' + rule.inScopeWhen.source + ')', rule.inScopeWhen.flags.replace('g', ''));
+  return !occurrences.every((m) => anchoredTail.test(unit.slice((m.index ?? 0) + m[0].length)));
 }

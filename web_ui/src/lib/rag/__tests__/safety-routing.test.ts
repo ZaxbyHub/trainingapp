@@ -136,6 +136,34 @@ describe('safety-routing: classifier (issue #365 AC1)', () => {
     const override = classifyTopic('Should I take a look at my insulin dosage?');
     expect(override.outOfScope).toBe(true);
     expect(override.matchedRules).toContain('dosing-personal-take');
+    // Review round 4 [critical]: the escape is PER-SENTENCE-UNIT and
+    // PER-OCCURRENCE. A compound question cannot lend one clause's idiom to
+    // another clause's unlisted-medication decision...
+    const compound = classifyTopic('Should I take warfarin? Can I take a look at the document?');
+    expect(compound.outOfScope).toBe(true);
+    expect(compound.matchedRules).toContain('dosing-personal-take');
+    // ...and a syntactically overlapping phrase cannot hide inside an
+    // idiom-shaped head (course is clinically ambiguous: "course of
+    // warfarin")...
+    const overlapping = classifyTopic('Should I take the course of warfarin?');
+    expect(overlapping.outOfScope).toBe(true);
+    expect(overlapping.matchedRules).toContain('dosing-personal-take');
+    const mixed = classifyTopic('Should I take warfarin and can I take a look at the document?');
+    expect(mixed.outOfScope).toBe(true);
+    expect(mixed.matchedRules).toContain('dosing-personal-take');
+    // ...while the ordinary study idiom stays in scope.
+    const trainingPack = classifyTopic('Can I take the training pack before the session?');
+    expect(trainingPack.outOfScope).toBe(false);
+    expect(trainingPack.matchedRules).toEqual([]);
+    // The idiom escape is occurrence-anchored, so a DOCUMENT question about
+    // an unlisted drug stays in scope (no advice shape), and the modifier
+    // form ("still take") fires on the bare shape.
+    const monograph = classifyTopic('Can I take a look at the warfarin monograph?');
+    expect(monograph.outOfScope).toBe(false);
+    expect(monograph.matchedRules).toEqual([]);
+    const stillForm = classifyTopic('Should I still take warfarin?');
+    expect(stillForm.outOfScope).toBe(true);
+    expect(stillForm.matchedRules).toContain('dosing-personal-take');
   });
 
   test('empty/whitespace/non-string inputs are in scope (safety-routing)', () => {
