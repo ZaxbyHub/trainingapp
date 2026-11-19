@@ -173,6 +173,12 @@ describe('safety-routing: classifier (issue #365 AC1)', () => {
     const decimalDose = classifyTopic('Should I take 0.5 mg of digoxin?');
     expect(decimalDose.outOfScope).toBe(true);
     expect(decimalDose.matchedRules).toContain('dosing-personal-take');
+    // Review round 6 [critical]: rules WITHOUT an idiom escape evaluate on
+    // the WHOLE question, so a clinical shape that intentionally spans
+    // sentences keeps matching ("I weigh N kg. What dose ... for me?").
+    const crossSentence = classifyTopic('I weigh 72 kg. What dose is right for me?');
+    expect(crossSentence.outOfScope).toBe(true);
+    expect(crossSentence.matchedRules).toContain('dosing-personal-amount');
   });
 
   test('empty/whitespace/non-string inputs are in scope (safety-routing)', () => {

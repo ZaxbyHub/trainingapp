@@ -155,12 +155,13 @@ export interface SafetyClassification {
 /**
  * Classify a question against the PROPOSED rule list. Pure and synchronous:
  * microseconds, never throws, degrades to in-scope on empty/whitespace input.
- * Evaluation is per-sentence-unit (round 4): a compound question cannot lend
- * one clause's in-scope idiom to another clause's medication decision. A
+ * Evaluation is two-mode (rounds 4+6): rules WITHOUT an in-scope idiom
+ * escape evaluate on the WHOLE question (their clinical shapes may span
+ * sentences - "I weigh 72 kg. What dose is right for me?"), while only
+ * escape-bearing rules evaluate per-sentence-unit with occurrence-anchored
+ * suppression, because only their escape can suppress a real decision. A
  * DECIMAL POINT is not a boundary (round 5): digits around a period are
- * guarded with a placeholder before the split, so "I weigh 72.5 kg, what
- * dose is right for me?" stays one unit and the weight-and-dose shape keeps
- * matching across the decimal.
+ * guarded with a placeholder before the split.
  */
 export function classifyTopic(question: string): SafetyClassification {
   if (typeof question !== 'string') return { outOfScope: false, category: null, matchedRules: [] };
@@ -171,7 +172,16 @@ export function classifyTopic(question: string): SafetyClassification {
   const units = (guarded.match(/[^.!?\n;]+[.?!]?/g) ?? [guarded]).map((u) => u.replaceAll(DECIMAL_GUARD, '.'));
   const matchedRules: string[] = [];
   for (const rule of SAFETY_RULES) {
-    if (units.some((unit) => ruleFiresOnUnit(rule, unit))) matchedRules.push(rule.id);
+    // Rules WITHOUT an in-scope idiom escape have no suppression mechanism a
+    // foreign clause could hijack, so they evaluate on the WHOLE question
+    // exactly as before round 4 - clinical shapes that intentionally span
+    // sentences ("I weigh 72 kg. What dose is right for me?") keep matching.
+    // Only escape-bearing rules evaluate per sentence unit and per
+    // occurrence (round 4), because only their escape can suppress a real
+    // decision.
+    const fires =
+      rule.inScopeWhen === undefined ? rule.pattern.test(text) : units.some((unit) => ruleFiresOnUnit(rule, unit));
+    if (fires) matchedRules.push(rule.id);
   }
   return matchedRules.length > 0
     ? { outOfScope: true, category: 'clinical', matchedRules }
