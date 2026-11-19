@@ -110,15 +110,32 @@ describe('safety-routing: classifier (issue #365 AC1)', () => {
   });
 
   test('named medications outside the vocabulary list still fire; non-clinical take does not (safety-routing)', () => {
-    // Review round 2: the clinicalContext condition must not silently drop
-    // named-medication advice (amoxicillin via the -cillin suffix shape) and
-    // must not fire on ordinary non-clinical "take" uses.
+    // Review round 2: the context condition must not silently drop
+    // named-medication advice (amoxicillin via the -cillin suffix shape).
+    // Review round 3 (fail-toward-refusal): the bare personal-take shape
+    // decides - an unlisted drug name (warfarin carries NO vocabulary word
+    // and NO suffix shape) still refuses, the in-scope idiom list is the
+    // only escape, and an idiom does NOT suppress when a clinical signal
+    // co-occurs.
     const hit = classifyTopic('Should I take amoxicillin?');
     expect(hit.outOfScope).toBe(true);
     expect(hit.matchedRules).toContain('dosing-personal-take');
+    // The reviewer's named regression: warfarin is outside the vocabulary
+    // list and outside every suffix shape - the bare shape must still fire.
+    const warfarin = classifyTopic('Should I take warfarin?');
+    expect(warfarin.outOfScope).toBe(true);
+    expect(warfarin.matchedRules).toContain('dosing-personal-take');
+    // The in-scope idiom escape (no clinical signal).
     const miss = classifyTopic('Can I take a look at the training document before the session?');
     expect(miss.outOfScope).toBe(false);
     expect(miss.matchedRules).toEqual([]);
+    const slides = classifyTopic('Can I take the training course slides?');
+    expect(slides.outOfScope).toBe(false);
+    expect(slides.matchedRules).toEqual([]);
+    // The idiom does NOT win over a clinical signal.
+    const override = classifyTopic('Should I take a look at my insulin dosage?');
+    expect(override.outOfScope).toBe(true);
+    expect(override.matchedRules).toContain('dosing-personal-take');
   });
 
   test('empty/whitespace/non-string inputs are in scope (safety-routing)', () => {

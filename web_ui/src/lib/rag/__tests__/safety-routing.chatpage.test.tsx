@@ -13,7 +13,7 @@
 // REAL so complete()→flushBuffer()→onToken/onDone is the production path.
 import React from 'react';
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, act, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor, cleanup, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import 'fake-indexeddb/auto';
 import type { ChatMessage } from '../../../types/chat';
@@ -115,13 +115,62 @@ function mockExternalConfig(enabled: boolean, grounded: boolean): void {
   );
 }
 
-function renderChatPage(): { onSave: ReturnType<typeof vi.fn>; getMessages: () => ChatMessage[] } {
-  const onSaveConversation = vi.fn(
-    () =>
-      new Promise<void>((resolve) => {
-        void Promise.resolve().then(resolve);
-      }),
-  );
+function renderChatPage(options?: {
+  save?: 'mock' | 'real-dexie';
+}): {
+  onSave: ReturnType<typeof vi.fn>;
+  getMessages: () => ChatMessage[];
+  savedIds: string[];
+} {
+  const savedIds: string[] = [];
+  let activeId: string | undefined;
+  // Round 3: save='real-dexie' installs a save seam that persists through the
+  // REAL conversations db (createConversation/updateConversation + reread via
+  // getConversation) - the same layer the production saveMessages hook
+  // delegates to - instead of resolving a no-op mock.
+  const onSaveConversation =
+    options?.save === 'real-dexie'
+      ? vi.fn(
+          async (
+            conversationId: string | undefined,
+            messages: ChatMessage[],
+            _storageTag: string,
+            _engine: unknown,
+            onCreate?: (newId: string) => void,
+          ): Promise<void> => {
+            void _storageTag;
+            void _engine;
+            if (messages.length === 0) return;
+            const { createConversation, updateConversation, getConversation } =
+              await import('../../../db/conversations');
+            const target = conversationId ?? activeId;
+            if (target !== undefined) {
+              const existing = await getConversation(target);
+              if (existing === undefined) return; // production guard: never resurrect
+              await updateConversation(target, { messages, updatedAt: Date.now() });
+              return;
+            }
+            const id = `conv-r3-${Date.now()}-${savedIds.length}`;
+            await createConversation({
+              id,
+              title: 'safety-routing round-3 real save',
+              messages,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              mode: 'wllama',
+              modelUsed: 'test-model',
+            } as unknown as Parameters<typeof createConversation>[0]);
+            savedIds.push(id);
+            activeId = id;
+            onCreate?.(id);
+          },
+        )
+      : vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              void Promise.resolve().then(resolve);
+            }),
+        );
   // Lifted view (live streaming-persistence pattern): ChatPage pushes every
   // thread update through onMessagesChange; without threading it back the
   // parent keeps messages=[] and the refusal never renders.
@@ -145,7 +194,7 @@ function renderChatPage(): { onSave: ReturnType<typeof vi.fn>; getMessages: () =
     );
   }
   render(<Harness />);
-  return { onSave: onSaveConversation, getMessages: () => messages };
+  return { onSave: onSaveConversation, getMessages: () => messages, savedIds };
 }
 
 // Send INSIDE the act block (live ChatPage.streaming-persistence pattern,
@@ -316,10 +365,14 @@ describe('safety-routing: ChatPage pre-route branch (issue #365 AC1)', () => {
   });
 
   test('a REAL ChatPage send/completion with canary content leaks nothing into the audit rows (safety-routing)', async () => {
-    // Review round 2 (F-4 remainder): the no-leak proof must ride the REAL
-    // send/completion flow, not a direct db call. This ChatPage mount runs
-    // the full renderer flow (send -> persist via the real save seam).
-    const { onSave } = renderChatPage();
+    // Review rounds 2+3: the no-leak proof rides the REAL send/completion
+    // flow with the REAL Dexie conversation save, and the audit-row read is
+    // guarded NONEMPTY (a governance row seeded through the real writer)
+    // so the not-contains assertions cannot pass vacuously on an empty
+    // table.
+    const audit = await import('../../../db/audit');
+    await audit.appendAuditEvent('app_start', null); // the app-shell lifecycle row
+    const { savedIds } = renderChatPage({ save: 'real-dexie' });
     const USER_CANARY = 'user-canary-zq81XT send this exact text';
     const ASSISTANT_CANARY = 'assistant-canary-wm52YL grounded answer text';
     orchestratorQuery.mockImplementation(async function* (): AsyncGenerator<RAGEvent> {
@@ -327,61 +380,93 @@ describe('safety-routing: ChatPage pre-route branch (issue #365 AC1)', () => {
       yield { type: 'complete', data: { answer: ASSISTANT_CANARY, sources: [], chunks: [], grounding: 'grounded' } };
     });
     await submitMessage(USER_CANARY);
-    // The persisted conversation carries both canaries (the save seam ran).
-    // Find the ASSISTANT-bearing payload (the send-time save carries only the
-    // user message + empty placeholder; the terminal save has the answer).
-    const saved = assistantSaves(onSave.mock.calls);
-    const assistantThread = saved.find((m) => {
-      const content = (m as { content?: string }).content ?? '';
-      return content.includes(ASSISTANT_CANARY);
-    });
-    expect(assistantThread, 'the terminal save with the assistant answer must exist').toBeDefined();
-    const persistedText = JSON.stringify(assistantThread);
-    expect(persistedText).toContain(ASSISTANT_CANARY);
-    // The audit db rows (same module realm) carry none of it.
-    const audit = await import('../../../db/audit');
-    const raw = JSON.stringify(await audit.auditDb.events.toArray());
+    // The REAL conversation db carries both canaries (round 3: the save
+    // rode createConversation, not a mock capture). The real save settles
+    // on real timers (migration + write-lock + key probe), so poll.
+    const { getConversation } = await import('../../../db/conversations');
+    let conv: Awaited<ReturnType<typeof getConversation>>;
+    await waitFor(
+      () => {
+        expect(savedIds.length, 'the real save must have created a conversation').toBeGreaterThan(0);
+      },
+      { timeout: 3000, interval: 50 },
+    );
+    await waitFor(
+      async () => {
+        conv = await getConversation(savedIds[savedIds.length - 1]);
+        expect(
+          (conv?.messages ?? []).some((m) => m.role === 'assistant' && m.content.includes(ASSISTANT_CANARY)),
+          'the completion save must have landed the assistant answer',
+        ).toBe(true);
+      },
+      { timeout: 3000, interval: 50 },
+    );
+    expect(conv, 'the conversation row must exist').toBeDefined();
+    const convText = JSON.stringify(conv);
+    expect(convText).toContain(USER_CANARY);
+    expect(convText).toContain(ASSISTANT_CANARY);
+    // The audit db rows (same realm, different db) carry none of it - and
+    // they are NONEMPTY (the precondition that makes not-contains mean
+    // something).
+    const rows = await audit.auditDb.events.toArray();
+    expect(rows.length, 'audit rows must exist for the no-leak read to be meaningful').toBeGreaterThan(0);
+    expect(rows.some((r) => r.event === 'app_start')).toBe(true);
+    const raw = JSON.stringify(rows);
     expect(raw).not.toContain('zq81XT');
     expect(raw).not.toContain('wm52YL');
   });
 
-  test('the PERSISTED refusal row re-read from the save payload renders the safety notice (safety-routing)', async () => {
-    // Review round 2 (F-4 remainder): the reload leg renders the ACTUAL
-    // persisted row captured from the real save seam, not a hand-built
-    // message.
-    const { onSave } = renderChatPage();
+  test('the refusal persists through the REAL conversation db and re-reads with its safety metadata (safety-routing)', async () => {
+    // Review round 3: the reread must ride the REAL Dexie save/read path
+    // (createConversation at the send-time save, updateConversation at the
+    // completion save, getConversation to reread) - the same layer the
+    // production saveMessages hook uses - so a persistence layer dropping
+    // the safety metadata would fail this leg, which the captured mock
+    // payload could never detect.
+    const { savedIds } = renderChatPage({ save: 'real-dexie' });
     await submitMessage(CLINICAL);
     await flush();
-    const saved = assistantSaves(onSave.mock.calls);
-    const persistedAssistant = saved[saved.length - 1] as {
-      id?: string;
-      content?: string;
-      safety?: { category: string; matchedRules: string[] };
-      grounding?: string;
-    };
-    expect(persistedAssistant.safety?.category).toBe('clinical');
+    // The real save settles on real timers (migration + write-lock + key
+    // probe), so poll instead of a fixed flush.
+    await waitFor(
+      () => {
+        expect(savedIds.length, 'the send-time save must have created the conversation').toBeGreaterThan(0);
+      },
+      { timeout: 3000, interval: 50 },
+    );
+    const { getConversation } = await import('../../../db/conversations');
+    let conv: Awaited<ReturnType<typeof getConversation>>;
+    await waitFor(
+      async () => {
+        conv = await getConversation(savedIds[savedIds.length - 1]);
+        expect(
+          (conv?.messages ?? []).some((m) => m.role === 'assistant' && m.content === SAFETY_REFUSAL_TEXT),
+          'the completion save must have landed the refusal answer',
+        ).toBe(true);
+      },
+      { timeout: 3000, interval: 50 },
+    );
+    const persistedAssistant = (conv as { messages: ChatMessage[] }).messages.find(
+      (m) => m.role === 'assistant',
+    );
+    expect(persistedAssistant, 'the persisted assistant row must exist').toBeDefined();
+    expect(persistedAssistant?.content).toBe(SAFETY_REFUSAL_TEXT);
+    expect((persistedAssistant?.safety as { category?: string } | undefined)?.category).toBe('clinical');
+    expect((persistedAssistant?.safety as { matchedRules?: string[] } | undefined)?.matchedRules).toContain(
+      'dosing-personal-take',
+    );
     // Unmount the send-phase tree before rendering the reloaded row (the
     // refusal text would otherwise appear twice).
     cleanup();
-    // Render the PERSISTED row (the object the save seam captured) as the
-    // reloaded thread.
-    const persistedRow = {
-      id: persistedAssistant.id ?? 'a1',
-      role: 'assistant' as const,
-      content: persistedAssistant.content ?? '',
-      timestamp: Date.now(),
-      grounding: persistedAssistant.grounding as 'grounded' | 'general' | undefined,
-      safety: persistedAssistant.safety as
-        | { category: 'clinical'; matchedRules: string[] }
-        | undefined,
-    };
+    // Render the rows REREAD FROM THE DB (not the in-memory thread, not a
+    // mock capture).
     render(
       <ChatPage
-        messages={[persistedRow]}
+        messages={(conv as { messages: ChatMessage[] }).messages}
         onMessagesChange={() => {}}
         onSaveConversation={async () => {}}
         onNewChat={() => {}}
-        currentConversationId={'conv-1'}
+        currentConversationId={'conv-r3-reread'}
         setCurrentConversationId={() => {}}
         onOpenSettings={() => {}}
       />,
@@ -390,6 +475,13 @@ describe('safety-routing: ChatPage pre-route branch (issue #365 AC1)', () => {
     expect(screen.getByText(SAFETY_REFUSAL_TEXT)).toBeInTheDocument();
     expect(screen.getByTestId('safety-notice')).toBeInTheDocument();
     expect(screen.queryByText('General knowledge')).not.toBeInTheDocument();
+    // The refusal message's OWN actions are suppressed; the USER message in
+    // the reread thread legitimately keeps its copy affordance, so the
+    // absence assertions are scoped to the assistant container.
+    const assistantRegion = document.querySelector('[data-role="assistant"]') as HTMLElement;
+    expect(assistantRegion).toBeDefined();
+    expect(within(assistantRegion).queryByRole('button', { name: /^copy message$/i })).not.toBeInTheDocument();
+    expect(within(assistantRegion).queryByRole('button', { name: /^copy source$/i })).not.toBeInTheDocument();
   });
 
   test('Regenerate on a refusal re-runs the classifier and never touches the route (safety-routing)', async () => {

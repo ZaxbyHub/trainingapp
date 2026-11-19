@@ -26,9 +26,17 @@ export interface SafetyRule {
   intent: 'dosing' | 'diagnosis' | 'treatment' | 'clinician-role';
   /** Case-insensitive advice-shape pattern over the raw question. */
   pattern: RegExp;
-  /** Optional second condition: when set, the rule fires only if BOTH the
-   *  pattern and this context regex match the question (AND semantics).
-   *  Used by rules whose bare advice-shape also covers non-clinical uses. */
+  /** Optional in-scope idiom list (paired with clinicalContext): when the
+   *  idiom matches AND no clinicalContext signal co-occurs, the rule is
+   *  SUPPRESSED - the question reads as an ordinary document/study action.
+   *  Without an idiom match the bare advice shape fires - fail-toward-
+   *  refusal: an unlisted drug name ("Should I take warfarin?") still
+   *  refuses because the shape alone decides (review round 3). clinicalContext
+   *  is the idiom OVERRIDE signal: idiom + clinical signal = refusal. */
+  inScopeWhen?: RegExp;
+  /** Vocabulary second-chance net and the idiom-override signal (see
+   *  inScopeWhen). Dosage units, medication words, pharmaceutical suffix
+   *  shapes. With no inScopeWhen on the rule it is inert. */
   clinicalContext?: RegExp;
   /** A question that MUST match (pinned). */
   positiveExample: string;
@@ -47,15 +55,17 @@ export const SAFETY_RULES: readonly SafetyRule[] = Object.freeze([
   {
     id: 'dosing-personal-take',
     intent: 'dosing',
-    // Clinical-context required: the bare "can i take" shape also matches
-    // ordinary non-clinical uses ("Can I take a look at the document?") - the
-    // rule fires only when a dosage unit / medication word OR a common
-    // pharmaceutical SUFFIX shape (-cillin/-mycin/-olol/-pril/-sartan/
-    // -statin/-mab/-nib/-tinib/-floxacin/-cycline/-azole/-prazole/-gliptin/
-    // -dronate/-zepam/-conazole) co-occurs, so a named drug the vocabulary
-    // list never anticipated ("Should I take amoxicillin?") still fires
-    // while "Can I take a look..." does not (review round 2).
+    // Fail-toward-refusal (review round 3): the bare personal-take shape
+    // decides, with an explicit IN-SCOPE idiom list as the only escape -
+    // "Can I take a look at the training document..." stays in scope, while
+    // any named medication OUTSIDE the vocabulary list ("Should I take
+    // warfarin?", "Should I take amoxicillin?") still refuses. An idiom
+    // match does NOT suppress when a clinical signal co-occurs ("Should I
+    // take a look at my insulin dosage?" refuses). The clinicalContext
+    // vocabulary (dosage units, medication words, pharmaceutical suffix
+    // shapes) is the second-chance net for rules that need it.
     pattern: /\b(should i|can i|is it safe to)\s+(?:still\s+)?take\b/i,
+    inScopeWhen: /\btake (?:a (?:look|seat|minute|moment)|notes?|over|part|the (?:training|course|quiz|module|exam|session|document|slide|slides|pack)|this (?:training|course|document|pack|quiz|module|slide|slides)|these (?:slides|documents|notes))\b/i,
     clinicalContext: /\b(mg|mcg|ml|dose|dosing|dosage|medication|medicine|meds|drug|drugs|pill|pills|tablet|tablets|capsule|capsules|insulin|antibiotic|antibiotics|painkiller|painkillers|supplement|supplements|vitamin|vitamins|aspirin|ibuprofen|paracetamol|acetaminophen|metformin|statin|statins|steroid|steroids|[a-z]{3,}(?:cillin|mycin|olol|pril|sartan|statin|mab|nib|tinib|floxacin|cycline|azole|prazole|gliptin|dronate|zepam|conazole))\b/i,
     positiveExample: 'Should I take 500 mg of metformin with my breakfast?',
     negativeExample: 'Can I take a look at the training document before the session?',
@@ -145,11 +155,12 @@ export function classifyTopic(question: string): SafetyClassification {
   if (text === '') return { outOfScope: false, category: null, matchedRules: [] };
   const matchedRules: string[] = [];
   for (const rule of SAFETY_RULES) {
-    // clinicalContext is AND semantics: a rule with a context condition fires
-    // only when BOTH its advice shape and the clinical context match.
-    if (rule.pattern.test(text) && (rule.clinicalContext === undefined || rule.clinicalContext.test(text))) {
-      matchedRules.push(rule.id);
-    }
+    // Fail-toward-refusal: the bare advice shape decides. The ONLY escape is
+    // an inScopeWhen idiom match WITH no clinicalContext signal co-occurring
+    // (idiom + clinical = refusal; no idiom = the shape fires, so an
+    // unlisted drug name like "warfarin" still refuses).
+    if (rule.inScopeWhen?.test(text) === true && rule.clinicalContext?.test(text) !== true) continue;
+    if (rule.pattern.test(text)) matchedRules.push(rule.id);
   }
   return matchedRules.length > 0
     ? { outOfScope: true, category: 'clinical', matchedRules }
