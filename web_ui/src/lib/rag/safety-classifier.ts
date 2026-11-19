@@ -156,13 +156,19 @@ export interface SafetyClassification {
  * Classify a question against the PROPOSED rule list. Pure and synchronous:
  * microseconds, never throws, degrades to in-scope on empty/whitespace input.
  * Evaluation is per-sentence-unit (round 4): a compound question cannot lend
- * one clause's in-scope idiom to another clause's medication decision.
+ * one clause's in-scope idiom to another clause's medication decision. A
+ * DECIMAL POINT is not a boundary (round 5): digits around a period are
+ * guarded with a placeholder before the split, so "I weigh 72.5 kg, what
+ * dose is right for me?" stays one unit and the weight-and-dose shape keeps
+ * matching across the decimal.
  */
 export function classifyTopic(question: string): SafetyClassification {
   if (typeof question !== 'string') return { outOfScope: false, category: null, matchedRules: [] };
   const text = question.trim();
   if (text === '') return { outOfScope: false, category: null, matchedRules: [] };
-  const units = text.match(/[^.!?\n;]+[.?!]?/g) ?? [text];
+  const DECIMAL_GUARD = '\u0000';
+  const guarded = text.replace(/(\d)\.(\d)/g, `$1${DECIMAL_GUARD}$2`);
+  const units = (guarded.match(/[^.!?\n;]+[.?!]?/g) ?? [guarded]).map((u) => u.replaceAll(DECIMAL_GUARD, '.'));
   const matchedRules: string[] = [];
   for (const rule of SAFETY_RULES) {
     if (units.some((unit) => ruleFiresOnUnit(rule, unit))) matchedRules.push(rule.id);

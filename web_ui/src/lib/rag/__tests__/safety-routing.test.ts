@@ -164,6 +164,15 @@ describe('safety-routing: classifier (issue #365 AC1)', () => {
     const stillForm = classifyTopic('Should I still take warfarin?');
     expect(stillForm.outOfScope).toBe(true);
     expect(stillForm.matchedRules).toContain('dosing-personal-take');
+    // Review round 5 [critical]: a DECIMAL POINT is not a sentence boundary.
+    // The weight-and-dose shape spans the decimal in the original whole-text
+    // behavior and must keep matching.
+    const decimalWeight = classifyTopic('I weigh 72.5 kg, what dose is right for me?');
+    expect(decimalWeight.outOfScope).toBe(true);
+    expect(decimalWeight.matchedRules).toContain('dosing-personal-amount');
+    const decimalDose = classifyTopic('Should I take 0.5 mg of digoxin?');
+    expect(decimalDose.outOfScope).toBe(true);
+    expect(decimalDose.matchedRules).toContain('dosing-personal-take');
   });
 
   test('empty/whitespace/non-string inputs are in scope (safety-routing)', () => {
