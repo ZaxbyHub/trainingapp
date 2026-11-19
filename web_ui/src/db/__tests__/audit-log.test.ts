@@ -88,15 +88,37 @@ describe('audit-log: writer shape (issue #366 AC1)', () => {
     expect(subjects).toEqual(['external.baseUrl', 'null']);
   });
 
-  test('raw table contains NO conversation-content canary ever (audit-log)', async () => {
+  test('raw table contains NO conversation-content canary through a REAL conversation save (audit-log)', async () => {
     const audit = await freshAudit(nextPrefix());
     await audit.appendAuditEvent('app_start', null);
     await audit.appendAuditEvent('clear_cache', null);
-    const raw = JSON.stringify(
-      await rawAuditRows(await auditDbName(currentPrefix)),
-    );
+    // REAL conversation-content flow: drive the actual db-layer conversation
+    // writer (createConversation) with canary-bearing user + assistant
+    // message content, then inspect every raw audit row (review round: the
+    // canary must ride a REAL persisted conversation, not just exist in test
+    // scope). Dexie mock hygiene: unique prefix + fresh module realm.
+    const { createConversation } = await import('../conversations');
+    const CONVERSATION_ID = 'conv-canary-real';
+    await createConversation({
+      id: CONVERSATION_ID,
+      title: CONV_CANARY,
+      messages: [
+        { id: 'u1', role: 'user', content: `user says: ${CONV_CANARY}`, timestamp: Date.now() },
+        { id: 'a1', role: 'assistant', content: `assistant replies: take 500mg ${CONV_CANARY}`, timestamp: Date.now() },
+      ],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      mode: 'wllama',
+      modelUsed: 'test-model',
+    } as unknown as Parameters<typeof createConversation>[0]);
+    // A settings row lands AFTER the conversation exists (lifecycle overlap).
+    await audit.appendAuditEvent('settings_change', 'external.baseUrl');
+    const raw = JSON.stringify(await rawAuditRows(await auditDbName(currentPrefix)));
+    // The audit table carries governance keys only - never the conversation
+    // content, in any field, even while the conversation is stored nearby.
     expect(raw).not.toContain(CONV_CANARY);
     expect(raw).not.toContain('500mg');
+    expect(raw).toContain('external.baseUrl');
   });
 });
 
@@ -133,10 +155,24 @@ describe('audit-log: real producer legs (issue #366 AC1)', () => {
     expect(JSON.stringify(rows)).not.toContain(URL_CANARY);
     expect(JSON.stringify(rows)).not.toContain(KEY_CANARY);
 
+    // A REAL API-key save drives the key seam: patch.apiKey commits the key
+    // record (subject external.apiKey) and the KEY VALUE never lands in any
+    // audit field (review round: the canary must ride the real producer).
+    provider.saveExternalConfig({ apiKey: KEY_CANARY });
+    rows = await rawAuditRows(await auditDbName(prefix));
+    const keyRows = rows.filter((r) => r.subject === 'external.apiKey');
+    expect(keyRows.length).toBe(1);
+    expect(JSON.stringify(rows)).not.toContain(KEY_CANARY);
+    // Clearing it emits the committed clear (a second row for the key).
+    provider.saveExternalConfig({ apiKey: '' });
+    rows = await rawAuditRows(await auditDbName(prefix));
+    expect(rows.filter((r) => r.subject === 'external.apiKey').length).toBe(2);
+
     // Unchanged re-save produces NO rows (effective-value discipline).
+    // (7 = 5 config rows + the apiKey save + the apiKey clear.)
     provider.saveExternalConfig({ baseUrl: URL_CANARY });
     rows = await rawAuditRows(await auditDbName(prefix));
-    expect(rows.filter((r) => r.event === 'settings_change').length).toBe(5);
+    expect(rows.filter((r) => r.event === 'settings_change').length).toBe(7);
 
     // Failed config write via a REAL failing-storage global (vi.stubGlobal
     // replaces globalThis.localStorage, so the provider's setItem throws
@@ -171,7 +207,7 @@ describe('audit-log: real producer legs (issue #366 AC1)', () => {
       localStorage.setItem(PROFILE_KEY, prefix);
     }
     rows = await rawAuditRows(await auditDbName(prefix));
-    expect(rows.filter((r) => r.event === 'settings_change').length).toBe(5);
+    expect(rows.filter((r) => r.event === 'settings_change').length).toBe(7);
   });
 
   test('updates.optIn: persisted marker on both runtimes; failed check still one row (audit-log)', async () => {

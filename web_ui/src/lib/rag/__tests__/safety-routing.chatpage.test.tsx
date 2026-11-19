@@ -13,8 +13,9 @@
 // REAL so complete()→flushBuffer()→onToken/onDone is the production path.
 import React from 'react';
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor, cleanup } from '@testing-library/react';
 import '@testing-library/jest-dom';
+import 'fake-indexeddb/auto';
 import type { ChatMessage } from '../../../types/chat';
 import type { RAGEvent } from '../rag-orchestrator';
 
@@ -314,6 +315,83 @@ describe('safety-routing: ChatPage pre-route branch (issue #365 AC1)', () => {
     expect(screen.queryByRole('button', { name: /^copy source$/i })).not.toBeInTheDocument();
   });
 
+  test('a REAL ChatPage send/completion with canary content leaks nothing into the audit rows (safety-routing)', async () => {
+    // Review round 2 (F-4 remainder): the no-leak proof must ride the REAL
+    // send/completion flow, not a direct db call. This ChatPage mount runs
+    // the full renderer flow (send -> persist via the real save seam).
+    const { onSave } = renderChatPage();
+    const USER_CANARY = 'user-canary-zq81XT send this exact text';
+    const ASSISTANT_CANARY = 'assistant-canary-wm52YL grounded answer text';
+    orchestratorQuery.mockImplementation(async function* (): AsyncGenerator<RAGEvent> {
+      yield { type: 'token', data: ASSISTANT_CANARY };
+      yield { type: 'complete', data: { answer: ASSISTANT_CANARY, sources: [], chunks: [], grounding: 'grounded' } };
+    });
+    await submitMessage(USER_CANARY);
+    // The persisted conversation carries both canaries (the save seam ran).
+    // Find the ASSISTANT-bearing payload (the send-time save carries only the
+    // user message + empty placeholder; the terminal save has the answer).
+    const saved = assistantSaves(onSave.mock.calls);
+    const assistantThread = saved.find((m) => {
+      const content = (m as { content?: string }).content ?? '';
+      return content.includes(ASSISTANT_CANARY);
+    });
+    expect(assistantThread, 'the terminal save with the assistant answer must exist').toBeDefined();
+    const persistedText = JSON.stringify(assistantThread);
+    expect(persistedText).toContain(ASSISTANT_CANARY);
+    // The audit db rows (same module realm) carry none of it.
+    const audit = await import('../../../db/audit');
+    const raw = JSON.stringify(await audit.auditDb.events.toArray());
+    expect(raw).not.toContain('zq81XT');
+    expect(raw).not.toContain('wm52YL');
+  });
+
+  test('the PERSISTED refusal row re-read from the save payload renders the safety notice (safety-routing)', async () => {
+    // Review round 2 (F-4 remainder): the reload leg renders the ACTUAL
+    // persisted row captured from the real save seam, not a hand-built
+    // message.
+    const { onSave } = renderChatPage();
+    await submitMessage(CLINICAL);
+    await flush();
+    const saved = assistantSaves(onSave.mock.calls);
+    const persistedAssistant = saved[saved.length - 1] as {
+      id?: string;
+      content?: string;
+      safety?: { category: string; matchedRules: string[] };
+      grounding?: string;
+    };
+    expect(persistedAssistant.safety?.category).toBe('clinical');
+    // Unmount the send-phase tree before rendering the reloaded row (the
+    // refusal text would otherwise appear twice).
+    cleanup();
+    // Render the PERSISTED row (the object the save seam captured) as the
+    // reloaded thread.
+    const persistedRow = {
+      id: persistedAssistant.id ?? 'a1',
+      role: 'assistant' as const,
+      content: persistedAssistant.content ?? '',
+      timestamp: Date.now(),
+      grounding: persistedAssistant.grounding as 'grounded' | 'general' | undefined,
+      safety: persistedAssistant.safety as
+        | { category: 'clinical'; matchedRules: string[] }
+        | undefined,
+    };
+    render(
+      <ChatPage
+        messages={[persistedRow]}
+        onMessagesChange={() => {}}
+        onSaveConversation={async () => {}}
+        onNewChat={() => {}}
+        currentConversationId={'conv-1'}
+        setCurrentConversationId={() => {}}
+        onOpenSettings={() => {}}
+      />,
+    );
+    await flush();
+    expect(screen.getByText(SAFETY_REFUSAL_TEXT)).toBeInTheDocument();
+    expect(screen.getByTestId('safety-notice')).toBeInTheDocument();
+    expect(screen.queryByText('General knowledge')).not.toBeInTheDocument();
+  });
+
   test('Regenerate on a refusal re-runs the classifier and never touches the route (safety-routing)', async () => {
     const { onSave } = renderChatPage();
     await submitMessage(CLINICAL);
@@ -323,17 +401,17 @@ describe('safety-routing: ChatPage pre-route branch (issue #365 AC1)', () => {
     expect(refusalsAfterFirst.length).toBeGreaterThan(0);
     expect(orchestratorQuery).not.toHaveBeenCalled();
 
-    const regen = screen.queryByRole('button', { name: /regenerate response/i });
-    if (regen !== null) {
-      await act(async () => {
-        fireEvent.click(regen);
-        await new Promise((r) => setTimeout(r, 25));
-      });
-      expect(orchestratorQuery).not.toHaveBeenCalled();
-    } else {
-      await submitMessage(CLINICAL);
-      expect(orchestratorQuery).not.toHaveBeenCalled();
-    }
+    // The Regenerate affordance is REQUIRED here (review round: a Send
+    // fallback would not prove the Regenerate entry re-runs the classifier).
+    const regen = await waitFor(() => {
+      const btn = screen.getByRole('button', { name: /regenerate response/i });
+      return btn;
+    });
+    await act(async () => {
+      fireEvent.click(regen);
+      await new Promise((r) => setTimeout(r, 25));
+    });
+    expect(orchestratorQuery).not.toHaveBeenCalled();
     const refusals = assistantSaves(onSave.mock.calls).filter(
       (m) => (m.safety as { category?: string } | undefined)?.category === 'clinical',
     );

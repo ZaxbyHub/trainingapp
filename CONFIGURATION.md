@@ -1356,7 +1356,7 @@ negative example that the shipped tests pin):**
 
 | id | intent | matches (shape) | positive example | negative example (must NOT match) |
 | --- | --- | --- | --- | --- |
-| dosing-personal-take | dosing | should/can/is-it-safe + take | Should I take 500 mg of metformin with my breakfast? | What do the training materials say about taking metformin with food? |
+| dosing-personal-take | dosing | should/can/is-it-safe + take AND (dosage unit OR medication vocabulary OR a common pharmaceutical suffix shape -cillin/-mycin/-olol/-pril/-sartan/-statin/-mab/-nib/-tinib/-floxacin/-cycline/-azole/-prazole/-gliptin/-dronate/-zepam/-conazole) | Should I take 500 mg of metformin with my breakfast? / Should I take amoxicillin? | Can I take a look at the training document before the session? |
 | dosing-personal-amount | dosing | how much + (should i/do i/for me); I weigh N + dose | How much ibuprofen should I take for my headache? | How much ibuprofen is discussed in the pain-management slide? |
 | dosing-patient-directive | dosing | what dose should (i/we/the patient); titrate up/down | What dose should I titrate the patient to? | What dose ranges appear in the dosing-table exercise? |
 | diagnosis-self | diagnosis | do/could I have; what's wrong with me; diagnose me | Do I have lupus based on these symptoms? | What are the diagnostic criteria for lupus in the rheumatology pack? |

@@ -26,6 +26,10 @@ export interface SafetyRule {
   intent: 'dosing' | 'diagnosis' | 'treatment' | 'clinician-role';
   /** Case-insensitive advice-shape pattern over the raw question. */
   pattern: RegExp;
+  /** Optional second condition: when set, the rule fires only if BOTH the
+   *  pattern and this context regex match the question (AND semantics).
+   *  Used by rules whose bare advice-shape also covers non-clinical uses. */
+  clinicalContext?: RegExp;
   /** A question that MUST match (pinned). */
   positiveExample: string;
   /** A question that MUST NOT match (pinned) - in-scope document/study
@@ -43,9 +47,18 @@ export const SAFETY_RULES: readonly SafetyRule[] = Object.freeze([
   {
     id: 'dosing-personal-take',
     intent: 'dosing',
+    // Clinical-context required: the bare "can i take" shape also matches
+    // ordinary non-clinical uses ("Can I take a look at the document?") - the
+    // rule fires only when a dosage unit / medication word OR a common
+    // pharmaceutical SUFFIX shape (-cillin/-mycin/-olol/-pril/-sartan/
+    // -statin/-mab/-nib/-tinib/-floxacin/-cycline/-azole/-prazole/-gliptin/
+    // -dronate/-zepam/-conazole) co-occurs, so a named drug the vocabulary
+    // list never anticipated ("Should I take amoxicillin?") still fires
+    // while "Can I take a look..." does not (review round 2).
     pattern: /\b(should i|can i|is it safe to)\s+(?:still\s+)?take\b/i,
+    clinicalContext: /\b(mg|mcg|ml|dose|dosing|dosage|medication|medicine|meds|drug|drugs|pill|pills|tablet|tablets|capsule|capsules|insulin|antibiotic|antibiotics|painkiller|painkillers|supplement|supplements|vitamin|vitamins|aspirin|ibuprofen|paracetamol|acetaminophen|metformin|statin|statins|steroid|steroids|[a-z]{3,}(?:cillin|mycin|olol|pril|sartan|statin|mab|nib|tinib|floxacin|cycline|azole|prazole|gliptin|dronate|zepam|conazole))\b/i,
     positiveExample: 'Should I take 500 mg of metformin with my breakfast?',
-    negativeExample: 'What do the training materials say about taking metformin with food?',
+    negativeExample: 'Can I take a look at the training document before the session?',
   },
   {
     id: 'dosing-personal-amount',
@@ -132,7 +145,11 @@ export function classifyTopic(question: string): SafetyClassification {
   if (text === '') return { outOfScope: false, category: null, matchedRules: [] };
   const matchedRules: string[] = [];
   for (const rule of SAFETY_RULES) {
-    if (rule.pattern.test(text)) matchedRules.push(rule.id);
+    // clinicalContext is AND semantics: a rule with a context condition fires
+    // only when BOTH its advice shape and the clinical context match.
+    if (rule.pattern.test(text) && (rule.clinicalContext === undefined || rule.clinicalContext.test(text))) {
+      matchedRules.push(rule.id);
+    }
   }
   return matchedRules.length > 0
     ? { outOfScope: true, category: 'clinical', matchedRules }

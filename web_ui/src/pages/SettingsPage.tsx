@@ -674,12 +674,17 @@ function InactivityTimeoutControl(): React.ReactElement {
     const clamped = Math.min(Math.max(Math.round(parsed), 0), INACTIVITY_CONTROL_MAX_MIN);
     setThreshold(clamped);
     try {
+      // Issue #366 (WI5): the authoritative BEFORE-snapshot is the STORED
+      // value (readStoredThreshold), never the editable draft state - after a
+      // FAILED write the draft advances but storage does not, and a
+      // successful retry of that same value must still emit (the stored
+      // value changed).
+      const storedBefore = readStoredThreshold();
       localStorage.setItem(INACTIVITY_TIMEOUT_KEY, String(clamped));
       setSaved(clamped);
-      // Issue #366 (WI5): emit only when the storage write committed AND the
-      // effective value changed (re-saving the current threshold is not a
-      // governance event). Subject = the key name, never the value.
-      if (clamped !== threshold) recordAuditEvent('settings_change', 'inactivity.timeout');
+      // Emit only when the storage write committed AND the effective stored
+      // value changed. Subject = the key name, never the value.
+      if (clamped !== storedBefore) recordAuditEvent('settings_change', 'inactivity.timeout');
     } catch {
       setSaved(null);
     }

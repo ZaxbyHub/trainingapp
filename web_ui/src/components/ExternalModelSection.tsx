@@ -433,20 +433,16 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
       // the before-snapshot.
       const runDesktop = async (): Promise<boolean> => {
         if (auditSnapshotRef.current === null) {
-          // Hold the first included PUT for the authoritative baseline GET -
-          // BOUNDED (250 ms): a baseline that never arrives (slow/unreachable
-          // backend) must never hold a user save hostage. On timeout or
-          // failure the PUT proceeds with ZERO audit rows (the disclosed
-          // boundary in the PROPOSED policy block).
-          const baselineRace = session.apiClient.getSettings() as Promise<unknown>;
-          const timeout = new Promise((resolve) => setTimeout(() => resolve(null), 250));
+          // Hold the first included PUT for the authoritative baseline GET per
+          // the approved policy: rows are omitted ONLY when the GET FAILS
+          // (rejected/unreachable backend). A slow-but-successful GET still
+          // gates the PUT (review round: a 250 ms timeout treated slow
+          // success as failure and silently dropped audit rows).
           try {
-            const baseline = await Promise.race([baselineRace, timeout]);
-            if (baseline !== null && mountedRef.current) {
-              applyDesktopSettings(baseline as Record<string, unknown>);
-            }
+            const baseline = await session.apiClient.getSettings();
+            if (mountedRef.current) applyDesktopSettings(baseline as Record<string, unknown>);
           } catch {
-            /* baseline never arrives -> commit still proceeds, zero rows */
+            /* baseline GET failed -> commit still proceeds, zero rows */
           }
         }
         const before = auditSnapshotRef.current;

@@ -109,6 +109,18 @@ describe('safety-routing: classifier (issue #365 AC1)', () => {
     }
   });
 
+  test('named medications outside the vocabulary list still fire; non-clinical take does not (safety-routing)', () => {
+    // Review round 2: the clinicalContext condition must not silently drop
+    // named-medication advice (amoxicillin via the -cillin suffix shape) and
+    // must not fire on ordinary non-clinical "take" uses.
+    const hit = classifyTopic('Should I take amoxicillin?');
+    expect(hit.outOfScope).toBe(true);
+    expect(hit.matchedRules).toContain('dosing-personal-take');
+    const miss = classifyTopic('Can I take a look at the training document before the session?');
+    expect(miss.outOfScope).toBe(false);
+    expect(miss.matchedRules).toEqual([]);
+  });
+
   test('empty/whitespace/non-string inputs are in scope (safety-routing)', () => {
     expect(classifyTopic('').outOfScope).toBe(false);
     expect(classifyTopic('   ').outOfScope).toBe(false);
