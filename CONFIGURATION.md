@@ -1420,6 +1420,7 @@ acknowledged outbox; main-custody writes without an awaited marker seam
 (desktop API-key custody, update feedUrl edits); pre-shell desktop launches.
 Also excluded from `settings_change`: inference mode/engine/profile, rag
 presets, pack-recency tuning (per-session preference surfaces). The first
-desktop external-settings PUT awaits a bounded (250 ms) baseline GET; if no
-authoritative baseline arrives the PUT still commits and NO row is emitted
-(disclosed boundary - the before-state is unknown).
+desktop external-settings PUT in a session first AWAITS an authoritative
+baseline GET of the persisted settings (no timeout); if that GET FAILS the
+PUT still commits and NO row is emitted (disclosed boundary - the
+before-state is unknown).
