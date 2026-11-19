@@ -35,6 +35,8 @@ import { LLM_MODEL_DIR } from '../lib/models/model-manifest';
 import { citationsToRefs } from '../lib/api/citations';
 import type { Citation } from '../lib/api/types';
 import { presetOptions } from '../lib/rag/rag-presets';
+import { classifyTopic } from '../lib/rag/safety-classifier';
+import { SAFETY_REFUSAL_TEXT } from '../lib/rag/safety-notice';
 import { downloadConversation } from '../lib/export/conversation-export';
 import { messagesForRegenerate } from '../lib/chat/message-ops';
 import { sequenceConversationSave } from '../lib/chat/save-sequencer';
@@ -770,6 +772,9 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
           abstain: data.abstain,
           abstainReason: data.abstainReason,
           retrievalDegraded: data.retrievalDegraded,
+          // #365 (WI4): safety-branch metadata - persisted so a reload still
+          // renders the safety notice (and suppresses badge/copy/citations).
+          safety: data.safety,
         };
       });
       snapshot = updated;
@@ -858,6 +863,28 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         abortControllerRef.current = null;
       }
     });
+
+    // Issue #365 (WI4): PRE-ROUTE clinical safety branch. Runs before the
+    // answer-route split (desktop SSE / ungrounded external / grounded RAG)
+    // so an out-of-scope clinical advice question never reaches model init,
+    // retrieval, or generation on ANY renderer path. Send and Regenerate
+    // share this entry, so a regenerated refusal re-runs the classifier. The
+    // refusal rides the exact token+complete streaming contract a normal
+    // answer uses - it renders, persists, and reloads identically (content
+    // arrives via the token event; the onDone map carries `safety`, which the
+    // bubble renders as the safety notice in place of the grounding badge).
+    // No settings read happens here (F-012 one-read-per-send pin preserved).
+    const safetyClassification = classifyTopic(text);
+    if (safetyClassification.outOfScope) {
+      streamManager.pushToken(SAFETY_REFUSAL_TEXT);
+      streamManager.complete({
+        sources: [],
+        contextLength: SAFETY_REFUSAL_TEXT.length,
+        inferenceTime: 0,
+        safety: { category: 'clinical', matchedRules: safetyClassification.matchedRules },
+      });
+      return;
+    }
 
     // universal-provider-settings-overhaul: with the desktop backend on an
     // external engine, every turn goes to the backend regardless of the
@@ -1071,6 +1098,11 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
                   contextTrimmed: event.data.contextTrimmed,
                   contextLength: fullAnswer.length,
                   inferenceTime: Date.now() - startTime,
+                  // #365: forwarded from the orchestrator's defense-in-depth
+                  // branch (normally unset - ChatPage's pre-route check fires
+                  // first; kept so any other orchestrator consumer's refusal
+                  // persists its safety metadata unchanged).
+                  safety: event.data.safety,
                 });
                 break;
               case 'error': {

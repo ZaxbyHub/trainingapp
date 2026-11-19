@@ -3,6 +3,7 @@
  */
 
 import type { LearnResult } from '../lib/api/types';
+import type { SafetyTurnMetadata } from '../lib/rag/safety-classifier';
 
 export type MessageRole = 'user' | 'assistant' | 'system';
 
@@ -58,6 +59,11 @@ export interface ChatMessage {
   abstainReason?: 'insufficient_evidence' | 'retrieval_degraded';
   /** True when retrieval ran keyword-only because semantic search was unavailable (F4). */
   retrievalDegraded?: boolean;
+  /** Issue #365 (WI4): set when this answer is a safety-branch refusal (the
+   *  question was detected as out-of-scope clinical advice). Persisted so a
+   *  reloaded conversation still renders the safety notice instead of the
+   *  grounding badge, and suppresses copy/citation actions on the refusal. */
+  safety?: SafetyTurnMetadata;
   /** Structured error string when generation failed mid-stream (S6). Rendered
    *  as a styled error card instead of being injected into `content`. */
   error?: string;
