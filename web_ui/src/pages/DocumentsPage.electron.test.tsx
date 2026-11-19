@@ -24,7 +24,10 @@ vi.mock('../lib/storage/document-store', () => ({
 vi.mock('../lib/storage/profile', () => ({
   migrateOrphanedNamespaces: vi.fn(async () => undefined),
   getProfilePrefix: vi.fn(() => 'testprfx'),
-}));
+    // Issue #366: the audit import chain (browser-pack-manager -> db/audit -> profile)
+    // needs the name derivations even in page-specs that never touch storage.
+    getStorageDbNames: () => ({ documents: 'testprfx-doc-qa-documents', vectorMapping: 'testprfx-doc-qa-indexes', vector: 'testprfx-doc-qa-index', keyword: 'testprfx-doc-qa-keywords', conversations: 'testprfx-doc-qa-conversations', audit: 'testprfx-doc-qa-audit' }),
+  }));
 // AC2's whole point: the browser-local pipeline must never even LOAD in
 // Electron mode. Mocking these modules enforces that structurally — any
 // static side effect (edgevec WASM import, transformers.js) or runtime call

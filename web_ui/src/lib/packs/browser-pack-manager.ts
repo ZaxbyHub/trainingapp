@@ -18,6 +18,7 @@
 // persistent storage is requested on install.
 import type { InstallPackResult, PackInfo } from '../api/types';
 import { PackManagerError, openPackArchive, sourceFromBlob, type ArchiveFileEntry } from './pack-extract-browser';
+import { recordAuditEvent } from '../../db/audit';
 import { compareVersions, parseManifest, validateManifestGates, type ManifestGateConfig, type PackManifest } from './pack-manifest';
 import { packGateConfig } from './pack-policy';
 import {
@@ -318,6 +319,13 @@ export class BrowserPackManager {
       return record;
     });
 
+    // Issue #366 (WI5): pack_install audit - emitted at the renderer-owned
+    // COMMIT point (the registry transaction has resolved), AFTER the lock
+    // callback returns and BEFORE the onInstalled hook / notify, so an
+    // audit-write failure can never enter install cleanup or misreport the
+    // pack result (recordAuditEvent swallows; the operation proceeds).
+    recordAuditEvent('pack_install', `${result.packId}@${result.version}`);
+
     try {
       await this.deps.hooks?.onInstalled(result, manifest, docs);
     } catch (error) {
@@ -367,6 +375,11 @@ export class BrowserPackManager {
       if (activeRemoved.length > 0) await this.deps.hooks?.onRemoved(activeRemoved).catch(() => undefined);
       return rows.length;
     });
+    // Issue #366 (WI5): pack_remove audit - only after the registry commit
+    // resolved with rows actually deleted (the nothing-matched case throws
+    // above and produces no row). Directory-cleanup failures are collected by
+    // the orphan sweep and do not change the commit truth.
+    if (removed > 0) recordAuditEvent('pack_remove', packId);
     this.notify();
     return removed;
   }

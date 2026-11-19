@@ -273,14 +273,16 @@ describe('diagnostics enhanced-level (AC2: persisted live info->debug toggle)', 
     const getState = handlerFor('desktop:diagnostics:get-state');
     expect(getState(undefined)).toEqual({ active: true, enhanced: false, sinkHealthy: true });
 
-    expect(setState(undefined, true)).toEqual({ ok: true, enhanced: true });
+    // Issue #366 (WI5): the reply carries the persisted marker (the renderer's
+    // audit producer emits settings_change on it, never on ok alone).
+    expect(setState(undefined, true)).toEqual({ ok: true, enhanced: true, persisted: true });
     console.debug('[test] debug while enhanced');
     expect(readLog(ws)).toContain('[test] debug while enhanced');
     expect(JSON.parse(fs.readFileSync(path.join(ws.profileDir, 'diagnostics-settings.json'), 'utf8'))).toEqual({
       enhancedLogging: true,
     });
 
-    expect(setState(undefined, false)).toEqual({ ok: true, enhanced: false });
+    expect(setState(undefined, false)).toEqual({ ok: true, enhanced: false, persisted: true });
     console.debug('[test] debug after toggle off');
     expect(readLog(ws)).not.toContain('[test] debug after toggle off');
     expect(getState(undefined)).toEqual({ active: true, enhanced: false, sinkHealthy: true });

@@ -146,7 +146,7 @@ export type DiagnosticsExportReply =
  * drop replies `dropped:'level'` without it). */
 export interface DesktopDiagnosticsBridge {
   getState(): Promise<{ active: boolean; enhanced: boolean; sinkHealthy?: boolean }>;
-  setEnhancedLevel(enabled: boolean): Promise<{ ok: boolean; detail?: string; enhanced?: boolean }>;
+  setEnhancedLevel(enabled: boolean): Promise<{ ok: boolean; detail?: string; enhanced?: boolean; persisted?: true }>;
   logEntry(entry: DiagnosticsLogEntry): Promise<{
     ok: boolean;
     dup?: boolean;

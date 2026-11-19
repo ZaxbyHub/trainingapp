@@ -633,12 +633,16 @@ export function bootstrap(): void {
             checkedAt: new Date().toISOString(),
           };
           pushUpdatesStatus();
-          return { ok: false as const, detail: updatesStatus.error ?? 'update check failed', status: updatesStatus };
+          // Issue #366 (WI5): saveUpdatesState committed (line 611) even
+          // though the follow-up check failed - the marker distinguishes the
+          // two facts so the renderer's audit producer logs a committed
+          // opt-in regardless of the check result (never keyed on `ok`).
+          return { ok: false as const, detail: updatesStatus.error ?? 'update check failed', status: updatesStatus, persisted: true as const };
         }
       } else {
         pushUpdatesStatus();
       }
-      return { ok: true as const, status: updatesStatus };
+      return { ok: true as const, status: updatesStatus, persisted: true as const };
     });
     ipcMain.handle('desktop:updates:check-now', async () => {
       if (!loadUpdatesState(updatesProfileDir).optIn) {
