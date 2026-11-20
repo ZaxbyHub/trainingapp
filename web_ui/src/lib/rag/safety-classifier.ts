@@ -61,16 +61,20 @@ export const SAFETY_RULES: readonly SafetyRule[] = Object.freeze([
   {
     id: 'dosing-personal-take',
     intent: 'dosing',
-    // Fail-toward-refusal (review rounds 3+4): the bare personal-take shape
-    // decides. Suppression is PER-SENTENCE-UNIT and PER-OCCURRENCE: the
-    // in-scope idiom tail must follow the shape occurrence's own "take"
-    // (anchored at the match end, never a whole-question search), so
-    // "Should I take warfarin? Can I take a look at the document?" refuses
-    // on the first unit and "Should I take the course of warfarin?" refuses
-    // because clinically ambiguous heads (course/pack) are excluded from the
-    // idiom list. A clinical signal anywhere in the unit overrides any
-    // idiom ("take a look at my insulin dosage" refuses). Named medications
-    // outside the vocabulary ("warfarin", "amoxicillin") always refuse.
+    // Fail-toward-refusal (review rounds 3-4 + final-critic rounds): the
+    // bare personal-take shape decides. Suppression is PER-SENTENCE-UNIT
+    // and PER-OCCURRENCE with CONTINUATION LIMITS: the in-scope idiom tail
+    // must follow the shape occurrence's own "take" (anchored at the match
+    // end, never a whole-question search), and the text AFTER the idiom must
+    // keep the occurrence an ordinary study action - no further "take"
+    // ("take the quiz, then take my warfarin"), no possessive ("the
+    // document's recommended amount of warfarin"), no coordination ("take
+    // these notes and my warfarin"). A clinical signal anywhere in the unit
+    // overrides every escape ("take a look at my insulin dosage" refuses).
+    // Named-medication DECISIONS on the bare shape ("Should I take
+    // warfarin?") refuse; document/study questions about unlisted drugs
+    // ("Can I take a look at the warfarin monograph?", "Can I take the
+    // document to the pharmacy?") stay in scope under the escape.
     pattern: /\b(should i|can i|is it safe to)\s+(?:still\s+)?take\b/i,
     // Rounds 7-8 (final-critic): clinically ambiguous idiom heads are
     // removed as each is found - course/pack (round 4), over/bare part
@@ -196,8 +200,14 @@ export function classifyTopic(question: string): SafetyClassification {
 /** Whether the rule fires on one sentence unit. The bare shape decides
  *  (fail-toward-refusal). For rules with an in-scope idiom escape, the unit
  *  is suppressed only when EVERY shape occurrence's own tail is the idiom -
- *  anchored at the occurrence's end, never a whole-unit search - and no
- *  clinical signal occurs anywhere in the unit. */
+ *  anchored at the occurrence's end, never a whole-unit search - AND the
+ *  continuation after the idiom keeps the occurrence an ordinary study
+ *  action (final-critic r4): the remainder must carry NO further "take"
+ *  (a second, pronoun-less take is the hidden decision - "take the quiz,
+ *  then take my warfarin"), must not open with a possessive ('s - "the
+ *  document's recommended amount of warfarin"), and must not open with a
+ *  coordination (and/,/then/with/or - "take these notes and my warfarin").
+ *  A clinical signal anywhere in the unit overrides any of this. */
 function ruleFiresOnUnit(rule: SafetyRule, unit: string): boolean {
   const global =
     rule.pattern.flags.includes('g') ? rule.pattern : new RegExp(rule.pattern.source, rule.pattern.flags + 'g');
@@ -206,5 +216,14 @@ function ruleFiresOnUnit(rule: SafetyRule, unit: string): boolean {
   if (rule.clinicalContext?.test(unit)) return true;
   if (rule.inScopeWhen === undefined) return true;
   const anchoredTail = new RegExp('^(?:' + rule.inScopeWhen.source + ')', rule.inScopeWhen.flags.replace('g', ''));
-  return !occurrences.every((m) => anchoredTail.test(unit.slice((m.index ?? 0) + m[0].length)));
+  return !occurrences.every((m) => {
+    const slice = unit.slice((m.index ?? 0) + m[0].length);
+    const tailMatch = anchoredTail.exec(slice);
+    if (tailMatch === null) return false;
+    const after = slice.slice(tailMatch[0].length);
+    if (/\btake\b/i.test(after)) return false;
+    if (/^['\u2019]s?\b/i.test(after)) return false;
+    if (/^\s*(?:,|;|\b(?:and|then|with|or)\b)/i.test(after)) return false;
+    return true;
+  });
 }

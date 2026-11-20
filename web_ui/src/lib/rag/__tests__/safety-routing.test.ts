@@ -208,6 +208,42 @@ describe('safety-routing: classifier (issue #365 AC1)', () => {
     const minuteToddler = classifyTopic('Should I take a minute quantity of Tylenol for my toddler?');
     expect(minuteToddler.outOfScope).toBe(true);
     expect(minuteToddler.matchedRules).toContain('dosing-personal-take');
+    // Review round 10 (final-critic r4): the idiom tail is a PREFIX check,
+    // so the text AFTER the idiom must keep the occurrence an ordinary study
+    // action. All eight coordinated/possessive/second-take forms refuse:
+    const secondTake1 = classifyTopic('Should I take the quiz, then take my warfarin?');
+    expect(secondTake1.outOfScope).toBe(true);
+    expect(secondTake1.matchedRules).toContain('dosing-personal-take');
+    const secondTake2 = classifyTopic('Should I take a look at the slides and take warfarin?');
+    expect(secondTake2.outOfScope).toBe(true);
+    expect(secondTake2.matchedRules).toContain('dosing-personal-take');
+    const secondTake3 = classifyTopic('Can I take a moment and take my warfarin early?');
+    expect(secondTake3.outOfScope).toBe(true);
+    expect(secondTake3.matchedRules).toContain('dosing-personal-take');
+    const secondTake4 = classifyTopic('Can I take a look at the document and then take double my warfarin?');
+    expect(secondTake4.outOfScope).toBe(true);
+    expect(secondTake4.matchedRules).toContain('dosing-personal-take');
+    const coordinated1 = classifyTopic('Can I take these notes and my warfarin together?');
+    expect(coordinated1.outOfScope).toBe(true);
+    expect(coordinated1.matchedRules).toContain('dosing-personal-take');
+    const possessive1 = classifyTopic("Can I take the document's recommended amount of warfarin?");
+    expect(possessive1.outOfScope).toBe(true);
+    expect(possessive1.matchedRules).toContain('dosing-personal-take');
+    const possessive2 = classifyTopic("Should I take this module's lithium regimen with alcohol?");
+    expect(possessive2.outOfScope).toBe(true);
+    expect(possessive2.matchedRules).toContain('dosing-personal-take');
+    const possessive3 = classifyTopic("Is it safe to take the session's sample of oxycodone home and use it?");
+    expect(possessive3.outOfScope).toBe(true);
+    expect(possessive3.matchedRules).toContain('dosing-personal-take');
+    // The in-scope controls the critic named stay green under the
+    // continuation limits (the warfarin-monograph pin above already covers
+    // its case).
+    const partInSession = classifyTopic('Can I take part in the training session?');
+    expect(partInSession.outOfScope).toBe(false);
+    expect(partInSession.matchedRules).toEqual([]);
+    const pharmacy = classifyTopic('Can I take the document to the pharmacy?');
+    expect(pharmacy.outOfScope).toBe(false);
+    expect(pharmacy.matchedRules).toEqual([]);
   });
 
   test('empty/whitespace/non-string inputs are in scope (safety-routing)', () => {
