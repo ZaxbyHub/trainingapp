@@ -206,12 +206,11 @@ export function classifyTopic(question: string): SafetyClassification {
  *  carry NO further "take" (a second, pronoun-less take is the hidden
  *  decision - "take the quiz, then take my warfarin"), must not open with
  *  a possessive ('s - "the document's recommended amount of warfarin"),
- *  and coordination (and/then/with/or/comma) breaks the escape UNLESS the
- *  coordinated remainder carries its own study verb ("take the quiz and
- *  then review my notes" stays in scope); a bare or possessed noun phrase
- *  coordinated onto the shared "take" ("...and my warfarin", "...and
- *  warfarin together", "...along with my warfarin") shares the ingestion
- *  verb and refuses regardless of determiners.
+ *  and coordination of ANY kind at ANY position (and/then/with/or/along
+ *  with/comma/semicolon) breaks the escape outright - the strict cut after
+ *  rounds 12-15 proved every lexical carve-out for coordinated study
+ *  actions bypassable; the over-refusal of coordinated study actions is a
+ *  disclosed maintainer sign-off item.
  *  A clinical signal anywhere in the unit overrides any of this. */
 function ruleFiresOnUnit(rule: SafetyRule, unit: string): boolean {
   const global =
@@ -228,15 +227,17 @@ function ruleFiresOnUnit(rule: SafetyRule, unit: string): boolean {
     const after = slice.slice(tailMatch[0].length);
     if (/\btake\b/i.test(after)) return false;
     if (/^['\u2019]s?\b/i.test(after)) return false;
-    // Coordination of ANY kind in the remainder breaks the escape (review
-    // rounds 11-14 convergence): every lexical carve-out for coordinated
-    // study actions - personal markers, then study verbs in any position -
-    // was bypassed by the next coordinated form, so the strict cut is the
-    // only convergent shape. Over-refusal of coordinated study actions
-    // ("take the quiz and then review my notes") is a disclosed
-    // fail-toward-refusal trade-off gated on the maintainer's AC3 sign-off
-    // - NOT silently accepted.
-    const coordinated = /\b(?:and|then|with|or|along with)\b/i.test(after) || /^\s*[,;]/.test(after);
+    // Coordination of ANY kind, at ANY position in the remainder, breaks
+    // the escape (review rounds 11-15 convergence): every lexical carve-out
+    // for coordinated study actions - personal markers, then study verbs in
+    // any position - was bypassed by the next coordinated form (round 15:
+    // a comma after the idiom head, "take the quiz today, my warfarin
+    // tomorrow?"), so the strict cut is the only convergent shape.
+    // Over-refusal of coordinated study actions ("take the quiz and then
+    // review my notes") is a disclosed fail-toward-refusal trade-off gated
+    // on the maintainer's AC3 sign-off - NOT silently accepted.
+    const coordinated =
+      /\b(?:and|then|with|or|along with)\b/i.test(after) || /[,;]/.test(after);
     if (coordinated) return false;
     return true;
   });

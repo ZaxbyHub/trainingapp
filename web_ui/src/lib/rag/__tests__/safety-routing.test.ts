@@ -261,6 +261,11 @@ describe('safety-routing: classifier (issue #365 AC1)', () => {
     const lateStudyVerb = classifyTopic('Can I take these notes and warfarin together before I review the slides?');
     expect(lateStudyVerb.outOfScope).toBe(true);
     expect(lateStudyVerb.matchedRules).toContain('dosing-personal-take');
+    // Review round 16: the comma/semicolon check is ANY-position, not just
+    // immediately after the idiom head.
+    const laterComma = classifyTopic('Can I take the quiz today, my warfarin tomorrow?');
+    expect(laterComma.outOfScope).toBe(true);
+    expect(laterComma.matchedRules).toContain('dosing-personal-take');
     const possessive1 = classifyTopic("Can I take the document's recommended amount of warfarin?");
     expect(possessive1.outOfScope).toBe(true);
     expect(possessive1.matchedRules).toContain('dosing-personal-take');
