@@ -266,19 +266,6 @@ export function loadExternalConfig(): ExternalConfig {
   return { ...stored, apiKey };
 }
 
-/**
- * Persist a partial update. The key goes only where the custody rules allow:
- * nowhere inside the desktop app; localStorage only while rememberKey is on;
- * sessionStorage otherwise; its bound origin travels with it. Turning
- * rememberKey off moves both out of localStorage.
- *
- * `patch.apiKey` is a (re-)entry: a non-empty value binds to the origin of
- * the base URL in effect after this save (send `baseUrl` in the same patch to
- * bind to the URL the key was typed for); '' clears the key. Without
- * `patch.apiKey` the saved key keeps its binding, whatever the base URL
- * becomes; a pending key (saved with no base URL) binds only when this patch
- * carries a base URL.
- */
 /** Per-key TRUTH of a saveExternalConfig commit (issue #366 audit producer).
  *  The UI behavior is unchanged (storage failures still stay non-throwing and
  *  in-memory for the view); these flags additionally let the audit producer
@@ -299,6 +286,19 @@ export interface ExternalConfigCommitOutcome {
   changedKeys: string[];
 }
 
+/**
+ * Persist a partial update. The key goes only where the custody rules allow:
+ * nowhere inside the desktop app; localStorage only while rememberKey is on;
+ * sessionStorage otherwise; its bound origin travels with it. Turning
+ * rememberKey off moves both out of localStorage.
+ *
+ * `patch.apiKey` is a (re-)entry: a non-empty value binds to the origin of
+ * the base URL in effect after this save (send `baseUrl` in the same patch to
+ * bind to the URL the key was typed for); '' clears the key. Without
+ * `patch.apiKey` the saved key keeps its binding, whatever the base URL
+ * becomes; a pending key (saved with no base URL) binds only when this patch
+ * carries a base URL.
+ */
 export function saveExternalConfig(patch: Partial<ExternalConfig>): ExternalConfigCommitOutcome {
   migrateUnboundExternalKey();
   const prev = readStored();

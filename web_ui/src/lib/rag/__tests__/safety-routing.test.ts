@@ -96,6 +96,24 @@ async function collect(gen: AsyncGenerator<{ type: string; data: unknown }>) {
 }
 
 describe('safety-routing: classifier (issue #365 AC1)', () => {
+  test('the frozen nine-rule roster is intact (safety-routing)', () => {
+    // Feedback F-001: the per-rule loop below iterates whatever SAFETY_RULES
+    // contains, so it passes vacuously for an empty or truncated array. Pin
+    // the exact roster here so deleting or renaming any rule fails this suite
+    // even when its example assertions are never reached.
+    expect(SAFETY_RULES.map((rule) => rule.id)).toEqual([
+      'dosing-personal-take',
+      'dosing-personal-amount',
+      'dosing-patient-directive',
+      'diagnosis-self',
+      'diagnosis-results',
+      'treatment-personal-decision',
+      'treatment-patient-plan',
+      'clinician-role-play',
+      'medical-advice-request',
+    ]);
+  });
+
   test('every PROPOSED rule matches its positive example and not its negative example (safety-routing)', () => {
     for (const rule of SAFETY_RULES) {
       const hit = classifyTopic(rule.positiveExample);
