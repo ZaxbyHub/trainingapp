@@ -213,9 +213,10 @@ function ruleFiresOnText(rule: SafetyRule, text: string): boolean {
  *  a coordinator ("and", "along", "plus", "together"), or any unknown token
  *  ("&", "+", "/") - breaks the escape and refuses (fail-toward-refusal),
  *  and the punctuation gate (isSafeContinuation) refuses symbols before any
- *  word is examined. A locative preposition admits at most ONE bounded noun
- *  phrase (determiner + up to two words), so document questions about
- *  unlisted drugs ("...at the warfarin monograph?", "...to the pharmacy?")
+ *  word is examined. A locative preposition admits one bounded noun phrase
+ *  whose AT MOST ONE word may be unknown (a trailing unknown must be the
+ *  phrase's sole content word), so document questions about unlisted drugs
+ *  ("...at the warfarin monograph?", "...to the pharmacy?")
  *  stay in scope while unknown words outside a bounded phrase refuse. */
 const CONTINUATION_VOCAB = new Set([
   'the',
