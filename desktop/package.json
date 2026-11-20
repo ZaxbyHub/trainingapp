@@ -24,7 +24,7 @@
     "typecheck:test": "tsc -p tsconfig.test.json"
   },
   "devDependencies": {
-    "@axe-core/playwright": "^4.13.0",
+    "@axe-core/playwright": "^4.14.0",
     "@playwright/test": "^1.65.0",
     "@types/node": "^26.6.6",
     "concurrently": "^10.0.7",
