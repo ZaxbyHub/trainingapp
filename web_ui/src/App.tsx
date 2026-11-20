@@ -17,6 +17,7 @@ import { isKnownUnsupportedBrowser } from './lib/browser/browser-compat';
 import { migrateLegacyProviderToDesktop } from './lib/llm/external-migration';
 import { INACTIVITY_TIMEOUT_KEY } from './lib/storage/persisted-keys';
 import { ensureCurrentProfileRegistered } from './lib/storage/profile';
+import { recordAuditEvent } from './db/audit';
 import { startInactivityWatch, INACTIVITY_DEFAULT_MIN } from './lib/session/inactivity';
 import { anyHandlerBusy } from './lib/session/session-clear';
 import { AppLayout } from './layouts/AppLayout';
@@ -222,6 +223,22 @@ export function DesktopBootGate({ children }: { children: ReactNode }) {
   return <DesktopSessionProvider value={state}>{children}</DesktopSessionProvider>;
 }
 
+/**
+ * Issue #366 (WI5) lifecycle audit guard: NON-PERSISTED and MODULE-scoped,
+ * so app_start is emitted exactly ONCE PER RENDERER PAGE LOAD that reaches
+ * the app shell. React StrictMode's double-mount replay and an ordinary
+ * same-document component remount add no extra row; a real reload (including
+ * the clear-cache reload) runs a fresh module realm and starts a new
+ * lifecycle. Disclosed boundary (PROPOSED block): a desktop launch that
+ * fails before AppContent mounts (boot gate) records no start row.
+ */
+let appStartRecordedThisLoad = false;
+
+/** Tests only: reset the once-per-page-load guard between module realms. */
+export function resetAppStartGuardForTests(): void {
+  appStartRecordedThisLoad = false;
+}
+
 function AppContent() {
   const [currentPage, setCurrentPage] = useState('chat');
   // settings-wiring-honesty (AC10): the Settings section a navigation asked
@@ -257,6 +274,25 @@ function AppContent() {
     // registry at boot — browser path only (Electron keeps its own profile
     // identity in the backend; the registry would be dead weight there).
     if (!isElectron()) ensureCurrentProfileRegistered();
+  }, []);
+
+  // Issue #366 (WI5): app_start / app_stop lifecycle audit. One app_start per
+  // renderer page load (module-scoped guard above defeats StrictMode replay
+  // and same-document remounts); app_stop is a BEST-EFFORT pagehide append
+  // (pagehide cannot await; recordAuditEvent swallows write failures) with
+  // the listener removed on cleanup so a remount never double-subscribes.
+  useEffect(() => {
+    if (!appStartRecordedThisLoad) {
+      appStartRecordedThisLoad = true;
+      recordAuditEvent('app_start', null);
+    }
+    const onPageHide = (): void => {
+      recordAuditEvent('app_stop', null);
+    };
+    window.addEventListener('pagehide', onPageHide);
+    return () => {
+      window.removeEventListener('pagehide', onPageHide);
+    };
   }, []);
 
   // Issue #34 item 6p (AC6): the workstation-wide inactivity auto-clear. The

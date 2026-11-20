@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 import type { ChatMessage } from '../types/chat';
 import { ChatMessageBubble } from './ChatMessageBubble';
+import { ClinicalDisclaimer } from './ClinicalDisclaimer';
 import { useDocumentCount } from '../hooks/useDocumentCount';
 import { Button, Icon } from '../ui';
 import '../pages/chat.css';
@@ -197,6 +198,9 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = React.memo(({
               </>
             )}
             <p className="chat-welcome__footnote">All conversations are stored locally in your browser</p>
+            {/* Issue #365 (WI4): the clinical disclaimer also renders on the
+                chat welcome state (before any answer exists). */}
+            <ClinicalDisclaimer />
           </div>
         ) : (
           <>

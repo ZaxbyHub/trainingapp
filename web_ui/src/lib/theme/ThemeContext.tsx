@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { THEME_PREFERENCE_KEY } from '../storage/persisted-keys';
+import { recordAuditEvent } from '../../db/audit';
 
 export type ThemeMode = 'light' | 'dark';
 
@@ -96,23 +97,36 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
   const themePreference: ThemePreference = getStoredPreference() ?? 'system';
 
   const setTheme = (mode: ThemePreference) => {
+    // Issue #366 (WI5) settings_change audit: emit ONLY when the storage
+    // operation truly committed AND the EFFECTIVE preference changed (the
+    // stored value, never the in-memory draft, is the before-snapshot;
+    // stored-null means effective 'system'). An unchanged re-select or a
+    // swallowed storage failure produces no row. The subject is the key name
+    // — never the value.
+    const stored = getStoredPreference();
     if (mode === 'system') {
       // Clear the explicit preference so the media-query listener takes over
       // and the app follows future OS-preference changes. Do NOT persist —
       // a stored value here would defeat the entire point of 'system'.
+      let removed = true;
       try {
         localStorage.removeItem(THEME_PREFERENCE_KEY);
       } catch {
         // localStorage unavailable; theme still updates in memory
+        removed = false;
       }
+      if (removed && stored !== null) recordAuditEvent('settings_change', 'theme-preference');
       setThemeState(getSystemPreference());
     } else {
       // Explicit preference: persist and apply.
+      let saved = true;
       try {
         localStorage.setItem(THEME_PREFERENCE_KEY, mode);
       } catch {
         // localStorage unavailable; theme still updates in memory
+        saved = false;
       }
+      if (saved && stored !== mode) recordAuditEvent('settings_change', 'theme-preference');
       setThemeState(mode);
     }
   };

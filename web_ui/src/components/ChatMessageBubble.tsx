@@ -10,6 +10,8 @@ import { PackProvenance } from './PackProvenance';
 import { SourceCitation } from './SourceCitation';
 import { LearnPanel } from './LearnPanel';
 import { GroundingBadge } from './GroundingBadge';
+import { ClinicalDisclaimer } from './ClinicalDisclaimer';
+import { SAFETY_NOTICE_TEXT } from '../lib/rag/safety-notice';
 import { formatRelativeTime } from '../utils/relativeTime';
 import { markdownToPlainText } from '../lib/markdown/plain-text';
 import { Banner, Button, Icon } from '../ui';
@@ -250,8 +252,12 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
           {message.content === '' && !message.isStreaming && !onRegenerate ? null : (
           <div className="chat-msg__meta">
             <span className="chat-msg__time">{relativeLabel}</span>
-            {copyButton}
-            {copySourceButton}
+            {/* #365 (WI4): a safety-branch refusal gets no copy/copy-source
+                affordances (the refusal body is not quotable answer content);
+                Regenerate stays - re-running the classifier on retry is a
+                pinned behavior. */}
+            {message.safety ? null : copyButton}
+            {message.safety ? null : copySourceButton}
             {onRegenerate && (
               <Button
                 variant="ghost"
@@ -266,9 +272,20 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
             )}
           </div>
           )}
-          {/* C5 (issue #72): per-answer provenance badge (above the
-              citations it describes); accessible, never color-only. */}
-          <GroundingBadge grounding={message.grounding} />
+          {/* Issue #365 (WI4): a safety-branch refusal replaces the
+              provenance badge with an explicit safety notice (never "General
+              knowledge" beside a deterministic refusal - plan-critic r1
+              BLOCKER-2 shape) and suppresses pack provenance/citations/learn
+              (there are none; the guards make the intent explicit). */}
+          {message.safety ? (
+            <div role="status" aria-live="polite" className="chat-msg__note" data-testid="safety-notice">
+              {SAFETY_NOTICE_TEXT}
+            </div>
+          ) : (
+            /* C5 (issue #72): per-answer provenance badge (above the
+               citations it describes); accessible, never color-only. */
+            <GroundingBadge grounding={message.grounding} />
+          )}
           {/* #34 item 3: aggregate in-chat pack-version provenance, above the
               citation pills it summarizes. Renders nothing without
               pack-attributed citations, and is suppressed when the engine
@@ -292,6 +309,12 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
           )}
         </>
       )}
+      {/* Issue #365 (WI4) AC2: the clinical disclaimer renders with EVERY
+          assistant answer (normal, streamed, abstain, error) - below the
+          body and provenance, above nothing. It is assistant-only (this is
+          inside the assistant return), so user/system bubbles never carry it
+          and the normal copy path is byte-identical. */}
+      <ClinicalDisclaimer />
     </div>
   );
 });

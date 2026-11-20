@@ -18,7 +18,7 @@ import { fetchModelStatus, isElectron, useDesktopSession } from '../lib/desktop-
 import { notifyDesktopModelsChanged } from '../lib/desktop-models-events';
 import { getBrowserPackManager } from '../lib/packs/browser-pack-manager';
 import { releaseBrowserTrainingIfEmpty } from '../lib/packs/browser-training';
-import { AIRGAP_UPDATES_DETAIL, getUpdatesBridge } from '../lib/packs/pack-update-controller';
+import { AIRGAP_UPDATES_DETAIL, getUpdatesBridge, recordUpdateOptInAudit } from '../lib/packs/pack-update-controller';
 import { IS_AIRGAP } from '../lib/llm/airgap';
 import { WEBLLM_VISIBLE } from '../lib/llm/engine-visibility';
 import type { RAGPreset } from '../lib/rag/rag-presets';
@@ -55,6 +55,9 @@ import {
   MODEL_CONNECTION_SECTION_ID,
   SETTINGS_SECTIONS,
 } from '../lib/settings-sections';
+// Issue #366 (WI5): local audit log producers + the viewer section.
+import { recordAuditEvent, appendAuditEvent } from '../db/audit';
+import { SettingsAuditSection } from './SettingsAuditSection';
 // AC8 (settings-wiring-honesty): the single version source is
 // web_ui/package.json (desktop/package.json is kept in lockstep by test).
 import { version as APP_VERSION } from '../../package.json';
@@ -183,6 +186,9 @@ function UpdatesSection(): React.ReactElement {
       const result = await getUpdatesBridge()?.setUpdateOptIn?.(!status.optIn);
       if (result !== undefined && !result.ok && result.detail) showError(result.detail);
       if (result?.status !== undefined) setStatus(result.status);
+      // Issue #366 (WI5): the single shared emit rule (marker-gated; a
+      // committed opt-in whose follow-up check failed still persisted).
+      recordUpdateOptInAudit(result);
     } catch (err: unknown) {
       showError(err instanceof Error ? err.message : 'Failed to change the updates setting');
     } finally {
@@ -493,6 +499,10 @@ function DiagnosticsSection(): React.ReactElement {
       try {
         const result = await electronBridge.setEnhancedLevel(next);
         if (result.ok) {
+          // Issue #366 (WI5): desktop diagnostics persist in MAIN; emit only
+          // on the handler's explicit `persisted` marker (never on ok alone -
+          // plan B3), subject = the settings key, never the value.
+          if (result.persisted === true) recordAuditEvent('settings_change', 'diagnostics.enhanced');
           // Main applied + persisted; the renderer applies its own level from
           // the same call (no restart, both processes).
           setEnhancedLogging(next);
@@ -517,6 +527,10 @@ function DiagnosticsSection(): React.ReactElement {
       setBusy(false);
       return;
     }
+    // Issue #366 (WI5): browser diagnostics persist through this renderer
+    // localStorage write - the commit point; emit only after it succeeded
+    // (the toggle always changes the effective value).
+    recordAuditEvent('settings_change', 'diagnostics.enhanced');
     setEnhancedLogging(next);
     setEnhancedState(next);
     setStatus(next ? 'Enhanced logging on (debug level)' : 'Enhanced logging off (info level)');
@@ -660,8 +674,17 @@ function InactivityTimeoutControl(): React.ReactElement {
     const clamped = Math.min(Math.max(Math.round(parsed), 0), INACTIVITY_CONTROL_MAX_MIN);
     setThreshold(clamped);
     try {
+      // Issue #366 (WI5): the authoritative BEFORE-snapshot is the STORED
+      // value (readStoredThreshold), never the editable draft state - after a
+      // FAILED write the draft advances but storage does not, and a
+      // successful retry of that same value must still emit (the stored
+      // value changed).
+      const storedBefore = readStoredThreshold();
       localStorage.setItem(INACTIVITY_TIMEOUT_KEY, String(clamped));
       setSaved(clamped);
+      // Emit only when the storage write committed AND the effective stored
+      // value changed. Subject = the key name, never the value.
+      if (clamped !== storedBefore) recordAuditEvent('settings_change', 'inactivity.timeout');
     } catch {
       setSaved(null);
     }
@@ -1235,6 +1258,19 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
         await attempt('course player service worker', () => releaseBrowserTrainingIfEmpty());
       }
 
+      // Issue #366 (WI5): clear_cache audit row - the confirmed clear executed
+      // (the arming click never reaches here). AWAITED before the reload is
+      // scheduled (a pending IndexedDB write would race the reload); its
+      // REJECTION is swallowed so the existing reload/failure behavior
+      // proceeds unchanged. The audit db itself SURVIVES clear-cache (its
+      // lifecycle is retention + the audit viewer's own Clear - disclosed in
+      // the section copy + CONFIGURATION.md).
+      try {
+        await appendAuditEvent('clear_cache', null);
+      } catch {
+        /* swallowed: a governance-log write failure never changes clear-cache behavior */
+      }
+
       setClearCacheResult(failed ? 'error' : 'cleared');
       setClearCacheReloading(settingsCleared);
 
@@ -1787,6 +1823,9 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
             <SettingsStorageSection />
             {/* Inactivity auto-clear threshold (issue #34 item 6p, AC6). */}
             <InactivityTimeoutControl />
+            {/* Issue #366 (WI5): bounded read-only audit viewer + two-click
+                Clear (local-only, non-exportable - PROPOSED policy). */}
+            <SettingsAuditSection />
             {/* Per-kind packaged-model readiness (issue #24 F6): each kind is
                 reported individually, scoped to the selected engine. */}
             {packagesReady && (

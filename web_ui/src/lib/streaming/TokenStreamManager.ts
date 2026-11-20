@@ -6,6 +6,7 @@
 import { SSEStreamConsumer, DEFAULT_FIRST_BYTE_TIMEOUT_MS } from '../api/streaming';
 import type { SearchResult } from '../../types/search';
 import type { Citation, Grounding, LearnResult } from '../api/types';
+import type { SafetyTurnMetadata } from '../rag/safety-classifier';
 
 type TokenCallback = (token: string) => void;
 
@@ -32,6 +33,8 @@ type DoneCallback = (data: {
   retrievalDegraded?: boolean;
   /** Number of context chunks dropped to fit the token budget (F11). */
   contextTrimmed?: number;
+  /** Issue #365 (WI4): set when the answer is a safety-branch refusal. */
+  safety?: SafetyTurnMetadata;
 }) => void;
 type ErrorCallback = (error: string) => void;
 
@@ -186,6 +189,8 @@ export class TokenStreamManager {
     abstainReason?: 'insufficient_evidence' | 'retrieval_degraded';
     retrievalDegraded?: boolean;
     contextTrimmed?: number;
+    /** Issue #365 (WI4): safety-branch refusal metadata (see DoneCallback). */
+    safety?: SafetyTurnMetadata;
   }): void {
     if (this.cancelled) return;
 

@@ -38,6 +38,14 @@ export interface StorageDbNames {
    * default-'' special case (getProfilePrefix always holds a random prefix).
    */
   conversations: string;
+  /**
+   * IndexedDB name for the local governance audit log (issue #366, WI5).
+   * Profile-namespaced like every other store, but a SEPARATE lifecycle from
+   * conversations: Clear Cache deliberately does NOT delete it (retention is
+   * governed by its own window + the audit viewer's explicit Clear), while a
+   * full-profile / orphan Delete removes it with the rest. See deleteNamespace.
+   */
+  audit: string;
 }
 
 /**
@@ -118,6 +126,7 @@ export function getStorageDbNames(): StorageDbNames {
     vector: `${prefix}-doc-qa-index`,
     keyword: `${prefix}-doc-qa-keywords`,
     conversations: `${prefix}-doc-qa-conversations`,
+    audit: `${prefix}-doc-qa-audit`,
   };
 }
 
@@ -128,7 +137,7 @@ export function getStorageDbNames(): StorageDbNames {
  * orphan prefix is discoverable (Adopt/Delete) and an orphan Delete removes
  * the chat history it owns.
  */
-const ORPHAN_DB_RE = /^([a-z0-9]{3,8})-doc-qa-(documents|indexes|keywords|conversations)$/;
+const ORPHAN_DB_RE = /^([a-z0-9]{3,8})-doc-qa-(documents|indexes|keywords|conversations|audit)$/;
 
 /**
  * One-time, best-effort migration of orphaned per-session databases into the
@@ -417,7 +426,14 @@ export async function deleteNamespace(
     `${prefix}-doc-qa-documents`,
     `${prefix}-doc-qa-indexes`,
     `${prefix}-doc-qa-keywords`,
-    ...(options.includeConversations === true ? [`${prefix}-doc-qa-conversations`] : []),
+    // Issue #366 (WI5): the audit db rides the FULL-DESTRUCTION arm only.
+    // Clear Cache (default path) deliberately keeps the governance log -
+    // its lifecycle is retention + the audit viewer's own Clear (disclosed
+    // in the Clear Cache section text + CONFIGURATION.md). Destroying a
+    // namespace outright (orphan/full-profile Delete) takes it with the rest.
+    ...(options.includeConversations === true
+      ? [`${prefix}-doc-qa-conversations`, `${prefix}-doc-qa-audit`]
+      : []),
   ];
   await Promise.all(
     names.map(

@@ -577,7 +577,10 @@ function registerDiagnosticsIpc(): void {
       };
     }
     enhancedLevel = enabled;
-    return { ok: true as const, enhanced: enabled };
+    // Issue #366 (WI5): saveDiagnosticsSettings committed - the marker the
+    // renderer's audit producer emits on. The validation + not-active +
+    // catch returns above carry NO marker (they did not persist).
+    return { ok: true as const, enhanced: enabled, persisted: true as const };
   });
 
   ipcMain.handle('desktop:diagnostics:log-entry', (_event, rawPayload: unknown) => {

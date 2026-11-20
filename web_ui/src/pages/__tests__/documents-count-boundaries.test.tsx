@@ -18,7 +18,11 @@ vi.mock('../../lib/storage/document-store', () => ({
 }));
 vi.mock('../../lib/storage/profile', () => ({
   migrateOrphanedNamespaces: vi.fn().mockResolvedValue(undefined),
-}));
+    // Issue #366: the audit import chain (browser-pack-manager -> db/audit -> profile)
+    // needs the name derivations even in page-specs that never touch storage.
+    getProfilePrefix: () => 'testprfx',
+    getStorageDbNames: () => ({ documents: 'testprfx-doc-qa-documents', vectorMapping: 'testprfx-doc-qa-indexes', vector: 'testprfx-doc-qa-index', keyword: 'testprfx-doc-qa-keywords', conversations: 'testprfx-doc-qa-conversations', audit: 'testprfx-doc-qa-audit' }),
+  }));
 // The leaf extractors are mocked so importOriginal below loads the REAL
 // factory (and its real EXTRACTOR_MAP) without pulling pdfjs/mammoth/xlsx/
 // jszip into the jsdom run: SUPPORTED_EXTENSIONS is derived from the real

@@ -360,14 +360,27 @@ describe('desktop app', () => {
   test('a settings load that resolves after a PUT does not repaint the stale URL (and nothing PUTs it back)', async () => {
     installDesktopBridgeStub();
     const { s, updateSettings } = session({ 'external.baseUrl': 'http://192.168.1.50:8080', 'external.model': 'm' });
+    // Issue #366: the FIRST included PUT is held until the authoritative
+    // baseline GET resolves (approved policy - a slow SUCCESS still gates;
+    // only GET failure commits without rows), so this test resolves the
+    // INITIAL GET up front and parks a SECOND late GET for the stale-repaint
+    // assertion (its original shape parked the FIRST GET, which the hold
+    // contract now legitimately waits on).
     let release: (v: unknown) => void = () => undefined;
-    const late = new Promise((resolve) => {
-      release = resolve;
+    let getCall = 0;
+    (s.apiClient as unknown as { getSettings: () => Promise<unknown> }).getSettings = vi.fn(() => {
+      getCall += 1;
+      if (getCall === 1) {
+        return Promise.resolve({ 'external.baseUrl': 'http://192.168.1.50:8080', 'external.model': 'm' });
+      }
+      return new Promise((resolve) => {
+        release = resolve;
+      });
     });
-    (s.apiClient as unknown as { getSettings: () => Promise<unknown> }).getSettings = () => late;
     renderDesktop(s);
     const q = within(panel());
     const base = q.getByLabelText(/^base url$/i) as HTMLInputElement;
+    await waitFor(() => expect(updateSettings).not.toHaveBeenCalled());
     fireEvent.change(base, { target: { value: 'http://192.168.1.77:8000' } });
     fireEvent.blur(base);
     await waitFor(() => expect(updateSettings).toHaveBeenCalledWith({ 'external.baseUrl': 'http://192.168.1.77:8000' }));

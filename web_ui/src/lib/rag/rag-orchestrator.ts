@@ -33,6 +33,8 @@ import { linkedSlidesWithin } from './learn-links';
 import { DEFAULT_N_CTX } from '../llm/wllama-service';
 import { ensureEmbeddingServiceReady, ensureReadinessGateChecked } from '../../hooks/useServiceInitialization';
 import { getRetrievalHealth, getLastEmbeddingInitFailure, setKeywordOnly, setOk } from './retrieval-health';
+import { classifyTopic, type SafetyTurnMetadata } from './safety-classifier';
+import { SAFETY_REFUSAL_TEXT } from './safety-notice';
 
 /**
  * Options for RAG query execution.
@@ -265,6 +267,12 @@ export type RAGEvent =
         retrievalDegraded?: boolean;
         /** Number of context chunks dropped to fit the token budget (F11). */
         contextTrimmed?: number;
+        /** Issue #365 (WI4): present when the question was routed through the
+         *  safety branch (out-of-scope clinical advice). The answer is the
+         *  deterministic refusal; no retrieval or generation ran. Persisted on
+         *  the message so the bubble renders the safety notice (not the
+         *  grounding badge) and suppresses copy/citation actions after reload. */
+        safety?: SafetyTurnMetadata;
       };
     }
   | { type: 'error'; data: { stage: RAGStage; message: string } };
@@ -374,6 +382,34 @@ export class RAGOrchestrator {
     question: string,
     options: RAGQueryOptions = {}
   ): AsyncGenerator<RAGEvent> {
+    // Issue #365 (WI4) defense-in-depth: an out-of-scope clinical advice
+    // question never reaches embedding, retrieval, reranking, or generation.
+    // ChatPage additionally classifies PRE-route (covering the desktop-SSE
+    // and ungrounded-external paths that bypass this pipeline); this branch
+    // guarantees the invariant for every orchestrator caller. The refusal
+    // arrives as one token event + a safety-labeled complete so consumers
+    // that render content from token events (ChatPage) display and persist
+    // it exactly like a streamed answer.
+    const safety = classifyTopic(question);
+    if (safety.outOfScope) {
+      yield { type: 'token', data: SAFETY_REFUSAL_TEXT };
+      yield {
+        type: 'complete',
+        data: {
+          answer: SAFETY_REFUSAL_TEXT,
+          sources: [],
+          chunks: [],
+          // General by construction (no chunks were consulted); the bubble
+          // suppresses the badge from the safety field, not the grounding.
+          grounding: 'general',
+          learn: [],
+          abstain: false,
+          safety: { category: 'clinical', matchedRules: safety.matchedRules },
+        },
+      };
+      return;
+    }
+
     const topK = options.topK ?? 10;
     const candidateMultiplier = Math.max(1, options.candidateMultiplier ?? 1);
     const fetchK = topK * candidateMultiplier;

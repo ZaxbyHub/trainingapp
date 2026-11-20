@@ -38,6 +38,7 @@ import { Banner, Button, Checkbox, Combobox, Field, PasswordInput, Select, Switc
 import { SettingsRadioCards, SettingsSection, SettingsSubsection } from './SettingsControls';
 import { isElectron, useDesktopSession } from '../lib/desktop-session';
 import { notifyDesktopModelsChanged } from '../lib/desktop-models-events';
+import { recordAuditEvent } from '../db/audit';
 import { ApiError } from '../lib/api/types';
 import { IS_AIRGAP } from '../lib/llm/airgap';
 import { validateEndpointUrl } from '../lib/llm/endpoint-policy';
@@ -158,6 +159,58 @@ function causeOfTestError(err: unknown, desktop: boolean): ProblemCause {
   return 'other';
 }
 
+// ---------------------------------------------------------------------------
+// Issue #366 (WI5): settings_change audit producer.
+//
+// The desktop PUT /settings seam is commit-faithful (the backend runs its
+// persistence transaction BEFORE answering 200 - desktop/main/backend/
+// server.ts), so rows are emitted after the awaited success, one per
+// INCLUDED key whose effective value actually changed. The before-state is a
+// dedicated IMMUTABLE last-applied snapshot (never the editable draft, which
+// can hold unsaved values), fed only from accepted GET/PUT answers. The
+// first included PUT is HELD until a successful baseline GET; if the
+// baseline never arrives the PUT still commits and NO rows are emitted
+// (disclosed audit boundary, PROPOSED policy block). `external.apiKey` is
+// excluded on desktop (main custody, plan B8).
+// ---------------------------------------------------------------------------
+
+/** Included settings subjects for the desktop PUT path. */
+const AUDITED_DESKTOP_KEYS: readonly string[] = [
+  'external.enabled',
+  'external.protocol',
+  'external.baseUrl',
+  'external.model',
+  'external.grounded',
+  'external.firstByteTimeoutMs',
+  'external.idleTimeoutMs',
+];
+
+/** One canonical shape per included key so a PUT body value compares
+ *  directly against the snapshot value the backend answered. */
+function auditCanonical(key: string, value: unknown): string {
+  switch (key) {
+    case 'external.enabled':
+      return String(value === true);
+    case 'external.grounded':
+      // Missing answers as true (matches applyDesktopSettings semantics).
+      return String(value !== false);
+    case 'external.protocol':
+      return value === 'anthropic' ? 'anthropic' : 'openai';
+    case 'external.firstByteTimeoutMs':
+    case 'external.idleTimeoutMs':
+      return typeof value === 'number' ? String(value) : '';
+    default:
+      return typeof value === 'string' ? value.trim() : '';
+  }
+}
+
+/** Immutable snapshot of the audited keys from an accepted settings answer. */
+function auditSnapshotOf(s: Record<string, unknown>): Readonly<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for (const key of AUDITED_DESKTOP_KEYS) out[key] = auditCanonical(key, s[key]);
+  return Object.freeze(out);
+}
+
 export interface ExternalModelSectionProps {
   id?: string;
   /**
@@ -237,9 +290,16 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
 
   // Desktop: whether any backend snapshot (GET or PUT answer) has been applied.
   const snapshotAppliedRef = useRef(false);
+  // Issue #366: immutable last-applied audit snapshot (accepted answers only;
+  // null until the first one - the baseline gate below).
+  const auditSnapshotRef = useRef<Readonly<Record<string, string>> | null>(null);
+  // Issue #366: included desktop PUTs are serialized (one in flight) so each
+  // audit diff's before-snapshot is the last APPLIED commit.
+  const persistChainRef = useRef<Promise<void>>(Promise.resolve());
   const applyDesktopSettings = useCallback((s: Record<string, unknown>) => {
     const firstSnapshot = !snapshotAppliedRef.current;
     snapshotAppliedRef.current = true;
+    auditSnapshotRef.current = auditSnapshotOf(s);
     const current = draftRef.current;
     const nextBaseUrl = typeof s['external.baseUrl'] === 'string' ? (s['external.baseUrl'] as string) : current.baseUrl;
     // The first backend snapshot is the saved config: the source that actually answers
@@ -337,6 +397,9 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
   const persist = useCallback(
     async (patch: Partial<Draft>): Promise<boolean> => {
       if (!desktop) {
+        // Issue #366: the browser commit point IS saveExternalConfig - it now
+        // emits the audit rows itself (per-key persistence truth + effective-
+        // value diff), so this branch consumes only the outcome for UI state.
         saveExternalConfig(patch);
         // Issue #351 (AC6): the persisted patch is the new truth — fold it into
         // the draft so the timeout disclosure reflects the save immediately
@@ -359,36 +422,75 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
       if (patch.firstByteTimeoutMs !== undefined) body['external.firstByteTimeoutMs'] = patch.firstByteTimeoutMs;
       if (patch.idleTimeoutMs !== undefined) body['external.idleTimeoutMs'] = patch.idleTimeoutMs;
       if (patch.apiKey !== undefined) body['external.apiKey'] = patch.apiKey;
-      writeSeqRef.current += 1;
-      const seq = writeSeqRef.current;
-      try {
-        const settings = await session.apiClient.updateSettings(body);
-        // Only the answer to the LATEST PUT repaints the panel (answers can
-        // arrive out of order).
-        if (mountedRef.current && seq === writeSeqRef.current) applyDesktopSettings(settings as Record<string, unknown>);
-        if (patch.enabled !== undefined) notifyDesktopModelsChanged();
-        return true;
-      } catch (err) {
-        if (mountedRef.current) setProblem(`The desktop backend refused this setting: ${errorText(err)}`);
-        // Final critic FC2: the refused PUT bumped the write sequence, so an
-        // initial GET still in flight will be discarded. If no snapshot was
-        // ever applied, read the backend again (same guard: a later PUT still
-        // wins) so the panel never keeps its defaults (e.g. the switch OFF
-        // while the backend generates externally).
-        if (!snapshotAppliedRef.current) {
-          const startedAt = writeSeqRef.current;
-          void session.apiClient
-            .getSettings()
-            .then((s) => {
-              if (!mountedRef.current || writeSeqRef.current !== startedAt) return;
-              applyDesktopSettings(s as Record<string, unknown>);
-            })
-            .catch(() => {
-              /* the Desktop backend section reports settings errors */
-            });
+      // Issue #366: the desktop PUT path is commit-faithful (backend runs its
+      // transaction before answering 200), so emit AFTER the awaited success,
+      // one row per INCLUDED key whose value differs from the last-applied
+      // snapshot. external.apiKey is excluded (main custody, plan B8). The
+      // first included PUT is HELD until a baseline GET populates the
+      // before-snapshot (no diff against the local-default draft); a baseline
+      // that never arrives commits the PUT with ZERO rows (disclosed boundary).
+      // Included PUTs are SERIALIZED so a lagging response can never define
+      // the before-snapshot.
+      const runDesktop = async (): Promise<boolean> => {
+        if (auditSnapshotRef.current === null) {
+          // Hold the first included PUT for the authoritative baseline GET per
+          // the approved policy: rows are omitted ONLY when the GET FAILS
+          // (rejected/unreachable backend). A slow-but-successful GET still
+          // gates the PUT (review round: a 250 ms timeout treated slow
+          // success as failure and silently dropped audit rows).
+          try {
+            const baseline = await session.apiClient.getSettings();
+            if (mountedRef.current) applyDesktopSettings(baseline as Record<string, unknown>);
+          } catch {
+            /* baseline GET failed -> commit still proceeds, zero rows */
+          }
         }
-        return false;
-      }
+        const before = auditSnapshotRef.current;
+        writeSeqRef.current += 1;
+        const seq = writeSeqRef.current;
+        try {
+          const settings = await session.apiClient.updateSettings(body);
+          // Only the answer to the LATEST PUT repaints the panel (answers can
+          // arrive out of order).
+          if (mountedRef.current && seq === writeSeqRef.current) applyDesktopSettings(settings as Record<string, unknown>);
+          if (patch.enabled !== undefined) notifyDesktopModelsChanged();
+          if (before !== null) {
+            for (const key of AUDITED_DESKTOP_KEYS) {
+              if (!(key in body)) continue;
+              if (auditCanonical(key, body[key]) !== before[key]) {
+                recordAuditEvent('settings_change', key);
+              }
+            }
+          }
+          return true;
+        } catch (err) {
+          if (mountedRef.current) setProblem(`The desktop backend refused this setting: ${errorText(err)}`);
+          // Final critic FC2: the refused PUT bumped the write sequence, so an
+          // initial GET still in flight will be discarded. If no snapshot was
+          // ever applied, read the backend again (same guard: a later PUT still
+          // wins) so the panel never keeps its defaults (e.g. the switch OFF
+          // while the backend generates externally).
+          if (!snapshotAppliedRef.current) {
+            const startedAt = writeSeqRef.current;
+            void session.apiClient
+              .getSettings()
+              .then((s) => {
+                if (!mountedRef.current || writeSeqRef.current !== startedAt) return;
+                applyDesktopSettings(s as Record<string, unknown>);
+              })
+              .catch(() => {
+                /* the Desktop backend section reports settings errors */
+              });
+          }
+          return false;
+        }
+      };
+      const prevLink = persistChainRef.current;
+      let release!: () => void;
+      persistChainRef.current = new Promise<void>((r) => {
+        release = r;
+      });
+      return prevLink.then(runDesktop).finally(release);
     },
     [desktop, session, applyDesktopSettings],
   );

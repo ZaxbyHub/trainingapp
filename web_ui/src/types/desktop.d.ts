@@ -146,7 +146,7 @@ export type DiagnosticsExportReply =
  * drop replies `dropped:'level'` without it). */
 export interface DesktopDiagnosticsBridge {
   getState(): Promise<{ active: boolean; enhanced: boolean; sinkHealthy?: boolean }>;
-  setEnhancedLevel(enabled: boolean): Promise<{ ok: boolean; detail?: string; enhanced?: boolean }>;
+  setEnhancedLevel(enabled: boolean): Promise<{ ok: boolean; detail?: string; enhanced?: boolean; persisted?: true }>;
   logEntry(entry: DiagnosticsLogEntry): Promise<{
     ok: boolean;
     dup?: boolean;
@@ -186,7 +186,7 @@ export interface DesktopApiBridge {
   /** E5 (issue #88): current update status (never networked on its own). */
   getUpdateStatus(): Promise<UpdateStatus>;
   /** E5 (issue #88): flip the opt-in. Enabling triggers one check. */
-  setUpdateOptIn(enabled: boolean): Promise<{ ok: boolean; detail?: string; status?: UpdateStatus }>;
+  setUpdateOptIn(enabled: boolean): Promise<{ ok: boolean; detail?: string; status?: UpdateStatus; persisted?: true }>;
   /** E5 (issue #88): force a check (refused while opted out). */
   checkForUpdates(): Promise<{ ok: boolean; detail?: string; status?: UpdateStatus }>;
   /** E5 (issue #88): download-verify-install a checked pack update through

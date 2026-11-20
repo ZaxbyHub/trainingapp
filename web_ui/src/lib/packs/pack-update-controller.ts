@@ -12,6 +12,7 @@
 import type { UpdateStatus } from '../../types/desktop';
 import { IS_AIRGAP } from '../llm/airgap';
 import { PACK_UPDATES_STATE_KEY } from '../storage/persisted-keys';
+import { recordAuditEvent } from '../../db/audit';
 import { getBrowserPackManager, type BrowserPackManager } from './browser-pack-manager';
 import {
   DEFAULT_UPDATE_FEED_URL,
@@ -29,6 +30,15 @@ export interface UpdateActionResult {
   ok: boolean;
   detail?: string;
   status?: UpdateStatus;
+  /** Issue #366 (WI5): set ONLY by setUpdateOptIn on its SUCCESSFUL post-
+   *  persistence returns (both the direct opt-out return and the opt-in
+   *  path's merged check result). The follow-up update CHECK failing does not
+   *  clear it - persistence and check outcome are separate facts. NEVER set
+   *  by runCheck/checkForUpdates directly (a manual check persists nothing),
+   *  and never set when the storage write did not commit (nullable-storage
+   *  no-op or throw). The renderer's audit producer emits settings_change
+   *  ONLY on this marker, never on `ok` alone. */
+  persisted?: true;
 }
 
 /** The E5 update surface shared by window.desktopApi and the browser controller. */
@@ -39,6 +49,17 @@ export interface UpdatesBridge {
   applyPackUpdate(packId: string): Promise<UpdateActionResult>;
   onUpdateAvailable(callback: (status: UpdateStatus) => void): () => void;
   openUpdateExternal?(url: string): Promise<{ ok: boolean; detail?: string }>;
+}
+
+/**
+ * Issue #366 (WI5): the SINGLE renderer-side emit rule for the updates
+ * opt-in. Fires only on the `persisted` marker (never on `ok` - a committed
+ * opt-in whose follow-up check failed still persisted). Exercised by the
+ * frozen audit-log legs driving the real controller, and by SettingsPage's
+ * UpdatesSection toggle in production.
+ */
+export function recordUpdateOptInAudit(result: UpdateActionResult | undefined): void {
+  if (result?.persisted === true) recordAuditEvent('settings_change', 'updates.optIn');
 }
 
 export const AIRGAP_UPDATES_DETAIL = 'Update checks are not available in the air-gapped build (no network access).';
@@ -117,9 +138,17 @@ export class BrowserUpdatesController implements UpdatesBridge {
   async setUpdateOptIn(enabled: boolean): Promise<UpdateActionResult> {
     if (this.deps.airgap && enabled) return { ok: false, detail: AIRGAP_UPDATES_DETAIL, status: this.status };
     const storage = this.deps.storage();
+    // Issue #366 (WI5): truth of the persistence commit. `storage` is null
+    // when localStorage is unavailable, and `storage?.setItem` would then be
+    // a silent no-op - that path persists NOTHING, so no marker (UI behavior
+    // unchanged; only the audit marker is gated).
+    let persisted = false;
     try {
       const current = readState(storage);
-      storage?.setItem(PACK_UPDATES_STATE_KEY, JSON.stringify({ ...current, optIn: enabled }));
+      if (storage !== null) {
+        storage.setItem(PACK_UPDATES_STATE_KEY, JSON.stringify({ ...current, optIn: enabled }));
+        persisted = true;
+      }
     } catch (error) {
       return { ok: false, detail: `could not save the updates setting: ${error instanceof Error ? error.message : String(error)}`, status: this.status };
     }
@@ -130,10 +159,15 @@ export class BrowserUpdatesController implements UpdatesBridge {
     });
     if (!enabled) {
       this.entries = {};
-      return { ok: true, status: next };
+      // Opt-out returns DIRECTLY (no follow-up check): the marker must decorate
+      // this post-persist return too, not just the opt-in/check path.
+      return { ok: true, status: next, ...(persisted ? { persisted: true as const } : {}) };
     }
-    // Desktop parity: enabling triggers one check.
-    return this.checkForUpdates();
+    // Desktop parity: enabling triggers one check. The check's OWN outcome
+    // (ok true or false) says nothing about persistence - merge the marker
+    // through, never let a failed check erase it.
+    const check = await this.checkForUpdates();
+    return { ...check, ...(persisted ? { persisted: true as const } : {}) };
   }
 
   checkForUpdates(): Promise<UpdateActionResult> {

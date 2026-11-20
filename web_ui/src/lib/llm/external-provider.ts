@@ -44,6 +44,7 @@
  */
 import type { LLMService } from '../../types/llm';
 import { isElectron } from '../desktop-session';
+import { recordAuditEvent } from '../../db/audit';
 import { EXTERNAL_API_KEY_KEY, EXTERNAL_API_KEY_ORIGIN_KEY, EXTERNAL_CONFIG_KEY } from '../storage/persisted-keys';
 import { notifyExternalConfigChanged } from './external-config-events';
 import { AnthropicCompatChatService, listAnthropicModels } from './anthropic-provider';
@@ -157,20 +158,27 @@ function readKeyEntry(remember: boolean, name: string): string | null {
   }
 }
 
-/** Remove the key and its origin from BOTH storages. */
-function removeKeyEverywhere(): void {
+/** Remove the key and its origin from BOTH storages. Returns false when any
+ *  removal FAILED (issue #366: a clear whose old key survives in a storage is
+ *  NOT committed - callers must not report it as such). Failures stay
+ *  non-throwing (storage-unavailable behavior unchanged). */
+function removeKeyEverywhere(): boolean {
+  let ok = true;
   try {
     localStorage.removeItem(EXTERNAL_API_KEY_KEY);
     localStorage.removeItem(EXTERNAL_API_KEY_ORIGIN_KEY);
   } catch {
     /* storage unavailable */
+    ok = false;
   }
   try {
     sessionStorage.removeItem(EXTERNAL_API_KEY_KEY);
     sessionStorage.removeItem(EXTERNAL_API_KEY_ORIGIN_KEY);
   } catch {
     /* storage unavailable */
+    ok = false;
   }
+  return ok;
 }
 
 /**
@@ -180,10 +188,15 @@ function removeKeyEverywhere(): void {
  * origin without a key), never an old key next to a new origin, and never a
  * key without its origin (which would read as a legacy, unbound key). An
  * empty key just removes both everywhere.
+ *
+ * Issue #366: returns a per-storage TRUTH of the commit - `persisted` is true
+ * only when the removals AND (for a non-empty key) both writes completed. A
+ * failed removal means the old key may still live: callers must treat the
+ * clear as NOT committed. UI behavior (the swallow) is unchanged.
  */
-function writeKeyRecord(rec: KeyRecord, remember: boolean): void {
-  removeKeyEverywhere();
-  if (rec.key === '') return;
+function writeKeyRecord(rec: KeyRecord, remember: boolean): { persisted: boolean } {
+  const removed = removeKeyEverywhere();
+  if (rec.key === '') return { persisted: removed };
   const origin = rec.origin ?? '';
   try {
     if (remember) {
@@ -195,7 +208,9 @@ function writeKeyRecord(rec: KeyRecord, remember: boolean): void {
     }
   } catch {
     /* storage unavailable — the key stays only in the form */
+    return { persisted: false };
   }
+  return { persisted: removed };
 }
 
 /**
@@ -251,6 +266,26 @@ export function loadExternalConfig(): ExternalConfig {
   return { ...stored, apiKey };
 }
 
+/** Per-key TRUTH of a saveExternalConfig commit (issue #366 audit producer).
+ *  The UI behavior is unchanged (storage failures still stay non-throwing and
+ *  in-memory for the view); these flags additionally let the audit producer
+ *  emit rows ONLY for keys whose relevant storage writes fully succeeded, and
+ *  only for keys whose EFFECTIVE VALUE CHANGED (never the whole patch blindly). */
+export interface ExternalConfigCommitOutcome {
+  /** True when the config-blob localStorage write succeeded. */
+  configPersisted: boolean;
+  /** True when the key-record storage operations (removals + writes) fully
+   *  succeeded. Meaningless on desktop (main custody - the renderer never
+   *  writes the key), reported as true so it cannot gate anything there. */
+  keyPersisted: boolean;
+  /** Included key names whose committed effective value differs from the
+   *  stored previous value: 'external.enabled' | 'external.protocol' |
+   *  'external.baseUrl' | 'external.model' | 'external.grounded' |
+   *  'external.firstByteTimeoutMs' | 'external.idleTimeoutMs' |
+   *  'browser.rememberKey' | 'external.apiKey' (browser only). */
+  changedKeys: string[];
+}
+
 /**
  * Persist a partial update. The key goes only where the custody rules allow:
  * nowhere inside the desktop app; localStorage only while rememberKey is on;
@@ -264,7 +299,7 @@ export function loadExternalConfig(): ExternalConfig {
  * becomes; a pending key (saved with no base URL) binds only when this patch
  * carries a base URL.
  */
-export function saveExternalConfig(patch: Partial<ExternalConfig>): void {
+export function saveExternalConfig(patch: Partial<ExternalConfig>): ExternalConfigCommitOutcome {
   migrateUnboundExternalKey();
   const prev = readStored();
   const prevRec: KeyRecord = isElectron() ? { key: '', origin: null } : readKeyRecord(prev);
@@ -293,16 +328,36 @@ export function saveExternalConfig(patch: Partial<ExternalConfig>): void {
   if (patch.idleTimeoutMs !== undefined && patchIdle !== undefined) {
     next.idleTimeoutMs = patchIdle;
   }
+  let configPersisted = true;
   try {
     localStorage.setItem(EXTERNAL_CONFIG_KEY, JSON.stringify(next));
   } catch {
-    /* storage unavailable — settings stay in memory for this view */
+    /* storage unavailable — settings stay in memory for this view (behavior
+       unchanged); the audit producer reads the false outcome and skips rows. */
+    configPersisted = false;
   }
+  // Effective-value diff against the STORED previous config (the authoritative
+  // before-snapshot for the browser path - never the caller's draft).
+  const changedKeys: string[] = [];
+  const push = (key: string, changed: boolean): void => {
+    if (changed) changedKeys.push(key);
+  };
+  push('external.enabled', next.enabled !== prev.enabled);
+  push('external.protocol', next.protocol !== prev.protocol);
+  push('external.baseUrl', next.baseUrl !== prev.baseUrl);
+  push('external.model', next.model !== prev.model);
+  push('external.grounded', next.grounded !== prev.grounded);
+  push('external.firstByteTimeoutMs', (next.firstByteTimeoutMs ?? null) !== (prev.firstByteTimeoutMs ?? null));
+  push('external.idleTimeoutMs', (next.idleTimeoutMs ?? null) !== (prev.idleTimeoutMs ?? null));
+  push('browser.rememberKey', next.rememberKey !== prev.rememberKey);
   if (isElectron()) {
     // Desktop custody: the renderer never holds the key (nor its binding).
+    // Key-record rows are excluded on desktop (B8); removal is best-effort
+    // exactly as before, and keyPersisted is reported true so it never gates
+    // a desktop config row.
     removeKeyEverywhere();
     notifyExternalConfigChanged();
-    return;
+    return { configPersisted, keyPersisted: true, changedKeys };
   }
   let rec: KeyRecord = prevRec;
   if (patch.apiKey !== undefined) {
@@ -313,9 +368,25 @@ export function saveExternalConfig(patch: Partial<ExternalConfig>): void {
     const first = keyOriginOf(patch.baseUrl);
     if (first !== '') rec = { key: rec.key, origin: first };
   }
-  writeKeyRecord(rec, next.rememberKey);
+  const keyChanged = rec.key !== prevRec.key || rec.origin !== prevRec.origin;
+  const keyResult = writeKeyRecord(rec, next.rememberKey);
+  if (keyChanged) changedKeys.push('external.apiKey');
+  // Issue #366 (WI5): THIS function is the browser commit point - emit the
+  // audit rows here, gated per key on the truth of its own persistence
+  // (config keys on configPersisted, the key record on keyPersisted) and on
+  // the effective-value diff above. Subject = the key name, never a value.
+  // The desktop branch above returns early (renderer-owned config only; its
+  // PUT-path rows are the component's snapshot diff), and the desktop key
+  // custody is main-owned and excluded - the apiKey row stays browser-only.
+  for (const key of changedKeys) {
+    const committed = key === 'external.apiKey' ? keyResult.persisted : configPersisted;
+    if (committed && !(isElectron() && key === 'external.apiKey')) {
+      recordAuditEvent('settings_change', key);
+    }
+  }
   // Mounted views that describe the generator (header + sidebar chips) re-read.
   notifyExternalConfigChanged();
+  return { configPersisted, keyPersisted: keyResult.persisted, changedKeys };
 }
 
 /** True when the browser app would answer through an external endpoint. */

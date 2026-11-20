@@ -293,9 +293,12 @@ describe('profile (F1 stable namespace)', () => {
         `${getProfilePrefix()}-doc-qa-keywords`,
       ]);
       expect(deleted).not.toContain(`${getProfilePrefix()}-doc-qa-conversations`);
+      // Issue #366 (WI5): the audit db SURVIVES clear-cache too - its
+      // lifecycle is its own retention window + the audit viewer's Clear.
+      expect(deleted).not.toContain(`${getProfilePrefix()}-doc-qa-audit`);
     });
 
-    it('the orphan-Delete path (includeConversations) removes all FOUR databases', async () => {
+    it('the orphan-Delete path (includeConversations) removes all FIVE databases', async () => {
       const deleted = stubDeleteDatabase();
       await deleteNamespace('orphan01', { includeConversations: true });
       expect(deleted).toEqual([
@@ -303,6 +306,7 @@ describe('profile (F1 stable namespace)', () => {
         'orphan01-doc-qa-indexes',
         'orphan01-doc-qa-keywords',
         'orphan01-doc-qa-conversations',
+        'orphan01-doc-qa-audit',
       ]);
     });
 

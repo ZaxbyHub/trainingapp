@@ -1319,3 +1319,108 @@ cross-origin requests from the app's origin (a GitHub Releases redirect does not
 updates need a CORS-enabled mirror or the desktop app). Requests are https-only, without
 credentials or referrer; the browser cannot check intermediate redirect hops, only the final URL.
 The air-gapped build (`npm run build:airgap`) refuses the opt-in.
+
+## Clinical safety rails (PROPOSED wording - WI4, gates on maintainer review)
+
+> **PROPOSED**: every wording element below (refusal text, disclaimer text,
+> classifier rule list) is a proposal gated on maintainer sign-off. It is
+> rendered by the shipped code and quoted VERBATIM from
+> `web_ui/src/lib/rag/safety-notice.ts` and
+> `web_ui/src/lib/rag/safety-classifier.ts`.
+
+**Out-of-scope routing.** When a question is detected as ADVICE-SHAPED
+clinical content (personal dosing, self-diagnosis, treatment decisions,
+clinician role-play), the answer surface returns a deterministic refusal
+instead of running retrieval or generation. Detection is a fixed rule list
+(below) - no model involvement; a same-input rematch on Regenerate always
+re-refuses. Scope: all three renderer answer paths (desktop SSE, ungrounded
+external, grounded RAG) plus a defense-in-depth branch inside the RAG
+orchestrator. Answers that arrive from a NON-ChatPage surface are out of
+scope for this PR and are a sign-off item.
+
+**Refusal text (verbatim):** `SAFETY_REFUSAL_TEXT` - "This training assistant
+does not provide individual clinical advice. Questions about personal
+dosing, self-diagnosis, or treatment decisions must be answered by a
+licensed clinician using authorized clinical resources. Your uploaded
+training documents and knowledge packs remain available for study questions
+- ask about the material itself and I will cite it."
+
+**Disclaimer (verbatim, shown with EVERY assistant answer and on the chat
+welcome state):** `CLINICAL_DISCLAIMER_TEXT` - "Educational content only.
+This assistant answers questions about your uploaded training materials; it
+does not provide medical advice, diagnosis, or dosing guidance. Verify all
+clinical decisions against authoritative sources and licensed care."
+
+**Classifier rule list (PROPOSED; each rule: id, intent, a positive and a
+negative example that the shipped tests pin):**
+
+| id | intent | matches (shape) | positive example | negative example (must NOT match) |
+| --- | --- | --- | --- | --- |
+| dosing-personal-take | dosing | should/can/is-it-safe + (still) take - FAIL-TOWARD-REFUSAL, evaluated on the WHOLE QUESTION with an OCCURRENCE-ANCHORED escape: the bare personal-take shape fires unless EVERY shape occurrence is immediately followed by an in-scope idiom tail (take a look/seat/moment, take notes, take part in, take the/this/these + training/quiz/module/exam/session/document/slides - clinically ambiguous heads (course/pack/over/part/minute) excluded) AND its continuation passes the punctuation gate (letters and spaces only plus one final ?/./! at the end - any other character refuses) and the strict word walk (every word a known study/locative word; a locative preposition admits one bounded noun phrase (optional determiner + content words) in which AT MOST ONE word may be unknown and a trailing unknown must be the phrase SOLE content word - known study nouns (incl. monograph/label/leaflet) and ordinary study-time adverbs (today/tonight/...) may follow - before the walk resumes on the strict list); coordinators (and/then/with/or/along/plus/as well as/but/what about), personal pronouns, and a further take refuse anywhere in the continuation; a compound question cannot lend one clause's idiom to another clause's medication decision; a clinical signal anywhere in the question (dosage unit OR medication vocabulary OR a pharmaceutical suffix shape -cillin/-mycin/-olol/-pril/-sartan/-statin/-mab/-nib/-tinib/-floxacin/-cycline/-azole/-prazole/-gliptin/-dronate/-zepam/-conazole) still refuses | Should I take 500 mg of metformin with my breakfast? / Should I take warfarin? / Should I take amoxicillin? / Should I take warfarin? Can I take a look at the document? | Can I take a look at the training document before the session? |
+| dosing-personal-amount | dosing | how much + (should i/do i/for me); I weigh N + dose | How much ibuprofen should I take for my headache? | How much ibuprofen is discussed in the pain-management slide? |
+| dosing-patient-directive | dosing | what dose should (i/we/the patient); titrate up/down | What dose should I titrate the patient to? | What dose ranges appear in the dosing-table exercise? |
+| diagnosis-self | diagnosis | do/could I have; what's wrong with me; diagnose me | Do I have lupus based on these symptoms? | What are the diagnostic criteria for lupus in the rheumatology pack? |
+| diagnosis-results | diagnosis | my labs/symptoms/results + interpretation verb | Are my lab results concerning or normal? | Which lab results indicate renal impairment in the nephrology module? |
+| treatment-personal-decision | treatment | should I/we + stop/start/switch/prescribe | Should I stop my blood pressure medication now that I feel better? | When should clinicians consider stopping anticoagulation per the guideline summary? |
+| treatment-patient-plan | treatment | how (do/should/to) I treat; my/the patient should | How should I treat this patient's cellulitis? | How is cellulitis treated in the wound-care chapter? |
+| clinician-role-play | clinician-role | act as / pretend to be a clinician | Act as a doctor and tell me what this rash is. | What does the communication-skills lesson say about talking to a doctor? |
+| medical-advice-request | clinician-role | give me/need/want medical advice | Give me some medical advice about my chest pain. | What counts as medical advice in the documentation-ethics unit? |
+
+## Local audit log (PROPOSED policy - WI5, gates on maintainer review)
+
+> **PROPOSED**: retention window, event roster, and non-exportability are
+> policy proposals gated on maintainer sign-off. The implementation ships
+> them as described here; a policy change is a constant + roster edit.
+
+**What it is.** A bounded, LOCAL-ONLY, append-only record of governance
+events in its own per-profile IndexedDB database
+(`{prefix}-doc-qa-audit`) - separate from the conversations store (separate
+lifecycle). View it in **Settings > Storage & privacy > Local audit log**
+(newest 50 rows: timestamp, event, subject). Rows store an event class, a
+timestamp, and a stable subject id (pack id, settings KEY name) - NEVER
+conversation content or setting VALUES. There is NO export path;
+non-exportable is the default policy.
+
+**Retention (PROPOSED): 90 days.** Rows older than the window are purged at
+the next audit write (purge-on-write). The audit log SURVIVES Clear Cache
+(its lifecycle is its own retention + the viewer's Clear button; a
+full-profile/orphan Delete removes it with the namespace).
+
+**Event roster (PROPOSED) - v1 is RENDERER-OBSERVED by design.** Every
+included producer's emit site is a point where the renderer truthfully
+observed the commit; audit coverage is renderer-lifecycle-bound, and NO
+claim of complete audit coverage is made:
+
+- `app_start` - once per renderer page load that reaches the app shell
+  (StrictMode and same-document remounts emit one; a real reload - including
+  the clear-cache reload - starts a new lifecycle). A desktop launch that
+  fails before the shell mounts records no start row (disclosed boundary).
+- `app_stop` - best-effort on `pagehide`.
+- `pack_install` / `pack_remove` - BROWSER runtime installs/removals at the
+  renderer-owned registry commit (`BrowserPackManager`).
+- `settings_change` - one row per INCLUDED key whose effective value changed
+  at a truthfully observed persistence commit: `diagnostics.enhanced`,
+  `inactivity.timeout`, `theme-preference`, `updates.optIn`,
+  `external.enabled`, `external.protocol`, `external.baseUrl`,
+  `external.model`, `external.grounded`, `external.firstByteTimeoutMs`,
+  `external.idleTimeoutMs`, `external.apiKey` (browser remembered-key
+  writes/clears only), `browser.rememberKey`. updates.optIn and the desktop
+  diagnostics toggle emit only on the handler's explicit `persisted` marker
+  (a committed opt-in whose follow-up update-check FAILED still persisted -
+  and still logs one row).
+- `clear_cache` - the confirmed clear action (not the arming click).
+- `audit_log_cleared` - the viewer's own Clear (exactly one marker row).
+
+**Excluded (intentional, disclosed; maintainer sign-off item, tracked by a
+follow-up issue):** backend-process pack commits (desktop `/packs/install` +
+`/packs/remove` via `PackManager`, reachable via ApiClient, the signed-update
+loopback installer, and bundled-boot installs) - commit-faithful audit there
+needs either OpenAPI response-schema changes or a main->renderer
+acknowledged outbox; main-custody writes without an awaited marker seam
+(desktop API-key custody, update feedUrl edits); pre-shell desktop launches.
+Also excluded from `settings_change`: inference mode/engine/profile, rag
+presets, pack-recency tuning (per-session preference surfaces). The first
+desktop external-settings PUT in a session first AWAITS an authoritative
+baseline GET of the persisted settings (no timeout); if that GET FAILS the
+PUT still commits and NO row is emitted (disclosed boundary - the
+before-state is unknown).
