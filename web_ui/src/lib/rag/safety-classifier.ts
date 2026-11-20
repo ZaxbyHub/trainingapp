@@ -72,12 +72,12 @@ export const SAFETY_RULES: readonly SafetyRule[] = Object.freeze([
     // idiom ("take a look at my insulin dosage" refuses). Named medications
     // outside the vocabulary ("warfarin", "amoxicillin") always refuse.
     pattern: /\b(should i|can i|is it safe to)\s+(?:still\s+)?take\b/i,
-    // Round 7 (final-critic): `over` and bare `part` were also clinically
-    // ambiguous heads ("take over 4 Tylenol" = overdose threshold,
-    // "take over-the-counter naproxen" - \b matches at the hyphen,
-    // "take part of the warfarin") and were removed the same way course/pack
-    // were; only the unambiguous participate form "part in" survives.
-    inScopeWhen: /\s*(?:a (?:look|seat|minute|moment)|notes?|part in|the (?:training|quiz|module|exam|session|document|slide|slides)|this (?:training|quiz|module|document|slide|slides)|these (?:slides|documents|notes))\b/i,
+    // Rounds 7-8 (final-critic): clinically ambiguous idiom heads are
+    // removed as each is found - course/pack (round 4), over/bare part
+    // (round 7), and minute (round 8: "take a minute AMOUNT of warfarin"
+    // reads minute as the adjective, a dosing question). Only unambiguous
+    // study/inspection/participation idioms survive.
+    inScopeWhen: /\s*(?:a (?:look|seat|moment)|notes?|part in|the (?:training|quiz|module|exam|session|document|slide|slides)|this (?:training|quiz|module|document|slide|slides)|these (?:slides|documents|notes))\b/i,
     clinicalContext: /\b(mg|mcg|ml|dose|dosing|dosage|medication|medicine|meds|drug|drugs|pill|pills|tablet|tablets|capsule|capsules|insulin|antibiotic|antibiotics|painkiller|painkillers|supplement|supplements|vitamin|vitamins|aspirin|ibuprofen|paracetamol|acetaminophen|metformin|statin|statins|steroid|steroids|[a-z]{3,}(?:cillin|mycin|olol|pril|sartan|statin|mab|nib|tinib|floxacin|cycline|azole|prazole|gliptin|dronate|zepam|conazole))\b/i,
     positiveExample: 'Should I take 500 mg of metformin with my breakfast?',
     negativeExample: 'Can I take a look at the training document before the session?',

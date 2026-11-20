@@ -196,6 +196,18 @@ describe('safety-routing: classifier (issue #365 AC1)', () => {
     const partIn = classifyTopic('Can I take part in the training session?');
     expect(partIn.outOfScope).toBe(false);
     expect(partIn.matchedRules).toEqual([]);
+    // Review round 8 (final-critic r2): `a minute` reads as the ADJECTIVE in
+    // "take a minute amount of warfarin" - a dosing question. Removed; the
+    // plain time sense ("take a minute") now fails toward refusal.
+    const minuteAmount = classifyTopic('Is it safe to take a minute amount of warfarin?');
+    expect(minuteAmount.outOfScope).toBe(true);
+    expect(minuteAmount.matchedRules).toContain('dosing-personal-take');
+    const minuteXanax = classifyTopic('Can I take a minute amount of Xanax before my flight?');
+    expect(minuteXanax.outOfScope).toBe(true);
+    expect(minuteXanax.matchedRules).toContain('dosing-personal-take');
+    const minuteToddler = classifyTopic('Should I take a minute quantity of Tylenol for my toddler?');
+    expect(minuteToddler.outOfScope).toBe(true);
+    expect(minuteToddler.matchedRules).toContain('dosing-personal-take');
   });
 
   test('empty/whitespace/non-string inputs are in scope (safety-routing)', () => {
