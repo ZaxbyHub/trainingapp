@@ -179,6 +179,23 @@ describe('safety-routing: classifier (issue #365 AC1)', () => {
     const crossSentence = classifyTopic('I weigh 72 kg. What dose is right for me?');
     expect(crossSentence.outOfScope).toBe(true);
     expect(crossSentence.matchedRules).toContain('dosing-personal-amount');
+    // Review round 7 (final-critic): `over` and bare `part` were clinically
+    // ambiguous idiom heads exactly like course/pack - overdose thresholds,
+    // over-the-counter phrasing (\b matches at the hyphen), and part-of-a-
+    // pill forms all suppressed the decision. They are removed; only the
+    // unambiguous "part in" participates form survives.
+    const overdose = classifyTopic('Can I take over 4 Tylenol a day?');
+    expect(overdose.outOfScope).toBe(true);
+    expect(overdose.matchedRules).toContain('dosing-personal-take');
+    const otc = classifyTopic('Can I take over-the-counter naproxen with my warfarin?');
+    expect(otc.outOfScope).toBe(true);
+    expect(otc.matchedRules).toContain('dosing-personal-take');
+    const partOf = classifyTopic('Should I take part of the warfarin tonight?');
+    expect(partOf.outOfScope).toBe(true);
+    expect(partOf.matchedRules).toContain('dosing-personal-take');
+    const partIn = classifyTopic('Can I take part in the training session?');
+    expect(partIn.outOfScope).toBe(false);
+    expect(partIn.matchedRules).toEqual([]);
   });
 
   test('empty/whitespace/non-string inputs are in scope (safety-routing)', () => {
