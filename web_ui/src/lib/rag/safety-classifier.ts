@@ -206,11 +206,12 @@ export function classifyTopic(question: string): SafetyClassification {
  *  carry NO further "take" (a second, pronoun-less take is the hidden
  *  decision - "take the quiz, then take my warfarin"), must not open with
  *  a possessive ('s - "the document's recommended amount of warfarin"),
- *  and coordination (and/then/with/or/comma) breaks the escape only when
- *  the coordinated remainder carries a PERSONAL marker (my/our/his/her/
- *  their - "take these notes and my warfarin", "...along with my
- *  warfarin"), so an ordinary coordinated study action ("take the quiz and
- *  then review the slides") stays in scope.
+ *  and coordination (and/then/with/or/comma) breaks the escape UNLESS the
+ *  coordinated remainder carries its own study verb ("take the quiz and
+ *  then review my notes" stays in scope); a bare or possessed noun phrase
+ *  coordinated onto the shared "take" ("...and my warfarin", "...and
+ *  warfarin together", "...along with my warfarin") shares the ingestion
+ *  verb and refuses regardless of determiners.
  *  A clinical signal anywhere in the unit overrides any of this. */
 function ruleFiresOnUnit(rule: SafetyRule, unit: string): boolean {
   const global =
@@ -227,14 +228,21 @@ function ruleFiresOnUnit(rule: SafetyRule, unit: string): boolean {
     const after = slice.slice(tailMatch[0].length);
     if (/\btake\b/i.test(after)) return false;
     if (/^['\u2019]s?\b/i.test(after)) return false;
-    // Coordination breaks the escape only when the coordinated remainder
-    // carries a PERSONAL marker (my/our/his/her/their) - "take these notes
-    // and my warfarin", "take these notes along with my warfarin" - while
-    // an ordinary coordinated study action ("take the quiz and then review
-    // the slides") stays in scope (implementation-review round 12).
+    // Coordination breaks the escape unless the coordinated remainder
+    // carries its own STUDY VERB (review/study/read/...), which keeps the
+    // occurrence an ordinary study action ("take the quiz and then review
+    // my notes"); a bare or possessed noun phrase coordinated onto the
+    // shared "take" ("...and my warfarin", "...and warfarin together",
+    // "...along with my warfarin") shares the ingestion verb and refuses
+    // regardless of determiners (implementation-review round 13: refusal
+    // must not depend on a possessive pronoun, and personal study
+    // materials must stay in scope).
     const coordinated = /\b(?:and|then|with|or)\b/i.test(after) || /^\s*[,;]/.test(after);
-    const personal = /\b(?:my|our|his|her|their)\b/i.test(after);
-    if (coordinated && personal) return false;
+    if (coordinated) {
+      const STUDY_VERB =
+        /\b(?:review(?:ed|ing|s)?|stud(?:y|ied|ies|ying)|read(?:s|ing)?|discuss(?:es|ed|ing|ion)?|complete[sd]?|attend(?:s|ed|ing)?|watch(?:es|ed|ing)?|open(?:s|ed|ing)?|print(?:s|ed|ing)?|download(?:s|ed|ing)?|upload(?:s|ed|ing)?|shar(?:e|es|ed|ing)|skips?|skipped|skipping|retak(?:e|es|en|ing)|summar(?:y|ize|ise[sd]?)|find(?:s|ing)?|search(?:es|ed|ing)?|brows(?:e|es|ed|ing)|look(?:s|ed|ing)? (?:at|into)|check(?:s|ed|ing)?)\b/i;
+      if (!STUDY_VERB.test(after)) return false;
+    }
     return true;
   });
 }

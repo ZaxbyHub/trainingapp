@@ -237,6 +237,16 @@ describe('safety-routing: classifier (issue #365 AC1)', () => {
     const coordinatedStudy = classifyTopic('Can I take the quiz and then review the slides?');
     expect(coordinatedStudy.outOfScope).toBe(false);
     expect(coordinatedStudy.matchedRules).toEqual([]);
+    // Review round 13: refusal must NOT depend on a possessive pronoun, and
+    // personal study materials stay in scope. The coordinated remainder's
+    // own STUDY VERB keeps the occurrence an ordinary study action; a bare
+    // or possessed noun phrase coordinated onto the shared "take" refuses.
+    const bareCoordination = classifyTopic('Can I take these notes and warfarin together?');
+    expect(bareCoordination.outOfScope).toBe(true);
+    expect(bareCoordination.matchedRules).toContain('dosing-personal-take');
+    const personalStudy = classifyTopic('Can I take the quiz and then review my notes?');
+    expect(personalStudy.outOfScope).toBe(false);
+    expect(personalStudy.matchedRules).toEqual([]);
     const possessive1 = classifyTopic("Can I take the document's recommended amount of warfarin?");
     expect(possessive1.outOfScope).toBe(true);
     expect(possessive1.matchedRules).toContain('dosing-personal-take');
