@@ -289,6 +289,53 @@ const CONTINUATION_VOCAB = new Set([
   'next',
   'finally',
 ]);
+/** The NOUN subset of CONTINUATION_VOCAB: only these may follow an unknown
+ *  word inside a bounded prepositional phrase (round-22: a time adverb like
+ *  "tonight" does not turn "at home warfarin tonight" into a document
+ *  reference). Determiners, prepositions, place words, and study-time
+ *  adverbs stay in CONTINUATION_VOCAB for strict-position walking but do
+ *  not satisfy the post-unknown follow-up. */
+const CONTINUATION_STUDY_NOUNS = new Set([
+  'document',
+  'documents',
+  'pack',
+  'packs',
+  'slide',
+  'slides',
+  'training',
+  'quiz',
+  'module',
+  'exam',
+  'session',
+  'sessions',
+  'notes',
+  'chapter',
+  'section',
+  'manual',
+  'guide',
+  'guides',
+  'handout',
+  'course',
+  'lesson',
+  'lessons',
+  'video',
+  'recording',
+  'deck',
+  'archive',
+  'library',
+  'portal',
+  'dashboard',
+  'transcript',
+  'script',
+  'exercise',
+  'assignment',
+  'curriculum',
+  'diagram',
+  'appendix',
+  'monograph',
+  'label',
+  'leaflet',
+]);
 const CONTINUATION_PREPS = new Set(['to', 'at', 'in', 'on', 'for', 'about', 'before', 'after', 'during', 'from', 'of']);
 const CONTINUATION_DETERMINERS = new Set(['the', 'this', 'these', 'a', 'an']);
 const CONTINUATION_COORDINATORS = /\b(?:and|then|with|or|along|plus|besides|alongside|also|together|too|but|as well as|what about)\b/i;
@@ -342,21 +389,23 @@ function isSafeContinuation(after: string): boolean {
           continue;
         }
         // Unknown content word: only ONE per phrase, it must be the FIRST
-        // content word or be FOLLOWED by a known study noun before the
+        // content word or be FOLLOWED by a known STUDY NOUN before the
         // phrase ends (a trailing unknown on a multi-word phrase - "class
-        // warfarin", "starting warfarin" - refuses).
+        // warfarin", "starting warfarin" - refuses; a time adverb does NOT
+        // satisfy the follow-up - "at home warfarin tonight" refuses, the
+        // round-22 reviewer Critical).
         if (unknownUsed) return false;
         if (contentWords > 0) {
           let j = i + 1;
-          let followedByVocab = false;
+          let followedByStudyNoun = false;
           while (j < words.length && !CONTINUATION_PREPS.has(words[j])) {
-            if (CONTINUATION_VOCAB.has(words[j])) {
-              followedByVocab = true;
+            if (CONTINUATION_STUDY_NOUNS.has(words[j])) {
+              followedByStudyNoun = true;
               break;
             }
             j += 1;
           }
-          if (!followedByVocab) return false;
+          if (!followedByStudyNoun) return false;
         }
         unknownUsed = true;
         contentWords += 1;

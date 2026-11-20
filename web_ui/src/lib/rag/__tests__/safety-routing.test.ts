@@ -340,6 +340,11 @@ describe('safety-routing: classifier (issue #365 AC1)', () => {
       'Can I take the quiz at home oxycodone after the session?',
       'Can I take the quiz in the class warfarin?',
       'Can I take the quiz before starting warfarin?',
+      // Review round 22: a TIME ADVERB does not satisfy the post-unknown
+      // follow-up - only a known STUDY NOUN does ("at home warfarin
+      // monograph" stays a document reference; "...warfarin tonight?" is
+      // the same medication-timing class as "...warfarin at bedtime?").
+      'Can I take the quiz at home warfarin tonight?',
     ];
     for (const falsifier of phraseArithmeticFalsifiers) {
       const result = classifyTopic(falsifier);
