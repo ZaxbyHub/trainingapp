@@ -211,11 +211,12 @@ function ruleFiresOnText(rule: SafetyRule, text: string): boolean {
  *  prepositions, and study-material nouns. Any OTHER word in the
  *  continuation - a drug name, a verb ("review"), a personal pronoun ("my"),
  *  a coordinator ("and", "along", "plus", "together"), or any unknown token
- *  ("&", "+", "/") - breaks the escape and refuses (fail-toward-refusal).
- *  After a locative preposition arbitrary nouns are accepted, so document
- *  questions about unlisted drugs ("...at the warfarin monograph?") stay in
- *  scope while "...and warfarin together?" refuses (the coordinator is
- *  checked BEFORE the preposition admits unknown words). */
+ *  ("&", "+", "/") - breaks the escape and refuses (fail-toward-refusal),
+ *  and the punctuation gate (isSafeContinuation) refuses symbols before any
+ *  word is examined. A locative preposition admits at most ONE bounded noun
+ *  phrase (determiner + up to two words), so document questions about
+ *  unlisted drugs ("...at the warfarin monograph?", "...to the pharmacy?")
+ *  stay in scope while unknown words outside a bounded phrase refuse. */
 const CONTINUATION_VOCAB = new Set([
   'the',
   'this',
@@ -273,27 +274,56 @@ const CONTINUATION_VOCAB = new Set([
   'offline',
 ]);
 const CONTINUATION_PREPS = new Set(['to', 'at', 'in', 'on', 'for', 'about', 'before', 'after', 'during', 'from', 'of']);
-const CONTINUATION_COORDINATORS = /\b(?:and|then|with|or|along|plus|besides|alongside|also|together|too)\b/i;
+const CONTINUATION_DETERMINERS = new Set(['the', 'this', 'these', 'a', 'an']);
+const CONTINUATION_COORDINATORS = /\b(?:and|then|with|or|along|plus|besides|alongside|also|together|too|but|as well as|what about)\b/i;
+const CONTINUATION_PRONOUNS = /\b(?:my|our|his|her|their|mine|ours|yours|theirs)\b/i;
 
-/** Whether every word in the continuation is a known study/locative word;
- *  after the first locative preposition arbitrary (unknown) nouns are
- *  accepted, but a coordinator anywhere refuses first. */
+/** Whether the continuation after an idiom occurrence keeps it an ordinary
+ *  study action (round 20, the final-critic r6 spec). Fail-toward-refusal:
+ *  1. PUNCTUATION GATE: only letters and spaces are admitted, plus a single
+ *     sentence-ender (?/./!) at the very end of the continuation. Any other
+ *     character - & + / , ; ' or an INTERIOR . ? ! - refuses BEFORE any word
+ *     is examined, which also covers symbols, comma/semicolon joins, and
+ *     possessives ("the document's recommended amount").
+ *  2. Coordinators (incl. as well as / but / what about) and personal
+ *     pronouns refuse anywhere in the continuation.
+ *  3. WORD WALK (strict list): every word must be a known study/locative
+ *     vocabulary word, EXCEPT that a locative preposition admits at most ONE
+ *     bounded noun phrase (optional determiner + up to two words) before the
+ *     walk returns to the strict list - so "at the warfarin monograph" and
+ *     "to the pharmacy" stay in scope while a second unknown content word
+ *     outside a bounded phrase refuses. */
 function isSafeContinuation(after: string): boolean {
+  const trimmed = after.trim();
+  if (!/^[A-Za-z\s]*$/.test(trimmed) && !/^[A-Za-z\s]*[.?!]$/.test(trimmed)) return false;
   if (CONTINUATION_COORDINATORS.test(after)) return false;
+  if (CONTINUATION_PRONOUNS.test(after)) return false;
   if (/\btake\b/i.test(after)) return false;
-  const words = after
+  // The gate above already admitted at most one trailing sentence-ender; strip
+  // it so the final word reaches the walk bare ("course slides?" -> "slides").
+  const words = trimmed
+    .replace(/[.?!]$/, '')
     .toLowerCase()
-    .replace(/[^a-z\s]/g, ' ')
     .split(/\s+/)
     .filter((word) => word !== '');
-  let inPrepPhrase = false;
-  for (const word of words) {
-    if (CONTINUATION_PREPS.has(word) && !inPrepPhrase) {
-      inPrepPhrase = true;
+  let i = 0;
+  while (i < words.length) {
+    const word = words[i];
+    if (CONTINUATION_PREPS.has(word)) {
+      i += 1;
+      if (i < words.length && CONTINUATION_DETERMINERS.has(words[i])) i += 1;
+      let consumed = 0;
+      while (i < words.length && consumed < 2) {
+        i += 1;
+        consumed += 1;
+      }
       continue;
     }
-    if (inPrepPhrase) continue;
-    if (!CONTINUATION_VOCAB.has(word)) return false;
+    if (CONTINUATION_VOCAB.has(word)) {
+      i += 1;
+      continue;
+    }
+    return false;
   }
   return true;
 }

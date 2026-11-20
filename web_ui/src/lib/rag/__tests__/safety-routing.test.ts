@@ -297,6 +297,30 @@ describe('safety-routing: classifier (issue #365 AC1)', () => {
       expect(result.outOfScope, `must refuse: ${falsifier}`).toBe(true);
       expect(result.matchedRules, `must pin the rule: ${falsifier}`).toContain('dosing-personal-take');
     }
+    // Review round 20 (final-critic r6): the punctuation gate refuses symbols
+    // and interior sentence-enders BEFORE the word walk, and a locative
+    // preposition admits at most ONE bounded noun phrase (determiner + up to
+    // two words) before the strict list resumes - so a place/time phrase no
+    // longer admits an arbitrary coordinated dosing clause. All ten r6
+    // falsifiers (incl. the round-19 reviewer's "at home + warfarin" form)
+    // pin as refusals; the monograph/pharmacy controls above stay in scope.
+    const prepPhraseFalsifiers = [
+      'Can I take the quiz at home & 2 warfarin?',
+      'Can I take the quiz at home + warfarin?',
+      'Can I take the quiz in class/warfarin?',
+      'Can I take the quiz in class, warfarin at night?',
+      'Can I take the quiz at home; warfarin at night?',
+      'Can I take the quiz at home, my warfarin at night?',
+      'Can I take the quiz at home as well as my warfarin?',
+      'Can I take notes on the slides as well as warfarin?',
+      'Can I take the quiz at home. Warfarin at night?',
+      'Can I take the quiz at home but what about warfarin at night?',
+    ];
+    for (const falsifier of prepPhraseFalsifiers) {
+      const result = classifyTopic(falsifier);
+      expect(result.outOfScope, `must refuse: ${falsifier}`).toBe(true);
+      expect(result.matchedRules, `must pin the rule: ${falsifier}`).toContain('dosing-personal-take');
+    }
     const possessive1 = classifyTopic("Can I take the document's recommended amount of warfarin?");
     expect(possessive1.outOfScope).toBe(true);
     expect(possessive1.matchedRules).toContain('dosing-personal-take');
