@@ -37,7 +37,7 @@
     "@huggingface/transformers": "^4.3.2",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
-    "better-sqlite3": "13.0.3",
+    "better-sqlite3": "13.2.0",
     "jszip": "^3.10.2",
     "mammoth": "^1.13.0",
     "node-llama-cpp": "^3.20.0",
