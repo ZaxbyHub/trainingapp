@@ -234,9 +234,9 @@ describe('safety-routing: classifier (issue #365 AC1)', () => {
     expect(alongWith.matchedRules).toContain('dosing-personal-take');
     // ...while an ordinary coordinated STUDY action with no personal object
     // stays in scope.
-    const coordinatedStudy = classifyTopic('Can I take the quiz and then review the slides?');
-    expect(coordinatedStudy.outOfScope).toBe(false);
-    expect(coordinatedStudy.matchedRules).toEqual([]);
+    // (The 'the quiz and then review the slides' refusal pin lives in the
+    // round-15 strict-cut block below - it was pinned in-scope at rounds
+    // 12-14 and flipped by the disclosed strict cut.)
     // Review round 13: refusal must NOT depend on a possessive pronoun, and
     // personal study materials stay in scope. The coordinated remainder's
     // own STUDY VERB keeps the occurrence an ordinary study action; a bare
@@ -244,9 +244,23 @@ describe('safety-routing: classifier (issue #365 AC1)', () => {
     const bareCoordination = classifyTopic('Can I take these notes and warfarin together?');
     expect(bareCoordination.outOfScope).toBe(true);
     expect(bareCoordination.matchedRules).toContain('dosing-personal-take');
-    const personalStudy = classifyTopic('Can I take the quiz and then review my notes?');
-    expect(personalStudy.outOfScope).toBe(false);
-    expect(personalStudy.matchedRules).toEqual([]);
+    // Review round 15 (strict cut after the rounds 12-14 convergence): EVERY
+    // lexical carve-out for coordinated study actions (personal markers,
+    // then study verbs in any position) was bypassed by the next coordinated
+    // form - so coordination of ANY kind breaks the escape, and coordinated
+    // study actions refuse as a DISCLOSED fail-toward-refusal trade-off
+    // (an explicit maintainer AC3 sign-off item, not a silent acceptance):
+    const coordinatedStudySlides = classifyTopic('Can I take the quiz and then review the slides?');
+    expect(coordinatedStudySlides.outOfScope).toBe(true);
+    expect(coordinatedStudySlides.matchedRules).toContain('dosing-personal-take');
+    const coordinatedStudyPersonal = classifyTopic('Can I take the quiz and then review my notes?');
+    expect(coordinatedStudyPersonal.outOfScope).toBe(true);
+    expect(coordinatedStudyPersonal.matchedRules).toContain('dosing-personal-take');
+    // The round-14 falsifier: a later study verb after the coordinated drug
+    // must not rescue the escape.
+    const lateStudyVerb = classifyTopic('Can I take these notes and warfarin together before I review the slides?');
+    expect(lateStudyVerb.outOfScope).toBe(true);
+    expect(lateStudyVerb.matchedRules).toContain('dosing-personal-take');
     const possessive1 = classifyTopic("Can I take the document's recommended amount of warfarin?");
     expect(possessive1.outOfScope).toBe(true);
     expect(possessive1.matchedRules).toContain('dosing-personal-take');
