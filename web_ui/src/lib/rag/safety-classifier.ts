@@ -202,11 +202,15 @@ export function classifyTopic(question: string): SafetyClassification {
  *  is suppressed only when EVERY shape occurrence's own tail is the idiom -
  *  anchored at the occurrence's end, never a whole-unit search - AND the
  *  continuation after the idiom keeps the occurrence an ordinary study
- *  action (final-critic r4): the remainder must carry NO further "take"
- *  (a second, pronoun-less take is the hidden decision - "take the quiz,
- *  then take my warfarin"), must not open with a possessive ('s - "the
- *  document's recommended amount of warfarin"), and must not open with a
- *  coordination (and/,/then/with/or - "take these notes and my warfarin").
+ *  action (final-critic r4 + implementation-review r12): the remainder must
+ *  carry NO further "take" (a second, pronoun-less take is the hidden
+ *  decision - "take the quiz, then take my warfarin"), must not open with
+ *  a possessive ('s - "the document's recommended amount of warfarin"),
+ *  and coordination (and/then/with/or/comma) breaks the escape only when
+ *  the coordinated remainder carries a PERSONAL marker (my/our/his/her/
+ *  their - "take these notes and my warfarin", "...along with my
+ *  warfarin"), so an ordinary coordinated study action ("take the quiz and
+ *  then review the slides") stays in scope.
  *  A clinical signal anywhere in the unit overrides any of this. */
 function ruleFiresOnUnit(rule: SafetyRule, unit: string): boolean {
   const global =
@@ -223,7 +227,14 @@ function ruleFiresOnUnit(rule: SafetyRule, unit: string): boolean {
     const after = slice.slice(tailMatch[0].length);
     if (/\btake\b/i.test(after)) return false;
     if (/^['\u2019]s?\b/i.test(after)) return false;
-    if (/^\s*(?:,|;|\b(?:and|then|with|or)\b)/i.test(after)) return false;
+    // Coordination breaks the escape only when the coordinated remainder
+    // carries a PERSONAL marker (my/our/his/her/their) - "take these notes
+    // and my warfarin", "take these notes along with my warfarin" - while
+    // an ordinary coordinated study action ("take the quiz and then review
+    // the slides") stays in scope (implementation-review round 12).
+    const coordinated = /\b(?:and|then|with|or)\b/i.test(after) || /^\s*[,;]/.test(after);
+    const personal = /\b(?:my|our|his|her|their)\b/i.test(after);
+    if (coordinated && personal) return false;
     return true;
   });
 }

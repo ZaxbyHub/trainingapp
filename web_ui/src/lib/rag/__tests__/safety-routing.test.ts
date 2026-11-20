@@ -226,6 +226,17 @@ describe('safety-routing: classifier (issue #365 AC1)', () => {
     const coordinated1 = classifyTopic('Can I take these notes and my warfarin together?');
     expect(coordinated1.outOfScope).toBe(true);
     expect(coordinated1.matchedRules).toContain('dosing-personal-take');
+    // Review round 12: coordination breaks the escape only with a PERSONAL
+    // marker in the coordinated remainder - "along with my warfarin" (not a
+    // listed coordinator opening) refuses...
+    const alongWith = classifyTopic('Can I take these notes along with my warfarin?');
+    expect(alongWith.outOfScope).toBe(true);
+    expect(alongWith.matchedRules).toContain('dosing-personal-take');
+    // ...while an ordinary coordinated STUDY action with no personal object
+    // stays in scope.
+    const coordinatedStudy = classifyTopic('Can I take the quiz and then review the slides?');
+    expect(coordinatedStudy.outOfScope).toBe(false);
+    expect(coordinatedStudy.matchedRules).toEqual([]);
     const possessive1 = classifyTopic("Can I take the document's recommended amount of warfarin?");
     expect(possessive1.outOfScope).toBe(true);
     expect(possessive1.matchedRules).toContain('dosing-personal-take');
