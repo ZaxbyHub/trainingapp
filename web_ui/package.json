@@ -48,7 +48,7 @@
     "xlsx": "file:../vendor/sheetjs/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
-    "@axe-core/playwright": "^4.13.0",
+    "@axe-core/playwright": "^4.14.0",
     "@mlc-ai/web-llm": "^0.2.83",
     "@playwright/test": "^1.63.0",
     "@testing-library/jest-dom": "^6.0.0",
