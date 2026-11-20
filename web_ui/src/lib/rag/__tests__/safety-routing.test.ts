@@ -272,6 +272,31 @@ describe('safety-routing: classifier (issue #365 AC1)', () => {
     const semicolonCoord = classifyTopic('Can I take the quiz today; my warfarin tomorrow?');
     expect(semicolonCoord.outOfScope).toBe(true);
     expect(semicolonCoord.matchedRules).toContain('dosing-personal-take');
+    // Review round 18 (final-critic r5 allowlist): the continuation is
+    // checked as a VOCABULARY ALLOWLIST - every word after the idiom must be
+    // a known study/locative word; unknown tokens, symbols, other
+    // coordinators, verbs, and personal pronouns all refuse.
+    const allowlistFalsifiers = [
+      'Can I take notes & my warfarin together?',
+      'Can I take the quiz & warfarin tonight?',
+      'Can I take notes plus my warfarin?',
+      'Can I take the quiz plus warfarin?',
+      'Should I take the training plus 5 warfarin?',
+      'Can I take notes as well as warfarin?',
+      'Can I take the quiz alongside warfarin?',
+      'Can I take the quiz besides warfarin?',
+      'Can I take the quiz + warfarin?',
+      'Can I take the quiz/warfarin?',
+      'Can I take the quiz — warfarin too?',
+      'Can I take the quiz\nand my warfarin?',
+      'Can I take the quiz. Then warfarin?',
+      'Can I take the quiz? Also my warfarin?',
+    ];
+    for (const falsifier of allowlistFalsifiers) {
+      const result = classifyTopic(falsifier);
+      expect(result.outOfScope, `must refuse: ${falsifier}`).toBe(true);
+      expect(result.matchedRules, `must pin the rule: ${falsifier}`).toContain('dosing-personal-take');
+    }
     const possessive1 = classifyTopic("Can I take the document's recommended amount of warfarin?");
     expect(possessive1.outOfScope).toBe(true);
     expect(possessive1.matchedRules).toContain('dosing-personal-take');

@@ -61,20 +61,18 @@ export const SAFETY_RULES: readonly SafetyRule[] = Object.freeze([
   {
     id: 'dosing-personal-take',
     intent: 'dosing',
-    // Fail-toward-refusal (review rounds 3-4 + final-critic rounds): the
-    // bare personal-take shape decides. Suppression is PER-SENTENCE-UNIT
-    // and PER-OCCURRENCE with CONTINUATION LIMITS: the in-scope idiom tail
-    // must follow the shape occurrence's own "take" (anchored at the match
-    // end, never a whole-question search), and the text AFTER the idiom must
-    // keep the occurrence an ordinary study action - no further "take"
-    // ("take the quiz, then take my warfarin"), no possessive ("the
-    // document's recommended amount of warfarin"), no coordination ("take
-    // these notes and my warfarin"). A clinical signal anywhere in the unit
-    // overrides every escape ("take a look at my insulin dosage" refuses).
-    // Named-medication DECISIONS on the bare shape ("Should I take
-    // warfarin?") refuse; document/study questions about unlisted drugs
-    // ("Can I take a look at the warfarin monograph?", "Can I take the
-    // document to the pharmacy?") stay in scope under the escape.
+    // Fail-toward-refusal (review rounds 3-18): the bare personal-take
+    // shape decides. Suppression is PER-OCCURRENCE on the WHOLE question:
+    // the in-scope idiom tail must follow the shape occurrence's own
+    // "take" (anchored at the match end), and every word after the idiom
+    // must be a known study/locative word (see CONTINUATION_VOCAB) - any
+    // drug name, verb, personal pronoun, coordinator, or unknown token
+    // refuses. A clinical signal anywhere overrides every escape ("take a
+    // look at my insulin dosage" refuses). Named-medication DECISIONS on
+    // the bare shape ("Should I take warfarin?") refuse; document/study
+    // questions about unlisted drugs ("Can I take a look at the warfarin
+    // monograph?", "Can I take the document to the pharmacy?") stay in
+    // scope under the escape.
     pattern: /\b(should i|can i|is it safe to)\s+(?:still\s+)?take\b/i,
     // Rounds 7-8 (final-critic): clinically ambiguous idiom heads are
     // removed as each is found - course/pack (round 4), over/bare part
@@ -164,86 +162,138 @@ export interface SafetyClassification {
 /**
  * Classify a question against the PROPOSED rule list. Pure and synchronous:
  * microseconds, never throws, degrades to in-scope on empty/whitespace input.
- * Evaluation is two-mode (rounds 4+6): rules WITHOUT an in-scope idiom
- * escape evaluate on the WHOLE question (their clinical shapes may span
- * sentences - "I weigh 72 kg. What dose is right for me?"), while only
- * escape-bearing rules evaluate per-sentence-unit with occurrence-anchored
- * suppression, because only their escape can suppress a real decision. A
- * DECIMAL POINT is not a boundary (round 5): digits around a period are
- * guarded with a placeholder before the split.
+ * Every rule evaluates on the WHOLE question (round 18: the per-unit system
+ * was removed - sentence/newline/semicolon boundaries let a coordinated
+ * dosing clause hide in a shape-less fragment). Escape-bearing rules
+ * suppress only when EVERY shape occurrence's continuation after the idiom
+ * is a known study/locative phrase (see isSafeContinuation); any unknown
+ * word - a drug name, a verb, a coordinator, a personal pronoun - refuses.
  */
 export function classifyTopic(question: string): SafetyClassification {
   if (typeof question !== 'string') return { outOfScope: false, category: null, matchedRules: [] };
   const text = question.trim();
   if (text === '') return { outOfScope: false, category: null, matchedRules: [] };
-  const DECIMAL_GUARD = '\u0000';
-  const guarded = text.replace(/(\d)\.(\d)/g, `$1${DECIMAL_GUARD}$2`);
-  // A semicolon is NOT a unit boundary (round 17): it is coordination, so
-  // semicolon-joined text stays in ONE unit and the any-position
-  // comma/semicolon continuation check sees it - splitting at the
-  // semicolon would let a dosing decision after the semicolon hide behind
-  // an idiom in the first fragment.
-  const units = (guarded.match(/[^.!?\n]+[.?!]?/g) ?? [guarded]).map((u) => u.replaceAll(DECIMAL_GUARD, '.'));
   const matchedRules: string[] = [];
   for (const rule of SAFETY_RULES) {
-    // Rules WITHOUT an in-scope idiom escape have no suppression mechanism a
-    // foreign clause could hijack, so they evaluate on the WHOLE question
-    // exactly as before round 4 - clinical shapes that intentionally span
-    // sentences ("I weigh 72 kg. What dose is right for me?") keep matching.
-    // Only escape-bearing rules evaluate per sentence unit and per
-    // occurrence (round 4), because only their escape can suppress a real
-    // decision.
-    const fires =
-      rule.inScopeWhen === undefined ? rule.pattern.test(text) : units.some((unit) => ruleFiresOnUnit(rule, unit));
-    if (fires) matchedRules.push(rule.id);
+    if (ruleFiresOnText(rule, text)) matchedRules.push(rule.id);
   }
   return matchedRules.length > 0
     ? { outOfScope: true, category: 'clinical', matchedRules }
     : { outOfScope: false, category: null, matchedRules: [] };
 }
 
-/** Whether the rule fires on one sentence unit. The bare shape decides
- *  (fail-toward-refusal). For rules with an in-scope idiom escape, the unit
- *  is suppressed only when EVERY shape occurrence's own tail is the idiom -
- *  anchored at the occurrence's end, never a whole-unit search - AND the
- *  continuation after the idiom keeps the occurrence an ordinary study
- *  action (final-critic r4 + implementation-review r12): the remainder must
- *  carry NO further "take" (a second, pronoun-less take is the hidden
- *  decision - "take the quiz, then take my warfarin"), must not open with
- *  a possessive ('s - "the document's recommended amount of warfarin"),
- *  and coordination of ANY kind at ANY position (and/then/with/or/along
- *  with/comma/semicolon) breaks the escape outright - the strict cut after
- *  rounds 12-15 proved every lexical carve-out for coordinated study
- *  actions bypassable; the over-refusal of coordinated study actions is a
- *  disclosed maintainer sign-off item.
- *  A clinical signal anywhere in the unit overrides any of this. */
-function ruleFiresOnUnit(rule: SafetyRule, unit: string): boolean {
+/** Whether the rule fires on the whole question. The bare shape decides
+ *  (fail-toward-refusal). For rules with an in-scope idiom escape, the rule
+ *  is suppressed only when EVERY shape occurrence's own continuation after
+ *  the idiom is a known study/locative phrase (round 18 allowlist, the
+ *  convergence of rounds 12-17: every coordinator blocklist - personal
+ *  markers, study verbs, coordinator word lists - was bypassed by the next
+ *  coordinated form, so the check is INVERTED to a vocabulary allowlist; a
+ *  clinical signal anywhere overrides any of this). */
+function ruleFiresOnText(rule: SafetyRule, text: string): boolean {
   const global =
     rule.pattern.flags.includes('g') ? rule.pattern : new RegExp(rule.pattern.source, rule.pattern.flags + 'g');
-  const occurrences = [...unit.matchAll(global)];
+  const occurrences = [...text.matchAll(global)];
   if (occurrences.length === 0) return false;
-  if (rule.clinicalContext?.test(unit)) return true;
+  if (rule.clinicalContext?.test(text)) return true;
   if (rule.inScopeWhen === undefined) return true;
   const anchoredTail = new RegExp('^(?:' + rule.inScopeWhen.source + ')', rule.inScopeWhen.flags.replace('g', ''));
   return !occurrences.every((m) => {
-    const slice = unit.slice((m.index ?? 0) + m[0].length);
+    const slice = text.slice((m.index ?? 0) + m[0].length);
     const tailMatch = anchoredTail.exec(slice);
     if (tailMatch === null) return false;
-    const after = slice.slice(tailMatch[0].length);
-    if (/\btake\b/i.test(after)) return false;
-    if (/^['\u2019]s?\b/i.test(after)) return false;
-    // Coordination of ANY kind, at ANY position in the remainder, breaks
-    // the escape (review rounds 11-15 convergence): every lexical carve-out
-    // for coordinated study actions - personal markers, then study verbs in
-    // any position - was bypassed by the next coordinated form (round 15:
-    // a comma after the idiom head, "take the quiz today, my warfarin
-    // tomorrow?"), so the strict cut is the only convergent shape.
-    // Over-refusal of coordinated study actions ("take the quiz and then
-    // review my notes") is a disclosed fail-toward-refusal trade-off gated
-    // on the maintainer's AC3 sign-off - NOT silently accepted.
-    const coordinated =
-      /\b(?:and|then|with|or|along with)\b/i.test(after) || /[,;]/.test(after);
-    if (coordinated) return false;
-    return true;
+    return isSafeContinuation(slice.slice(tailMatch[0].length));
   });
+}
+
+/** Known study/locative words that may appear after an idiom occurrence
+ *  without turning it into a medication decision: determiners, locative
+ *  prepositions, and study-material nouns. Any OTHER word in the
+ *  continuation - a drug name, a verb ("review"), a personal pronoun ("my"),
+ *  a coordinator ("and", "along", "plus", "together"), or any unknown token
+ *  ("&", "+", "/") - breaks the escape and refuses (fail-toward-refusal).
+ *  After a locative preposition arbitrary nouns are accepted, so document
+ *  questions about unlisted drugs ("...at the warfarin monograph?") stay in
+ *  scope while "...and warfarin together?" refuses (the coordinator is
+ *  checked BEFORE the preposition admits unknown words). */
+const CONTINUATION_VOCAB = new Set([
+  'the',
+  'this',
+  'these',
+  'a',
+  'an',
+  'to',
+  'at',
+  'in',
+  'on',
+  'for',
+  'about',
+  'before',
+  'after',
+  'during',
+  'from',
+  'of',
+  'document',
+  'documents',
+  'pack',
+  'packs',
+  'slide',
+  'slides',
+  'training',
+  'quiz',
+  'module',
+  'exam',
+  'session',
+  'sessions',
+  'notes',
+  'chapter',
+  'section',
+  'manual',
+  'guide',
+  'guides',
+  'handout',
+  'course',
+  'lesson',
+  'lessons',
+  'video',
+  'recording',
+  'deck',
+  'archive',
+  'library',
+  'portal',
+  'dashboard',
+  'transcript',
+  'script',
+  'exercise',
+  'assignment',
+  'curriculum',
+  'diagram',
+  'appendix',
+  'home',
+  'offline',
+]);
+const CONTINUATION_PREPS = new Set(['to', 'at', 'in', 'on', 'for', 'about', 'before', 'after', 'during', 'from', 'of']);
+const CONTINUATION_COORDINATORS = /\b(?:and|then|with|or|along|plus|besides|alongside|also|together|too)\b/i;
+
+/** Whether every word in the continuation is a known study/locative word;
+ *  after the first locative preposition arbitrary (unknown) nouns are
+ *  accepted, but a coordinator anywhere refuses first. */
+function isSafeContinuation(after: string): boolean {
+  if (CONTINUATION_COORDINATORS.test(after)) return false;
+  if (/\btake\b/i.test(after)) return false;
+  const words = after
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, ' ')
+    .split(/\s+/)
+    .filter((word) => word !== '');
+  let inPrepPhrase = false;
+  for (const word of words) {
+    if (CONTINUATION_PREPS.has(word) && !inPrepPhrase) {
+      inPrepPhrase = true;
+      continue;
+    }
+    if (inPrepPhrase) continue;
+    if (!CONTINUATION_VOCAB.has(word)) return false;
+  }
+  return true;
 }
