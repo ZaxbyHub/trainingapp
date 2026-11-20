@@ -266,6 +266,12 @@ describe('safety-routing: classifier (issue #365 AC1)', () => {
     const laterComma = classifyTopic('Can I take the quiz today, my warfarin tomorrow?');
     expect(laterComma.outOfScope).toBe(true);
     expect(laterComma.matchedRules).toContain('dosing-personal-take');
+    // Review round 17: a SEMICOLON is not a unit boundary either - it is
+    // coordination, so the semicolon survives into the unit and the
+    // any-position check refuses.
+    const semicolonCoord = classifyTopic('Can I take the quiz today; my warfarin tomorrow?');
+    expect(semicolonCoord.outOfScope).toBe(true);
+    expect(semicolonCoord.matchedRules).toContain('dosing-personal-take');
     const possessive1 = classifyTopic("Can I take the document's recommended amount of warfarin?");
     expect(possessive1.outOfScope).toBe(true);
     expect(possessive1.matchedRules).toContain('dosing-personal-take');

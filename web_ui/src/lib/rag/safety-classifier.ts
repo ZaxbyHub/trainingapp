@@ -178,7 +178,12 @@ export function classifyTopic(question: string): SafetyClassification {
   if (text === '') return { outOfScope: false, category: null, matchedRules: [] };
   const DECIMAL_GUARD = '\u0000';
   const guarded = text.replace(/(\d)\.(\d)/g, `$1${DECIMAL_GUARD}$2`);
-  const units = (guarded.match(/[^.!?\n;]+[.?!]?/g) ?? [guarded]).map((u) => u.replaceAll(DECIMAL_GUARD, '.'));
+  // A semicolon is NOT a unit boundary (round 17): it is coordination, so
+  // semicolon-joined text stays in ONE unit and the any-position
+  // comma/semicolon continuation check sees it - splitting at the
+  // semicolon would let a dosing decision after the semicolon hide behind
+  // an idiom in the first fragment.
+  const units = (guarded.match(/[^.!?\n]+[.?!]?/g) ?? [guarded]).map((u) => u.replaceAll(DECIMAL_GUARD, '.'));
   const matchedRules: string[] = [];
   for (const rule of SAFETY_RULES) {
     // Rules WITHOUT an in-scope idiom escape have no suppression mechanism a
