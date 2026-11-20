@@ -321,6 +321,37 @@ describe('safety-routing: classifier (issue #365 AC1)', () => {
       expect(result.outOfScope, `must refuse: ${falsifier}`).toBe(true);
       expect(result.matchedRules, `must pin the rule: ${falsifier}`).toContain('dosing-personal-take');
     }
+    // Review round 21 / final-critic r7: the bounded phrase consumed TWO
+    // unchecked words per preposition (and prepositions are vocab, so a
+    // second preposition refilled the allowance) - a comma-free run-on
+    // ("in class warfarin at night") and an unknown ending a multi-word
+    // phrase ("before starting warfarin") escaped. The phrase now admits at
+    // most ONE unknown, which must be the phrase's sole content word or be
+    // followed only by known study nouns; monograph/label/leaflet were
+    // added to the vocab so the document controls keep working. All eight
+    // inputs pin as refusals; ordinary study-time adverbs ("the quiz
+    // today/tonight") stay in scope.
+    const phraseArithmeticFalsifiers = [
+      'Can I take the quiz in class warfarin at night?',
+      'Can I take the quiz at home warfarin at bedtime?',
+      'Can I take the quiz in the morning warfarin at night?',
+      'Should I take notes in class prednisone at noon?',
+      'Is it safe to take the exam at school lithium at night?',
+      'Can I take the quiz at home oxycodone after the session?',
+      'Can I take the quiz in the class warfarin?',
+      'Can I take the quiz before starting warfarin?',
+    ];
+    for (const falsifier of phraseArithmeticFalsifiers) {
+      const result = classifyTopic(falsifier);
+      expect(result.outOfScope, `must refuse: ${falsifier}`).toBe(true);
+      expect(result.matchedRules, `must pin the rule: ${falsifier}`).toContain('dosing-personal-take');
+    }
+    const quizToday = classifyTopic('Can I take the quiz today?');
+    expect(quizToday.outOfScope).toBe(false);
+    expect(quizToday.matchedRules).toEqual([]);
+    const quizTonight = classifyTopic('Can I take the quiz tonight?');
+    expect(quizTonight.outOfScope).toBe(false);
+    expect(quizTonight.matchedRules).toEqual([]);
     const possessive1 = classifyTopic("Can I take the document's recommended amount of warfarin?");
     expect(possessive1.outOfScope).toBe(true);
     expect(possessive1.matchedRules).toContain('dosing-personal-take');

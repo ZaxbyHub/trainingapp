@@ -28,21 +28,21 @@ export interface SafetyRule {
   pattern: RegExp;
   /** In-scope idiom TAIL (occurrence-anchored): what may follow the shape
    *  occurrence's own final word for THAT occurrence to read as an ordinary
-   *  document/study action. Suppression is per-sentence-unit AND
-   *  per-occurrence (round 4): the tail is anchored at the shape match's
-   *  end - never searched across the whole question - so a second clause's
-   *  idiom cannot lend suppression to another clause's medication decision,
-   *  and clinically ambiguous heads (course/pack: "course of warfarin",
+   *  document/study action. Suppression is per-occurrence on the WHOLE
+   *  question (rounds 4+18): the tail is anchored at the shape match's end
+   *  - never searched across the whole text - so a second clause's idiom
+   *  cannot lend suppression to another clause's medication decision, and
+   *  clinically ambiguous heads (course/pack: "course of warfarin",
    *  "pack of samples") are excluded from the list entirely. With no idiom
    *  coverage the bare shape fires - fail-toward-refusal: an unlisted drug
    *  name ("Should I take warfarin?") refuses because the shape alone
-   *  decides. clinicalContext is the whole-unit override: ANY clinical
-   *  signal in the sentence unit makes an idiom-covered occurrence refuse
-   *  anyway ("take a look at my insulin dosage"). */
+   *  decides. clinicalContext is the whole-question override: ANY clinical
+   *  signal anywhere in the question makes an idiom-covered occurrence
+   *  refuse anyway ("take a look at my insulin dosage"). */
   inScopeWhen?: RegExp;
-  /** Vocabulary second-chance net and the idiom-override signal (see
-   *  inScopeWhen). Dosage units, medication words, pharmaceutical suffix
-   *  shapes. With no inScopeWhen on the rule it is inert. */
+  /** The idiom-override signal for rules WITH an in-scope idiom (see
+   *  inScopeWhen): dosage units, medication words, pharmaceutical suffix
+   *  shapes. Inert on rules that carry no inScopeWhen. */
   clinicalContext?: RegExp;
   /** A question that MUST match (pinned). */
   positiveExample: string;
@@ -272,6 +272,21 @@ const CONTINUATION_VOCAB = new Set([
   'appendix',
   'home',
   'offline',
+  'monograph',
+  'label',
+  'leaflet',
+  // ordinary study-time adverbs after the idiom (no preposition involved):
+  'today',
+  'tomorrow',
+  'tonight',
+  'later',
+  'now',
+  'soon',
+  'earlier',
+  'immediately',
+  'first',
+  'next',
+  'finally',
 ]);
 const CONTINUATION_PREPS = new Set(['to', 'at', 'in', 'on', 'for', 'about', 'before', 'after', 'during', 'from', 'of']);
 const CONTINUATION_DETERMINERS = new Set(['the', 'this', 'these', 'a', 'an']);
@@ -288,11 +303,15 @@ const CONTINUATION_PRONOUNS = /\b(?:my|our|his|her|their|mine|ours|yours|theirs)
  *  2. Coordinators (incl. as well as / but / what about) and personal
  *     pronouns refuse anywhere in the continuation.
  *  3. WORD WALK (strict list): every word must be a known study/locative
- *     vocabulary word, EXCEPT that a locative preposition admits at most ONE
- *     bounded noun phrase (optional determiner + up to two words) before the
- *     walk returns to the strict list - so "at the warfarin monograph" and
- *     "to the pharmacy" stay in scope while a second unknown content word
- *     outside a bounded phrase refuses. */
+ *     vocabulary word, EXCEPT that a locative preposition admits one bounded
+ *     noun phrase (optional determiner + content words) in which AT MOST ONE
+ *     word may be unknown, and a trailing unknown must be the phrase's SOLE
+ *     content word (round 8: "at the warfarin monograph" = unknown followed
+ *     only by a known study noun; "to the pharmacy" = single unknown;
+ *     "in class warfarin at night" / "before starting warfarin" refuse -
+ *     two unchecked words or an unknown ending a multi-word phrase are not
+ *     admissible). The walk resumes on the strict list at each new
+ *     preposition. */
 function isSafeContinuation(after: string): boolean {
   const trimmed = after.trim();
   if (!/^[A-Za-z\s]*$/.test(trimmed) && !/^[A-Za-z\s]*[.?!]$/.test(trimmed)) return false;
@@ -312,10 +331,35 @@ function isSafeContinuation(after: string): boolean {
     if (CONTINUATION_PREPS.has(word)) {
       i += 1;
       if (i < words.length && CONTINUATION_DETERMINERS.has(words[i])) i += 1;
-      let consumed = 0;
-      while (i < words.length && consumed < 2) {
+      let contentWords = 0;
+      let unknownUsed = false;
+      while (i < words.length && !CONTINUATION_PREPS.has(words[i])) {
+        const phraseWord = words[i];
+        if (CONTINUATION_VOCAB.has(phraseWord)) {
+          i += 1;
+          contentWords += 1;
+          continue;
+        }
+        // Unknown content word: only ONE per phrase, it must be the FIRST
+        // content word or be FOLLOWED by a known study noun before the
+        // phrase ends (a trailing unknown on a multi-word phrase - "class
+        // warfarin", "starting warfarin" - refuses).
+        if (unknownUsed) return false;
+        if (contentWords > 0) {
+          let j = i + 1;
+          let followedByVocab = false;
+          while (j < words.length && !CONTINUATION_PREPS.has(words[j])) {
+            if (CONTINUATION_VOCAB.has(words[j])) {
+              followedByVocab = true;
+              break;
+            }
+            j += 1;
+          }
+          if (!followedByVocab) return false;
+        }
+        unknownUsed = true;
+        contentWords += 1;
         i += 1;
-        consumed += 1;
       }
       continue;
     }
