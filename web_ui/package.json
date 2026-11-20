@@ -33,7 +33,7 @@
     "@huggingface/transformers": "^3.0.0",
     "@wllama/wllama": "^3.5.1",
     "@wllama/wllama-compat": "^3.8.1",
-    "dexie": "^4.4.4",
+    "dexie": "^4.4.7",
     "edgevec": "^0.6.0",
     "flexsearch": "^0.8.0",
     "jszip": "^3.10.1",
