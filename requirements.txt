@@ -30,7 +30,7 @@ python-multipart>=0.0.32  # FastAPI form data parsing
 
 # GUI
 customtkinter>=6.0.0,<7.0.0
-pillow>=12.2.0,<13.0.0
+pillow>=12.3.0,<13.0.0
 
 # Testing
 psutil>=5.9.0
