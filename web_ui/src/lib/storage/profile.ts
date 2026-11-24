@@ -438,11 +438,24 @@ export async function deleteNamespace(
   await Promise.all(
     names.map(
       (name) =>
-        new Promise<void>((resolve) => {
+        new Promise<void>((resolve, reject) => {
           const req = indexedDB.deleteDatabase(name);
-          req.onsuccess = () => resolve();
-          req.onerror = () => resolve();
-          req.onblocked = () => resolve();
+          let settled = false;
+          const finish = (error?: Error): void => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            if (error) reject(error);
+            else resolve();
+          };
+          // A blocked delete can still complete when the last connection closes.
+          // Wait a bounded interval; never report success merely because blocked.
+          const timer = setTimeout(() => finish(new Error(`deleting ${name} timed out after a blocked wait`)), 5000);
+          req.onsuccess = () => finish();
+          req.onerror = () => finish(req.error ?? new Error(`deleting ${name} failed`));
+          req.onblocked = () => {
+            console.warn(`[profile] delete blocked for ${name}; waiting up to 5s for open connections to close`);
+          };
         })
     )
   );

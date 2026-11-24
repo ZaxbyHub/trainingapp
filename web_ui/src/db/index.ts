@@ -43,7 +43,7 @@ import type { Conversation } from './conversations';
  */
 export type ConversationMetaRow = {
   key: string;
-  value: number | { target: string; phase: 'copying' | 'done'; epoch?: number };
+  value: number | string | { target: string; phase: 'copying' | 'done'; epoch?: number };
 };
 
 /**

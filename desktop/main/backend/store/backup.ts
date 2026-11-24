@@ -18,6 +18,9 @@
 // restored snapshot.
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { journalDestructiveTransition, type AuditStoreLike } from '../audit-outbox.js';
+import { getCurrentStore, openReadOnlyAuditSnapshot } from './sqlite-store.js';
 import path from 'node:path';
 import { CURRENT_SCHEMA_VERSION } from './migrate.js';
 
@@ -187,6 +190,22 @@ export async function restoreBackup(opts: RestoreOptions): Promise<{ schemaVersi
       `backup embedding_dims ${meta.embeddingDims} does not match the active store's dims ${opts.dims}; ` +
         'refusing to restore',
     );
+  }
+  // Snapshot a valid active store even when its handle was already closed. A
+  // corrupt/unopenable file falls back to preserving any existing journal.
+  let snapshot: (AuditStoreLike & { close?: () => void }) | null = getCurrentStore();
+  if (snapshot === null || snapshot.dbPath !== opts.dbPath) {
+    snapshot = openReadOnlyAuditSnapshot(opts.dbPath);
+  }
+  try {
+    await journalDestructiveTransition(snapshot, opts.dbPath, {
+      eventId: randomUUID(),
+      event: 'clear_cache',
+      subject: 'recovery-restore',
+      occurredAt: Date.now(),
+    });
+  } finally {
+    if (snapshot !== getCurrentStore()) snapshot?.close?.();
   }
   fs.copyFileSync(opts.backupPath, opts.dbPath);
   for (const sidecar of [`${opts.dbPath}-wal`, `${opts.dbPath}-shm`]) {

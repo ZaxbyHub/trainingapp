@@ -18,6 +18,7 @@ import { migrateLegacyProviderToDesktop } from './lib/llm/external-migration';
 import { INACTIVITY_TIMEOUT_KEY } from './lib/storage/persisted-keys';
 import { ensureCurrentProfileRegistered } from './lib/storage/profile';
 import { recordAuditEvent } from './db/audit';
+import { startAuditOutboxListener } from './db/audit-outbox-listener';
 import { startInactivityWatch, INACTIVITY_DEFAULT_MIN } from './lib/session/inactivity';
 import { anyHandlerBusy } from './lib/session/session-clear';
 import { AppLayout } from './layouts/AppLayout';
@@ -276,6 +277,13 @@ function AppContent() {
     if (!isElectron()) ensureCurrentProfileRegistered();
   }, []);
 
+  // #373: desktop outbox subscriber. Browser runtime keeps its local audit
+  // producers; an older desktop main without the bridge is a safe no-op.
+  useEffect(() => {
+    if (!isElectron() || window.desktopApi === undefined) return;
+    return startAuditOutboxListener(window.desktopApi);
+  }, []);
+
   // Issue #366 (WI5): app_start / app_stop lifecycle audit. One app_start per
   // renderer page load (module-scoped guard above defeats StrictMode replay
   // and same-document remounts); app_stop is a BEST-EFFORT pagehide append
@@ -284,7 +292,9 @@ function AppContent() {
   useEffect(() => {
     if (!appStartRecordedThisLoad) {
       appStartRecordedThisLoad = true;
-      recordAuditEvent('app_start', null);
+      // Desktop app_start is owned by the main process at host-ready; the
+      // renderer must not add a second lifecycle row there.
+      if (!isElectron()) recordAuditEvent('app_start', null);
     }
     const onPageHide = (): void => {
       recordAuditEvent('app_stop', null);

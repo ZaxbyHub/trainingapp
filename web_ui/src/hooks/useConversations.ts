@@ -309,6 +309,9 @@ export function useConversations() {
         stateEpoch: await stateEpochRef.current,
       });
       if (!applied) {
+        // A peer advance stales this write only. Rebind so the next operation
+        // in this tab does not keep aborting against the pre-advance epoch.
+        bindFreshEpoch();
         // Stale-state rename after a cross-tab clear: a deliberate silent
         // no-op (the gate aborted it) — no banner, no success reporting.
         return false;
@@ -321,7 +324,7 @@ export function useConversations() {
       setPersistenceError('Failed to rename conversation');
       return false;
     }
-  }, [refreshConversations]);
+  }, [refreshConversations, bindFreshEpoch]);
 
   useEffect(() => {
     if (!isInitialized.current) {
@@ -477,7 +480,9 @@ export function useConversations() {
         };
         const applied = await createConversation(newConv, { stateEpoch });
         if (!applied) {
-          // Stale-state save (a clear moved the epoch): a deliberate no-op.
+          // Stale-state save (a clear or peer delete moved the epoch): a
+          // deliberate no-op. Rebind so the next stateful write can proceed.
+          bindFreshEpoch();
           // No onCreate, no re-point, no list refresh — the cleared surface
           // stays cleared.
           return;
@@ -497,7 +502,9 @@ export function useConversations() {
           updatedAt: now,
         }, { stateEpoch });
         if (!applied) {
-          // Stale-state update after a clear: no-op, nothing resurrected.
+          // Stale-state update after a clear or peer delete: no-op, nothing
+          // resurrected. The next write binds the current epoch.
+          bindFreshEpoch();
           return;
         }
       }
@@ -507,7 +514,7 @@ export function useConversations() {
       console.error('[useConversations] Failed to save conversation:', error);
       setPersistenceError('Failed to save conversation');
     }
-  }, [refreshConversations]);
+  }, [refreshConversations, bindFreshEpoch]);
 
   /**
    * Delete a conversation by ID. If the deleted conversation is the current one,
@@ -525,12 +532,17 @@ export function useConversations() {
     try {
       const applied = await deleteConversation(id, { stateEpoch: await stateEpochRef.current });
       if (!applied) {
+        // A peer delete advanced the epoch. Rebind before the next write.
+        bindFreshEpoch();
         // Stale-state delete after a cross-tab clear: a deliberate silent
         // no-op (the gate aborted it). The current state is NOT cleared —
         // clearing would pretend the delete landed — but no error either:
         // this is the documented benign case, not a failure.
         return false;
       }
+      // This delete advanced the epoch; subsequent writes in this tab must
+      // bind the new value rather than the pre-delete capture.
+      bindFreshEpoch();
       if (currentConversationId === id) {
         setCurrentConversationIdBoth(undefined);
         setCurrentMessages([]);
@@ -543,7 +555,7 @@ export function useConversations() {
       setPersistenceError('Failed to delete conversation');
       return false;
     }
-  }, [currentConversationId, refreshConversations]);
+  }, [currentConversationId, refreshConversations, bindFreshEpoch]);
 
   /**
    * Reset ALL in-memory conversation state and bind a fresh epoch (the

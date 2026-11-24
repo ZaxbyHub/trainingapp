@@ -12,10 +12,12 @@
 // automatic policy: restore from the latest backup when one exists, else
 // re-initialize fresh.
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { journalDestructiveTransition } from '../audit-outbox.js';
 import { createRequire } from 'node:module';
 import { CURRENT_SCHEMA_VERSION } from './migrate.js';
 import { latestBackup, restoreBackup } from './backup.js';
-import { openStore, type StoreHandle } from './sqlite-store.js';
+import { openStore, getCurrentStore, type StoreHandle } from './sqlite-store.js';
 
 export type RecoveryChoice = 'restore' | 'fresh';
 
@@ -114,7 +116,13 @@ export interface RecoverStoreResult {
  * Re-initialize an empty schema at dbPath after deleting the corrupt file and
  * its sidecars. Returns the fresh handle (caller installs it).
  */
-export function reinitializeStore(opts: { dbPath: string; repoRoot?: string; dims: number }): StoreHandle {
+export async function reinitializeStore(opts: { dbPath: string; repoRoot?: string; dims: number }): Promise<StoreHandle> {
+  await journalDestructiveTransition(getCurrentStore(), opts.dbPath, {
+    eventId: randomUUID(),
+    event: 'clear_cache',
+    subject: 'recovery-fresh',
+    occurredAt: Date.now(),
+  });
   for (const sidecar of [opts.dbPath, `${opts.dbPath}-wal`, `${opts.dbPath}-shm`]) {
     try {
       fs.rmSync(sidecar, { force: true });
@@ -162,7 +170,7 @@ export async function recoverStore(opts: RecoverStoreOptions): Promise<RecoverSt
     return { action: 'restore', restoredFrom: backup };
   }
 
-  reinitializeStore({ dbPath: opts.dbPath, repoRoot: opts.repoRoot, dims: opts.dims }).close();
+  await reinitializeStore({ dbPath: opts.dbPath, repoRoot: opts.repoRoot, dims: opts.dims }).then((store) => store.close());
   return { action: 'fresh' };
 }
 

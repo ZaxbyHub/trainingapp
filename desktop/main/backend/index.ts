@@ -17,7 +17,7 @@ import { createLoopbackGuard } from '../security/loopback-guard.js';
 import { DEFAULT_ALLOWED_ORIGINS, DEV_ORIGINS_ENV } from '../security/defaults.js';
 import { resolveNodeEngine } from './inference/llama-engine.js';
 import { SidecarManager } from './sidecar-manager.js';
-import { commitSettingsChange, createBackendServer, listenOnRandomPort } from './server.js';
+import { commitSettingsChange, createBackendServer, listenOnRandomPort, settingsCommitMutexFor } from './server.js';
 import { closeStore, openStore, type StoreHandle } from './store/sqlite-store.js';
 import { checkStoreIntegrity, recoverStore } from './store/recovery.js';
 import { createBackup } from './store/backup.js';
@@ -702,7 +702,7 @@ export class NodeBackendHost implements BackendHost {
    * (live apply + sidecar persistence). Assigned during start() once the
    * persistence closure exists; undefined before start / for storeless hosts.
    */
-  applyEngineSettings: ((patch: Record<string, unknown>) => { ok: true } | { ok: false; status: 400 | 422 | 500; detail: string; errors?: string[] }) | undefined;
+  applyEngineSettings: ((patch: Record<string, unknown>) => Promise<{ ok: true } | { ok: false; status: 400 | 422 | 500; detail: string; errors?: string[] }>) | undefined;
 
   constructor(
     private readonly config: BackendHostConfig,
@@ -929,13 +929,16 @@ export class NodeBackendHost implements BackendHost {
     // through the SAME validated seam the settings API uses — live apply +
     // sidecar persistence — exposed to the bootstrap IPC layer as an own
     // property (getFirstRunPackTools precedent; prototypes stay start/stop).
-    this.applyEngineSettings = (patch: Record<string, unknown>) => {
-      // Same all-or-nothing commit as PUT /settings: external.json first,
+    const settingsCommitMutex = settingsCommitMutexFor(this.engine);
+    this.applyEngineSettings = async (patch: Record<string, unknown>) => {
+      this.config.onSettingsSectionEntry?.({ patch });
+      return settingsCommitMutex(async () => {
+        // Same all-or-nothing commit as PUT /settings: external.json first,
       // settings.json last; any failure restores the engine (incl. external.*
       // and the SecretStore) and re-writes an already-written external.json.
       const engine = this.engine;
       const touchesExternal = Object.keys(patch).some((key) => key.startsWith('external.'));
-      const result = commitSettingsChange(engine, 'change', () => engine.applySettingsPatch(patch), {
+      const result = await commitSettingsChange(engine, 'change', (context) => engine.applySettingsPatch(patch, context), {
         ...(persistExternal !== undefined && touchesExternal && typeof engine.externalSnapshot === 'function'
           ? { external: () => persistExternal?.(engine.externalSnapshot?.() ?? {}) }
           : {}),
@@ -945,6 +948,7 @@ export class NodeBackendHost implements BackendHost {
       // through the same live-follow seam a PUT /settings does.
       if (result.ok) followThresholdSetting(patch);
       return result;
+      });
     };
     const server = createBackendServer({
       guard: createLoopbackGuard({
@@ -955,6 +959,8 @@ export class NodeBackendHost implements BackendHost {
       tokenHeaderName: this.config.tokenHeaderName,
       allowedOrigins: this.config.allowedOrigins ?? allowedOrigins,
       engine: this.engine,
+      settingsCommitMutex,
+      onSettingsSectionEntry: this.config.onSettingsSectionEntry,
       scheduler: this.scheduler,
       telemetry: () => {
         // The payload's effectiveProfile reflects the ENGINE's actual profile
@@ -1205,6 +1211,7 @@ export class NodeBackendHost implements BackendHost {
                 embedder: this.embedder,
                 packsRoot: this.config.packsRoot ?? path.join(path.dirname(this.config.storePath ?? this.store.dbPath), 'packs'),
                 packsSecurity: resolvePacksSecurity(env, this.config.packsSecurity),
+                auditSink: this.config.auditSink,
               });
               if (typeof (this.engine as { attachPackManager?: unknown }).attachPackManager === 'function') {
                 (this.engine as unknown as { attachPackManager: (pm: PackManager) => void }).attachPackManager(this.packManager);

@@ -1,5 +1,5 @@
 import { db, CONV_WRITE_LOCK, migrationReady, requireKeyForWrite } from './index';
-import { readConversationEpoch, readEpochOf, withConversationWriteLock, withEpochGate } from './conv-protocol';
+import { readConversationEpoch, readClearRecord, readEpochOf, withConversationWriteLock, withEpochGate, withAdvancingDeleteGate } from './conv-protocol';
 import { CONVERSATION_QUERY_MAX_LENGTH } from './conversation-query';
 import {
   ConversationConflictError,
@@ -25,6 +25,9 @@ export interface Conversation {
   updatedAt: number;  // Unix timestamp (ms)
   mode: 'server' | 'wllama';
   modelUsed: string;  // model identifier
+  /** M3v10 clear-repair signals. Absence is meaningful and must be preserved. */
+  afterClear?: number;
+  sawPendingGoal?: number;
 }
 
 /**
@@ -43,24 +46,6 @@ export interface ConversationMutationOptions {
 /** The active profile db's prefix (key derivation is per-database, #367). */
 function activePrefix(): string {
   return prefixOfDbName(db.name);
-}
-
-/**
- * Run `mutate` under the origin-wide write lock with the epoch gate applied.
- * Used for the SINGLE-TRANSACTION mutations (create/delete): atomic at the
- * IndexedDB level with no read-merge-write window, so the legacy wrapper's
- * documented direct-call degrade stays correct for them (RC5-01 scopes the
- * multi-phase update to withExclusiveLock below). Returns true when the
- * mutation was applied, false ONLY when the gate aborted a stale write (the
- * caller discards its stale state instead of surfacing an error). A GENUINE
- * write failure propagates (PRR-105, PR #264 review).
- */
-async function gatedMutation(
-  options: ConversationMutationOptions | undefined,
-  mutate: () => unknown,
-): Promise<boolean> {
-  const stateEpoch = options?.stateEpoch ?? (await readConversationEpoch());
-  return withConversationWriteLock(() => withEpochGate(stateEpoch, mutate));
 }
 
 /**
@@ -88,7 +73,17 @@ export async function createConversation(
     const stateEpoch = options?.stateEpoch ?? (await readConversationEpoch());
     return withConversationWriteLock(async () => {
       await requireKeyForWrite(db);
-      const envelope = await encryptRow(conversation, undefined, activePrefix());
+      const record = readClearRecord();
+      const tagged: Conversation = {
+        ...conversation,
+        ...(record.completed?.[activePrefix()] === undefined
+          ? {}
+          : { afterClear: record.completed[activePrefix()] }),
+        ...((record.pendingV2 ?? record.pending)?.profile === activePrefix()
+          ? { sawPendingGoal: (record.pendingV2 ?? record.pending)!.epochGoal }
+          : {}),
+      };
+      const envelope = await encryptRow(tagged, undefined, activePrefix());
       return withEpochGate(stateEpoch, () => db.conversations.add(envelope));
     });
   } catch (error) {
@@ -190,6 +185,14 @@ export async function updateConversation(
           // The primary key cannot change; the envelope binds it via AAD.
           id,
         };
+        // M3v10 create-vs-overwrite: an existing row's scoped signals (and
+        // their absence) survive every rename/save. Only a genuinely new row
+        // receives the current clear signals.
+        const stored = snapshot as Record<string, unknown>;
+        if (typeof stored['afterClear'] === 'number') merged.afterClear = stored['afterClear'];
+        else delete merged.afterClear;
+        if (typeof stored['sawPendingGoal'] === 'number') merged.sawPendingGoal = stored['sawPendingGoal'];
+        else delete merged.sawPendingGoal;
         const envelope = await encryptRow(merged, undefined, prefix);
 
         // Phase 3: tx{epoch recheck + optimistic byte-compare + write}. No
@@ -234,7 +237,8 @@ export async function deleteConversation(
 ): Promise<boolean> {
   try {
     await migrationReady(db.name);
-    return await gatedMutation(options, () => db.conversations.delete(id));
+    const stateEpoch = options?.stateEpoch ?? (await readConversationEpoch());
+    return withConversationWriteLock(() => withAdvancingDeleteGate(stateEpoch, id));
   } catch (error) {
     console.error('[conversations] Failed to delete conversation:', error);
     throw error;

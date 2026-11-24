@@ -613,6 +613,10 @@ former secret entry behind; the leftover is inert once the stores are gone (a fr
 its own secret). Note deletion can be blocked while a connection is open — until a blocked
 deletion completes, the leftover secret still unlocks the stores that still exist.
 
+Deleting a conversation advances the stored conversation epoch in the same transaction as the
+delete. Other tabs' pending saves captured under the older epoch are aborted as stale no-ops;
+each tab rebinds on its next write, so one peer delete does not disable later saves.
+
 What this protects: the stored history against casual inspection of browser storage and against
 one registered profile reading another profile's history on a shared workstation. What it does
 not protect against: someone (or some software) with full access to the browser profile itself —
@@ -1386,41 +1390,45 @@ the next audit write (purge-on-write). The audit log SURVIVES Clear Cache
 (its lifecycle is its own retention + the viewer's Clear button; a
 full-profile/orphan Delete removes it with the namespace).
 
-**Event roster (PROPOSED) - v1 is RENDERER-OBSERVED by design.** Every
-included producer's emit site is a point where the renderer truthfully
-observed the commit; audit coverage is renderer-lifecycle-bound, and NO
-claim of complete audit coverage is made:
+**Event roster (PROPOSED).** Browser producers emit where the renderer
+truthfully observes a commit. Desktop main-process producers emit into a
+profile-bound durable SQLite outbox; the renderer acknowledges an event only
+after its local IndexedDB commit. Pending events survive reloads and are
+delivered in source-sequence order. No claim of complete audit coverage is made:
 
-- `app_start` - once per renderer page load that reaches the app shell
-  (StrictMode and same-document remounts emit one; a real reload - including
-  the clear-cache reload - starts a new lifecycle). A desktop launch that
-  fails before the shell mounts records no start row (disclosed boundary).
-- `app_stop` - best-effort on `pagehide`.
-- `pack_install` / `pack_remove` - BROWSER runtime installs/removals at the
-  renderer-owned registry commit (`BrowserPackManager`).
-- `settings_change` - one row per INCLUDED key whose effective value changed
-  at a truthfully observed persistence commit: `diagnostics.enhanced`,
+- `app_start` - once per browser renderer lifecycle. On desktop, the main
+  process records it after the backend host becomes ready; a failed host start
+  records no start row.
+- `app_stop` - best-effort on browser `pagehide`, and once on desktop
+  `before-quit` (delivered on a later successful launch if the app exits before
+  acknowledgment).
+- `pack_install` / `pack_remove` - browser registry commits, and desktop
+  `PackManager` registry commits (including API, signed-update installer, and
+  bundled-boot installs) in the same store transaction as the registry change.
+- `settings_change` - one row per INCLUDED key whose effective value changed at
+  a truthfully observed persistence commit: `diagnostics.enhanced`,
   `inactivity.timeout`, `theme-preference`, `updates.optIn`,
   `external.enabled`, `external.protocol`, `external.baseUrl`,
   `external.model`, `external.grounded`, `external.firstByteTimeoutMs`,
-  `external.idleTimeoutMs`, `external.apiKey` (browser remembered-key
-  writes/clears only), `browser.rememberKey`. updates.optIn and the desktop
-  diagnostics toggle emit only on the handler's explicit `persisted` marker
-  (a committed opt-in whose follow-up update-check FAILED still persisted -
-  and still logs one row).
+  `external.idleTimeoutMs`, `external.apiKey`, `browser.rememberKey`.
+  Browser remembered-key writes/clears are renderer-observed. Desktop API-key
+  save/clear/reset is captured only after the safeStorage-backed SecretStore
+  mutation succeeds, in the same serialized settings commit as persistence;
+  the audit subject is the key name, never the secret value. updates.optIn and
+  desktop diagnostics emit only on an explicit `persisted` marker.
 - `clear_cache` - the confirmed clear action (not the arming click).
-- `audit_log_cleared` - the viewer's own Clear (exactly one marker row).
+- `audit_log_cleared` - the viewer's own Clear (exactly one marker row). Desktop
+  Clear first advances a durable clear sequence/generation, purges pending
+  desktop events through that fence, and atomically removes renderer rows at or
+  below it plus legacy unsequenced rows. Events allocated after the fence remain.
 
-**Excluded (intentional, disclosed; maintainer sign-off item, tracked by a
-follow-up issue):** backend-process pack commits (desktop `/packs/install` +
-`/packs/remove` via `PackManager`, reachable via ApiClient, the signed-update
-loopback installer, and bundled-boot installs) - commit-faithful audit there
-needs either OpenAPI response-schema changes or a main->renderer
-acknowledged outbox; main-custody writes without an awaited marker seam
-(desktop API-key custody, update feedUrl edits); pre-shell desktop launches.
-Also excluded from `settings_change`: inference mode/engine/profile, rag
-presets, pack-recency tuning (per-session preference surfaces). The first
-desktop external-settings PUT in a session first AWAITS an authoritative
-baseline GET of the persisted settings (no timeout); if that GET FAILS the
-PUT still commits and NO row is emitted (disclosed boundary - the
-before-state is unknown).
+**Excluded (intentional, disclosed):** update feedUrl edits in
+`desktop/main/index.ts`; pre-shell desktop launches; and settings surfaces that
+are per-session preferences rather than persisted governance changes: inference
+mode/engine/profile, rag presets, and pack-recency tuning. The first desktop
+external-settings PUT in a session first AWAITS an authoritative baseline GET
+of the persisted settings (no timeout); if that GET FAILS the PUT still commits
+and NO settings row is emitted (disclosed boundary - the before-state is
+unknown). A renderer that has not acknowledged a desktop outbox event shows no
+local row yet; the durable pending event remains in SQLite until a later
+successful commit/acknowledgment.

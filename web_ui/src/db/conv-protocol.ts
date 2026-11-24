@@ -259,6 +259,33 @@ export async function withEpochGate(
   return applied;
 }
 
+/**
+ * Presence-gated delete gate (#372 AC2): re-read the epoch, delete only an
+ * existing row, and advance the epoch in the SAME transaction. A missing row
+ * is a benign applied no-op and does not advance the epoch.
+ */
+export async function withAdvancingDeleteGate(
+  stateEpoch: number,
+  id: string,
+): Promise<boolean> {
+  let applied = false;
+  await db.transaction('rw', db.conversations, db.meta, async () => {
+    const current = await readEpochOf(db);
+    if (current !== stateEpoch) return;
+    if ((await db.conversations.get(id)) === undefined) {
+      applied = true;
+      return;
+    }
+    await db.conversations.delete(id);
+    await db.meta.put({ key: EPOCH_META_KEY, value: current + 1 });
+    // Permanent adoption tombstone: legacy rows can be recreated by an old or
+    // mixed build, so deletion history must outlive the current profile row.
+    await db.meta.put({ key: `legacy-tomb:${id}`, value: 1 });
+    applied = true;
+  });
+  return applied;
+}
+
 /** Open (or reuse) the conversations db for an arbitrary profile prefix. */
 function conversationsDbNameFor(profile: string): string {
   return `${profile}-doc-qa-conversations`;
@@ -286,9 +313,13 @@ export interface ClearRecord {
    * legacy value never suppresses anything.
    */
   completed: { [profile: string]: number } | null;
+  /** M3v10: old readers ignore this field; new readers use it for scoped tags. */
+  pendingV2?: { epochGoal: number; profile: string } | null;
 }
 
 const EMPTY_RECORD: ClearRecord = { pending: null, completed: null };
+const DELETE_POST_PREFIX = 'delete-post-';
+const CLEARED_GOAL_PREFIX = 'cleared-goal:';
 
 export function readClearRecord(): ClearRecord {
   try {
@@ -297,10 +328,14 @@ export function readClearRecord(): ClearRecord {
     if (raw === null) return EMPTY_RECORD;
     const parsed: unknown = JSON.parse(raw);
     if (parsed === null || typeof parsed !== 'object') return EMPTY_RECORD;
-    const record = parsed as { pending?: unknown; completed?: unknown };
+    const record = parsed as { pending?: unknown; pendingV2?: unknown; completed?: unknown };
     const pending =
       record.pending !== null && typeof record.pending === 'object'
         ? (record.pending as { epochGoal?: unknown; profile?: unknown })
+        : null;
+    const pendingV2 =
+      record.pendingV2 !== null && typeof record.pendingV2 === 'object'
+        ? (record.pendingV2 as { epochGoal?: unknown; profile?: unknown })
         : null;
     const completedRaw =
       record.completed !== null && typeof record.completed === 'object'
@@ -323,12 +358,24 @@ export function readClearRecord(): ClearRecord {
         completed = map;
       }
     }
+    const normalizedPending =
+      pending !== null && typeof pending.epochGoal === 'number' && typeof pending.profile === 'string'
+        ? { epochGoal: pending.epochGoal, profile: pending.profile }
+        : null;
+    const normalizedV2 =
+      pendingV2 !== null && typeof pendingV2.epochGoal === 'number' && typeof pendingV2.profile === 'string'
+        ? { epochGoal: pendingV2.epochGoal, profile: pendingV2.profile }
+        : null;
     return {
-      pending:
-        pending !== null && typeof pending.epochGoal === 'number' && typeof pending.profile === 'string'
-          ? { epochGoal: pending.epochGoal, profile: pending.profile }
-          : null,
+      pending: normalizedPending,
       completed,
+      // Preserve the legacy observable shape unless v2 actually differs.
+      ...(normalizedV2 !== null &&
+      (normalizedPending === null ||
+        normalizedV2.epochGoal !== normalizedPending.epochGoal ||
+        normalizedV2.profile !== normalizedPending.profile)
+        ? { pendingV2: normalizedV2 }
+        : {}),
     };
   } catch {
     return EMPTY_RECORD;
@@ -347,8 +394,16 @@ function writeClearRecord(record: ClearRecord): void {
 function markCompleted(epochGoal: number, profile: string): void {
   const record = readClearRecord();
   const previous = record.completed ?? {};
+  const newerPending =
+    record.pendingV2 !== null &&
+    record.pendingV2 !== undefined &&
+    record.pendingV2.profile === profile &&
+    record.pendingV2.epochGoal > epochGoal
+      ? record.pendingV2
+      : null;
   writeClearRecord({
-    pending: null,
+    pending: newerPending,
+    ...(newerPending === null ? {} : { pendingV2: newerPending }),
     completed: {
       ...previous,
       // Only THIS profile's goal moves; every other profile's marker stays.
@@ -358,6 +413,71 @@ function markCompleted(epochGoal: number, profile: string): void {
 }
 
 export type ClearAllResult = { cleared: boolean } | { deferred: true };
+
+/** Execute one owed clear and its permanent evidence in the same transaction. */
+async function executeClearGoal(target: DocQaDb, epochGoal: number, profile: string): Promise<void> {
+  await target.transaction('rw', target.conversations, target.meta, async () => {
+    const current = await readEpochOf(target);
+    if (current < epochGoal) {
+      await target.meta.put({ key: EPOCH_META_KEY, value: epochGoal });
+      await target.conversations.clear();
+    }
+    await target.meta.put({ key: `${DELETE_POST_PREFIX}${String(epochGoal)}`, value: Date.now() });
+    void profile;
+  });
+}
+
+/**
+ * Repair evidence-backed false completions (M3v10). Discovery is
+ * completed[G] + delete-post-G + no cleared-goal >= G. The transaction
+ * revalidates live state so a newer true clear supersedes a paused repair.
+ */
+export async function repairCompletedConversationClears(
+  profile: string = getProfilePrefix(),
+): Promise<number> {
+  const targetName = conversationsDbNameFor(profile);
+  const target = targetName === db.name ? db : openProfileDb(profile);
+  const targetIsSingleton = target === db;
+  try {
+    if (typeof target.meta.where !== 'function') return 0;
+    const record = readClearRecord();
+    const completedGoal = record.completed?.[profile];
+    if (completedGoal === undefined) return 0;
+    const evidence = await target.meta.where('key').between(`${DELETE_POST_PREFIX}${String(completedGoal)}`, `${DELETE_POST_PREFIX}${String(completedGoal)}\uffff`).toArray();
+    if (evidence.length === 0) return 0;
+    const cleared = await target.meta.where('key').between(`${CLEARED_GOAL_PREFIX}${profile}`, `${CLEARED_GOAL_PREFIX}${profile}\uffff`).toArray();
+    const clearedGoals = cleared.map((r) => typeof r.value === 'number' ? r.value : 0);
+    if (clearedGoals.some((g) => g >= completedGoal)) return 0;
+    let repaired = 0;
+    let applied = false;
+    await target.transaction('rw', target.conversations, target.meta, async () => {
+      const live = readClearRecord();
+      if (live.completed?.[profile] !== completedGoal) return;
+      const liveCleared = await target.meta.where('key').between(`${CLEARED_GOAL_PREFIX}${profile}`, `${CLEARED_GOAL_PREFIX}${profile}\uffff`).toArray();
+      if (liveCleared.some((r) => typeof r.value === 'number' && r.value >= completedGoal)) return;
+      const liveEvidence = await target.meta.get(`${DELETE_POST_PREFIX}${String(completedGoal)}`);
+      if (liveEvidence === undefined) return;
+      const rows = await target.conversations.toArray();
+      for (const row of rows) {
+        const r = row as unknown as Record<string, unknown>;
+        const keep = r['afterClear'] === completedGoal || r['sawPendingGoal'] === completedGoal;
+        if (!keep) {
+          await target.conversations.delete(String(r['id']));
+          repaired += 1;
+        }
+      }
+      const current = await readEpochOf(target);
+      await target.meta.put({ key: EPOCH_META_KEY, value: Math.max(completedGoal, current + 1) });
+      await target.meta.put({ key: `${CLEARED_GOAL_PREFIX}${profile}`, value: completedGoal });
+      await target.meta.delete(`${DELETE_POST_PREFIX}${String(completedGoal)}`);
+      applied = true;
+    });
+    if (applied) markCompleted(completedGoal, profile);
+    return repaired;
+  } finally {
+    if (!targetIsSingleton) target.close();
+  }
+}
 
 /**
  * Optional all-or-nothing clear hook (issue #279, plan B1/PC-4/PC2-2):
@@ -418,17 +538,20 @@ export async function clearAllConversationsInDb(
     // #279 B1: the in-tab reset runs AFTER acquisition and BEFORE the
     // pending-record write — the all-or-nothing seam.
     await options?.beforeClear?.();
-    const epochGoal = (await readEpochOf(target)) + 1;
-    writeClearRecord({ pending: { epochGoal, profile }, completed: readClearRecord().completed });
+    let completedGoalValue = (await readEpochOf(target)) + 1;
+    const pending = { epochGoal: completedGoalValue, profile };
+    writeClearRecord({ pending, pendingV2: pending, completed: readClearRecord().completed });
     await withConversationWriteLock(async () => {
-      await target.transaction('rw', target.conversations, target.meta, async () => {
-        const current = await readEpochOf(target);
-        if (current < epochGoal) {
-          await target.meta.put({ key: EPOCH_META_KEY, value: epochGoal });
-          await target.conversations.clear();
-        }
-      });
-      markCompleted(epochGoal, profile);
+      await executeClearGoal(target, completedGoalValue, profile);
+      // Shared-lock interposition: a pending record written while the old
+      // clear waited for this lock is owed BEFORE the old writer completes.
+      for (;;) {
+        const next = readClearRecord().pendingV2 ?? readClearRecord().pending;
+        if (next === null || next === undefined || next.profile !== profile || next.epochGoal <= completedGoalValue) break;
+        await executeClearGoal(target, next.epochGoal, profile);
+        completedGoalValue = next.epochGoal;
+      }
+      markCompleted(completedGoalValue, profile);
     });
     return { cleared: true };
   } finally {
@@ -446,6 +569,7 @@ export async function clearAllConversationsInDb(
  * just marked completed (crash-after-commit never strands the boot).
  */
 export async function replayPendingConversationClear(): Promise<{ replayed: boolean; deferred: boolean }> {
+  await repairCompletedConversationClears(getProfilePrefix());
   const record = readClearRecord();
   const pending = record.pending;
   if (pending === null) return { replayed: false, deferred: false };
@@ -504,7 +628,11 @@ export function onConversationsCleared(cb: () => void): () => void {
     if (event.key !== CONVERSATIONS_CLEARED_KEY) return;
     if (event.newValue === null) return; // removal, not a clear
     try {
-      cb();
+      // A live old-writer completion is the discovery signal for M3v10
+      // repair. Run it before resetting this tab's in-memory state.
+      void repairCompletedConversationClears(getProfilePrefix())
+        .catch((error: unknown) => console.warn('[conv-protocol] live completion repair failed:', error))
+        .finally(() => cb());
     } catch (error) {
       console.warn('[conv-protocol] cleared-notification handler failed:', error);
     }
@@ -590,6 +718,12 @@ async function copyLegacyRowsIntoProfileUnlocked(
   // page is fully encrypted before its rw transaction opens.
   const targetPrefix = prefixOfDbName(profileDb.name);
   const secret = await getOrCreateSecret(targetPrefix);
+  const tombstoneRows = typeof profileDb.meta.where === 'function'
+    ? await profileDb.meta.where('key').between('legacy-tomb:', 'legacy-tomb:\uffff').toArray()
+    : (await profileDb.meta.toArray()).filter((row) => row.key.startsWith('legacy-tomb:'));
+  const tombstones = new Set(
+    tombstoneRows.map((row) => row.key.slice('legacy-tomb:'.length)),
+  );
   return (async () => {
     let offset = 0;
     let copied = 0;
@@ -600,8 +734,34 @@ async function copyLegacyRowsIntoProfileUnlocked(
         .limit(LEGACY_ADOPT_PAGE)
         .toArray();
       if (page.length === 0) break;
+      // Offset advances by RAW page length; only filtered rows count as copied.
+      offset += page.length;
+      const live = page.filter((row) => !tombstones.has(String((row as { id?: unknown }).id)));
+      if (live.length === 0) continue;
+      const existing = new Map<string, Record<string, unknown>>();
+      await profileDb.transaction('r', profileDb.conversations, async () => {
+        for (const row of live) {
+          const found = await profileDb.conversations.get(String((row as { id: string }).id));
+          if (found !== undefined) existing.set(String((row as { id: string }).id), found as unknown as Record<string, unknown>);
+        }
+      });
+      const record = readClearRecord();
       const envelopes = await Promise.all(
-        page.map((row) => encryptRow(row as { id: string; createdAt: number; updatedAt: number }, secret, targetPrefix)),
+        live.map((row) => {
+          const id = String((row as { id: string }).id);
+          const prior = existing.get(id);
+          const tagged: Record<string, unknown> = { ...(row as unknown as Record<string, unknown>) };
+          if (prior !== undefined) {
+            if (typeof prior['afterClear'] === 'number') tagged['afterClear'] = prior['afterClear'];
+            else delete tagged['afterClear'];
+            if (typeof prior['sawPendingGoal'] === 'number') tagged['sawPendingGoal'] = prior['sawPendingGoal'];
+            else delete tagged['sawPendingGoal'];
+          } else {
+            if (record.completed?.[targetPrefix] !== undefined) tagged['afterClear'] = record.completed[targetPrefix];
+            if (record.pendingV2?.profile === targetPrefix) tagged['sawPendingGoal'] = record.pendingV2.epochGoal;
+          }
+          return encryptRow(tagged as { id: string; createdAt: number; updatedAt: number }, secret, targetPrefix);
+        }),
       );
       await profileDb.transaction('rw', [profileDb.conversations, profileDb.meta], async () => {
         const now = await readEpochOf(profileDb);
@@ -611,8 +771,7 @@ async function copyLegacyRowsIntoProfileUnlocked(
         }
         await profileDb.conversations.bulkPut(envelopes);
       });
-      offset += page.length;
-      copied += page.length;
+      copied += live.length;
     }
     return copied;
   })();

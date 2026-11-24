@@ -14,6 +14,8 @@
 // surface preserves the pre-B6 stub semantics verbatim: honest failure with
 // the owning-issue message, empty document lists.
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { journalDestructiveTransition } from '../audit-outbox.js';
 import type { StoreHandle } from './sqlite-store.js';
 import { openStore } from './sqlite-store.js';
 import {
@@ -148,6 +150,14 @@ export class StoreDocumentSurface implements DocumentSurface {
   async clearDocuments(): Promise<void> {
     const store = this.opts.getStore();
     if (store === null) return;
+    // Persist pending governance events before the database bytes disappear.
+    // A failed journal write aborts the clear rather than silently losing them.
+    await journalDestructiveTransition(store, store.dbPath, {
+      eventId: randomUUID(),
+      event: 'clear_cache',
+      subject: 'documents',
+      occurredAt: Date.now(),
+    });
     this.opts.setStore(null);
     this.pipeline = null;
     store.close();

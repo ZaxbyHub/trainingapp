@@ -50,17 +50,34 @@ export interface AuditRow {
   ts: number;
   event: AuditEventClass;
   subject: string | null;
+  /** Outbox identity and main-side ordering/ownership (#373). */
+  eventId?: string;
+  source_seq?: number | null;
+  source_gen?: number;
+}
+
+interface AuditMetaRow {
+  key: string;
+  value: number | string;
 }
 
 class AuditDatabase extends Dexie {
   events!: Table<AuditRow, number>;
+  meta!: Table<AuditMetaRow, string>;
 
   constructor(name?: string) {
     // The name parameter is a test seam (mirrors db/index.ts DocQADatabase):
-    // production derives it from the active profile prefix.
+    // production derives from the active profile prefix.
     super(name ?? getStorageDbNames().audit);
     this.version(1).stores({
       events: '++seq, ts, event',
+    });
+    // Additive subscriber schema (#373 AC3): existing v1 rows remain valid;
+    // eventId dedup, source sequencing and generation ownership are optional
+    // on legacy rows and populated by the outbox commit path.
+    this.version(2).stores({
+      events: '++seq, ts, event, eventId, source_seq, source_gen',
+      meta: 'key',
     });
   }
 }
@@ -136,9 +153,26 @@ export async function countAuditEvents(): Promise<number> {
  * table mid-clear.
  */
 export async function clearAuditLog(): Promise<void> {
+  const bridge = window.desktopApi;
+  const beforeClear = bridge?.auditBeforeClear;
+  let desktopClear: { clearSeq: number; clearGen: number } | null = null;
+  if (beforeClear !== undefined) {
+    // Dynamic import avoids a module cycle: the listener consumes outbox rows,
+    // which in turn use this database. The function runs after both are loaded.
+    const { getActiveAuditOutboxContext } = await import('./audit-outbox-listener');
+    const context = getActiveAuditOutboxContext();
+    if (context !== null) desktopClear = await beforeClear(context.generation, context.sender);
+  }
   const cutoff = Date.now() - AUDIT_RETENTION_MS;
-  await auditDb.transaction('rw', auditDb.events, async () => {
-    await auditDb.events.clear();
+  await auditDb.transaction('rw', auditDb.events, auditDb.meta, async () => {
+    if (desktopClear !== null) {
+      await auditDb.events.where('source_seq').belowOrEqual(desktopClear.clearSeq).delete();
+      await auditDb.events.filter((row) => row.source_seq === undefined || row.source_seq === null).delete();
+      await auditDb.meta.put({ key: 'audit_clear_seq', value: desktopClear.clearSeq });
+      await auditDb.meta.put({ key: 'audit_clear_gen', value: desktopClear.clearGen });
+    } else {
+      await auditDb.events.clear();
+    }
     await auditDb.events.add({ ts: Date.now(), event: 'audit_log_cleared', subject: null });
     // The marker is fresh so it is never purged; still honor the boundary.
     await auditDb.events.where('ts').below(cutoff).delete();

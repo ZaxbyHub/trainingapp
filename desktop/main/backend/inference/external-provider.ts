@@ -36,7 +36,9 @@
 // failures stores a key next to an origin it was not entered for. If the
 // rollback's own SecretStore write fails, the stored key is not used at all
 // (fail closed) until a key is saved or cleared successfully.
+import { randomUUID } from 'node:crypto';
 import { validateEndpointUrl } from '../../security/endpoint-policy.js';
+import { adaptLegacyCustodySink, type CustodyBatch, type CustodyProvider, type DesktopAuditEnvelope } from '../audit-outbox.js';
 import type { SecretStore } from '../../security/secret-store.js';
 import { FIRST_BYTE_TIMEOUT_MS, IDLE_TIMEOUT_MS } from '../net/guarded-request.js';
 import type { DnsLookup } from '../net/guarded-request.js';
@@ -74,6 +76,8 @@ export interface ExternalProviderOptions {
   idleTimeoutMs?: number;
   /** Aggregate deadline of one connection test (default PROBE_TOTAL_TIMEOUT_MS). */
   probeTimeoutMs?: number;
+  /** #373 request-scoped custody sink (provider or legacy plain shape). */
+  auditSink?: CustodyProvider | { capture(envelope: DesktopAuditEnvelope): void; flush(): void | Promise<void>; discard(): void };
 }
 
 /** Non-secret persisted snapshot (<profileDir>/external.json). */
@@ -158,6 +162,7 @@ function memoryStore(): SecretStore {
 export class ExternalProviderState {
   private values: Values = { enabled: false, protocol: 'openai', baseUrl: '', model: '', grounded: true };
   private readonly store: SecretStore;
+  private readonly auditSink: CustodyProvider | null;
   private readonly airgapOption: boolean | undefined;
   readonly lookup: DnsLookup | undefined;
   readonly firstByteTimeoutMs: number | undefined;
@@ -180,6 +185,7 @@ export class ExternalProviderState {
 
   constructor(options: ExternalProviderOptions = {}) {
     this.store = options.secretStore ?? memoryStore();
+    this.auditSink = options.auditSink === undefined ? null : adaptLegacyCustodySink(options.auditSink);
     this.airgapOption = options.airgap;
     this.lookup = options.lookup;
     this.firstByteTimeoutMs = options.firstByteTimeoutMs;
@@ -285,13 +291,26 @@ export class ExternalProviderState {
     return errors;
   }
 
+  beginRequest(): CustodyBatch | null {
+    return this.auditSink?.beginRequest() ?? null;
+  }
+
+  private capture(batch: CustodyBatch | null | undefined): void {
+    batch?.capture({
+      eventId: randomUUID(),
+      event: 'settings_change',
+      subject: 'external.apiKey',
+      occurredAt: Date.now(),
+    });
+  }
+
   /**
    * Commit an already-validated patch. A key the store cannot encrypt
    * degrades to session-only; a SecretStore delete that fails (clearing the
    * key, or removing an older key behind a session-only one) THROWS — the
    * caller restores a captureState() snapshot and reports the failure.
    */
-  commit(patch: Record<string, unknown>): void {
+  commit(patch: Record<string, unknown>, batch?: CustodyBatch | null): void {
     // Issue #351: the timeout settings are part of the committed state (they
     // flow to guardedRequest at CALL time via firstByteTimeoutValueMs()).
     if (typeof patch['external.firstByteTimeoutMs'] === 'number') {
@@ -318,15 +337,17 @@ export class ExternalProviderState {
       const key = patch['external.apiKey'];
       if (key === '') this.clearKey();
       else this.saveKey(key, originOf(this.values.baseUrl));
+      this.capture(batch);
     }
   }
 
   /** settings-wiring-honesty `reset` for external.* keys (validated by the caller). */
-  reset(keys: string[]): void {
+  reset(keys: string[], batch?: CustodyBatch | null): void {
     for (const key of keys) {
       switch (key) {
         case 'external.apiKey':
           this.clearKey();
+          this.capture(batch);
           break;
         case 'external.enabled':
           this.values.enabled = false;

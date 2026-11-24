@@ -1968,7 +1968,9 @@ export class LlamaEngine implements EngineSurface {
     };
   }
 
-  applySettingsPatch(patch: Record<string, unknown>): { ok: true } | { ok: false; status: 400 | 422; detail: string; errors?: string[] } {
+  beginSettingsRequest() { return this.external.beginRequest(); }
+
+  applySettingsPatch(patch: Record<string, unknown>, context?: { auditBatch?: NonNullable<ReturnType<ExternalProviderState['beginRequest']>> | null }): { ok: true } | { ok: false; status: 400 | 422; detail: string; errors?: string[] } {
     const inferenceSubset: Record<string, unknown> = {};
     const externalSubset: Record<string, unknown> = {};
     const rest: Record<string, unknown> = {};
@@ -2062,7 +2064,7 @@ export class LlamaEngine implements EngineSurface {
     }
     if (Object.keys(externalSubset).length > 0) {
       const wasActive = this.external.active();
-      this.external.commit(externalSubset);
+      this.external.commit(externalSubset, context?.auditBatch);
       // Switching to an external endpoint releases a resident local GGUF
       // (deferred behind any in-flight local generation). Issue #246 (rev-2
       // critic): call dispose() DIRECTLY — it captures the queue tail before
@@ -2122,7 +2124,7 @@ export class LlamaEngine implements EngineSurface {
    * defaults — resetting external.apiKey deletes BOTH secret entries (the key
    * and its bound origin). All-or-nothing: an unknown key commits nothing.
    */
-  resetSettings(keys: unknown): { ok: true } | { ok: false; status: 400 | 422; detail: string; errors?: string[] } {
+  resetSettings(keys: unknown, context?: { auditBatch?: NonNullable<ReturnType<ExternalProviderState['beginRequest']>> | null }): { ok: true } | { ok: false; status: 400 | 422; detail: string; errors?: string[] } {
     if (!Array.isArray(keys) || keys.some((key) => typeof key !== 'string')) return this.stub.resetSettings(keys);
     const externalKeys = (keys as string[]).filter((key) => key.startsWith('external.'));
     const ragKeys = (keys as string[]).filter((key) => !key.startsWith('external.'));
@@ -2140,7 +2142,7 @@ export class LlamaEngine implements EngineSurface {
       const ragResult = this.stub.resetSettings(ragKeys);
       if (!ragResult.ok) return ragResult;
     }
-    if (externalKeys.length > 0) this.external.reset(externalKeys);
+    if (externalKeys.length > 0) this.external.reset(externalKeys, context?.auditBatch);
     return { ok: true };
   }
 

@@ -78,6 +78,9 @@ interface EnvelopeFields {
 export interface EncryptedRow extends EnvelopeFields {
   v: number;
   e: { iv: string; ct: string };
+  /** M3v10 signals live beside the indexed identity fields. Absence is data. */
+  afterClear?: number;
+  sawPendingGoal?: number;
 }
 
 function toBase64(bytes: Uint8Array): string {
@@ -315,12 +318,15 @@ export async function encryptRow<T extends EnvelopeFields>(
   const key = await deriveKey(resolvedPrefix, resolvedSecret);
   const iv = new Uint8Array(12);
   crypto.getRandomValues(iv);
+  const tagged = conversation as T & { afterClear?: number; sawPendingGoal?: number };
   const rowShape: EncryptedRow = {
     id: conversation.id,
     createdAt: conversation.createdAt,
     updatedAt: conversation.updatedAt,
     v: ENVELOPE_VERSION,
     e: { iv: '', ct: '' },
+    ...(tagged.afterClear === undefined ? {} : { afterClear: tagged.afterClear }),
+    ...(tagged.sawPendingGoal === undefined ? {} : { sawPendingGoal: tagged.sawPendingGoal }),
   };
   const ct = await crypto.subtle.encrypt(
     { name: 'AES-GCM', iv, additionalData: aadBytes(rowShape) },

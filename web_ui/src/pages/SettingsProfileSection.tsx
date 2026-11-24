@@ -123,6 +123,10 @@ export function SettingsProfileSection(): React.ReactElement {
         setNotice(`Deleted the orphaned data of ${prefix}.`);
         setDeletingPrefix(null);
         void refresh();
+      }).catch((error: unknown) => {
+        console.error('[profile] orphan delete failed:', error);
+        setError('Could not delete the orphaned data. A database may still be open; try again after closing other tabs.');
+        setDeletingPrefix(null);
       });
       return;
     }
