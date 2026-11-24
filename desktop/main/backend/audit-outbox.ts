@@ -133,11 +133,15 @@ export async function bindOutboxBinding(
   prefix: string,
   sender: number = 0,
   previousSender?: number,
+  expectedEpoch?: number,
 ): Promise<{ prefix: string; generation: number }> {
   const db = store.db;
   ensureAuditOutboxSchema(db);
   db.exec('BEGIN IMMEDIATE');
   try {
+    if (expectedEpoch !== undefined && meta(db, 'binding_epoch') !== expectedEpoch) {
+      throw new Error('audit subscribe epoch was superseded');
+    }
     const current = readLease(db);
     if (current !== null && current.prefix === prefix) {
       // A renderer reload keeps the same webContents id but creates a new

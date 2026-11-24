@@ -287,7 +287,12 @@ export async function withAdvancingDeleteGate(
     // repair distinguish that false completion from a true clear.
     const pending = readClearRecord().pendingV2 ?? readClearRecord().pending;
     if (pending !== null && pending.profile === prefixOfDbName(db.name)) {
-      await db.meta.put({ key: `${DELETE_POST_PREFIX}${String(pending.epochGoal)}`, value: Date.now() });
+      const key = `${DELETE_POST_PREFIX}${String(pending.epochGoal)}`;
+      // Keep the FIRST evidence for a goal. Its pre-delete epoch distinguishes
+      // a legacy true clear (already at G) from a skipped clear (G-1 -> G).
+      if ((await db.meta.get(key)) === undefined) {
+        await db.meta.put({ key, value: { preEpoch: current, at: Date.now() } });
+      }
     }
     applied = true;
   });
@@ -404,7 +409,7 @@ function markCompleted(epochGoal: number, profile: string): void {
   const previous = record.completed ?? {};
   const nextPending = record.pendingV2 ?? record.pending;
   const newerPending =
-    nextPending !== null && nextPending.profile === profile && nextPending.epochGoal > epochGoal
+    nextPending !== null && !(nextPending.profile === profile && nextPending.epochGoal <= epochGoal)
       ? nextPending
       : null;
   writeClearRecord({
@@ -465,6 +470,9 @@ export async function repairCompletedConversationClears(
       if (liveCleared.some((r) => typeof r.value === 'number' && r.value >= completedGoal)) return;
       const liveEvidence = await target.meta.get(`${DELETE_POST_PREFIX}${String(completedGoal)}`);
       if (liveEvidence === undefined) return;
+      const evidenceValue = liveEvidence.value as { preEpoch?: unknown } | number;
+      if (typeof evidenceValue === 'number') return; // legacy/unknown evidence: fail safe, never over-wipe
+      if (typeof evidenceValue.preEpoch === 'number' && evidenceValue.preEpoch >= completedGoal) return;
       const rows = await target.conversations.toArray();
       for (const row of rows) {
         const r = row as unknown as Record<string, unknown>;

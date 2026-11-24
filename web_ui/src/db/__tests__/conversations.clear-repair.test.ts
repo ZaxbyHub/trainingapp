@@ -133,8 +133,51 @@ describe('M3v10 clear repair and durable deletion evidence', () => {
       for (let index = 0; index < 20; index += 1) await conversations.createConversation(conversation(`post-${index}`));
       writeRecord({ pending: { epochGoal: 1, profile: prefix }, completed: null });
       for (let index = 0; index < 20; index += 1) expect(await conversations.deleteConversation(`post-${index}`)).toBe(true);
-      expect(await dbIndex.db.meta.get('delete-post-1')).toBeDefined();
+      expect(await dbIndex.db.meta.get('delete-post-1')).toMatchObject({ value: { preEpoch: 0 } });
       expect(await dbIndex.db.meta.get('legacy-tomb:post-19')).toBeDefined();
+    } finally {
+      dbIndex.db.close();
+    }
+  });
+
+  it('a legacy true clear with lost completion is distinguished by the pre-delete epoch', async () => {
+    const prefix = nextPrefix();
+    const { conversations, convProtocol, dbIndex } = await freshDb(prefix);
+    try {
+      writeRecord({ pending: { epochGoal: 1, profile: prefix }, pendingV2: { epochGoal: 1, profile: prefix }, completed: null });
+      // Base-build true clear: epoch + clear, no cleared-goal marker and no
+      // completion write. The current delete later records preEpoch=1.
+      await dbIndex.db.transaction('rw', dbIndex.db.conversations, dbIndex.db.meta, async () => {
+        await dbIndex.db.meta.put({ key: 'epoch', value: 1 });
+        await dbIndex.db.conversations.clear();
+      });
+      await dbIndex.db.conversations.add(conversation('legacy-post-clear'));
+      await conversations.createConversation(conversation('delete-me'));
+      expect(await conversations.deleteConversation('delete-me')).toBe(true);
+      expect(await dbIndex.db.meta.get('delete-post-1')).toMatchObject({ value: { preEpoch: 1 } });
+      await convProtocol.replayPendingConversationClear();
+      expect(await convProtocol.repairCompletedConversationClears(prefix)).toBe(0);
+      expect(await dbIndex.db.conversations.get('legacy-post-clear')).toBeDefined();
+    } finally {
+      dbIndex.db.close();
+    }
+  });
+
+  it('repairing one profile preserves another profile pending clear', async () => {
+    const prefix = nextPrefix();
+    const { conversations, convProtocol, dbIndex } = await freshDb(prefix);
+    try {
+      await conversations.createConversation(conversation('delete-me'));
+      writeRecord({ pending: { epochGoal: 1, profile: prefix }, completed: null });
+      expect(await conversations.deleteConversation('delete-me')).toBe(true);
+      writeRecord({
+        pending: { epochGoal: 3, profile: 'other99' },
+        pendingV2: { epochGoal: 3, profile: 'other99' },
+        completed: { [prefix]: 1 },
+      });
+      expect(await convProtocol.repairCompletedConversationClears(prefix)).toBe(0);
+      const after = JSON.parse(localStorage.getItem(CONVERSATIONS_CLEARED_KEY)!) as { pending?: { epochGoal: number; profile: string } };
+      expect(after.pending).toEqual({ epochGoal: 3, profile: 'other99' });
     } finally {
       dbIndex.db.close();
     }

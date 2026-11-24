@@ -61,8 +61,8 @@ contextBridge.exposeInMainWorld('desktopApi', {
   // Governance audit outbox (#373): all calls carry the binding generation
   // and sender; the main process rejects stale or unauthorized deliveries.
   getAuditBindingState: () => ipcRenderer.invoke('desktop:audit:binding-state'),
-  subscribeAuditOutbox: (prefix: string, sender: number) =>
-    ipcRenderer.invoke('desktop:audit:subscribe', prefix, sender),
+  subscribeAuditOutbox: (prefix: string, sender: number, expectedEpoch: number) =>
+    ipcRenderer.invoke('desktop:audit:subscribe', prefix, sender, expectedEpoch),
   getAuditPending: (generation: number, sender: number) =>
     ipcRenderer.invoke('desktop:audit:pending', generation, sender),
   ackAuditEvent: (eventId: string, generation: number, sender: number) =>
@@ -85,6 +85,9 @@ contextBridge.exposeInMainWorld('desktopApi', {
     const listener = (_event: unknown, payload: unknown): void => callback(payload);
     ipcRenderer.on('audit:namespace-revoked', listener);
     return () => ipcRenderer.removeListener('audit:namespace-revoked', listener);
+  },
+  ackAuditNamespaceRevoked: (prefix: string) => {
+    ipcRenderer.send('audit:namespace-revoked-ack', prefix);
   },
   // Diagnostics logging (issue #248): the renderer logging core's ONLY IPC
   // surface — level state (main is the sole Electron persistence authority),

@@ -215,7 +215,7 @@ export interface DesktopApiBridge {
   openUpdateExternal(url: string): Promise<{ ok: boolean; detail?: string }>;
   /** #373 acknowledged governance outbox. Optional for older desktop mains. */
   getAuditBindingState?(): Promise<AuditBindingState>;
-  subscribeAuditOutbox?(prefix: string, sender: number): Promise<{ prefix: string; generation: number }>;
+  subscribeAuditOutbox?(prefix: string, sender: number, expectedEpoch?: number): Promise<{ prefix: string; generation: number }>;
   getAuditPending?(generation: number, sender: number): Promise<DesktopAuditEnvelope[]>;
   ackAuditEvent?(eventId: string, generation: number, sender: number): Promise<void>;
   auditBeforeClear?(generation: number, sender: number): Promise<{ clearSeq: number; clearGen: number }>;
@@ -223,6 +223,7 @@ export interface DesktopApiBridge {
   onAuditPending?(callback: (payload: unknown) => void): () => void;
   onAuditBindingInvalidated?(callback: (payload: unknown) => void): () => void;
   onAuditNamespaceRevoked?(callback: (payload: unknown) => void): () => void;
+  ackAuditNamespaceRevoked?(prefix: string): void;
   /** Diagnostics logging (issue #248). Optional: an older main process does
    *  not expose it, and the renderer stays on browser-default behavior. */
   diagnostics?: DesktopDiagnosticsBridge;

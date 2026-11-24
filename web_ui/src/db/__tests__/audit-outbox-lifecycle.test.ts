@@ -61,6 +61,22 @@ describe('desktop audit bridge lifecycle', () => {
     expect(listener.getActiveAuditOutboxContext()).toBeNull();
   });
 
+  test('revocation during a pending state read prevents stale rebind', async () => {
+    const prefix = nextPrefix();
+    const { listener } = await load(prefix);
+    const channel = bridge({ prefix, generation: 3 });
+    let release!: (value: { prefix: string | null; generation: number; senders: number[]; epoch: number }) => void;
+    const pendingState = new Promise<{ prefix: string | null; generation: number; senders: number[]; epoch: number }>((resolve) => { release = resolve; });
+    channel.api.getAuditBindingState = vi.fn(() => pendingState);
+    stops.push(listener.startAuditOutboxListener(channel.api));
+    await vi.waitFor(() => expect(channel.api.getAuditBindingState).toHaveBeenCalled());
+    channel.revoke(prefix);
+    release({ prefix, generation: 3, senders: [], epoch: 0 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(channel.api.subscribeAuditOutbox).not.toHaveBeenCalled();
+    expect(listener.getActiveAuditOutboxContext()).toBeNull();
+  });
+
   test('namespace revocation stops the matching listener and closes its audit database', async () => {
     const prefix = nextPrefix();
     const { audit, listener } = await load(prefix);

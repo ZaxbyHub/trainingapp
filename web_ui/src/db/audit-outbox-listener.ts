@@ -16,7 +16,7 @@ type AuditBridge = Required<Pick<DesktopApiBridge,
   | 'ackAuditEvent'
   | 'onAuditPending'
   | 'onAuditBindingInvalidated'
->> & Pick<DesktopApiBridge, 'onAuditNamespaceRevoked'>;
+>> & Pick<DesktopApiBridge, 'onAuditNamespaceRevoked' | 'ackAuditNamespaceRevoked'>;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -72,21 +72,20 @@ export function startAuditOutboxListener(bridge: DesktopApiBridge): () => void {
     if (stopped) return;
     try {
       const state = await api.getAuditBindingState();
-      if (state.prefix === null) {
-        const bound = await api.subscribeAuditOutbox(loadedPrefix, sender);
-        generation = bound.generation;
-        activeContext = { generation, sender, prefix: loadedPrefix };
-      } else if (state.prefix === loadedPrefix) {
-        // Same-prefix subscribe is a non-revoking rejoin/add-sender.
-        const bound = await api.subscribeAuditOutbox(loadedPrefix, sender);
-        generation = bound.generation;
-        activeContext = { generation, sender, prefix: loadedPrefix };
-      } else {
+      if (stopped) return;
+      if (state.prefix !== null && state.prefix !== loadedPrefix) {
         // Foreign active binding: stay idle. Never silently rebind.
         generation = 0;
         activeContext = null;
         return;
       }
+      // The observed epoch fences a revocation that lands while this subscribe
+      // is in flight. A stale attempt is rejected by main and retried from a
+      // fresh state read; a stopped listener never publishes context again.
+      const bound = await api.subscribeAuditOutbox(loadedPrefix, sender, state.epoch);
+      if (stopped) return;
+      generation = bound.generation;
+      activeContext = { generation, sender, prefix: loadedPrefix };
       await drain();
     } catch (error) {
       if (stopped || attempt >= 3) return;
@@ -106,7 +105,11 @@ export function startAuditOutboxListener(bridge: DesktopApiBridge): () => void {
     window.removeEventListener('focus', onFocus);
     document.removeEventListener('visibilitychange', onVisibility);
     window.removeEventListener('audit:namespace-revoked', onLocalNamespaceRevoked);
-    void auditDb.close();
+    void Promise.resolve(auditDb.close()).then(() => {
+      api.ackAuditNamespaceRevoked?.(revokedPrefix);
+    }).catch((error: unknown) => {
+      console.warn('[audit-outbox] namespace close failed:', error instanceof Error ? error.name : String(error));
+    });
   };
   const onLocalNamespaceRevoked = (event: Event): void => {
     const revokedPrefix = (event as CustomEvent<{ prefix?: unknown }>).detail?.prefix;

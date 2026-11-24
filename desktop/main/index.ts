@@ -102,6 +102,12 @@ const DEV_URL = 'http://localhost:5173';
 
 /** Renderer lifetime is explicit: a destroyed sender can no longer acknowledge. */
 const auditSendersByWebContents = new Map<number, number>();
+const namespaceRevokeWaiters = new Map<string, {
+  targets: Set<number>;
+  timer: ReturnType<typeof setTimeout>;
+  resolve(): void;
+  reject(error: Error): void;
+}>();
 const validAuditSender = (value: unknown): value is number =>
   typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= 0xffffffff;
 
@@ -498,16 +504,17 @@ export function bootstrap(): void {
       return store;
     };
     ipcMain.handle('desktop:audit:binding-state', () => readOutboxBindingState(requireAuditStore()));
-    ipcMain.handle('desktop:audit:subscribe', (event, prefix: unknown, sender: unknown) => {
-      if (typeof prefix !== 'string' || prefix.length === 0 || prefix.length > 200 || !validAuditSender(sender)) {
-        throw new Error('audit subscribe requires a profile prefix and sender');
+    ipcMain.handle('desktop:audit:subscribe', (event, prefix: unknown, sender: unknown, expectedEpoch: unknown) => {
+      if (typeof prefix !== 'string' || prefix.length === 0 || prefix.length > 200 || !validAuditSender(sender) ||
+          typeof expectedEpoch !== 'number' || !Number.isInteger(expectedEpoch) || expectedEpoch < 0) {
+        throw new Error('audit subscribe requires a profile prefix, sender, and observed epoch');
       }
       const store = requireAuditStore();
       const state = readOutboxBindingState(store);
       if (state.prefix !== null && state.prefix !== prefix) {
         throw new Error('audit outbox is bound to a different active profile');
       }
-      const bound = bindOutboxBinding(store, prefix, sender, auditSendersByWebContents.get(event.sender.id));
+      const bound = bindOutboxBinding(store, prefix, sender, auditSendersByWebContents.get(event.sender.id), expectedEpoch);
       auditSendersByWebContents.set(event.sender.id, sender);
       return bound;
     });
@@ -541,15 +548,57 @@ export function bootstrap(): void {
       }
       return captureClear(store);
     });
-    ipcMain.handle('desktop:audit:revoke-namespace', (_event, prefix: unknown) => {
+    ipcMain.on('audit:namespace-revoked-ack', (event, prefix: unknown) => {
+      if (typeof prefix !== 'string') return;
+      const waiter = namespaceRevokeWaiters.get(prefix);
+      if (waiter === undefined) return;
+      try {
+        const store = requireAuditStore();
+        const sender = auditSendersByWebContents.get(event.sender.id);
+        if (sender !== undefined && readOutboxBindingState(store).prefix === prefix) {
+          removeOutboxSender(store, sender);
+        }
+      } catch (error) {
+        clearTimeout(waiter.timer);
+        namespaceRevokeWaiters.delete(prefix);
+        waiter.reject(error instanceof Error ? error : new Error(String(error)));
+        return;
+      }
+      waiter.targets.delete(event.sender.id);
+      if (waiter.targets.size === 0) {
+        clearTimeout(waiter.timer);
+        namespaceRevokeWaiters.delete(prefix);
+        waiter.resolve();
+      }
+    });
+    ipcMain.handle('desktop:audit:revoke-namespace', async (_event, prefix: unknown) => {
       if (typeof prefix !== 'string' || !/^[a-z0-9]{3,8}$/.test(prefix)) {
         throw new Error('audit revoke requires a profile prefix');
       }
       const store = requireAuditStore();
+      const before = readOutboxBindingState(store);
+      const targets = new Set(
+        [...auditSendersByWebContents.entries()]
+          .filter(([, sender]) => before.prefix === prefix && before.senders.includes(sender))
+          .map(([webContentsId]) => webContentsId),
+      );
       const state = revokeOutboxNamespace(store, prefix);
+      let acknowledged: Promise<void> | null = null;
+      if (targets.size > 0) {
+        acknowledged = new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            namespaceRevokeWaiters.delete(prefix);
+            reject(new Error(`audit namespace revocation timed out waiting for ${targets.size} renderer(s)`));
+          }, 3000);
+          namespaceRevokeWaiters.set(prefix, { targets, timer, resolve, reject });
+        });
+      }
       for (const win of BrowserWindow.getAllWindows()) {
         win.webContents.send('audit:namespace-revoked', { prefix, state });
       }
+      // Deletion must not race a renderer that is still draining. A missing ack
+      // fails the destructive operation closed; the lease is already revoked.
+      await acknowledged;
       return state;
     });
     try {

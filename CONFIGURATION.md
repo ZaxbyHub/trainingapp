@@ -622,10 +622,11 @@ that profile. Legacy or mixed builds can recreate old shared-store rows, so adop
 these ids permanently; tombstones are not removed by clear repair. If an old writer observes a
 delete's epoch advance, skips its owed clear, and then falsely marks that goal complete, the
 next boot or cross-tab completion signal repairs only rows lacking the matching profile/goal
-signals. A true clear writes a durable `cleared-goal` marker in the same transaction, so even a
-lost completion write cannot make repair wipe an old tab's untagged post-clear row. The durable
-true-clear marker and current-goal priority exclude over-wipe. One bounded mixed-version residual
-remains: on the no-Web-Locks old-wins path, a row created in the tiny window after the
+signals. A current-build true clear writes a durable `cleared-goal` marker in the same transaction.
+For a legacy true clear that cannot write that marker, delete evidence records the pre-delete epoch;
+if that epoch already reached the goal, repair knows the clear executed and leaves post-clear rows
+alone. Current-goal priority and these two signals exclude over-wipe. One bounded mixed-version
+residual remains: on the no-Web-Locks old-wins path, a row created in the tiny window after the
 pending-clear write but before the old skip can carry the pending goal and is kept rather than
 wiped (bounded under-wipe only).
 
@@ -1454,3 +1455,7 @@ decision. For Clear Cache, fresh recovery, and backup restore, a journal-write
 failure refuses the destructive operation when pending rows cannot be preserved.
 If the store itself is unopenable or integrity-failed, its pending rows are
 unrecoverable and the corruption-recovery exclusion applies (`desktop/main/backend/store/recovery.ts`).
+Full profile/orphan deletion revokes desktop custody first and waits for bound renderers to
+acknowledge that delivery stopped and their audit connection closed; a missing acknowledgment
+refuses the deletion rather than racing an in-flight reconciliation. Clear Cache keeps the audit
+log and does not revoke it.

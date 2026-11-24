@@ -86,9 +86,11 @@ describe('audit outbox renderer lifetime', () => {
       ensureAuditOutboxSchema(db);
       const store = { db };
       await bindOutboxBinding(store, 'profile-a', 11);
+      await expect(bindOutboxBinding(store, 'profile-a', 11, undefined, 0)).resolves.toMatchObject({ generation: 1 });
       const state = revokeOutboxNamespace(store, 'profile-a');
       expect(state).toMatchObject({ prefix: null, senders: [], epoch: 1 });
-      expect(await bindOutboxBinding(store, 'profile-b', 12)).toMatchObject({ generation: 3 });
+      await expect(bindOutboxBinding(store, 'profile-a', 11, undefined, 0)).rejects.toThrow('epoch was superseded');
+      expect(await bindOutboxBinding(store, 'profile-b', 12, undefined, 1)).toMatchObject({ generation: 3 });
       revokeOutboxNamespace(store, 'profile-a');
       expect(readOutboxBindingState(store)).toMatchObject({ prefix: 'profile-b', senders: [12] });
       expect((await bindOutboxBinding(store, 'profile-c', 13)).generation).toBeGreaterThan(2);
