@@ -69,6 +69,8 @@ contextBridge.exposeInMainWorld('desktopApi', {
     ipcRenderer.invoke('desktop:audit:ack', eventId, generation, sender),
   auditBeforeClear: (generation: number, sender: number) =>
     ipcRenderer.invoke('desktop:audit:before-clear', generation, sender),
+  revokeAuditNamespace: (prefix: string) =>
+    ipcRenderer.invoke('desktop:audit:revoke-namespace', prefix),
   onAuditPending: (callback: (payload: unknown) => void) => {
     const listener = (_event: unknown, payload: unknown): void => callback(payload);
     ipcRenderer.on('audit:pending', listener);
@@ -78,6 +80,11 @@ contextBridge.exposeInMainWorld('desktopApi', {
     const listener = (_event: unknown, payload: unknown): void => callback(payload);
     ipcRenderer.on('audit:binding-invalidated', listener);
     return () => ipcRenderer.removeListener('audit:binding-invalidated', listener);
+  },
+  onAuditNamespaceRevoked: (callback: (payload: unknown) => void) => {
+    const listener = (_event: unknown, payload: unknown): void => callback(payload);
+    ipcRenderer.on('audit:namespace-revoked', listener);
+    return () => ipcRenderer.removeListener('audit:namespace-revoked', listener);
   },
   // Diagnostics logging (issue #248): the renderer logging core's ONLY IPC
   // surface — level state (main is the sole Electron persistence authority),

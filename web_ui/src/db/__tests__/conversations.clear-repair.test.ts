@@ -140,6 +140,48 @@ describe('M3v10 clear repair and durable deletion evidence', () => {
     }
   });
 
+  it('a lost completion write after a true clear cannot make repair wipe an old-tab row', async () => {
+    const prefix = nextPrefix();
+    const { conversations, convProtocol, dbIndex } = await freshDb(prefix);
+    try {
+      await conversations.createConversation(conversation('before-clear'));
+      expect(await convProtocol.clearAllConversationsInDb(prefix)).toEqual({ cleared: true });
+      expect(await dbIndex.db.meta.get(`cleared-goal:${prefix}`)).toEqual({ key: `cleared-goal:${prefix}`, value: 1 });
+      // Simulate localStorage losing only the completion write: the durable
+      // clear transaction committed, but the pending record remains.
+      writeRecord({ pending: { epochGoal: 1, profile: prefix }, pendingV2: { epochGoal: 1, profile: prefix }, completed: null });
+      await dbIndex.db.conversations.add(conversation('old-tab-after-clear'));
+      expect(await convProtocol.replayPendingConversationClear()).toEqual({ replayed: true, deferred: false });
+      expect(await convProtocol.repairCompletedConversationClears(prefix)).toBe(0);
+      expect(await dbIndex.db.conversations.get('old-tab-after-clear')).toBeDefined();
+    } finally {
+      dbIndex.db.close();
+    }
+  });
+
+  it('older repair preserves a newer pending goal and boot replay executes it', async () => {
+    const prefix = nextPrefix();
+    const { conversations, convProtocol, dbIndex } = await freshDb(prefix);
+    try {
+      await conversations.createConversation(conversation('delete-me'));
+      writeRecord({ pending: { epochGoal: 1, profile: prefix }, completed: null });
+      expect(await conversations.deleteConversation('delete-me')).toBe(true);
+      writeRecord({
+        pending: { epochGoal: 2, profile: prefix },
+        pendingV2: { epochGoal: 2, profile: prefix },
+        completed: { [prefix]: 1 },
+      });
+      expect(await convProtocol.repairCompletedConversationClears(prefix)).toBe(0);
+      const afterRepair = JSON.parse(localStorage.getItem(CONVERSATIONS_CLEARED_KEY)!) as { pending?: { epochGoal: number } };
+      expect(afterRepair.pending?.epochGoal).toBe(2);
+      expect(await convProtocol.replayPendingConversationClear()).toEqual({ replayed: true, deferred: false });
+      expect(await dbIndex.db.meta.get(`cleared-goal:${prefix}`)).toEqual({ key: `cleared-goal:${prefix}`, value: 2 });
+      expect(await convProtocol.readConversationEpoch()).toBe(2);
+    } finally {
+      dbIndex.db.close();
+    }
+  });
+
   it('a paused G repair is superseded by a true H clear and spares H-era rows', async () => {
     const prefix = nextPrefix();
     const { conversations, convProtocol, dbIndex } = await freshDb(prefix);

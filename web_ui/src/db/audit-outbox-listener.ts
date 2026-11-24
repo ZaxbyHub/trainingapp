@@ -1,7 +1,7 @@
 /** Desktop audit-outbox listener: immutable loaded identity + level reconciliation. */
 import { getProfilePrefix } from '../lib/storage/profile';
 import type { DesktopApiBridge } from '../types/desktop';
-import type { AuditEventClass } from './audit';
+import { auditDb, type AuditEventClass } from './audit';
 import {
   appendAuditEnvelope,
   deliverPendingOutbox,
@@ -16,7 +16,7 @@ type AuditBridge = Required<Pick<DesktopApiBridge,
   | 'ackAuditEvent'
   | 'onAuditPending'
   | 'onAuditBindingInvalidated'
->>;
+>> & Pick<DesktopApiBridge, 'onAuditNamespaceRevoked'>;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -97,6 +97,26 @@ export function startAuditOutboxListener(bridge: DesktopApiBridge): () => void {
 
   const unsubPending = api.onAuditPending(() => { void drain(); });
   const unsubInvalidated = api.onAuditBindingInvalidated(() => { void reconcile(); });
+  const stopForNamespace = (revokedPrefix: string): void => {
+    if (revokedPrefix !== loadedPrefix) return;
+    stopped = true;
+    unsubPending();
+    unsubInvalidated();
+    if (activeContext?.sender === sender) activeContext = null;
+    window.removeEventListener('focus', onFocus);
+    document.removeEventListener('visibilitychange', onVisibility);
+    window.removeEventListener('audit:namespace-revoked', onLocalNamespaceRevoked);
+    void auditDb.close();
+  };
+  const onLocalNamespaceRevoked = (event: Event): void => {
+    const revokedPrefix = (event as CustomEvent<{ prefix?: unknown }>).detail?.prefix;
+    if (typeof revokedPrefix === 'string') stopForNamespace(revokedPrefix);
+  };
+  window.addEventListener('audit:namespace-revoked', onLocalNamespaceRevoked);
+  const unsubNamespace = api.onAuditNamespaceRevoked?.((payload) => {
+    const revokedPrefix = (payload as { prefix?: unknown }).prefix;
+    if (typeof revokedPrefix === 'string') stopForNamespace(revokedPrefix);
+  });
   const onFocus = (): void => { void reconcile(); };
   const onVisibility = (): void => { if (document.visibilityState === 'visible') void reconcile(); };
   window.addEventListener('focus', onFocus);
@@ -105,10 +125,12 @@ export function startAuditOutboxListener(bridge: DesktopApiBridge): () => void {
 
   return () => {
     stopped = true;
+    unsubNamespace?.();
     if (activeContext?.sender === sender) activeContext = null;
     unsubPending();
     unsubInvalidated();
     window.removeEventListener('focus', onFocus);
     document.removeEventListener('visibilitychange', onVisibility);
+    window.removeEventListener('audit:namespace-revoked', onLocalNamespaceRevoked);
   };
 }

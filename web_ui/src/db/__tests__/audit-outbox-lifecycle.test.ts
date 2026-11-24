@@ -27,6 +27,7 @@ function bridge(state: { prefix: string | null; generation: number }) {
   const acked: string[] = [];
   let invalidated: (() => void) | undefined;
   let notified: (() => void) | undefined;
+  let revoked: ((payload: { prefix: string }) => void) | undefined;
   const api = {
     getAuditBindingState: vi.fn(async () => ({ ...state, senders: [], epoch: state.generation })),
     subscribeAuditOutbox: vi.fn(async (prefix: string) => {
@@ -42,8 +43,9 @@ function bridge(state: { prefix: string | null; generation: number }) {
     auditBeforeClear: vi.fn(async () => ({ clearSeq: 2, clearGen: 4 })),
     onAuditPending: vi.fn((callback: () => void) => { notified = callback; return () => { notified = undefined; }; }),
     onAuditBindingInvalidated: vi.fn((callback: () => void) => { invalidated = callback; return () => { invalidated = undefined; }; }),
+    onAuditNamespaceRevoked: vi.fn((callback: (payload: { prefix: string }) => void) => { revoked = callback; return () => { revoked = undefined; }; }),
   } as unknown as DesktopApiBridge;
-  return { api, pending, acked, invalidate: () => invalidated?.(), notify: () => notified?.() };
+  return { api, pending, acked, invalidate: () => invalidated?.(), notify: () => notified?.(), revoke: (prefix: string) => revoked?.({ prefix }) };
 }
 
 describe('desktop audit bridge lifecycle', () => {
@@ -57,6 +59,17 @@ describe('desktop audit bridge lifecycle', () => {
     expect(channel.api.subscribeAuditOutbox).not.toHaveBeenCalled();
     expect(channel.api.getAuditPending).not.toHaveBeenCalled();
     expect(listener.getActiveAuditOutboxContext()).toBeNull();
+  });
+
+  test('namespace revocation stops the matching listener and closes its audit database', async () => {
+    const prefix = nextPrefix();
+    const { audit, listener } = await load(prefix);
+    const channel = bridge({ prefix, generation: 3 });
+    stops.push(listener.startAuditOutboxListener(channel.api));
+    await vi.waitFor(() => expect(listener.getActiveAuditOutboxContext()?.prefix).toBe(prefix));
+    channel.revoke(prefix);
+    expect(listener.getActiveAuditOutboxContext()).toBeNull();
+    expect(audit.auditDb.isOpen()).toBe(false);
   });
 
   test('same-prefix rejoin delivers once and acknowledges after the local commit', async () => {

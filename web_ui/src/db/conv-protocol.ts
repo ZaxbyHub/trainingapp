@@ -402,12 +402,10 @@ function writeClearRecord(record: ClearRecord): void {
 function markCompleted(epochGoal: number, profile: string): void {
   const record = readClearRecord();
   const previous = record.completed ?? {};
+  const nextPending = record.pendingV2 ?? record.pending;
   const newerPending =
-    record.pendingV2 !== null &&
-    record.pendingV2 !== undefined &&
-    record.pendingV2.profile === profile &&
-    record.pendingV2.epochGoal > epochGoal
-      ? record.pendingV2
+    nextPending !== null && nextPending.profile === profile && nextPending.epochGoal > epochGoal
+      ? nextPending
       : null;
   writeClearRecord({
     pending: newerPending,
@@ -423,12 +421,16 @@ function markCompleted(epochGoal: number, profile: string): void {
 export type ClearAllResult = { cleared: boolean } | { deferred: true };
 
 /** Execute one owed clear and its permanent evidence in the same transaction. */
-async function executeClearGoal(target: DocQaDb, epochGoal: number): Promise<void> {
+async function executeClearGoal(target: DocQaDb, epochGoal: number, profile: string): Promise<void> {
   await target.transaction('rw', target.conversations, target.meta, async () => {
     const current = await readEpochOf(target);
     if (current < epochGoal) {
       await target.meta.put({ key: EPOCH_META_KEY, value: epochGoal });
       await target.conversations.clear();
+      // Durable proof that this goal's clear really executed. If the later
+      // localStorage completion write is lost, repair must not mistake a
+      // post-clear old-tab row for an owed pre-clear row.
+      await target.meta.put({ key: `${CLEARED_GOAL_PREFIX}${profile}`, value: epochGoal });
     }
   });
 }
@@ -473,7 +475,14 @@ export async function repairCompletedConversationClears(
         }
       }
       const current = await readEpochOf(target);
-      await target.meta.put({ key: EPOCH_META_KEY, value: Math.max(completedGoal, current + 1) });
+      const nextEpoch = Math.max(completedGoal, current + 1);
+      const owed = live.pendingV2 ?? live.pending;
+      // Never advance the epoch to a newer pending goal: that would make its
+      // boot replay look already-complete even though its clear never ran.
+      const epoch = owed !== null && owed.profile === profile && owed.epochGoal > completedGoal
+        ? Math.max(current, Math.min(nextEpoch, owed.epochGoal - 1))
+        : nextEpoch;
+      await target.meta.put({ key: EPOCH_META_KEY, value: epoch });
       await target.meta.put({ key: `${CLEARED_GOAL_PREFIX}${profile}`, value: completedGoal });
       await target.meta.delete(`${DELETE_POST_PREFIX}${String(completedGoal)}`);
       applied = true;
@@ -548,13 +557,13 @@ export async function clearAllConversationsInDb(
     const pending = { epochGoal: completedGoalValue, profile };
     writeClearRecord({ pending, pendingV2: pending, completed: readClearRecord().completed });
     await withConversationWriteLock(async () => {
-      await executeClearGoal(target, completedGoalValue);
+      await executeClearGoal(target, completedGoalValue, profile);
       // Shared-lock interposition: a pending record written while the old
       // clear waited for this lock is owed BEFORE the old writer completes.
       for (;;) {
         const next = readClearRecord().pendingV2 ?? readClearRecord().pending;
         if (next === null || next === undefined || next.profile !== profile || next.epochGoal <= completedGoalValue) break;
-        await executeClearGoal(target, next.epochGoal);
+        await executeClearGoal(target, next.epochGoal, profile);
         completedGoalValue = next.epochGoal;
       }
       markCompleted(completedGoalValue, profile);
@@ -605,6 +614,7 @@ export async function replayPendingConversationClear(): Promise<{ replayed: bool
             if (now < pending.epochGoal) {
               await target.meta.put({ key: EPOCH_META_KEY, value: pending.epochGoal });
               await target.conversations.clear();
+              await target.meta.put({ key: `${CLEARED_GOAL_PREFIX}${pending.profile}`, value: pending.epochGoal });
             }
           });
         }

@@ -622,10 +622,12 @@ that profile. Legacy or mixed builds can recreate old shared-store rows, so adop
 these ids permanently; tombstones are not removed by clear repair. If an old writer observes a
 delete's epoch advance, skips its owed clear, and then falsely marks that goal complete, the
 next boot or cross-tab completion signal repairs only rows lacking the matching profile/goal
-signals. A true clear writes no repair evidence, so an old tab's untagged post-clear row is not
-wiped. One bounded mixed-version residual remains: on the no-Web-Locks old-wins path, a row
-created in the tiny window after the pending-clear write but before the old skip can carry the
-pending goal and is kept rather than wiped (under-wipe only, never over-wipe).
+signals. A true clear writes a durable `cleared-goal` marker in the same transaction, so even a
+lost completion write cannot make repair wipe an old tab's untagged post-clear row. The durable
+true-clear marker and current-goal priority exclude over-wipe. One bounded mixed-version residual
+remains: on the no-Web-Locks old-wins path, a row created in the tiny window after the
+pending-clear write but before the old skip can carry the pending goal and is kept rather than
+wiped (bounded under-wipe only).
 
 What this protects: the stored history against casual inspection of browser storage and against
 one registered profile reading another profile's history on a shared workstation. What it does

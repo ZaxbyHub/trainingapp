@@ -11,6 +11,7 @@ import {
   ensureAuditOutboxSchema,
   readOutboxBindingState,
   removeOutboxSender,
+  revokeOutboxNamespace,
   writeAuditJournalFallback,
 } from '../../main/backend/audit-outbox';
 import { getCurrentStore, openStore } from '../../main/backend/store/sqlite-store';
@@ -74,6 +75,23 @@ describe('audit outbox renderer lifetime', () => {
       expect(removeOutboxSender(store, 13)).toBe(false);
       expect(removeOutboxSender(store, 12)).toBe(true);
       expect(readOutboxBindingState(store)).toMatchObject({ prefix: null, senders: [] });
+    } finally {
+      db.close();
+    }
+  });
+
+  test('namespace revoke clears only the matching lease and advances custody generations', async () => {
+    const db = new Database(':memory:');
+    try {
+      ensureAuditOutboxSchema(db);
+      const store = { db };
+      await bindOutboxBinding(store, 'profile-a', 11);
+      const state = revokeOutboxNamespace(store, 'profile-a');
+      expect(state).toMatchObject({ prefix: null, senders: [], epoch: 1 });
+      expect(await bindOutboxBinding(store, 'profile-b', 12)).toMatchObject({ generation: 3 });
+      revokeOutboxNamespace(store, 'profile-a');
+      expect(readOutboxBindingState(store)).toMatchObject({ prefix: 'profile-b', senders: [12] });
+      expect((await bindOutboxBinding(store, 'profile-c', 13)).generation).toBeGreaterThan(2);
     } finally {
       db.close();
     }

@@ -422,6 +422,13 @@ export async function deleteNamespace(
   if (typeof indexedDB === 'undefined') {
     return;
   }
+  if (options.includeConversations === true && typeof window !== 'undefined') {
+    // Full namespace destruction revokes desktop custody first, then every
+    // loaded renderer stops draining and closes its audit connection before
+    // deleteDatabase starts. Clear Cache keeps the audit log and skips this.
+    await window.desktopApi?.revokeAuditNamespace?.(prefix);
+    window.dispatchEvent(new CustomEvent('audit:namespace-revoked', { detail: { prefix } }));
+  }
   const names = [
     `${prefix}-doc-qa-documents`,
     `${prefix}-doc-qa-indexes`,

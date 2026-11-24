@@ -71,6 +71,7 @@ import {
   readOutboxBindingState,
   readOutboxPending,
   removeOutboxSender,
+  revokeOutboxNamespace,
 } from './backend/audit-outbox.js';
 import { formatFailure, runStartupIntegrityCheck } from './integrity-check.js';
 import { migrateLegacyStoreLayout, resolveProfileLayout } from './backend/store/profiles.js';
@@ -539,6 +540,17 @@ export function bootstrap(): void {
         throw new Error('audit clear binding was superseded');
       }
       return captureClear(store);
+    });
+    ipcMain.handle('desktop:audit:revoke-namespace', (_event, prefix: unknown) => {
+      if (typeof prefix !== 'string' || !/^[a-z0-9]{3,8}$/.test(prefix)) {
+        throw new Error('audit revoke requires a profile prefix');
+      }
+      const store = requireAuditStore();
+      const state = revokeOutboxNamespace(store, prefix);
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send('audit:namespace-revoked', { prefix, state });
+      }
+      return state;
     });
     try {
       startup.hostConfig.auditSink?.emit({

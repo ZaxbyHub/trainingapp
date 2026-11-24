@@ -211,6 +211,32 @@ export function removeOutboxSender(store: StoreLike, sender: number): boolean {
   }
 }
 
+/** Revoke a namespace before its audit database is deleted. */
+export function revokeOutboxNamespace(store: StoreLike, prefix: string): ReturnType<typeof readOutboxBindingState> {
+  const db = store.db;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const current = readLease(db);
+    if (current?.prefix === prefix) db.prepare('DELETE FROM audit_outbox_binding WHERE singleton = 1').run();
+    setMeta(db, 'gen_high', meta(db, 'gen_high') + 1);
+    setMeta(db, 'binding_epoch', meta(db, 'binding_epoch') + 1);
+    const next = readLease(db);
+    if (store.dbPath !== undefined) {
+      const journalPath = defaultAuditJournalPath(store.dbPath);
+      const journal = readJournal(journalPath);
+      journal.lease = next;
+      journal.gen_high = Math.max(journal.gen_high, meta(db, 'gen_high'));
+      journal.binding_epoch = Math.max(journal.binding_epoch, meta(db, 'binding_epoch'));
+      writeJournal(journalPath, journal);
+    }
+    db.exec('COMMIT');
+    return readOutboxBindingState(store);
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch { /* preserve original */ }
+    throw error;
+  }
+}
+
 function assertAuthorized(db: SqliteDb, generation: number, sender: number): void {
   const current = readLease(db);
   if (current === null || current.generation !== generation || !current.senders.includes(sender)) {

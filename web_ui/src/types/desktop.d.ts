@@ -219,8 +219,10 @@ export interface DesktopApiBridge {
   getAuditPending?(generation: number, sender: number): Promise<DesktopAuditEnvelope[]>;
   ackAuditEvent?(eventId: string, generation: number, sender: number): Promise<void>;
   auditBeforeClear?(generation: number, sender: number): Promise<{ clearSeq: number; clearGen: number }>;
+  revokeAuditNamespace?(prefix: string): Promise<AuditBindingState>;
   onAuditPending?(callback: (payload: unknown) => void): () => void;
   onAuditBindingInvalidated?(callback: (payload: unknown) => void): () => void;
+  onAuditNamespaceRevoked?(callback: (payload: unknown) => void): () => void;
   /** Diagnostics logging (issue #248). Optional: an older main process does
    *  not expose it, and the renderer stays on browser-default behavior. */
   diagnostics?: DesktopDiagnosticsBridge;
