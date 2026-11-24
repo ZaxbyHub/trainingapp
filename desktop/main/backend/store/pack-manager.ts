@@ -773,11 +773,9 @@ export class PackManager {
     // nothing installed; the next install of the same pack clears residue).
     const failedDirs: string[] = [];
     for (const { row } of docMaps) {
-      if (row.install_path !== null && fs.existsSync(row.install_path)) {
+      if (row.install_path !== null) {
         try {
-          // Do not use force: on Windows it silently clears readonly attrs,
-          // erasing the committed-but-cleanup-failed signal the API returns.
-          fs.rmSync(row.install_path, { recursive: true });
+          fs.rmSync(row.install_path, { recursive: true, force: true });
         } catch (error) {
           failedDirs.push(
             `${row.install_path} (${error instanceof Error ? error.message : String(error)})`,

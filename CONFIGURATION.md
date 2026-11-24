@@ -617,6 +617,16 @@ Deleting a conversation advances the stored conversation epoch in the same trans
 delete. Other tabs' pending saves captured under the older epoch are aborted as stale no-ops;
 each tab rebinds on its next write, so one peer delete does not disable later saves.
 
+Each applied delete also leaves one permanent, id-sized `legacy-tomb:<id>` metadata entry for
+that profile. Legacy or mixed builds can recreate old shared-store rows, so adoption filters
+these ids permanently; tombstones are not removed by clear repair. If an old writer observes a
+delete's epoch advance, skips its owed clear, and then falsely marks that goal complete, the
+next boot or cross-tab completion signal repairs only rows lacking the matching profile/goal
+signals. A true clear writes no repair evidence, so an old tab's untagged post-clear row is not
+wiped. One bounded mixed-version residual remains: on the no-Web-Locks old-wins path, a row
+created in the tiny window after the pending-clear write but before the old skip can carry the
+pending goal and is kept rather than wiped (under-wipe only, never over-wipe).
+
 What this protects: the stored history against casual inspection of browser storage and against
 one registered profile reading another profile's history on a shared workstation. What it does
 not protect against: someone (or some software) with full access to the browser profile itself —
@@ -1432,3 +1442,13 @@ and NO settings row is emitted (disclosed boundary - the before-state is
 unknown). A renderer that has not acknowledged a desktop outbox event shows no
 local row yet; the durable pending event remains in SQLite until a later
 successful commit/acknowledgment.
+
+Desktop custody flush failure returns an error and rolls the settings change back;
+it never leaves a phantom audit row. Process death after settings persistence but
+before the audit flush remains a named crash window: the setting can commit without
+its audit row. Sidecar/Python mode is not connected to this main-process outbox, so
+its pack commits remain outside this coverage claim pending the open sidecar scope
+decision. For Clear Cache, fresh recovery, and backup restore, a journal-write
+failure refuses the destructive operation when pending rows cannot be preserved.
+If the store itself is unopenable or integrity-failed, its pending rows are
+unrecoverable and the corruption-recovery exclusion applies (`desktop/main/backend/store/recovery.ts`).

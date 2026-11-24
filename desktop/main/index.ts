@@ -444,7 +444,7 @@ export function bootstrap(): void {
       token: getLaunchToken(),
       tokenHeaderName: securityConfig.tokenHeaderName,
       allowedOrigins: securityConfig.allowedOrigins,
-      mode: 'node',
+      mode: resolveBackendMode({ env: process.env }),
       models,
       packsRoot: resolvePacksRoot(),
       storeBackupsDir: backupsDir,

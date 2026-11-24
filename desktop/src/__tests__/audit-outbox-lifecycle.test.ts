@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   appendStandalone,
   bindOutboxBinding,
+  captureClear,
   defaultAuditJournalPath,
   ensureAuditOutboxSchema,
   readOutboxBindingState,
@@ -140,6 +141,25 @@ describe('audit outbox destructive transitions', () => {
       getCurrentStore()?.close();
       fs.rmSync(path.dirname(activePath), { recursive: true, force: true });
       fs.rmSync(path.dirname(backupPath), { recursive: true, force: true });
+    }
+  });
+
+  test('captureClear re-merges journal high-water before computing the fence', async () => {
+    const dbPath = tempStore('clear-journal-high');
+    const store = openStore({ dbPath, dims: 8 });
+    try {
+      fs.writeFileSync(defaultAuditJournalPath(dbPath), JSON.stringify({
+        pending: [], fallback: [], clear_seq: 0, clear_at: 0, clear_gen: 0,
+        lease: null, seq_high: 11, gen_high: 0, binding_epoch: 0,
+      }));
+      appendStandalone(store, { eventId: 'old', event: 'app_start', subject: 'p', occurredAt: Date.now() });
+      expect(await captureClear(store)).toEqual({ clearSeq: 10, clearGen: 1 });
+      const next = appendStandalone(store, { eventId: 'new', event: 'app_start', subject: 'p', occurredAt: Date.now() });
+      expect(next.seq).toBe(11);
+      expect(eventIds(dbPath)).toEqual(['new']);
+    } finally {
+      store.close();
+      fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
     }
   });
 

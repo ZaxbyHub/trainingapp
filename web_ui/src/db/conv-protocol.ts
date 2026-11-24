@@ -281,6 +281,14 @@ export async function withAdvancingDeleteGate(
     // Permanent adoption tombstone: legacy rows can be recreated by an old or
     // mixed build, so deletion history must outlive the current profile row.
     await db.meta.put({ key: `legacy-tomb:${id}`, value: 1 });
+    // M3v10 evidence belongs to the DELETE transaction, not the clear. An old
+    // writer can observe this epoch advance, skip its owed clear, and then
+    // falsely mark that goal completed. Recording the pending goal here lets
+    // repair distinguish that false completion from a true clear.
+    const pending = readClearRecord().pendingV2 ?? readClearRecord().pending;
+    if (pending !== null && pending.profile === prefixOfDbName(db.name)) {
+      await db.meta.put({ key: `${DELETE_POST_PREFIX}${String(pending.epochGoal)}`, value: Date.now() });
+    }
     applied = true;
   });
   return applied;
@@ -415,15 +423,13 @@ function markCompleted(epochGoal: number, profile: string): void {
 export type ClearAllResult = { cleared: boolean } | { deferred: true };
 
 /** Execute one owed clear and its permanent evidence in the same transaction. */
-async function executeClearGoal(target: DocQaDb, epochGoal: number, profile: string): Promise<void> {
+async function executeClearGoal(target: DocQaDb, epochGoal: number): Promise<void> {
   await target.transaction('rw', target.conversations, target.meta, async () => {
     const current = await readEpochOf(target);
     if (current < epochGoal) {
       await target.meta.put({ key: EPOCH_META_KEY, value: epochGoal });
       await target.conversations.clear();
     }
-    await target.meta.put({ key: `${DELETE_POST_PREFIX}${String(epochGoal)}`, value: Date.now() });
-    void profile;
   });
 }
 
@@ -542,13 +548,13 @@ export async function clearAllConversationsInDb(
     const pending = { epochGoal: completedGoalValue, profile };
     writeClearRecord({ pending, pendingV2: pending, completed: readClearRecord().completed });
     await withConversationWriteLock(async () => {
-      await executeClearGoal(target, completedGoalValue, profile);
+      await executeClearGoal(target, completedGoalValue);
       // Shared-lock interposition: a pending record written while the old
       // clear waited for this lock is owed BEFORE the old writer completes.
       for (;;) {
         const next = readClearRecord().pendingV2 ?? readClearRecord().pending;
         if (next === null || next === undefined || next.profile !== profile || next.epochGoal <= completedGoalValue) break;
-        await executeClearGoal(target, next.epochGoal, profile);
+        await executeClearGoal(target, next.epochGoal);
         completedGoalValue = next.epochGoal;
       }
       markCompleted(completedGoalValue, profile);

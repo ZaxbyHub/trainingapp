@@ -290,14 +290,15 @@ function AppContent() {
   // (pagehide cannot await; recordAuditEvent swallows write failures) with
   // the listener removed on cleanup so a remount never double-subscribes.
   useEffect(() => {
+    // A current desktop main owns lifecycle rows through the durable outbox.
+    // Browser and older desktop mains keep the renderer-local fallback.
+    const desktopAuditOwned = isElectron() && window.desktopApi?.getAuditBindingState !== undefined;
     if (!appStartRecordedThisLoad) {
       appStartRecordedThisLoad = true;
-      // Desktop app_start is owned by the main process at host-ready; the
-      // renderer must not add a second lifecycle row there.
-      if (!isElectron()) recordAuditEvent('app_start', null);
+      if (!desktopAuditOwned) recordAuditEvent('app_start', null);
     }
     const onPageHide = (): void => {
-      recordAuditEvent('app_stop', null);
+      if (!desktopAuditOwned) recordAuditEvent('app_stop', null);
     };
     window.addEventListener('pagehide', onPageHide);
     return () => {

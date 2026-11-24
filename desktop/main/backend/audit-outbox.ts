@@ -241,8 +241,18 @@ export async function ackOutboxEvent(store: StoreLike, generation: number, sende
 export async function captureClear(store: StoreLike): Promise<{ clearSeq: number; clearGen: number }> {
   const db = store.db;
   ensureAuditOutboxSchema(db);
+  const journalPath = store.dbPath === undefined ? null : defaultAuditJournalPath(store.dbPath);
+  const journal = journalPath !== null && fs.existsSync(journalPath) ? readJournal(journalPath) : null;
   db.exec('BEGIN IMMEDIATE');
   try {
+    if (journal !== null) {
+      maxMeta(db, 'clear_seq', journal.clear_seq);
+      maxMeta(db, 'clear_gen', journal.clear_gen);
+      maxMeta(db, 'gen_high', journal.gen_high);
+      maxMeta(db, 'binding_epoch', journal.binding_epoch);
+      const maxRow = db.prepare('SELECT COALESCE(MAX(seq), 0) AS value FROM audit_outbox').get() as { value: number };
+      setMeta(db, 'next_seq', Math.max(meta(db, 'next_seq'), journal.seq_high, num(maxRow.value) + 1));
+    }
     const clearGen = meta(db, 'clear_gen') + 1;
     const clearSeq = meta(db, 'next_seq') - 1;
     setMeta(db, 'clear_gen', clearGen);
