@@ -161,7 +161,15 @@ export async function clearAuditLog(): Promise<void> {
     // which in turn use this database. The function runs after both are loaded.
     const { getActiveAuditOutboxContext } = await import('./audit-outbox-listener');
     const context = getActiveAuditOutboxContext();
-    if (context !== null) desktopClear = await beforeClear(context.generation, context.sender);
+    // PR #391 F-002: a null custody context is a transient/foreign-binding
+    // state, not a reason to clear locally. Falling through would skip the
+    // main clear_seq/clear_gen fence, so pending outbox rows redeliver after a
+    // clear the user saw succeed (CONFIGURATION.md:1474-1477). Fail closed;
+    // the Settings surface reports the failure and the user can retry.
+    if (context === null) {
+      throw new Error('Audit log clear requires an active desktop audit binding; retry in a moment.');
+    }
+    desktopClear = await beforeClear(context.generation, context.sender);
   }
   const cutoff = Date.now() - AUDIT_RETENTION_MS;
   await auditDb.transaction('rw', auditDb.events, auditDb.meta, async () => {

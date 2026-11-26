@@ -30,13 +30,23 @@ const CANONICAL_PREFIX = /^[a-z0-9]{3,8}$/;
 export interface ActiveAuditOutboxContext { generation: number; sender: number; prefix: string }
 let activeContext: ActiveAuditOutboxContext | null = null;
 
+/**
+ * Deterministic test seams. Production never passes hooks; tests use them as
+ * completion barriers instead of wall-clock sleeps when asserting that no
+ * delayed reconcile/drain action escapes a negative assertion.
+ */
+export interface AuditListenerHooks {
+  onReconcileSettled?: () => void;
+  onDrainSettled?: () => void;
+}
+
 /** Clear uses the same live custody identity as delivery; stale tabs cannot cut. */
 export function getActiveAuditOutboxContext(): ActiveAuditOutboxContext | null {
   return activeContext === null ? null : { ...activeContext };
 }
 
 /** Capture the profile ONCE: a stale tab must never drain as a switched profile. */
-export function startAuditOutboxListener(bridge: DesktopApiBridge): () => void {
+export function startAuditOutboxListener(bridge: DesktopApiBridge, hooks: AuditListenerHooks = {}): () => void {
   if (bridge.getAuditBindingState === undefined || bridge.subscribeAuditOutbox === undefined ||
       bridge.getAuditPending === undefined || bridge.ackAuditEvent === undefined ||
       bridge.onAuditPending === undefined || bridge.onAuditBindingInvalidated === undefined) {
@@ -48,6 +58,7 @@ export function startAuditOutboxListener(bridge: DesktopApiBridge): () => void {
   let generation = 0;
   let stopped = false;
   let draining = false;
+  let rerun = false;
 
   const queue: OutboxQueue = {
     pending: async () => (await api.getAuditPending(generation, sender)).map((envelope) => ({
@@ -59,19 +70,39 @@ export function startAuditOutboxListener(bridge: DesktopApiBridge): () => void {
   };
 
   const drain = async (): Promise<void> => {
-    if (draining || stopped || generation === 0) return;
+    if (stopped || generation === 0) return;
+    // PR #391 F-003: a notification that lands while a drain is in flight must
+    // not be dropped. Set a rerun flag and let the active drain take another
+    // pass; the single pending() snapshot cannot see events committed after it.
+    if (draining) {
+      rerun = true;
+      return;
+    }
     draining = true;
     try {
-      await deliverPendingOutbox(queue, async (envelope: OutboxEnvelope) => {
-        await appendAuditEnvelope(envelope, {
-          generation,
-          sourceSeq: (envelope as OutboxEnvelope & { seq?: number }).seq ?? null,
-        });
-      }, { generation });
+      do {
+        rerun = false;
+        const passGeneration = generation;
+        await deliverPendingOutbox(queue, async (envelope: OutboxEnvelope) => {
+          await appendAuditEnvelope(envelope, {
+            generation: passGeneration,
+            sourceSeq: (envelope as OutboxEnvelope & { seq?: number }).seq ?? null,
+          });
+        }, { generation: passGeneration });
+      } while (rerun && !stopped && generation !== 0);
     } catch (error) {
       console.warn('[audit-outbox] delivery deferred:', error instanceof Error ? error.name : String(error));
+      // A request that arrived while this pass was in flight is still owed a
+      // drain even though the pass failed. Re-run once asynchronously; a
+      // persistent failure cannot spin because only a new notification sets
+      // the flag again.
+      if (rerun && !stopped && generation !== 0) {
+        rerun = false;
+        queueMicrotask(() => { void drain(); });
+      }
     } finally {
       draining = false;
+      hooks.onDrainSettled?.();
     }
   };
 
@@ -103,6 +134,8 @@ export function startAuditOutboxListener(bridge: DesktopApiBridge): () => void {
       if (stopped || attempt >= 3) return;
       await sleep(50 * 2 ** attempt);
       await reconcile(attempt + 1);
+    } finally {
+      hooks.onReconcileSettled?.();
     }
   };
 

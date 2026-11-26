@@ -41,6 +41,10 @@ export interface CustodyProvider { beginRequest(): CustodyBatch }
 
 type Notify = (payload: { generation: number; pendingCount: number }) => void;
 
+/** Tombstone count at which one process-lifetime growth warning is emitted. */
+const ACK_JOURNAL_WARN_THRESHOLD = 5000;
+let ackJournalSizeWarned = false;
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS audit_outbox (
   event_id TEXT PRIMARY KEY,
@@ -335,6 +339,17 @@ export async function ackOutboxEvent(store: StoreLike, generation: number, sende
       if (journal.pending.length !== pendingBefore || journal.fallback.length !== fallbackBefore || journal.acked.length !== ackedBefore) {
         writeJournal(journalPath, journal);
       }
+      // PR #391 F-005: tombstones are retained forever by design (they stop a
+      // restored pre-ack backup from redelivering), and each ack rewrites the
+      // whole journal synchronously. The volume is small, so this is a growth
+      // warning rather than pruning: pruning by count would resurrect the
+      // duplicate-delivery class F-002 closed.
+      if (!ackJournalSizeWarned && journal.acked.length >= ACK_JOURNAL_WARN_THRESHOLD) {
+        ackJournalSizeWarned = true;
+        console.warn(
+          `[audit-outbox] ack tombstone journal reached ${String(journal.acked.length)} entries; growth is bounded only by daily event volume (see CONFIGURATION.md retention notes)`,
+        );
+      }
     }
     const result = db.prepare('DELETE FROM audit_outbox WHERE event_id = ?').run(eventId);
     db.exec('COMMIT');
@@ -424,16 +439,140 @@ function emptyJournal(): Journal {
   return { pending: [], fallback: [], clear_seq: 0, clear_at: 0, clear_gen: 0, lease: null, seq_high: 1, gen_high: 0, binding_epoch: 0, removed_senders: [], acked: [], revoked: [] };
 }
 
+/**
+ * PR #391 F-001: syntax-valid JSON with a wrong shape is just as unopenable as
+ * a syntax error — the consumer would dereference null/missing fields inside
+ * its transaction and rethrow. Validate every field the consumer reads,
+ * including array ENTRIES, so shape failures route through the same
+ * quarantine recovery instead of failing every launch.
+ */
+function requireEnvelope(value: unknown, where: string): void {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error(`invalid audit journal shape: ${where} envelope is not an object`);
+  }
+  const envelope = value as Record<string, unknown>;
+  if (typeof envelope.eventId !== 'string' || typeof envelope.event !== 'string' ||
+      typeof envelope.subject !== 'string' || typeof envelope.occurredAt !== 'number') {
+    throw new Error(`invalid audit journal shape: ${where} envelope fields`);
+  }
+}
+
+function validateJournalShape(parsed: Partial<Journal>): void {
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('invalid audit journal shape: top level is not an object');
+  }
+  const record = parsed as Record<string, unknown>;
+  for (const key of ['pending', 'fallback', 'acked', 'removed_senders', 'revoked'] as const) {
+    const value = record[key];
+    if (value !== undefined && !Array.isArray(value)) {
+      throw new Error(`invalid audit journal shape: ${key} is not an array`);
+    }
+  }
+  for (const key of ['clear_seq', 'clear_at', 'clear_gen', 'seq_high', 'gen_high', 'binding_epoch'] as const) {
+    const value = record[key];
+    if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value))) {
+      throw new Error(`invalid audit journal shape: ${key} is not a finite number`);
+    }
+  }
+  const list = (key: string): unknown[] => (record[key] === undefined ? [] : record[key] as unknown[]);
+  for (const entry of list('pending')) {
+    if (typeof entry !== 'object' || entry === null || typeof (entry as Record<string, unknown>).seq !== 'number') {
+      throw new Error('invalid audit journal shape: pending entry');
+    }
+    requireEnvelope((entry as Record<string, unknown>).envelope, 'pending entry');
+  }
+  for (const entry of list('fallback')) {
+    if (typeof entry !== 'object' || entry === null || typeof (entry as Record<string, unknown>).gen !== 'number') {
+      throw new Error('invalid audit journal shape: fallback entry');
+    }
+    requireEnvelope((entry as Record<string, unknown>).envelope, 'fallback entry');
+  }
+  for (const entry of list('acked')) {
+    if (typeof entry !== 'string') throw new Error('invalid audit journal shape: acked entry');
+  }
+  for (const entry of list('removed_senders')) {
+    const delta = entry as Record<string, unknown> | null;
+    if (delta === null || typeof delta !== 'object' || typeof delta.sender !== 'number' ||
+        typeof delta.prefix !== 'string' || typeof delta.generation !== 'number') {
+      throw new Error('invalid audit journal shape: removed_senders entry');
+    }
+  }
+  for (const entry of list('revoked')) {
+    const revoked = entry as Record<string, unknown> | null;
+    if (revoked === null || typeof revoked !== 'object' || typeof revoked.prefix !== 'string' ||
+        typeof revoked.generation !== 'number') {
+      throw new Error('invalid audit journal shape: revoked entry');
+    }
+  }
+  const lease = record.lease;
+  if (lease !== undefined && lease !== null) {
+    if (typeof lease !== 'object' || Array.isArray(lease)) throw new Error('invalid audit journal shape: lease is not an object');
+    const leaseRecord = lease as Record<string, unknown>;
+    if (typeof leaseRecord.prefix !== 'string' || typeof leaseRecord.generation !== 'number' || !Array.isArray(leaseRecord.senders)) {
+      throw new Error('invalid audit journal shape: lease fields');
+    }
+    for (const sender of leaseRecord.senders) {
+      if (typeof sender !== 'number') throw new Error('invalid audit journal shape: lease sender');
+    }
+  }
+}
+
 function readJournal(journalPath: string): Journal {
   if (!fs.existsSync(journalPath)) return emptyJournal();
-  return { ...emptyJournal(), ...(JSON.parse(fs.readFileSync(journalPath, 'utf8')) as Partial<Journal>) };
+  const parsed = JSON.parse(fs.readFileSync(journalPath, 'utf8')) as Partial<Journal>;
+  validateJournalShape(parsed);
+  return { ...emptyJournal(), ...parsed };
 }
 
 function writeJournal(journalPath: string, journal: Journal): void {
   fs.mkdirSync(path.dirname(journalPath), { recursive: true });
   const tmp = `${journalPath}.${String(process.pid)}.${String(Math.random()).slice(2)}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(journal), 'utf8');
+  // The rename below is atomic, but without an fsync the rename can outlive
+  // the file contents on power loss, leaving an empty/partial journal the
+  // next open cannot parse. Flush the bytes before publishing the name.
+  const fd = fs.openSync(tmp, 'r+');
+  try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
   fs.renameSync(tmp, journalPath);
+}
+
+/**
+ * PR #391 F-001: a malformed restart journal must not take a healthy store
+ * offline on every launch. Quarantine the bytes (evidence preserved), keep the
+ * pending outbox rows untouched, and invalidate custody bindings so renderers
+ * re-subscribe. Write paths still read strictly: an ack or removal must fail
+ * closed rather than overwrite unread evidence.
+ */
+function recoverFromCorruptJournal(store: StoreLike, journalPath: string, error: unknown): void {
+  const db = store.db;
+  ensureAuditOutboxSchema(db);
+  // Commit the fail-closed recovery FIRST: if it rolls back, the corrupt
+  // journal is still at its original path and the next open retries recovery
+  // instead of silently keeping a stale binding. Quarantining afterwards is
+  // idempotent-safe: if the rename fails, the next open repeats the (already
+  // committed) invalidation.
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    maxMeta(db, 'gen_high', meta(db, 'gen_high') + 1);
+    maxMeta(db, 'binding_epoch', meta(db, 'binding_epoch') + 1);
+    db.prepare('DELETE FROM audit_outbox_binding WHERE singleton = 1').run();
+    db.exec('COMMIT');
+  } catch (recoveryError) {
+    try { db.exec('ROLLBACK'); } catch { /* preserve original */ }
+    throw recoveryError;
+  }
+  const quarantined = `${journalPath}.corrupt-${Date.now()}`;
+  let quarantine = quarantined;
+  try {
+    fs.renameSync(journalPath, quarantined);
+  } catch (renameError) {
+    quarantine = `quarantine failed: ${renameError instanceof Error ? renameError.name : String(renameError)}`;
+  }
+  console.warn(
+    '[audit-outbox] restart journal quarantined; custody bindings invalidated and pending rows retained:',
+    error instanceof Error ? error.name : String(error),
+    quarantine,
+  );
 }
 
 /** Snapshot watermarks + pending rows, then append a capture-time fallback. */
@@ -491,7 +630,13 @@ export async function journalDestructiveTransition(
 /** Max-merge watermarks, seed sequence floor, gate/insert survivors, remove journal. */
 export function consumeAuditJournal(store: StoreLike, journalPath: string): void {
   if (!fs.existsSync(journalPath)) return;
-  const journal = readJournal(journalPath);
+  let journal: Journal;
+  try {
+    journal = readJournal(journalPath);
+  } catch (error) {
+    recoverFromCorruptJournal(store, journalPath, error);
+    return;
+  }
   const db = store.db;
   ensureAuditOutboxSchema(db);
   db.exec('BEGIN IMMEDIATE');

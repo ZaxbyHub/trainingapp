@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { PROFILE_KEY } from '../../lib/storage/persisted-keys';
-import type { DesktopApiBridge } from '../../types/desktop';
+import type { DesktopApiBridge, DesktopAuditEnvelope } from '../../types/desktop';
 
 let prefixCounter = 0;
 const nextPrefix = (): string => 'al' + String(++prefixCounter).padStart(6, '0');
@@ -90,11 +90,20 @@ describe('desktop audit bridge lifecycle', () => {
     let release!: (value: { prefix: string | null; generation: number; senders: number[]; epoch: number }) => void;
     const pendingState = new Promise<{ prefix: string | null; generation: number; senders: number[]; epoch: number }>((resolve) => { release = resolve; });
     channel.api.getAuditBindingState = vi.fn(() => pendingState);
-    stops.push(listener.startAuditOutboxListener(channel.api));
+    let releaseSettled!: () => void;
+    const reconcileSettled = new Promise<void>((resolve) => { releaseSettled = resolve; });
+    let armBarrier = false;
+    stops.push(listener.startAuditOutboxListener(channel.api, {
+      onReconcileSettled: () => { if (armBarrier) releaseSettled(); },
+    }));
     await vi.waitFor(() => expect(channel.api.getAuditBindingState).toHaveBeenCalled());
     channel.revoke(prefix);
+    // A completion barrier, not a microtask flush or wall-clock sleep: the
+    // released reconcile continuation must have SETTLED before the negative
+    // assertion, so a stale subscribe cannot escape it.
+    armBarrier = true;
     release({ prefix, generation: 3, senders: [], epoch: 0 });
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await reconcileSettled;
     expect(channel.api.subscribeAuditOutbox).not.toHaveBeenCalled();
     expect(listener.getActiveAuditOutboxContext()).toBeNull();
   });
@@ -115,14 +124,79 @@ describe('desktop audit bridge lifecycle', () => {
     const { audit, listener } = await load(prefix);
     const channel = bridge({ prefix, generation: 3 });
     channel.pending.push({ eventId: 'same-event', event: 'pack_install', subject: 'pack-a', occurredAt: Date.now(), seq: 7 });
-    stops.push(listener.startAuditOutboxListener(channel.api));
+    let releaseDrain!: () => void;
+    const drained = new Promise<void>((resolve) => { releaseDrain = resolve; });
+    let armBarrier = false;
+    stops.push(listener.startAuditOutboxListener(channel.api, {
+      onDrainSettled: () => { if (armBarrier) releaseDrain(); },
+    }));
     await vi.waitFor(() => expect(channel.acked).toEqual(['same-event']));
+    // The notification's drain must COMPLETE before the exactly-once
+    // assertion; a delayed duplicate delivery cannot escape the barrier.
+    armBarrier = true;
     channel.notify();
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await drained;
     const rows = await audit.listAuditEvents();
     expect(rows.filter((row) => row.eventId === 'same-event')).toHaveLength(1);
     expect(channel.acked).toEqual(['same-event']);
     expect(listener.getActiveAuditOutboxContext()).toMatchObject({ prefix, generation: 3 });
+  });
+
+  test('a notification during an in-flight drain re-drains without another trigger', async () => {
+    const prefix = nextPrefix();
+    const { listener } = await load(prefix);
+    const channel = bridge({ prefix, generation: 3 });
+    channel.pending.push({ eventId: 'first-event', event: 'pack_install', subject: 'pack-a', occurredAt: Date.now(), seq: 1 });
+    const basePending = channel.api.getAuditPending!;
+    let pendingCalls = 0;
+    let releaseSecond!: (rows: DesktopAuditEnvelope[]) => void;
+    channel.api.getAuditPending = vi.fn(async (pendingGeneration: number, pendingSender: number) => {
+      pendingCalls += 1;
+      if (pendingCalls === 2) {
+        return new Promise<DesktopAuditEnvelope[]>((resolve) => { releaseSecond = resolve; });
+      }
+      return basePending(pendingGeneration, pendingSender);
+    });
+    stops.push(listener.startAuditOutboxListener(channel.api));
+    await vi.waitFor(() => expect(channel.acked).toEqual(['first-event']));
+    // Second drain hangs on its pending snapshot. A new event arrives and is
+    // notified WHILE that drain is active; the stale snapshot cannot contain
+    // it, so the listener must rerun on its own.
+    channel.notify();
+    await vi.waitFor(() => expect(pendingCalls).toBeGreaterThanOrEqual(2));
+    channel.pending.push({ eventId: 'second-event', event: 'pack_remove', subject: 'pack-b', occurredAt: Date.now(), seq: 2 });
+    channel.notify();
+    releaseSecond([]);
+    await vi.waitFor(() => expect(channel.acked).toEqual(['first-event', 'second-event']));
+    expect(pendingCalls).toBeGreaterThanOrEqual(3);
+  });
+
+  test('a notification during a FAILING drain is still re-drained', async () => {
+    const prefix = nextPrefix();
+    const { listener } = await load(prefix);
+    const channel = bridge({ prefix, generation: 3 });
+    channel.pending.push({ eventId: 'first-event', event: 'pack_install', subject: 'pack-a', occurredAt: Date.now(), seq: 1 });
+    const basePending = channel.api.getAuditPending!;
+    let pendingCalls = 0;
+    let rejectSecond!: (error: unknown) => void;
+    channel.api.getAuditPending = vi.fn((pendingGeneration: number, pendingSender: number) => {
+      pendingCalls += 1;
+      if (pendingCalls === 2) {
+        return new Promise<DesktopAuditEnvelope[]>((_resolve, reject) => { rejectSecond = reject; });
+      }
+      return basePending(pendingGeneration, pendingSender);
+    });
+    stops.push(listener.startAuditOutboxListener(channel.api));
+    await vi.waitFor(() => expect(channel.acked).toEqual(['first-event']));
+    channel.notify();
+    await vi.waitFor(() => expect(pendingCalls).toBeGreaterThanOrEqual(2));
+    channel.pending.push({ eventId: 'second-event', event: 'pack_remove', subject: 'pack-b', occurredAt: Date.now(), seq: 2 });
+    channel.notify();
+    rejectSecond(new Error('simulated pending failure'));
+    // The failed pass must still honor the requested rerun instead of dropping
+    // the notification that arrived while it was in flight.
+    await vi.waitFor(() => expect(channel.acked).toEqual(['first-event', 'second-event']));
+    expect(pendingCalls).toBeGreaterThanOrEqual(3);
   });
 
   test('desktop clear fences old and legacy rows but preserves newer events', async () => {
@@ -145,5 +219,20 @@ describe('desktop audit bridge lifecycle', () => {
     expect(channel.api.auditBeforeClear).toHaveBeenCalledWith(3, expect.any(Number));
     expect(await audit.auditDb.meta.get('audit_clear_seq')).toEqual({ key: 'audit_clear_seq', value: 2 });
     expect(await audit.auditDb.meta.get('audit_clear_gen')).toEqual({ key: 'audit_clear_gen', value: 4 });
+  });
+
+  test('clear with the desktop bridge but no active custody context fails closed and keeps rows', async () => {
+    const prefix = nextPrefix();
+    const { audit } = await load(prefix);
+    const channel = bridge({ prefix, generation: 3 });
+    // Bridge present, listener never started: getActiveAuditOutboxContext()
+    // stays null. Pre-fix this fell through to a full local clear without the
+    // main fence, so pending main rows could reappear after the clear.
+    window.desktopApi = channel.api;
+    await audit.auditDb.events.add({ ts: Date.now(), event: 'app_start', subject: 'p', eventId: 'kept', source_seq: 1, source_gen: 3 });
+    await expect(audit.clearAuditLog()).rejects.toThrow(/active desktop audit binding/);
+    const rows = await audit.auditDb.events.toArray();
+    expect(rows.map((row) => row.eventId)).toEqual(['kept']);
+    expect(channel.api.auditBeforeClear).not.toHaveBeenCalled();
   });
 });

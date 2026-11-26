@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -8,6 +8,7 @@ import {
   appendStandalone,
   bindOutboxBinding,
   captureClear,
+  consumeAuditJournal,
   defaultAuditJournalPath,
   ensureAuditOutboxSchema,
   readOutboxBindingState,
@@ -206,6 +207,134 @@ describe('audit outbox destructive transitions', () => {
       expect(next.seq).toBe(11);
       expect(eventIds(dbPath)).toEqual(['new']);
     } finally {
+      store.close();
+      fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
+    }
+  });
+
+  test('a malformed restart journal on a healthy store is quarantined, not fatal', async () => {
+    const dbPath = tempStore('corrupt-journal');
+    const journalPath = defaultAuditJournalPath(dbPath);
+    const store = openStore({ dbPath, dims: 8 });
+    try {
+      await bindOutboxBinding(store, 'profile-a', 11);
+      appendStandalone(store, { eventId: 'survivor', event: 'app_start', subject: 'p', occurredAt: Date.now() });
+    } finally {
+      store.close();
+    }
+    fs.writeFileSync(journalPath, '{not valid json');
+    try {
+      const reopened = openStore({ dbPath, dims: 8 });
+      try {
+        // Healthy SQLite + corrupt sidecar must still open; the pending row is
+        // retained and the custody binding is invalidated so a renderer
+        // re-subscribes.
+        expect(eventIds(dbPath)).toContain('survivor');
+        expect(readOutboxBindingState(reopened)).toMatchObject({ prefix: null, senders: [] });
+        const quarantined = fs.readdirSync(path.dirname(journalPath)).filter((name) => name.includes('.corrupt-'));
+        expect(quarantined).toHaveLength(1);
+        expect(fs.readFileSync(path.join(path.dirname(journalPath), quarantined[0]), 'utf8')).toBe('{not valid json');
+      } finally {
+        reopened.close();
+      }
+    } finally {
+      getCurrentStore()?.close();
+      fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
+    }
+  });
+
+  test('a syntax-valid but wrong-shaped journal is quarantined, not fatal', async () => {
+    // Each malformed fixture gets its OWN fresh store and journal, and asserts
+    // ITS bytes were quarantined. A shared store with a "> 0 corrupt files"
+    // assertion could pass later fixtures without quarantining them.
+    const fixtures = ['{"pending":null}', '{"pending":[null]}', '[]'];
+    for (const [index, malformed] of fixtures.entries()) {
+      const dbPath = tempStore(`corrupt-shape-${String(index)}`);
+      const journalPath = defaultAuditJournalPath(dbPath);
+      const survivor = `shape-survivor-${String(index)}`;
+      const seed = openStore({ dbPath, dims: 8 });
+      try {
+        await bindOutboxBinding(seed, 'profile-a', 11);
+        appendStandalone(seed, { eventId: survivor, event: 'app_start', subject: 'p', occurredAt: Date.now() });
+      } finally {
+        seed.close();
+      }
+      fs.writeFileSync(journalPath, malformed);
+      try {
+        const reopened = openStore({ dbPath, dims: 8 });
+        try {
+          expect(eventIds(dbPath)).toContain(survivor);
+          expect(readOutboxBindingState(reopened)).toMatchObject({ prefix: null, senders: [] });
+          expect(fs.existsSync(journalPath), 'the malformed journal was moved aside').toBe(false);
+          const corrupt = fs.readdirSync(path.dirname(journalPath)).filter((name) => name.includes('.corrupt-'));
+          expect(corrupt).toHaveLength(1);
+          expect(fs.readFileSync(path.join(path.dirname(journalPath), corrupt[0]), 'utf8')).toBe(malformed);
+        } finally {
+          reopened.close();
+        }
+      } finally {
+        getCurrentStore()?.close();
+        fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
+      }
+    }
+  });
+
+  test('a failed recovery COMMIT leaves the corrupt journal for the next open', async () => {
+    const dbPath = tempStore('corrupt-commit-fail');
+    const journalPath = defaultAuditJournalPath(dbPath);
+    const store = openStore({ dbPath, dims: 8 });
+    try {
+      await bindOutboxBinding(store, 'profile-a', 11);
+      appendStandalone(store, { eventId: 'kept', event: 'app_start', subject: 'p', occurredAt: Date.now() });
+      fs.writeFileSync(journalPath, '{bad');
+      const failing = { db: failNextCommit(store.db, { armed: true }), dbPath };
+      // Quarantine happens only AFTER the recovery COMMIT: a rolled-back
+      // invalidation must leave the corrupt journal where the next open can
+      // retry it, not hide it behind a rename.
+      expect(() => consumeAuditJournal(failing, journalPath)).toThrow('simulated commit failure');
+      expect(fs.existsSync(journalPath)).toBe(true);
+      expect(readOutboxBindingState(store)).toMatchObject({ prefix: 'profile-a', senders: [11] });
+    } finally {
+      store.close();
+    }
+    try {
+      const reopened = openStore({ dbPath, dims: 8 });
+      try {
+        expect(readOutboxBindingState(reopened)).toMatchObject({ prefix: null, senders: [] });
+        expect(eventIds(dbPath)).toContain('kept');
+        expect(fs.existsSync(journalPath)).toBe(false);
+      } finally {
+        reopened.close();
+      }
+    } finally {
+      getCurrentStore()?.close();
+      fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
+    }
+  });
+
+  test('the ack-tombstone growth warning fires once at the threshold', async () => {
+    const dbPath = tempStore('ack-warn');
+    const journalPath = defaultAuditJournalPath(dbPath);
+    const store = openStore({ dbPath, dims: 8 });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const binding = await bindOutboxBinding(store, 'profile-a', 11);
+      appendStandalone(store, { eventId: 'warn-target', event: 'app_start', subject: 'p', occurredAt: Date.now() });
+      // Seed the journal just below the 5,000-entry threshold so one real ack
+      // crosses it; this exercises the ack path, not a helper.
+      fs.writeFileSync(journalPath, JSON.stringify({
+        pending: [], fallback: [], clear_seq: 0, clear_at: 0, clear_gen: 0, lease: null,
+        seq_high: 1, gen_high: 0, binding_epoch: 0, removed_senders: [], revoked: [],
+        acked: Array.from({ length: 4999 }, (_, index) => `old-${String(index)}`),
+      }));
+      expect(await ackOutboxEvent(store, binding.generation, 11, 'warn-target')).toBe(true);
+      const growthWarnings = (): number => warn.mock.calls.filter((call) => String(call[0]).includes('ack tombstone journal')).length;
+      expect(growthWarnings()).toBe(1);
+      appendStandalone(store, { eventId: 'warn-second', event: 'app_stop', subject: 'p', occurredAt: Date.now() });
+      expect(await ackOutboxEvent(store, binding.generation, 11, 'warn-second')).toBe(true);
+      expect(growthWarnings(), 'the warning is once per process, not per ack').toBe(1);
+    } finally {
+      warn.mockRestore();
       store.close();
       fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
     }

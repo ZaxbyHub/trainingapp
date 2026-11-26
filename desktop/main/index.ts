@@ -19,6 +19,7 @@ import { app, BrowserWindow, dialog, ipcMain, safeStorage, session, shell, utili
 import { createSafeStorageSecretStore } from './security/secret-store.js';
 import { registerPermissionHandlers } from './security/permissions.js';
 import { registerAppProtocol, registerAppSchemePrivileges } from './protocol.js';
+import { createAuditCallerAssertion, assertSenderNotOwnedElsewhere } from './audit-caller.js';
 import {
   createBackendHost,
   NodeBackendHost,
@@ -524,6 +525,11 @@ export function bootstrap(): void {
       if (store === null) throw new Error('governance store is unavailable');
       return store;
     };
+    // PR #391 F-007: delivery/ack/clear must prove the calling webContents is
+    // the one that bound this sender, matching subscribe/revoked-ack. The
+    // claimed sender alone is enumerable through binding-state, so membership
+    // in the sender set is not caller identity.
+    const assertAuditCaller = createAuditCallerAssertion(auditSendersByWebContents);
     ipcMain.handle('desktop:audit:binding-state', () => readOutboxBindingState(requireAuditStore()));
     ipcMain.handle('desktop:audit:subscribe', async (event, prefix: unknown, sender: unknown, expectedEpoch: unknown) => {
       // Feedback cluster C: the SAME canonical-prefix rule desktop:audit:
@@ -568,14 +574,16 @@ export function bootstrap(): void {
         }
         bindEpoch = recovered.epoch;
       }
+      assertSenderNotOwnedElsewhere(auditSendersByWebContents, event.sender.id, sender);
       const bound = await bindOutboxBinding(store, prefix, sender, auditSendersByWebContents.get(event.sender.id), bindEpoch);
       auditSendersByWebContents.set(event.sender.id, sender);
       return bound;
     });
-    ipcMain.handle('desktop:audit:pending', async (_event, generation: unknown, sender: unknown) => {
+    ipcMain.handle('desktop:audit:pending', async (event, generation: unknown, sender: unknown) => {
       if (typeof generation !== 'number' || !Number.isInteger(generation) || generation < 1 || !validAuditSender(sender)) {
         throw new Error('audit delivery requires a binding generation and sender');
       }
+      assertAuditCaller(event, sender);
       return (await readOutboxPending(requireAuditStore(), generation, sender)).map((row) => ({
         eventId: row.event_id,
         event: row.event,
@@ -584,17 +592,19 @@ export function bootstrap(): void {
         seq: row.seq,
       }));
     });
-    ipcMain.handle('desktop:audit:ack', async (_event, eventId: unknown, generation: unknown, sender: unknown) => {
+    ipcMain.handle('desktop:audit:ack', async (event, eventId: unknown, generation: unknown, sender: unknown) => {
       if (typeof eventId !== 'string' || eventId.length === 0 || eventId.length > 200 ||
           typeof generation !== 'number' || !Number.isInteger(generation) || generation < 1 || !validAuditSender(sender)) {
         throw new Error('audit acknowledgment requires an event id, generation, and sender');
       }
+      assertAuditCaller(event, sender);
       await ackOutboxEvent(requireAuditStore(), generation, sender, eventId);
     });
-    ipcMain.handle('desktop:audit:before-clear', async (_event, generation: unknown, sender: unknown) => {
+    ipcMain.handle('desktop:audit:before-clear', async (event, generation: unknown, sender: unknown) => {
       if (typeof generation !== 'number' || !Number.isInteger(generation) || generation < 1 || !validAuditSender(sender)) {
         throw new Error('audit clear requires a binding generation and sender');
       }
+      assertAuditCaller(event, sender);
       const store = requireAuditStore();
       const state = readOutboxBindingState(store);
       if (state.generation !== generation || !state.senders.includes(sender)) {

@@ -1435,11 +1435,19 @@ outbox binding lease:
   namespace-revocation entries (a revoked prefix/generation pair), and
   sender-removal deltas (a removed sender id scoped to the prefix/generation
   it applied to). Those records are retained INDEFINITELY - nothing purges
-  them on the 90-day window.
+  them on the 90-day window. Acknowledged tombstones therefore make the
+  journal grow with the number of distinct acknowledgments, bounded only by
+  event volume (roughly a few to tens of events per day); the desktop logs a
+  single warning when the tombstone list crosses 5,000 entries. Pruning by
+  count is deliberately not performed: removing a tombstone would let a
+  restored pre-acknowledgment backup redeliver the event again.
 
 The journal is kept as an idempotent recovery snapshot: Clear Cache, fresh
 recovery, and backup restore preserve it, and several restore arms reuse one
-journal.
+journal. If the journal file cannot be parsed at store open, it is renamed to
+`{db path}.audit-journal.json.corrupt-<timestamp>`, the custody binding is
+invalidated so renderers re-subscribe, and the pending outbox rows are
+retained; a healthy SQLite store still opens instead of failing every launch.
 
 **Event roster (PROPOSED).** Browser producers emit where the renderer
 truthfully observes a commit. Desktop main-process producers emit into a
