@@ -1,12 +1,22 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import { edgevecSnippetPlugin } from './vite.config';
 
 export default defineConfig({
-  plugins: [react()],
+  // edgevecSnippetPlugin is the same virtual-module stub the production build
+  // uses: the published edgevec 0.6.0 tarball omits the wasm-bindgen
+  // `snippets/` directory its own edgevec.js imports, so every module graph
+  // that reaches src/lib/search/vector-index.ts fails to resolve without it.
+  // Registering it here (plus server.deps.inline below) makes those graphs
+  // resolvable in the test pipeline instead of forcing a per-spec mock.
+  plugins: [react(), edgevecSnippetPlugin()],
   test: {
     globals: true,
     environment: 'jsdom',
+    // edgevec is externalized by default, which bypasses Vite plugins; inline
+    // it so the snippet stub above can intercept its internal import.
+    server: { deps: { inline: ['edgevec'] } },
     // Centralized test setup: registers jest-dom matchers and stubs jsdom gaps
     // (matchMedia, IntersectionObserver) once for every test file.
     setupFiles: ['./src/test/setup.ts'],
@@ -33,11 +43,10 @@ export default defineConfig({
     },
     // Generous timeout for tests that load mocked WASM/model pipelines.
     testTimeout: 30000,
-    // Pre-existing failing tests NOT owned by this PR (issue #20 is build/
-    // weights/packaging; the failures below trace to sibling-PR-owned logic).
-    // Each is explicitly listed here — not deleted — per issue #20 acceptance
-    // criterion #3 ("pre-existing unrelated failures may remain but must be
-    // explicitly noted"). Remove an entry when the owning sibling PR fixes it.
+    // No src/ spec is quarantined (issue #348 discharged the last seven: the
+    // entries that used to live here named CLOSED owners #20-#25 and rotted
+    // against a moved product). Any future quarantine must cite a live owner
+    // and is rejected by src/test/vitest-quarantine.test.ts until it does.
     exclude: [
       '**/node_modules/**',
       '**/dist/**',
@@ -46,28 +55,6 @@ export default defineConfig({
       // vitest — the include glob's `.spec.` branch would otherwise collect
       // them and fail at import.
       'e2e/**',
-      // Pre-existing behavioral failures (status-color and mode-switching
-      // assertions that don't match the component's actual behavior) plus the
-      // settings-wiring-honesty class: this file and the two marked below still
-      // encode the removed browser API-server mode (api mode outside Electron,
-      // the user-entered server URL, the old 'Local'/'API' toggle copy). Rework
-      // those cases before un-excluding them; they are not regressions of
-      // current behavior. Owned by issue #348.
-      'src/components/InferenceModeToggle.test.tsx',
-      // Depend on the unbuilt edgevec WASM snippet (node_modules artifact not
-      // present without a build step) AND content drift. Owned by issue #348
-      // (fix recipe: server.deps.inline edgevec + stub plugin, then un-exclude).
-      'src/pages/ChatPage.test.tsx',
-      'src/pages/ChatPage.verification-3.3.test.tsx', // also encodes the removed browser API-server mode (see above); owned by issue #348
-      'src/pages/DocumentsPage.test.tsx',
-      // Missing fake-timer setup + spy/mock-result drift in chat/streaming
-      // integration tests. Owned by issue #348.
-      'src/pages/ChatPage.rag.test.tsx',
-      'src/lib/inference/InferenceModeContext.test.tsx', // also encodes the removed browser API-server mode (see above); owned by issue #348
-      // Allocates multi-GB page fixtures for TextChunker stress/verification;
-      // exceeds the per-fork memory limit under the tuned pool (rework to
-      // stream fixtures). Owned by issue #348.
-      'src/test/verification/text-chunker.task44.test.ts',
     ],
   },
   resolve: {

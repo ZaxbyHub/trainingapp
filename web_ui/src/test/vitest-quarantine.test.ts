@@ -12,7 +12,10 @@
  *     the next comment block starts, and a trailing inline comment on an
  *     entry overrides it;
  *  3. the two rewritten extractor specs show a value (non-`import type`)
- *     import of the real extractor and zero `vi.mock` of the extractor module.
+ *     import of the real extractor and zero `vi.mock` of the extractor module;
+ *  4. none of the seven specs discharged by issue #348 reappear as exclusions
+ *     (the end state is zero src/ exclusions; the owner rule above governs any
+ *     future entry).
  *
  * Controls 4 runs the SAME validator over synthetic texts: ownerless fails,
  * fully-owned passes, inline-override associates the inline owner.
@@ -32,12 +35,27 @@ const CONFIG_PATH = join(ROOT, 'vitest.config.ts');
 const DOCX_SPEC_PATH = join(ROOT, 'src', 'lib', 'processing', 'docx-extractor.test.ts');
 const XLSX_SPEC_PATH = join(ROOT, 'src', 'lib', 'processing', 'xlsx-extractor.test.ts');
 
-/** Live follow-up owner(s) of the remaining quarantined specs. */
-const QUARANTINE_OWNERS: readonly number[] = [348];
+/** Live follow-up owner(s) of the remaining quarantined specs.
+ *
+ * Empty by design after issue #348 discharged the last seven entries: a new
+ * quarantine is a deliberate act that must add its own live owner id here, so
+ * this suite fails until it does. Never re-add a closed #20-#26 owner. */
+const QUARANTINE_OWNERS: readonly number[] = [];
 /** Owner ids that are closed work items and must never reappear. */
 const FORBIDDEN_OWNERS = /#2[0-6]\b/;
 /** This issue's own number is not a live owner for the quarantine. */
 const SELF_NUMBER = 271;
+
+/** Specs discharged by issue #348 — they may NEVER reappear as exclusions. */
+const DISCHARGED_PATHS = [
+  'src/components/InferenceModeToggle.test.tsx',
+  'src/pages/ChatPage.test.tsx',
+  'src/pages/ChatPage.verification-3.3.test.tsx',
+  'src/pages/DocumentsPage.test.tsx',
+  'src/pages/ChatPage.rag.test.tsx',
+  'src/lib/inference/InferenceModeContext.test.tsx',
+  'src/test/verification/text-chunker.task44.test.ts',
+];
 
 const UN_QUARANTINED_SPECS = [
   'src/lib/processing/docx-extractor.test.ts',
@@ -155,9 +173,18 @@ describe('vitest quarantine honesty (issue #271 AC5)', () => {
 
   test('every remaining src/ exclusion carries a live #N owner (validator on the real config)', () => {
     const entries = parseQuarantine(configText).filter((e) => e.path.startsWith('src/'));
-    expect(entries.length).toBeGreaterThanOrEqual(1);
+    // Zero entries is the correct end state (issue #348). The invariant is not
+    // "some spec is quarantined"; it is "anything quarantined has a live owner".
     const problems = validateQuarantine(entries, QUARANTINE_OWNERS, FORBIDDEN_OWNERS, SELF_NUMBER);
     expect(problems).toEqual([]);
+  });
+
+  test('the seven specs discharged by issue #348 never reappear as exclusions', () => {
+    const entries = parseQuarantine(configText).filter((e) => e.path.startsWith('src/'));
+    const excluded = entries.map((e) => e.path);
+    for (const path of DISCHARGED_PATHS) {
+      expect(excluded, `${path} is quarantined again`).not.toContain(path);
+    }
   });
 
   test('rewritten extractor specs value-import the real extractor and never mock it', () => {
@@ -191,7 +218,10 @@ describe('vitest quarantine honesty (issue #271 AC5)', () => {
     ],`;
 
     const ownedEntries = parseQuarantine(owned).filter((e) => e.path.startsWith('src/'));
-    expect(validateQuarantine(ownedEntries, QUARANTINE_OWNERS, FORBIDDEN_OWNERS, SELF_NUMBER)).toEqual([]);
+    // The LIVE allowlist is empty now (issue #348 discharged the last entry), so
+    // the controls supply a synthetic owner to exercise the accept path.
+    const CONTROL_OWNERS: readonly number[] = [348];
+    expect(validateQuarantine(ownedEntries, CONTROL_OWNERS, FORBIDDEN_OWNERS, SELF_NUMBER)).toEqual([]);
 
     const ownerlessEntries = parseQuarantine(ownerless).filter((e) => e.path.startsWith('src/'));
     const ownerlessProblems = validateQuarantine(ownerlessEntries, QUARANTINE_OWNERS, FORBIDDEN_OWNERS, SELF_NUMBER);

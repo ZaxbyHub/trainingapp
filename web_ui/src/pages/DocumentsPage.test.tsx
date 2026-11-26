@@ -1,40 +1,189 @@
 /**
  * Tests for DocumentsPage - integration of all components and file processing pipeline
+ * (issue #348 quarantine discharge).
+ *
+ * Harness and mock set adopted from the green sibling
+ * DocumentsPage.delete-order.test.tsx: the page pulls native-ESM / heavyweight
+ * seams (vector-index -> edgevec, embedding model, chunker, extractor) that
+ * cannot run in jsdom, plus the ToastProvider context. Deletion is the
+ * two-step inline confirm (Delete <file> -> Confirm delete <file>).
+ *
+ * The three header count-badge cases that used to live here are covered
+ * (still green) by src/pages/__tests__/documents-count-boundaries.test.tsx
+ * (singular/plural/zero rows).
  */
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import React from 'react';
+import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
 import '@testing-library/jest-dom';
 
-// Mock dependencies BEFORE importing DocumentsPage
-vi.mock('../lib/storage/document-store', () => ({
-  loadDocuments: vi.fn().mockResolvedValue([]),
-  saveDocuments: vi.fn().mockResolvedValue(undefined),
-  deleteDocument: vi.fn().mockResolvedValue(undefined),
-  // PRR-016: DocumentsPage gained these two imports in PR #274; the excluded
-  // spec's factory must stay in sync or the file breaks the moment it is
-  // re-enabled.
-  upsertDocument: vi.fn(async () => {}),
-  onDocumentsRemoteChange: vi.fn(() => () => {}),
+// vi.hoisted: the vi.mock factories below are hoisted above every const, so
+// the shared mock handles must be hoisted with them (the spec keeps static
+// imports of the page under test).
+const {
+  showToastSpy,
+  mockEmbeddingService,
+  mockVectorIndex,
+  mockKeywordIndex,
+  mockLoadDocuments,
+  mockSaveDocuments,
+  mockDeleteDocumentFromStore,
+  mockUpsertDocument,
+  mockOnDocumentsRemoteChange,
+  mockEnsureEmbeddingServiceReady,
+} = vi.hoisted(() => {
+  const showToastSpy = vi.fn();
+  const mockEmbeddingService = {
+    isReady: vi.fn(() => true),
+    encodeBatch: vi.fn(async (texts: string[]) => texts.map(() => new Array(768).fill(0))),
+  };
+  const mockVectorIndex = {
+    isReady: vi.fn(() => true),
+    initialize: vi.fn(async () => {}),
+    addBatch: vi.fn(async () => {}),
+    save: vi.fn(async () => {}),
+    removeByDocId: vi.fn(async (_docId: string) => {}),
+  };
+  const mockKeywordIndex = {
+    isReady: vi.fn(() => true),
+    addDocuments: vi.fn((_chunks: unknown[]) => {}),
+    save: vi.fn(async () => {}),
+    removeByDocId: vi.fn(async (_docId: string) => {}),
+  };
+  const mockLoadDocuments = vi.fn(async () => [] as Array<{ id: string; fileName: string; status: string; uploadedAt: number; progress: number; fileSize: number; fileType: string }>);
+  const mockSaveDocuments = vi.fn(async () => {});
+  const mockDeleteDocumentFromStore = vi.fn(async () => {});
+  const mockUpsertDocument = vi.fn(async () => {});
+  const mockOnDocumentsRemoteChange = vi.fn((_cb: () => void) => () => {});
+  const mockEnsureEmbeddingServiceReady = vi.fn(async () => true);
+  return {
+    showToastSpy,
+    mockEmbeddingService,
+    mockVectorIndex,
+    mockKeywordIndex,
+    mockLoadDocuments,
+    mockSaveDocuments,
+    mockDeleteDocumentFromStore,
+    mockUpsertDocument,
+    mockOnDocumentsRemoteChange,
+    mockEnsureEmbeddingServiceReady,
+  };
+});
+
+vi.mock('../components/ToastProvider', () => ({
+  ToastProvider: ({ children }: { children: React.ReactNode }) =>
+    React.createElement(React.Fragment, null, children),
+  useToast: () => ({ showToast: showToastSpy }),
 }));
 
+vi.mock('../hooks/useServiceInitialization', () => ({
+  ensureEmbeddingServiceReady: () => mockEnsureEmbeddingServiceReady(),
+}));
+vi.mock('../lib/processing/text-chunker', () => ({
+  TextChunker: class TextChunker {
+    chunkText(_fullText: string, _fileName: string, _pages?: unknown) {
+      return [
+        { docId: '', chunkIndex: 0, text: 'This is test document content', pageNumber: 1, startChar: 0, endChar: 35 },
+        { docId: '', chunkIndex: 1, text: 'with multiple chunks.', pageNumber: 1, startChar: 36, endChar: 53 },
+      ];
+    }
+  },
+}));
+vi.mock('../lib/embeddings/embedding-service', () => ({
+  getEmbeddingService: () => mockEmbeddingService,
+}));
+vi.mock('../lib/search/vector-index', () => ({
+  getVectorIndex: () => mockVectorIndex,
+}));
+vi.mock('../lib/search/keyword-index', () => ({
+  getKeywordIndex: () => mockKeywordIndex,
+}));
+vi.mock('../lib/storage/document-store', () => ({
+  loadDocuments: mockLoadDocuments,
+  saveDocuments: mockSaveDocuments,
+  upsertDocument: mockUpsertDocument,
+  deleteDocument: mockDeleteDocumentFromStore,
+  onDocumentsRemoteChange: mockOnDocumentsRemoteChange,
+}));
 vi.mock('../lib/processing/extractor-factory', () => ({
-  extractDocument: vi.fn().mockResolvedValue({
-    fullText: 'This is extracted text content',
-    pages: [{ pageNumber: 1, text: 'This is extracted text content' }],
-  }),
-  SUPPORTED_EXTENSIONS: ['.pdf', '.docx', '.xlsx', '.pptx', '.txt', '.md'],
+  extractDocument: vi.fn(async () => ({
+    fullText: 'This is test document content with multiple chunks.',
+    pages: 1,
+    metadata: {},
+  })),
+  SUPPORTED_EXTENSIONS: ['.txt', '.pdf', '.docx'],
 }));
 
 // Import DocumentsPage after mocks are set up
 import { DocumentsPage } from './DocumentsPage';
-import * as documentStore from '../lib/storage/document-store';
-import * as extractorFactory from '../lib/processing/extractor-factory';
+import { ToastProvider } from '../components/ToastProvider';
+import { extractDocument } from '../lib/processing/extractor-factory';
+import type { DocumentEntry } from '../types/document';
+
+function readyDoc(id: string, fileName: string): DocumentEntry {
+  return {
+    id,
+    fileName,
+    fileSize: 1024,
+    fileType: '.pdf',
+    status: 'ready' as const,
+    progress: 100,
+    uploadedAt: Date.now(),
+  };
+}
+
+function renderPage(): ReturnType<typeof render> {
+  return render(
+    <ToastProvider>
+      <DocumentsPage />
+    </ToastProvider>
+  );
+}
+
+/** Drop a file onto the DropZone (the drag-and-drop upload path). */
+function dropFile(fileName: string): void {
+  const dropZone = screen.getByRole('button', { name: /drop files here or click to select/i });
+  const file = new File(['content'], fileName, { type: 'application/pdf' });
+  fireEvent.drop(dropZone, {
+    dataTransfer: { files: [file], items: [{ kind: 'file', getAsFile: () => file }] },
+  });
+}
+
+/** Wait until the page leaves the loading branch (DropZone mounted). */
+async function waitForLoaded(): Promise<void> {
+  await waitFor(() => {
+    expect(screen.getByRole('button', { name: /drop files here or click to select/i })).toBeInTheDocument();
+  });
+}
+
+/** The two-step inline confirm delete (DocumentList). */
+async function confirmDelete(fileName: string): Promise<void> {
+  fireEvent.click(screen.getByRole('button', { name: `Delete ${fileName}` }));
+  const confirmButton = await screen.findByRole('button', { name: `Confirm delete ${fileName}` });
+  await act(async () => {
+    fireEvent.click(confirmButton);
+  });
+}
 
 describe('DocumentsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     cleanup();
+    // Re-prime defaults: clearAllMocks keeps implementations, so a
+    // never-resolving loadDocuments (loading-state test) or a gated
+    // extractDocument (processing test) must not leak into later suites.
+    mockLoadDocuments.mockImplementation(async () => []);
+    vi.mocked(extractDocument).mockImplementation(async () => ({
+      fullText: 'This is test document content with multiple chunks.',
+      pages: [{ pageNumber: 1, text: 'This is test document content with multiple chunks.' }],
+      metadata: { fileName: 'test.pdf', pageCount: 1, fileSize: 1024, extractedAt: 0 },
+    }));
+    mockSaveDocuments.mockImplementation(async () => {});
+    mockDeleteDocumentFromStore.mockImplementation(async () => {});
+    mockEnsureEmbeddingServiceReady.mockResolvedValue(true);
+    mockEmbeddingService.isReady.mockReturnValue(true);
+    mockVectorIndex.isReady.mockReturnValue(true);
+    mockKeywordIndex.isReady.mockReturnValue(true);
   });
 
   afterEach(() => {
@@ -42,41 +191,35 @@ describe('DocumentsPage', () => {
   });
 
   describe('Initial Loading', () => {
-    it('shows loading state while fetching documents', async () => {
-      (documentStore.loadDocuments as any).mockImplementation(() => new Promise(() => {})); // Never resolves
+    it('shows loading state while fetching documents', () => {
+      mockLoadDocuments.mockImplementation(() => new Promise(() => {})); // Never resolves
 
-      render(<DocumentsPage />);
+      renderPage();
 
-      expect(screen.getByText(/loading documents\.\.\./i)).toBeInTheDocument();
+      // Loading branch: the status region replaces the old
+      // "Loading documents..." text.
+      expect(screen.getByRole('status', { name: 'Loading documents' })).toHaveAttribute(
+        'aria-busy',
+        'true'
+      );
     });
 
     it('loads documents from IndexedDB on mount', async () => {
-      (documentStore.loadDocuments as any).mockResolvedValue([]);
-      (documentStore.saveDocuments as any).mockResolvedValue(undefined);
-
-      render(<DocumentsPage />);
+      renderPage();
 
       await waitFor(() => {
-        expect(documentStore.loadDocuments).toHaveBeenCalled();
+        expect(mockLoadDocuments).toHaveBeenCalled();
       });
     });
 
     it('renders DropZone after loading', async () => {
-      (documentStore.loadDocuments as any).mockResolvedValue([]);
-      (documentStore.saveDocuments as any).mockResolvedValue(undefined);
+      renderPage();
 
-      render(<DocumentsPage />);
-
-      await waitFor(() => {
-        expect(screen.getByRole('button', { name: /drop files here or click to select/i })).toBeInTheDocument();
-      });
+      await waitForLoaded();
     });
 
     it('renders DocumentList after loading', async () => {
-      (documentStore.loadDocuments as any).mockResolvedValue([]);
-      (documentStore.saveDocuments as any).mockResolvedValue(undefined);
-
-      render(<DocumentsPage />);
+      renderPage();
 
       await waitFor(() => {
         expect(screen.getByText(/no documents uploaded yet/i)).toBeInTheDocument();
@@ -86,95 +229,20 @@ describe('DocumentsPage', () => {
 
   describe('Header', () => {
     it('displays Documents heading', async () => {
-      (documentStore.loadDocuments as any).mockResolvedValue([]);
-      (documentStore.saveDocuments as any).mockResolvedValue(undefined);
-
-      render(<DocumentsPage />);
+      renderPage();
 
       await waitFor(() => {
-        expect(screen.getByRole('heading', { name: /documents/i })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: 'Documents' })).toBeInTheDocument();
       });
-    });
-
-    it('shows document count badge when documents exist', async () => {
-      const docs = [{
-        id: 'doc-1',
-        fileName: 'test.pdf',
-        fileSize: 1024,
-        fileType: '.pdf',
-        status: 'ready' as const,
-        progress: 100,
-        uploadedAt: Date.now(),
-      }];
-      (documentStore.loadDocuments as any).mockResolvedValue(docs);
-      (documentStore.saveDocuments as any).mockResolvedValue(undefined);
-
-      render(<DocumentsPage />);
-
-      await waitFor(() => {
-        expect(screen.getByText(/1 document/i)).toBeInTheDocument();
-      });
-    });
-
-    it('shows plural form for multiple files', async () => {
-      const docs = [
-        { id: 'doc-1', fileName: 'test1.pdf', fileSize: 1024, fileType: '.pdf', status: 'ready' as const, progress: 100, uploadedAt: Date.now() },
-        { id: 'doc-2', fileName: 'test2.pdf', fileSize: 1024, fileType: '.pdf', status: 'ready' as const, progress: 100, uploadedAt: Date.now() },
-      ];
-      (documentStore.loadDocuments as any).mockResolvedValue(docs);
-      (documentStore.saveDocuments as any).mockResolvedValue(undefined);
-
-      render(<DocumentsPage />);
-
-      await waitFor(() => {
-        expect(screen.getByText(/2 documents/i)).toBeInTheDocument();
-      });
-    });
-
-    it('does not show badge when no supported documents', async () => {
-      (documentStore.loadDocuments as any).mockResolvedValue([]);
-      (documentStore.saveDocuments as any).mockResolvedValue(undefined);
-
-      render(<DocumentsPage />);
-
-      // Settle first: the loading branch also renders the header, so badge
-      // absence only means something once loading finished (the DropZone
-      // button exists only in the loaded branch). Then target the header
-      // badge itself — the previous /document/i text query matched the
-      // always-present "Documents" heading and could never pass (review
-      // PRR-058, pr255).
-      await waitFor(() => {
-        expect(screen.getByRole('button', { name: /drop files here or click to select/i })).toBeInTheDocument();
-      });
-      expect(document.querySelector('.ui-page-header__actions .ui-badge')).toBeNull();
     });
   });
 
   describe('File Processing Pipeline', () => {
     it('adds new document when files are selected', async () => {
-      (documentStore.loadDocuments as any).mockResolvedValue([]);
-      (documentStore.saveDocuments as any).mockResolvedValue(undefined);
-      (extractorFactory.extractDocument as any).mockResolvedValue({
-        fullText: 'test content',
-        pages: [],
-      });
+      renderPage();
+      await waitForLoaded();
 
-      render(<DocumentsPage />);
-
-      await waitFor(() => {
-        expect(screen.queryByText(/no documents uploaded yet/i)).toBeInTheDocument();
-      });
-
-      // Simulate file selection via DropZone
-      const dropZone = screen.getByRole('button', { name: /drop files here or click to select/i });
-
-      const mockFile = new File(['content'], 'new-doc.pdf', { type: 'application/pdf' });
-      const mockDataTransfer = {
-        files: [mockFile],
-        items: [{ kind: 'file', getAsFile: () => mockFile }],
-      };
-
-      fireEvent.drop(dropZone, { dataTransfer: mockDataTransfer });
+      dropFile('new-doc.pdf');
 
       await waitFor(() => {
         expect(screen.getByText('new-doc.pdf')).toBeInTheDocument();
@@ -182,140 +250,94 @@ describe('DocumentsPage', () => {
     });
 
     it('updates status to processing after extraction starts', async () => {
-      (documentStore.loadDocuments as any).mockResolvedValue([]);
-      (documentStore.saveDocuments as any).mockResolvedValue(undefined);
-      (extractorFactory.extractDocument as any).mockResolvedValue({
-        fullText: 'test content',
-        pages: [],
-      });
+      // Hold extraction open so the Processing status is observable, not a
+      // microtask-blip between mocked stages.
+      let releaseExtraction!: (value: Awaited<ReturnType<typeof extractDocument>>) => void;
+      vi.mocked(extractDocument).mockImplementation(
+        () => new Promise((resolve) => { releaseExtraction = resolve; })
+      );
 
-      render(<DocumentsPage />);
+      renderPage();
+      await waitForLoaded();
 
-      await waitFor(() => {});
-
-      const dropZone = screen.getByRole('button', { name: /drop files here or click to select/i });
-      const mockFile = new File(['content'], 'processing-doc.pdf', { type: 'application/pdf' });
-
-      fireEvent.drop(dropZone, { dataTransfer: { files: [mockFile], items: [{ kind: 'file', getAsFile: () => mockFile }] } });
+      dropFile('processing-doc.pdf');
 
       await waitFor(() => {
         expect(screen.getByText(/processing\.\.\./i)).toBeInTheDocument();
       });
+      releaseExtraction({
+        fullText: 'test content',
+        pages: [{ pageNumber: 1, text: 'test content' }],
+        metadata: { fileName: 'processing-doc.pdf', pageCount: 1, fileSize: 12, extractedAt: 0 },
+      });
+      await waitFor(() => {
+        expect(screen.getByText('processing-doc.pdf')).toBeInTheDocument();
+      });
     });
 
     it('sets status to ready after successful processing', async () => {
-      (documentStore.loadDocuments as any).mockResolvedValue([]);
-      (documentStore.saveDocuments as any).mockResolvedValue(undefined);
-      (extractorFactory.extractDocument as any).mockResolvedValue({
-        fullText: 'This is the extracted text content',
-        pages: [{ pageNumber: 1, text: 'This is the extracted text content' }],
-      });
+      renderPage();
+      await waitForLoaded();
 
-      render(<DocumentsPage />);
-
-      await waitFor(() => {});
-
-      const dropZone = screen.getByRole('button', { name: /drop files here or click to select/i });
-      const mockFile = new File(['content'], 'ready-doc.pdf', { type: 'application/pdf' });
-
-      fireEvent.drop(dropZone, { dataTransfer: { files: [mockFile], items: [{ kind: 'file', getAsFile: () => mockFile }] } });
+      dropFile('ready-doc.pdf');
 
       await waitFor(() => {
-        expect(screen.getByText(/ready/i)).toBeInTheDocument();
-      }, { timeout: 3000 });
+        expect(screen.getByText('Ready')).toBeInTheDocument();
+      }, { timeout: 5000 });
     });
 
     it('sets status to error when extraction fails', async () => {
-      (documentStore.loadDocuments as any).mockResolvedValue([]);
-      (documentStore.saveDocuments as any).mockResolvedValue(undefined);
-      (extractorFactory.extractDocument as any).mockRejectedValue(new Error('Extraction failed'));
+      vi.mocked(extractDocument).mockRejectedValue(new Error('Extraction failed'));
 
-      render(<DocumentsPage />);
+      renderPage();
+      await waitForLoaded();
 
-      await waitFor(() => {});
-
-      const dropZone = screen.getByRole('button', { name: /drop files here or click to select/i });
-      const mockFile = new File(['content'], 'error-doc.pdf', { type: 'application/pdf' });
-
-      fireEvent.drop(dropZone, { dataTransfer: { files: [mockFile], items: [{ kind: 'file', getAsFile: () => mockFile }] } });
+      dropFile('error-doc.pdf');
 
       await waitFor(() => {
-        expect(screen.getByText(/error/i)).toBeInTheDocument();
-      }, { timeout: 3000 });
+        expect(screen.getByText('Error')).toBeInTheDocument();
+      }, { timeout: 5000 });
     });
 
     it('saves documents to IndexedDB after processing', async () => {
-      (documentStore.loadDocuments as any).mockResolvedValue([]);
-      (documentStore.saveDocuments as any).mockResolvedValue(undefined);
-      (extractorFactory.extractDocument as any).mockResolvedValue({ fullText: 'test', pages: [] });
+      renderPage();
+      await waitForLoaded();
 
-      render(<DocumentsPage />);
+      dropFile('save-test.pdf');
 
-      await waitFor(() => {});
-
-      const dropZone = screen.getByRole('button', { name: /drop files here or click to select/i });
-      const mockFile = new File(['content'], 'save-test.pdf', { type: 'application/pdf' });
-
-      fireEvent.drop(dropZone, { dataTransfer: { files: [mockFile], items: [{ kind: 'file', getAsFile: () => mockFile }] } });
-
-      // Wait for debounced save
+      // Wait for the 500ms debounced bulk save (the terminal row is also
+      // persisted per-document through upsertDocument).
       await waitFor(() => {
-        expect(documentStore.saveDocuments).toHaveBeenCalled();
-      }, { timeout: 3000 });
+        expect(mockSaveDocuments).toHaveBeenCalled();
+      }, { timeout: 5000 });
     });
   });
 
   describe('Document Deletion', () => {
     it('deletes document when delete button is clicked', async () => {
-      const docs = [{
-        id: 'doc-to-delete',
-        fileName: 'delete-me.pdf',
-        fileSize: 1024,
-        fileType: '.pdf',
-        status: 'ready' as const,
-        progress: 100,
-        uploadedAt: Date.now(),
-      }];
-      (documentStore.loadDocuments as any).mockResolvedValue(docs);
-      (documentStore.saveDocuments as any).mockResolvedValue(undefined);
-      (documentStore.deleteDocument as any).mockResolvedValue(undefined);
+      mockLoadDocuments.mockResolvedValue([readyDoc('doc-to-delete', 'delete-me.pdf')]);
 
-      render(<DocumentsPage />);
-
+      renderPage();
       await waitFor(() => {
         expect(screen.getByText('delete-me.pdf')).toBeInTheDocument();
       });
 
-      const deleteButton = screen.getByRole('button', { name: /delete delete-me\.pdf/i });
-      fireEvent.click(deleteButton);
+      await confirmDelete('delete-me.pdf');
 
       await waitFor(() => {
-        expect(documentStore.deleteDocument).toHaveBeenCalledWith('doc-to-delete');
+        expect(mockDeleteDocumentFromStore).toHaveBeenCalledWith('doc-to-delete');
       });
     });
 
     it('removes document from UI after deletion', async () => {
-      const docs = [{
-        id: 'doc-to-delete',
-        fileName: 'delete-me.pdf',
-        fileSize: 1024,
-        fileType: '.pdf',
-        status: 'ready' as const,
-        progress: 100,
-        uploadedAt: Date.now(),
-      }];
-      (documentStore.loadDocuments as any).mockResolvedValue([...docs]);
-      (documentStore.saveDocuments as any).mockResolvedValue(undefined);
-      (documentStore.deleteDocument as any).mockResolvedValue(undefined);
+      mockLoadDocuments.mockResolvedValue([readyDoc('doc-to-delete', 'delete-me.pdf')]);
 
-      render(<DocumentsPage />);
-
+      renderPage();
       await waitFor(() => {
         expect(screen.getByText('delete-me.pdf')).toBeInTheDocument();
       });
 
-      const deleteButton = screen.getByRole('button', { name: /delete delete-me\.pdf/i });
-      fireEvent.click(deleteButton);
+      await confirmDelete('delete-me.pdf');
 
       await waitFor(() => {
         expect(screen.queryByText('delete-me.pdf')).not.toBeInTheDocument();
@@ -323,27 +345,14 @@ describe('DocumentsPage', () => {
     });
 
     it('shows empty state when last document is deleted', async () => {
-      const docs = [{
-        id: 'doc-to-delete',
-        fileName: 'last-doc.pdf',
-        fileSize: 1024,
-        fileType: '.pdf',
-        status: 'ready' as const,
-        progress: 100,
-        uploadedAt: Date.now(),
-      }];
-      (documentStore.loadDocuments as any).mockResolvedValue([...docs]);
-      (documentStore.saveDocuments as any).mockResolvedValue(undefined);
-      (documentStore.deleteDocument as any).mockResolvedValue(undefined);
+      mockLoadDocuments.mockResolvedValue([readyDoc('doc-to-delete', 'last-doc.pdf')]);
 
-      render(<DocumentsPage />);
-
+      renderPage();
       await waitFor(() => {
         expect(screen.getByText('last-doc.pdf')).toBeInTheDocument();
       });
 
-      const deleteButton = screen.getByRole('button', { name: /delete last-doc\.pdf/i });
-      fireEvent.click(deleteButton);
+      await confirmDelete('last-doc.pdf');
 
       await waitFor(() => {
         expect(screen.getByText(/no documents uploaded yet/i)).toBeInTheDocument();
@@ -353,36 +362,30 @@ describe('DocumentsPage', () => {
 
   describe('Error Handling', () => {
     it('handles loadDocuments error gracefully', async () => {
-      (documentStore.loadDocuments as any).mockRejectedValue(new Error('Failed to load'));
-      (documentStore.saveDocuments as any).mockResolvedValue(undefined);
+      mockLoadDocuments.mockRejectedValue(new Error('Failed to load'));
 
-      render(<DocumentsPage />);
+      renderPage();
 
-      await waitFor(() => {
-        // Should still render DropZone and DocumentList even on load error
-        expect(screen.getByRole('button', { name: /drop files here or click to select/i })).toBeInTheDocument();
-      });
+      // Should still render DropZone and DocumentList even on load error
+      await waitForLoaded();
+      expect(screen.getByText(/no documents uploaded yet/i)).toBeInTheDocument();
     });
 
     it('handles saveDocuments error gracefully', async () => {
-      const docs = [{
-        id: 'doc-1',
-        fileName: 'doc1.pdf',
-        fileSize: 1024,
-        fileType: '.pdf',
-        status: 'ready' as const,
-        progress: 100,
-        uploadedAt: Date.now(),
-      }];
-      (documentStore.loadDocuments as any).mockResolvedValue(docs);
-      (documentStore.saveDocuments as any).mockRejectedValue(new Error('Failed to save'));
+      mockLoadDocuments.mockResolvedValue([readyDoc('doc-1', 'doc1.pdf')]);
+      mockSaveDocuments.mockRejectedValue(new Error('Failed to save'));
 
-      render(<DocumentsPage />);
+      renderPage();
 
-      await waitFor(() => {});
+      await waitFor(() => {
+        expect(screen.getByText('doc1.pdf')).toBeInTheDocument();
+      });
 
-      // Should not throw - errors are caught and logged
-      expect(screen.getByText('doc1.pdf')).toBeInTheDocument();
+      // Should not throw - errors are caught and logged (surfaced as a
+      // toast through the mocked provider).
+      await waitFor(() => {
+        expect(showToastSpy.mock.calls.some(([, type]) => type === 'error')).toBe(true);
+      });
     });
   });
 });

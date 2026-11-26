@@ -1,380 +1,181 @@
 /**
- * Verification tests for Task 3.3 - Inference mode architecture
- * Tests verification scope items NOT covered by existing tests
+ * Verification tests for Task 3.3 — inference mode architecture (issue #348:
+ * quarantine discharge), repaired against the CURRENT product.
+ *
+ * What changed vs the original spec and where the retired legs are covered green:
+ * - The header inference control is a NON-FLIPPING STATUS with no button and
+ *   renders null outside Electron (#265 AC6). The obsolete flip-button legs
+ *   (aria-pressed true/false/toggle, aria-label wording, disabled-during-check)
+ *   are covered by src/components/__tests__/inference-mode-toggle-status.test.tsx
+ *   (lines 44-102: honest status words/labels per state; lines 104-117: the
+ *   control is a status, NO button renders in any state) and
+ *   src/components/__tests__/inference-mode-toggle-desktop.test.tsx:39-72
+ *   (inside Electron it renders, never null, and no flip button exists in any
+ *   state — mode switching moved to Settings).
+ * - 'can switch mode while streaming is active' / 'mode switching does not
+ *   cancel active streaming' pinned a browser-app mode flip that no longer
+ *   exists (no flip control) and, in the second case, only asserted React
+ *   local state of a locally-defined fake component. The real product's
+ *   mid-stream switch handling is covered by
+ *   src/pages/ChatPage.streaming-persistence.test.tsx (engine-switch effect:
+ *   the live stream is terminalized and persisted, ~lines 1135, 1248-1270).
+ * - The 5 s connectivity-timeout leg now lives in
+ *   src/lib/inference/InferenceModeContext.test.tsx (where the probe's
+ *   contract is pinned); it is not duplicated here.
+ *
+ * ChatPage here renders inside the REAL InferenceModeProvider (the page calls
+ * useInferenceMode unconditionally); only the heavy engine/stream modules
+ * ChatPage imports unconditionally are stubbed (sibling convention:
+ * ChatPage.overlay.test.tsx).
  */
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, cleanup, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
 import { InferenceModeProvider, useInferenceMode } from '../lib/inference/InferenceModeContext';
-import { InferenceModeToggle } from '../components/InferenceModeToggle';
-import { ChatPage } from '../pages/ChatPage';
+import { ChatPage } from './ChatPage';
 
-// Mock fetch
-const mockFetch = vi.fn();
-global.fetch = mockFetch;
+const fetchMock = vi.fn();
 
-function renderWithContext(ui: React.ReactElement) {
-  return render(<InferenceModeProvider>{ui}</InferenceModeProvider>);
+// Inert stubs for modules ChatPage imports unconditionally (it is blocked in
+// every state asserted here, so none of these are exercised). Note
+// disposeBrowserEngine: the REAL InferenceModeContext (kept real below)
+// imports it from the same module.
+vi.mock('../lib/llm/llm-factory', () => ({
+  getLLMService: vi.fn(() => ({
+    initialize: vi.fn(async () => undefined),
+    generate: async function* () {
+      yield 'ok';
+    },
+    generateComplete: async () => 'ok',
+    isReady: () => false,
+    getModelInfo: () => null,
+    getInferenceMode: () => 'wasm' as const,
+    interrupt: () => undefined,
+  })),
+  disposeBrowserEngine: vi.fn(),
+}));
+vi.mock('../lib/rag/rag-orchestrator', () => ({
+  RAGOrchestrator: vi.fn().mockImplementation(() => ({ query: vi.fn() })),
+}));
+vi.mock('../lib/streaming', () => ({
+  TokenStreamManager: vi.fn().mockImplementation(() => ({
+    start: vi.fn(),
+    cancel: vi.fn(),
+    onToken: vi.fn(),
+    onDone: vi.fn(),
+    onError: vi.fn(),
+    pushToken: vi.fn(),
+    complete: vi.fn(),
+    dispose: vi.fn(),
+  })),
+}));
+// Keeps the blocked overlay on its stable "Preparing the model…" state instead
+// of racing a real readiness probe (ChatPage.overlay.test.tsx convention).
+vi.mock('../lib/llm/readiness-gate', () => ({
+  getReadinessSnapshot: () => ({ modelCached: false, webgpuAvailable: false }),
+  getReadinessResultSnapshot: () => null,
+  getReadinessGateInstance: () => null,
+  applyReadinessFromEvent: vi.fn(),
+  resetReadinessCache: vi.fn(),
+  ensureReadinessGateChecked: vi.fn(async () => null),
+}));
+
+function renderChatPage() {
+  return render(
+    <InferenceModeProvider>
+      <ChatPage
+        messages={[]}
+        onMessagesChange={() => {}}
+        onSaveConversation={() => {}}
+        onNewChat={() => {}}
+        currentConversationId={undefined}
+        setCurrentConversationId={() => {}}
+        onOpenSettings={() => {}}
+      />
+    </InferenceModeProvider>
+  );
 }
 
 describe('Task 3.3 Verification - Inference Mode Architecture', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    fetchMock.mockReset();
     cleanup();
     localStorage.clear();
-    mockFetch.mockReset();
+    sessionStorage.clear();
+    vi.stubGlobal('fetch', fetchMock);
   });
 
   afterEach(() => {
     cleanup();
+    vi.unstubAllGlobals();
+    localStorage.clear();
+    sessionStorage.clear();
+    vi.restoreAllMocks();
   });
 
-  describe('InferenceModeToggle - aria-pressed reflects mode', () => {
-    it('aria-pressed is false when mode is browser-local', () => {
-      renderWithContext(<InferenceModeToggle />);
-
-      const button = screen.getByRole('button');
-      expect(button).toHaveAttribute('aria-pressed', 'false');
-    });
-
-    it('aria-pressed is true when mode is api', async () => {
-      renderWithContext(<InferenceModeToggle />);
-
-      const button = screen.getByRole('button');
-      fireEvent.click(button);
-
-      await waitFor(() => {
-        expect(button).toHaveAttribute('aria-pressed', 'true');
-      });
-    });
-
-    it('aria-pressed toggles correctly on subsequent clicks', async () => {
-      renderWithContext(<InferenceModeToggle />);
-
-      const button = screen.getByRole('button');
-
-      // Initial: browser-local
-      expect(button).toHaveAttribute('aria-pressed', 'false');
-
-      // Click 1: switch to api
-      fireEvent.click(button);
-      await waitFor(() => {
-        expect(button).toHaveAttribute('aria-pressed', 'true');
-      });
-
-      // Click 2: switch back to browser-local
-      fireEvent.click(button);
-      await waitFor(() => {
-        expect(button).toHaveAttribute('aria-pressed', 'false');
-      });
-    });
-
-    it('has correct aria-label describing current mode', () => {
-      renderWithContext(<InferenceModeToggle />);
-
-      const button = screen.getByRole('button');
-      expect(button).toHaveAttribute('aria-label', 'Inference mode: browser-local. Click to toggle.');
-    });
-
-    it('aria-label updates when mode changes', async () => {
-      renderWithContext(<InferenceModeToggle />);
-
-      const button = screen.getByRole('button');
-      fireEvent.click(button);
-
-      await waitFor(() => {
-        expect(button).toHaveAttribute('aria-label', 'Inference mode: api. Click to toggle.');
-      });
-    });
-  });
-
-  describe('InferenceModeToggle - shows checking status', () => {
-    it('button is disabled during connectivity check', async () => {
-      // Mock a slow connectivity check
-      mockFetch.mockImplementation(
-        () =>
-          new Promise((resolve) => {
-            setTimeout(() => resolve({ ok: true, status: 200 }), 1000);
-          })
-      );
-
-      function TestWrapper() {
-        const { setMode, checkServerConnectivity } = useInferenceMode();
-
-        const handleToggle = async () => {
-          setMode('api');
-          await checkServerConnectivity();
-        };
-
-        return <button onClick={handleToggle}>Toggle</button>;
-      }
-
-      render(
-        <InferenceModeProvider>
-          <TestWrapper />
-        </InferenceModeProvider>
-      );
-
-      // Switch to api mode first
-      fireEvent.click(screen.getByText('Toggle'));
-
-      await waitFor(() => {
-        expect(mockFetch).toHaveBeenCalled();
-      });
-    });
-  });
-
-  describe('ChatPage - overlay does not block header toggle', () => {
+  describe('ChatPage - overlay does not remove the header', () => {
     it('header controls stay in the document while the blocking overlay is mounted', () => {
-      // Override mock to show model blocked state
-      vi.doMock('../lib/inference', () => ({
-        InferenceModeProvider: ({ children }: { children: React.ReactNode }) => children,
-        useInferenceMode: () => ({
-          mode: 'browser-local',
-          isModelReady: false,
-          isServerConnected: false,
-          modelLoadingProgress: 50,
-          setMode: vi.fn(),
-          checkServerConnectivity: vi.fn().mockResolvedValue(false),
-        }),
-      }));
+      // REAL ChatPage inside the REAL provider: the browser app boots
+      // browser-local with the model not ready and no external model, so the
+      // model gate (role=alertdialog) is up.
+      renderChatPage();
 
-      vi.doMock('../components/InferenceModeToggle', () => ({
-        InferenceModeToggle: () => (
-          <button data-testid="inference-toggle" aria-label="Inference mode toggle">
-            Toggle
-          </button>
-        ),
-      }));
+      const overlay = screen.getByRole('alertdialog');
+      expect(overlay).toBeInTheDocument();
 
-      render(<ChatPage
-  messages={[]}
-  onMessagesChange={() => {}}
-  onSaveConversation={() => {}}
-  onNewChat={() => {}}
-  currentConversationId={undefined}
+      // Real header controls that exist in the browser app (there is no
+      // inference-toggle testid and no inference status outside Electron):
+      // the PageHeader title and the model chip's settings button. They stay
+      // MOUNTED while the gate is up — but Lumen phase 7 makes the covered
+      // content inert, so accessibility-tree queries need `hidden: true` to
+      // see them (which is itself the pinned behavior: mounted, not removed).
+      const heading = screen.getByRole('heading', { name: 'Chat', hidden: true });
+      expect(heading).toBeInTheDocument();
+      const modelChip = screen.getByTestId('chat-model-chip');
+      expect(modelChip).toBeInTheDocument();
+      expect(modelChip).toHaveAttribute('aria-label', expect.stringContaining('Open model settings'));
 
-  setCurrentConversationId={() => {}}
+      // The inert gate: the header is excluded from the accessibility tree
+      // (not unmounted) while the overlay is up.
+      expect(heading.closest('.chat-page__content')).toHaveAttribute('inert');
+      expect(screen.queryByRole('heading', { name: 'Chat' })).not.toBeInTheDocument();
 
-  onOpenSettings={() => {}}
-/>);
-
-      // PR #147 PRR-030: the old header carried an inline zIndex: 101; the Lumen
-      // PageHeader (phase 3) has no inline style or z-index, so that invariant is
-      // gone. What still matters is below: the header controls stay in the document.
-
-      // Get the overlay (blocking) element if it exists
-      // The blocking overlay should NOT cover the toggle
-      // We verify this by checking the toggle button is still in the document
-      const toggleButton = screen.getByTestId('inference-toggle');
-      expect(toggleButton).toBeInTheDocument();
-    });
-
-    it('header toggle button is accessible when model loading overlay is shown', () => {
-      // Override mock to show model blocked state
-      vi.doMock('../lib/inference', () => ({
-        InferenceModeProvider: ({ children }: { children: React.ReactNode }) => children,
-        useInferenceMode: () => ({
-          mode: 'browser-local',
-          isModelReady: false,
-          isServerConnected: false,
-          modelLoadingProgress: 50,
-          setMode: vi.fn(),
-          checkServerConnectivity: vi.fn().mockResolvedValue(false),
-        }),
-      }));
-
-      vi.doMock('../components/InferenceModeToggle', () => ({
-        InferenceModeToggle: () => (
-          <button data-testid="inference-toggle" aria-label="Inference mode toggle">
-            Toggle
-          </button>
-        ),
-      }));
-
-      render(<ChatPage
-  messages={[]}
-  onMessagesChange={() => {}}
-  onSaveConversation={() => {}}
-  onNewChat={() => {}}
-  currentConversationId={undefined}
-
-  setCurrentConversationId={() => {}}
-
-  onOpenSettings={() => {}}
-/>);
-
-      // Even with the blocking overlay displayed, the toggle in header should be accessible
-      const toggleButton = screen.getByTestId('inference-toggle');
-      expect(toggleButton).toBeEnabled();
-      expect(toggleButton).toBeVisible();
-    });
-  });
-
-  describe('ChatPage - mode switching during streaming', () => {
-    it('can switch mode while streaming is active', async () => {
-      vi.useFakeTimers();
-
-      // Mock inference mode that allows mode switching
-      vi.doMock('../lib/inference', () => ({
-        InferenceModeProvider: ({ children }: { children: React.ReactNode }) => children,
-        useInferenceMode: () => ({
-          mode: 'browser-local',
-          isModelReady: true,
-          isServerConnected: true,
-          modelLoadingProgress: 0,
-          serverUrl: '',
-          modeError: null,
-          setMode: vi.fn(),
-          setServerUrl: vi.fn(),
-          checkServerConnectivity: vi.fn().mockResolvedValue(true),
-          setModelReady: vi.fn(),
-          setModelLoadingProgress: vi.fn(),
-        }),
-      }));
-
-      render(<ChatPage
-  messages={[]}
-  onMessagesChange={() => {}}
-  onSaveConversation={() => {}}
-  onNewChat={() => {}}
-  currentConversationId={undefined}
-
-  setCurrentConversationId={() => {}}
-
-  onOpenSettings={() => {}}
-/>);
-
-      // Start streaming by sending a message
-      const textarea = screen.getByPlaceholderText('Ask a question...');
-      fireEvent.change(textarea, { target: { value: 'Test message' } });
-      fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-
-      // Verify streaming started
-      await waitFor(() => {
-        expect(screen.getByTestId('streaming-indicator')).toBeInTheDocument();
-      });
-
-      // Now switch to API mode during streaming via the toggle
-      // The toggle should still be functional
-      const modeToggle = screen.getByRole('button', { name: /inference mode/i });
-      expect(modeToggle).toBeInTheDocument();
-
-      // Simulate clicking the toggle
-      fireEvent.click(modeToggle);
-
-      // The streaming should still be active (not cancelled by mode switch)
-      // This verifies mode switching doesn't break streaming
-      await act(async () => {
-        vi.advanceTimersByTime(100);
-      });
-
-      vi.useRealTimers();
-    });
-
-    it('mode switching does not cancel active streaming', async () => {
-      vi.useFakeTimers();
-
-      // Create a custom ChatPage that exposes mode for testing
-      function TestChatPage() {
-        const [mode, setMode] = React.useState<'browser-local' | 'api'>('browser-local');
-        const [isStreaming, setIsStreaming] = React.useState(false);
-
-        return (
-          <InferenceModeProvider>
-            <div>
-              <button
-                data-testid="mode-switcher"
-                onClick={() => setMode(mode === 'browser-local' ? 'api' : 'browser-local')}
-              >
-                Current Mode: {mode}
-              </button>
-              <button
-                data-testid="streaming-toggle"
-                onClick={() => setIsStreaming(!isStreaming)}
-              >
-                {isStreaming ? 'Streaming...' : 'Not Streaming'}
-              </button>
-            </div>
-          </InferenceModeProvider>
-        );
-      }
-
-      render(<TestChatPage />);
-
-      // Start streaming
-      fireEvent.click(screen.getByTestId('streaming-toggle'));
-      expect(screen.getByText('Streaming...')).toBeInTheDocument();
-
-      // Switch mode during streaming
-      fireEvent.click(screen.getByTestId('mode-switcher'));
-
-      // Streaming should still be active
-      expect(screen.getByText('Streaming...')).toBeInTheDocument();
-
-      vi.useRealTimers();
+      // #265 AC6: the inference control is desktop-only; in the browser app
+      // the header carries no inference-mode status at all.
+      expect(screen.queryByTestId('inference-mode-status')).not.toBeInTheDocument();
     });
 
     it('input remains disabled during model blocked state', () => {
-      // Override mock to show model blocked state
-      vi.doMock('../lib/inference', () => ({
-        InferenceModeProvider: ({ children }: { children: React.ReactNode }) => children,
-        useInferenceMode: () => ({
-          mode: 'browser-local',
-          isModelReady: false,
-          isServerConnected: false,
-          modelLoadingProgress: 50,
-          setMode: vi.fn(),
-          checkServerConnectivity: vi.fn().mockResolvedValue(false),
-          setModelReady: vi.fn(),
-          setModelLoadingProgress: vi.fn(),
-        }),
-      }));
+      // Same REAL blocked state as above: browser-local, model not ready.
+      renderChatPage();
 
-      vi.doMock('../components/InferenceModeToggle', () => ({
-        InferenceModeToggle: () => (
-          <button data-testid="inference-toggle" aria-label="Inference mode toggle">
-            Toggle
-          </button>
-        ),
-      }));
-
-      render(<ChatPage
-  messages={[]}
-  onMessagesChange={() => {}}
-  onSaveConversation={() => {}}
-  onNewChat={() => {}}
-  currentConversationId={undefined}
-
-  setCurrentConversationId={() => {}}
-
-  onOpenSettings={() => {}}
-/>);
-
-      // The model loading overlay should be shown
-      // But the header toggle should still be accessible
-      const toggleButton = screen.getByTestId('inference-toggle');
-      expect(toggleButton).toBeInTheDocument();
-      expect(toggleButton).toBeVisible();
+      // The blocking overlay is mounted…
+      expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+      // …and the composer is disabled while the gate is up. The textarea sits
+      // in the inert subtree, so the role query needs `hidden: true`.
+      const textarea = screen.getByRole('textbox', { hidden: true });
+      expect(textarea).toBeDisabled();
     });
   });
 
   describe('InferenceModeContext - AbortController cleanup verification', () => {
-    it('cancels previous AbortController when checkServerConnectivity is called again', async () => {
-      vi.useFakeTimers();
-
-      // Mock slow fetch
-      mockFetch.mockImplementation(
-        () =>
-          new Promise((resolve) => {
-            setTimeout(() => resolve({ ok: true, status: 200 }), 10000);
-          })
-      );
+    it('a second connectivity check aborts the previous in-flight request', async () => {
+      const abortSpy = vi.spyOn(AbortController.prototype, 'abort');
+      // Capture each request's signal; mirror real fetch abort semantics.
+      const signals: AbortSignal[] = [];
+      fetchMock.mockImplementation((_url: unknown, init?: RequestInit) => {
+        signals.push(init!.signal!);
+        return new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('Aborted', 'AbortError'));
+          });
+        });
+      });
 
       function TestComponent() {
         const { checkServerConnectivity } = useInferenceMode();
-        return <button onClick={() => checkServerConnectivity()}>Check</button>;
+        return <button onClick={() => void checkServerConnectivity()}>Check</button>;
       }
 
       render(
@@ -383,83 +184,29 @@ describe('Task 3.3 Verification - Inference Mode Architecture', () => {
         </InferenceModeProvider>
       );
 
-      // Start first connectivity check
-      const checkButton = screen.getByText('Check');
-      fireEvent.click(checkButton);
-
-      // Immediately start another check (should cancel the first)
-      fireEvent.click(checkButton);
-
-      // Both should have been called (second cancels first)
+      // Start the first connectivity check.
       await act(async () => {
-        vi.advanceTimersByTime(6000);
+        fireEvent.click(screen.getByText('Check'));
       });
 
-      // Verify abort was called (fetch should have been aborted)
-      // The second call should have aborted the first request
-      expect(mockFetch).toHaveBeenCalledTimes(2);
-
-      vi.useRealTimers();
-    });
-  });
-
-  describe('InferenceModeContext - 5s timeout verification', () => {
-    it('server connectivity check times out after 5 seconds', async () => {
-      vi.useFakeTimers();
-
-      // Mock fetch that never resolves
-      mockFetch.mockImplementation(
-        () =>
-          new Promise(() => {
-            // Never resolves - simulates network hang
-          })
-      );
-
-      function TestComponent() {
-        const { checkServerConnectivity, isServerConnected, modeError } = useInferenceMode();
-        return (
-          <div>
-            <button onClick={() => checkServerConnectivity()}>Check</button>
-            <span data-testid="connected">{String(isServerConnected)}</span>
-            <span data-testid="error">{modeError ?? 'null'}</span>
-          </div>
-        );
-      }
-
-      render(
-        <InferenceModeProvider>
-          <TestComponent />
-        </InferenceModeProvider>
-      );
-
-      // Start connectivity check
-      fireEvent.click(screen.getByText('Check'));
-
-      // At 4 seconds - should still be pending
+      // A second check cancels the first (InferenceModeContext.tsx:266-274).
       await act(async () => {
-        vi.advanceTimersByTime(4000);
+        fireEvent.click(screen.getByText('Check'));
       });
 
-      // At 5 seconds - should timeout
-      await act(async () => {
-        vi.advanceTimersByTime(1000);
-      });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(signals[0].aborted).toBe(true);
+      expect(signals[1].aborted).toBe(false);
+      expect(abortSpy).toHaveBeenCalledTimes(1);
 
-      // After timeout, state should show server unreachable
-      await waitFor(() => {
-        expect(screen.getByTestId('connected').textContent).toBe('false');
-        expect(screen.getByTestId('error').textContent).toBe('Server unreachable');
-      });
-
-      vi.useRealTimers();
+      abortSpy.mockRestore();
     });
   });
 
   describe('InferenceModeContext - localStorage try/catch verification', () => {
     it('loadStoredState handles localStorage.getItem throwing', () => {
-      const localStorageSpy = vi.spyOn(global, 'localStorage', 'get');
-      localStorageSpy.mockImplementation(() => {
-        throw new Error('localStorage access denied');
+      const getter = vi.spyOn(globalThis, 'localStorage', 'get').mockImplementation(() => {
+        throw new DOMException('localStorage access denied', 'SecurityError');
       });
 
       function TestComponent() {
@@ -467,47 +214,61 @@ describe('Task 3.3 Verification - Inference Mode Architecture', () => {
         return <div data-testid="mode">{mode}</div>;
       }
 
-      // Should not throw, should fall back to default
-      expect(() => {
-        render(
-          <InferenceModeProvider>
-            <TestComponent />
-          </InferenceModeProvider>
-        );
-      }).not.toThrow();
+      try {
+        // Should not throw, should fall back to the default.
+        expect(() => {
+          render(
+            <InferenceModeProvider>
+              <TestComponent />
+            </InferenceModeProvider>
+          );
+        }).not.toThrow();
 
-      expect(screen.getByTestId('mode').textContent).toBe('browser-local');
-
-      localStorageSpy.mockRestore();
+        expect(screen.getByTestId('mode').textContent).toBe('browser-local');
+      } finally {
+        getter.mockRestore();
+      }
     });
 
-    it('persistState handles localStorage.setItem throwing', () => {
-      const localStorageSpy = vi.spyOn(global, 'localStorage', 'set');
-      localStorageSpy.mockImplementation(() => {
-        throw new Error('localStorage quota exceeded');
+    it('persistState handles localStorage.setItem throwing (in-memory state still updates)', () => {
+      const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new DOMException('localStorage quota exceeded', 'QuotaExceededError');
       });
 
       function TestComponent() {
-        const { setMode } = useInferenceMode();
-        return <button onClick={() => setMode('api')}>Set API</button>;
+        const { ragPreset, setRagPreset } = useInferenceMode();
+        return (
+          <div>
+            <span data-testid="preset">{ragPreset}</span>
+            <button onClick={() => setRagPreset('quality')}>Set quality</button>
+          </div>
+        );
       }
 
-      // Should not throw even when localStorage fails
-      expect(() => {
-        render(
-          <InferenceModeProvider>
-            <TestComponent />
-          </InferenceModeProvider>
-        );
-      }).not.toThrow();
+      try {
+        // Mounting must not throw even though every write fails.
+        expect(() => {
+          render(
+            <InferenceModeProvider>
+              <TestComponent />
+            </InferenceModeProvider>
+          );
+        }).not.toThrow();
 
-      // Click should also not throw
-      fireEvent.click(screen.getByText('Set API'));
+        expect(screen.getByTestId('preset').textContent).toBe('balanced');
 
-      // Should still update state even though persistence failed
-      // (state is updated in memory, just not persisted)
+        // setRagPreset persists through persistState (whose setItem throws
+        // and is swallowed): the in-memory state must still update.
+        act(() => {
+          fireEvent.click(screen.getByText('Set quality'));
+        });
 
-      localStorageSpy.mockRestore();
+        expect(screen.getByTestId('preset').textContent).toBe('quality');
+        // And nothing was written.
+        expect(localStorage.getItem('inference-mode')).toBeNull();
+      } finally {
+        setItem.mockRestore();
+      }
     });
   });
 });

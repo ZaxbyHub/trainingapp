@@ -20,7 +20,7 @@ import path from 'path';
  * `edgevec_load` reject cleanly, which VectorIndex.load() already catches as
  * the "no index yet" path — no console error on a fresh boot.
  */
-function edgevecSnippetPlugin(): Plugin {
+export function edgevecSnippetPlugin(): Plugin {
   const VIRTUAL_SNIPPET_ID = '\0edgevec-snippet';
   return {
     name: 'edgevec-snippet-stub',

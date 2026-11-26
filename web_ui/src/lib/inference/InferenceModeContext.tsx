@@ -337,6 +337,14 @@ export function InferenceModeProvider({ children }: { children: React.ReactNode 
       }
       return false;
     } catch {
+      // A superseded request (a newer checkServerConnectivity call aborted this
+      // one) must not touch shared state: `timeoutIdRef` now holds the NEW
+      // request's watchdog, and reporting this request's failure would clobber
+      // the replacement's in-flight status. The finally below already scopes
+      // the controller by identity; the catch must do the same.
+      if (abortControllerRef.current !== controller) {
+        return false;
+      }
       if (timeoutIdRef.current) {
         clearTimeout(timeoutIdRef.current);
         timeoutIdRef.current = null;

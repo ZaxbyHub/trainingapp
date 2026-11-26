@@ -7,10 +7,30 @@
  * - Complete event passes sources to TokenStreamManager.complete()
  * - Error event calls TokenStreamManager.error() with message
  * - User message and empty assistant message are added to state
- * - Loading state is true during streaming, false after complete
+ * - Loading state surfaces an observable busy signal while streaming and
+ *   clears via the terminal done handler
  * - Cancellation via handleCancel aborts the controller and cancels stream
  * - Multiple rapid sends (second message while first streaming)
  * - Sources from complete event are stored in message
+ *
+ * Boundary mocks mirror the green sibling page specs
+ * (ChatPage.first-turn-done.test.tsx / ChatPage.keyboard-wiring.test.tsx):
+ * ChatPage transitively pulls native-ESM deps (rag-orchestrator -> vector-index
+ * -> edgevec) and the packaged-model gate (the REAL WllamaService.initialize
+ * throws "Browser LLM not packaged" when no GGUF is staged), so every such
+ * edge is mocked before the component import — getLLMService resolves
+ * immediately and the orchestrator/stream-manager are the test seams.
+ *
+ * Persistence lifecycle: production saves TWICE per turn — the send-time save
+ * (user turn + streaming placeholder, ChatPage.tsx:1201-1217) and the terminal
+ * done save (finalized thread, ChatPage.tsx:803-804). Assertions target the
+ * LAST call for finalized content and account for the send-time call
+ * explicitly.
+ *
+ * ChatPage is fully CONTROLLED (ChatPage.tsx:240-241): the messages prop is
+ * the only source of truth, so tests that assert rendered user/assistant
+ * bubbles use the stateful Harness below instead of `messages={[]}` + no-op
+ * setter.
  */
 
 import React from 'react';
@@ -33,6 +53,8 @@ let mockStreamManagerInstance: {
   error: ReturnType<typeof vi.fn>;
   cancel: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
+  startSSEStream: ReturnType<typeof vi.fn>;
+  setFirstByteTimeoutMs: ReturnType<typeof vi.fn>;
 };
 
 // Mock modules BEFORE importing the component under test
@@ -49,6 +71,38 @@ vi.mock('../lib/inference', () => ({
   useInferenceMode: vi.fn(),
 }));
 
+// Browser-local boundary: the REAL WllamaService.initialize throws
+// "Browser LLM not packaged — missing: /models/llm/lfm2-1.2b-rag/model.gguf"
+// in vitest (no GGUF staged), which ChatPage catches and routes to
+// streamManager.error BEFORE the orchestrator is ever constructed
+// (ChatPage.tsx:1022 -> :1045). Mocking the factory boundary lets the RAG
+// pipeline legs run. The extra exports are imported by
+// src/lib/llm/readiness-gate.ts:11 and src/lib/inference/InferenceModeContext.tsx:16.
+vi.mock('../lib/llm/llm-factory', () => ({
+  getLLMService: vi.fn(() => ({
+    initialize: vi.fn().mockResolvedValue(undefined),
+    interrupt: vi.fn(),
+    dispose: vi.fn(),
+  })),
+  DEFAULT_BROWSER_ENGINE: 'wllama',
+  disposeBrowserEngine: vi.fn(),
+  getPreferredBrowserEngine: vi.fn(() => 'wllama'),
+}));
+
+vi.mock('../lib/llm/readiness-gate', () => ({
+  ensureReadinessGateChecked: vi.fn().mockResolvedValue(null),
+  getReadinessResultSnapshot: vi.fn(() => null),
+  resetReadinessCache: vi.fn(),
+}));
+
+// ChatMessageList reads useDocumentCount(), whose real store touches
+// indexedDB (absent in jsdom) — the caught "indexedDB is not defined" error
+// spams the console. Mock the hook (ChatPage.keyboard-wiring.test.tsx:56-58
+// pattern) to keep the spec hermetic.
+vi.mock('../hooks/useDocumentCount', () => ({
+  useDocumentCount: () => ({ count: 3, loading: false }),
+}));
+
 vi.mock('../lib/streaming', () => ({
   TokenStreamManager: vi.fn().mockImplementation(function () {
     mockStreamManagerInstance = {
@@ -60,6 +114,11 @@ vi.mock('../lib/streaming', () => ({
       error: vi.fn(),
       cancel: vi.fn(),
       dispose: vi.fn(),
+      // Production calls these on the api-mode legs (ChatPage.tsx:935,947;
+      // TokenStreamManager.ts:85,237). Unused on the browser-local legs below
+      // but part of the manager's surface.
+      startSSEStream: vi.fn(),
+      setFirstByteTimeoutMs: vi.fn(),
     };
     return mockStreamManagerInstance;
   }),
@@ -71,6 +130,7 @@ import { ChatPage } from './ChatPage';
 // Re-export RAGEvent type for test helper
 export type { RAGEvent } from '../lib/rag/rag-orchestrator';
 import type { RAGEvent } from '../lib/rag/rag-orchestrator';
+import type { ChatMessage } from '../types/chat';
 
 /**
  * Helper: Create a controlled AsyncGenerator that yields RAGEvents
@@ -79,6 +139,38 @@ async function* mockRAGEvents(events: RAGEvent[]): AsyncGenerator<RAGEvent> {
   for (const event of events) {
     yield event;
   }
+}
+
+/**
+ * Stateful stand-in for App: ChatPage is fully CONTROLLED — the messages prop
+ * is the only source of truth (ChatPage.tsx:240-241) — so any test that
+ * asserts rendered user/assistant bubbles must let onMessagesChange write
+ * back into this holder, exactly like the real shell does.
+ */
+function Harness({
+  onSaveConversation = () => {},
+  onNewChat = () => {},
+  registerControls,
+}: {
+  onSaveConversation?: React.ComponentProps<typeof ChatPage>['onSaveConversation'];
+  onNewChat?: () => void;
+  registerControls?: (controls: {
+    setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
+  }) => void;
+}) {
+  const [messages, setMessages] = React.useState<ChatMessage[]>([]);
+  registerControls?.({ setMessages });
+  return (
+    <ChatPage
+      messages={messages}
+      onMessagesChange={setMessages}
+      onSaveConversation={onSaveConversation}
+      onNewChat={onNewChat}
+      currentConversationId={undefined}
+      setCurrentConversationId={() => {}}
+      onOpenSettings={() => {}}
+    />
+  );
 }
 
 // --- Test Suite ---
@@ -101,6 +193,8 @@ describe('ChatPage RAG Pipeline Integration', () => {
       error: vi.fn(),
       cancel: vi.fn(),
       dispose: vi.fn(),
+      startSSEStream: vi.fn(),
+      setFirstByteTimeoutMs: vi.fn(),
     };
 
     // Re-setup the mock implementation to return our fresh instance
@@ -116,7 +210,9 @@ describe('ChatPage RAG Pipeline Integration', () => {
     };
     vi.mocked(ragModule.RAGOrchestrator).mockImplementation(() => mockOrchestratorInstance as unknown as ragModule.RAGOrchestrator);
 
-    // Setup useInferenceMode mock
+    // Setup useInferenceMode mock — every field ChatPage destructures
+    // (ChatPage.tsx:193: mode, browserEngine, ragPreset, isModelReady,
+    // isServerConnected, modelLoadingProgress, setModelLoadingProgress).
     vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
       mode: 'browser-local',
       browserEngine: 'wllama',
@@ -309,30 +405,27 @@ describe('ChatPage RAG Pipeline Integration', () => {
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
-    render(<ChatPage
-  messages={[]}
-  onMessagesChange={() => {}}
-  onSaveConversation={() => {}}
-  onNewChat={() => {}}
-  currentConversationId={undefined}
-
-  setCurrentConversationId={() => {}}
-
-  onOpenSettings={() => {}}
-/>);
+    render(<Harness />);
 
     // Check initial state - no messages
     expect(screen.queryAllByText(userText)).toHaveLength(0);
 
     submitMessage(userText);
 
-    // Messages should be added immediately (before async iteration)
-    // After submit, user text appears - either in textarea (if not yet cleared) or message bubble
+    // Controlled messages: the user turn + streaming assistant placeholder are
+    // committed through onMessagesChange and rendered immediately, before any
+    // async iteration. The user bubble is visible, the assistant answer is NOT
+    // there yet (the placeholder is empty), and the turn is already busy.
     expect(screen.getByText(userText)).toBeInTheDocument();
+    expect(screen.queryByText('Hi!')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /stop generation/i })).toBeInTheDocument();
   });
 
   // ========================================================================
   // TEST 6: Loading state is true during streaming, false after complete
+  // Pinned through observable DOM signals: the composer swaps Send for
+  // "Stop generation" while the turn is in flight (ChatInput.tsx:386-407) and
+  // swaps back once the terminal done handler clears the busy state.
   // ========================================================================
   test('Loading state is true during streaming, false after complete', async () => {
     const userText = 'Loading test';
@@ -343,28 +436,33 @@ describe('ChatPage RAG Pipeline Integration', () => {
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
-    render(<ChatPage
-  messages={[]}
-  onMessagesChange={() => {}}
-  onSaveConversation={() => {}}
-  onNewChat={() => {}}
-  currentConversationId={undefined}
-
-  setCurrentConversationId={() => {}}
-
-  onOpenSettings={() => {}}
-/>);
+    render(<Harness />);
     submitMessage(userText);
 
+    // Observable busy signal while the stream is in flight: Send is replaced
+    // by Stop generation.
+    expect(screen.getByRole('button', { name: /stop generation/i })).toBeInTheDocument();
+
     await act(async () => {
-      for (let i = 0; i < 20; i++) {
+      for (let i = 0; i < 10; i++) {
         vi.advanceTimersByTime(100);
         await Promise.resolve();
       }
     });
 
-    // After complete, verify complete was called
-    expect(mockStreamManagerInstance.complete).toHaveBeenCalled();
+    // The RAG complete event reached the manager's complete payload...
+    expect(mockStreamManagerInstance.complete).toHaveBeenCalledTimes(1);
+    // ...and the terminal done handler (which the real TokenStreamManager
+    // fires synchronously inside complete()) is what clears the busy state.
+    expect(mockStreamManagerInstance.onDone).toHaveBeenCalledTimes(1);
+    const onDoneHandler = mockStreamManagerInstance.onDone.mock.calls[0][0];
+    await act(async () => {
+      onDoneHandler({ sources: [], contextLength: 9, inferenceTime: 1 });
+    });
+
+    // Busy state cleared: Stop is gone, Send is back.
+    expect(screen.queryByRole('button', { name: /stop generation/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /send message/i })).toBeInTheDocument();
   });
 
   // ========================================================================
@@ -417,24 +515,13 @@ describe('ChatPage RAG Pipeline Integration', () => {
   // ========================================================================
   test('Multiple rapid sends are handled correctly', async () => {
     const userText1 = 'First question';
-    const userText2 = 'Second question';
     const events: RAGEvent[] = [
       { type: 'token', data: 'Answer 1' },
       { type: 'complete', data: { answer: 'Answer 1', sources: [], chunks: [], grounding: 'grounded' } },
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
-    render(<ChatPage
-  messages={[]}
-  onMessagesChange={() => {}}
-  onSaveConversation={() => {}}
-  onNewChat={() => {}}
-  currentConversationId={undefined}
-
-  setCurrentConversationId={() => {}}
-
-  onOpenSettings={() => {}}
-/>);
+    render(<Harness />);
 
     const textarea = screen.getByRole('textbox');
     const sendButton = screen.getByRole('button', { name: /send message/i });
@@ -443,9 +530,12 @@ describe('ChatPage RAG Pipeline Integration', () => {
     fireEvent.change(textarea, { target: { value: userText1 } });
     fireEvent.click(sendButton);
 
-    // After first send, isLoading=true disables the textarea and
-    // the send button is replaced by "Stop generation" button,
-    // so a second concurrent send is structurally prevented.
+    // A genuine rapid-second-send attempt: while the first turn is in flight,
+    // the Send button is UNMOUNTED (ChatInput renders Stop in its place,
+    // ChatInput.tsx:386-407), so the captured ref is stale/detached and the
+    // second click cannot reach a handler — the concurrent send is
+    // structurally prevented.
+    fireEvent.click(sendButton);
 
     // Advance timers (and flush microtasks) to let the first (only) async generator consume events
     await act(async () => {
@@ -462,11 +552,16 @@ describe('ChatPage RAG Pipeline Integration', () => {
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     );
 
-    // Verify only first user's message appears as a sent message.
-    // (The rapid change2 may leave text2 in the input textarea, but no second message was added to chat.)
+    // Verify only the first send produced messages (stateful Harness — the
+    // controlled messages prop is the only source of truth). The user bubble
+    // carries a "Copy message" affordance; the assistant placeholder is still
+    // EMPTY (isStreaming, its token sits buffered in the mocked manager —
+    // ChatPage's view commit runs in the manager's token callback, not in
+    // pushToken), so it renders the streaming cursor with no Copy button
+    // (ChatMessageBubble.tsx:110). A duplicated second send would add a second
+    // non-empty user bubble and bump this count to 2.
     expect(screen.getByText(userText1)).toBeInTheDocument();
-    // Each message (user + assistant) renders a "Copy message" button; 2 means only the first send produced messages
-    expect(screen.getAllByRole('button', { name: /copy message/i })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: /copy message/i })).toHaveLength(1);
 
     // Verify no race condition: only one RAGOrchestrator created (hence only one abortControllerRef set inside the send path)
     expect(vi.mocked(ragModule.RAGOrchestrator)).toHaveBeenCalledTimes(1);
@@ -474,6 +569,11 @@ describe('ChatPage RAG Pipeline Integration', () => {
 
   // ========================================================================
   // TEST 9: Sources from complete event are stored in message
+  // The chain across the mocked manager boundary: the orchestrator complete
+  // event carries sources into streamManager.complete() (payload assert), and
+  // the terminal done handler — what the real TokenStreamManager fires with
+  // that same payload — stores them on the assistant message. Asserted on the
+  // RENDERED citation pills of the finalized bubble (stateful Harness).
   // ========================================================================
   test('Sources from complete event are stored in assistant message', async () => {
     const userText = 'Give me sources';
@@ -483,17 +583,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
-    render(<ChatPage
-  messages={[]}
-  onMessagesChange={() => {}}
-  onSaveConversation={() => {}}
-  onNewChat={() => {}}
-  currentConversationId={undefined}
-
-  setCurrentConversationId={() => {}}
-
-  onOpenSettings={() => {}}
-/>);
+    render(<Harness />);
     submitMessage(userText);
 
     await act(async () => {
@@ -503,13 +593,26 @@ describe('ChatPage RAG Pipeline Integration', () => {
       }
     });
 
-    // Verify onDone callback was called with sources
-    expect(mockStreamManagerInstance.onDone).toHaveBeenCalled();
+    // The complete payload carried the orchestrator's sources...
     expect(mockStreamManagerInstance.complete).toHaveBeenCalledWith(
       expect.objectContaining({
         sources,
       })
     );
+
+    // ...and the registered done handler stores them on the assistant
+    // message. Fire it the way the real TokenStreamManager.complete() does:
+    // synchronously, with the complete payload as the done data.
+    expect(mockStreamManagerInstance.onDone).toHaveBeenCalledTimes(1);
+    const onDoneHandler = mockStreamManagerInstance.onDone.mock.calls[0][0];
+    await act(async () => {
+      onDoneHandler({ sources, chunks: [], grounding: 'grounded', contextLength: 17, inferenceTime: 1 });
+    });
+
+    // The sources render as citation pills (Source 1..N) on the bubble.
+    for (let i = 1; i <= sources.length; i++) {
+      expect(screen.getByRole('button', { name: new RegExp(`^Source ${i}:`) })).toBeInTheDocument();
+    }
   });
 
   // ========================================================================
@@ -552,12 +655,18 @@ describe('ChatPage RAG Pipeline Integration', () => {
 
   // ========================================================================
   // TEST 10: Save-on-stream-done integration (PRR-006) + stale-ref guard.
-  // Verifies the headline wiring (onDone → onSaveConversation) AND that the
-  // finalized array includes every streamed token. This guards the PRR-002
-  // fix: onDone fires synchronously after flushBuffer() inside complete(),
-  // so the saved array must reflect tokens flushed in the same call stack.
-  // A regression that reads a stale messagesRef would save an empty/partial
-  // assistant content and FAIL the content assertion below.
+  // Verifies the headline wiring (terminal done -> onSaveConversation) AND
+  // that the finalized array includes every streamed token. This guards the
+  // PRR-002 fix: onDone fires synchronously after flushBuffer() inside
+  // complete(), so the saved array must reflect tokens flushed in the same
+  // call stack. A regression that reads a stale messagesRef would save an
+  // empty/partial assistant content and FAIL the content assertion below.
+  //
+  // Persistence lifecycle (current production): a turn saves TWICE — the
+  // send-time save persists the user turn + streaming placeholder
+  // (ChatPage.tsx:1201-1217) and the terminal done save persists the
+  // finalized thread (ChatPage.tsx:803-804). The send-time call is accounted
+  // for explicitly; the finalized assertions target the LAST call.
   // ========================================================================
   test('onDone invokes onSaveConversation with finalized messages including streamed tokens', async () => {
     const userText = 'Persist me';
@@ -569,25 +678,9 @@ describe('ChatPage RAG Pipeline Integration', () => {
     const onSaveConversation = vi.fn();
     const onNewChat = vi.fn();
 
-    // Stateful wrapper so onMessagesChange propagates back into the messages
-    // prop (keeps ChatPage's messagesRef in sync with submitted messages).
-    function Harness() {
-      const [messages, setMessages] = React.useState<import('../types/chat').ChatMessage[]>([]);
-      return (
-        <ChatPage
-          messages={messages}
-          onMessagesChange={setMessages}
-          onSaveConversation={onSaveConversation}
-          onNewChat={onNewChat}
-          currentConversationId={undefined}
-
-          setCurrentConversationId={() => {}}
-
-          onOpenSettings={() => {}}
-        />
-      );
-    }
-    render(<Harness />);
+    render(
+      <Harness onSaveConversation={onSaveConversation} onNewChat={onNewChat} />
+    );
     submitMessage(userText);
 
     // Let the submit + complete microtasks flush so the user+assistant pair is
@@ -613,12 +706,34 @@ describe('ChatPage RAG Pipeline Integration', () => {
       onDoneHandler({ sources: ['doc-x'], contextLength: streamedAnswer.length, inferenceTime: 5 });
     });
 
-    // Persistence path was invoked exactly once with the finalized messages.
-    expect(onSaveConversation).toHaveBeenCalledTimes(1);
-    const [savedMessages, savedMode, savedModelUsed] = onSaveConversation.mock.calls[0];
+    // Persistence lifecycle: exactly TWO saves per turn.
+    // 1) the send-time save (user turn + streaming placeholder), and
+    // 2) the terminal done save (finalized thread) — the LAST call.
+    // onSaveConversation signature: (conversationId, messages, mode,
+    // modelUsed, onCreate?) — messages is position 1.
+    expect(onSaveConversation).toHaveBeenCalledTimes(2);
+
+    const [, sendTimeMessages] = onSaveConversation.mock.calls[0];
+    expect(sendTimeMessages).toHaveLength(2); // user + assistant placeholder
+    const sendTimeAssistant = sendTimeMessages.find((m: { role: string }) => m.role === 'assistant');
+    expect(sendTimeAssistant.isStreaming).toBe(true);
+    expect(sendTimeAssistant.content).toBe('');
+
+    // Terminal save (LAST call): finalized messages with the streamed tokens.
+    const lastSave = onSaveConversation.mock.calls.at(-1);
+    expect(lastSave).toBeDefined();
+    const [, savedMessages, savedMode, savedModelUsed] = lastSave as [
+      unknown,
+      Array<{ role: string; isStreaming?: boolean; sources?: string[]; content: string }>,
+      string | undefined,
+      string | undefined,
+    ];
     expect(savedMessages.length).toBe(2); // user + assistant
-    const assistant = savedMessages.find((m: { role: string }) => m.role === 'assistant');
-    expect(assistant.isStreaming).toBe(false);
+    const assistant = savedMessages.find((m: { role: string }) => m.role === 'assistant')!;
+    expect(assistant).toBeDefined();
+    // The terminal handler STRIPS the streaming marker (destructure-omit at
+    // ChatPage.tsx:753-755) — the key is absent on the finalized message.
+    expect(assistant.isStreaming).toBeUndefined();
     expect(assistant.sources).toEqual(['doc-x']);
     // The streamed token MUST be present in the saved content — this is the
     // assertion that catches a stale-messagesRef regression.
