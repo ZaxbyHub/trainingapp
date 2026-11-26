@@ -297,24 +297,37 @@ export function InferenceModeProvider({ children }: { children: React.ReactNode 
         headers,
       });
 
+      // Only the currently-owned request may clear the watchdog or publish
+      // connectivity state. A replacement call can start while this response is
+      // in flight (including while its BODY is still being read below), so this
+      // identity check is repeated after every await.
+      if (abortControllerRef.current !== controller) {
+        return false;
+      }
+
       if (timeoutIdRef.current) {
         clearTimeout(timeoutIdRef.current);
         timeoutIdRef.current = null;
       }
 
       if (response.ok) {
+        // The server is reachable. If it reports auth ENABLED and the client
+        // has no stored token, surface a modeError so the user understands
+        // sends will 401 until a token is provided — rather than reporting
+        // a clean "connected" that masks the auth gap. (PR #28 PRR-011)
+        let authEnabled = false;
+        try {
+          const status = await response.json();
+          authEnabled = !!status?.enabled;
+        } catch {
+          // Older servers may not return JSON; assume auth disabled.
+        }
+        // Re-check after the body read: a replacement may have started while
+        // this body was resolving, and its state must win.
+        if (abortControllerRef.current !== controller) {
+          return false;
+        }
         if (isMountedRef.current) {
-          // The server is reachable. If it reports auth ENABLED and the client
-          // has no stored token, surface a modeError so the user understands
-          // sends will 401 until a token is provided — rather than reporting
-          // a clean "connected" that masks the auth gap. (PR #28 PRR-011)
-          let authEnabled = false;
-          try {
-            const status = await response.json();
-            authEnabled = !!status?.enabled;
-          } catch {
-            // Older servers may not return JSON; assume auth disabled.
-          }
           // B9 (issue #67): inside Electron the auth credential is the
           // per-launch bridge token sent via X-Desktop-Token on every request
           // — sessionStorage is never involved, so don't let its absence

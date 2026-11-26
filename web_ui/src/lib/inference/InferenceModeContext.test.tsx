@@ -441,6 +441,140 @@ describe('InferenceModeContext', () => {
       }
     });
 
+    it('a superseded SUCCESSFUL response cannot publish state after its body resolves late', async () => {
+      // Implementation-review finding: the catch guard alone is not enough. A
+      // fetch can resolve `ok` while its BODY is still being read; a
+      // replacement check started during that window must win, so the success
+      // path re-checks controller identity after `response.json()`.
+      let releaseBody!: (value: unknown) => void;
+      const body = new Promise((resolve) => {
+        releaseBody = resolve;
+      });
+      let call = 0;
+      fetchMock.mockImplementation((_url: string, init?: RequestInit) => {
+        call += 1;
+        if (call === 1) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () => body,
+          } as unknown as Response);
+        }
+        const signal = init?.signal as AbortSignal;
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () =>
+            reject(new DOMException('Aborted', 'AbortError'))
+          );
+        });
+      });
+
+      function TestComponent() {
+        const { checkServerConnectivity, isServerConnected, modeError } = useInferenceMode();
+        return (
+          <div>
+            <button onClick={() => void checkServerConnectivity()}>Check</button>
+            <span data-testid="connected">{String(isServerConnected)}</span>
+            <span data-testid="error">{modeError ?? 'null'}</span>
+          </div>
+        );
+      }
+
+      render(
+        <InferenceModeProvider>
+          <TestComponent />
+        </InferenceModeProvider>
+      );
+
+      // Request #1: fetch resolves ok, body read is still pending.
+      await act(async () => {
+        fireEvent.click(screen.getByText('Check'));
+      });
+      // Request #2 supersedes #1 while #1's body is unread.
+      act(() => {
+        fireEvent.click(screen.getByText('Check'));
+      });
+      // #1's body resolves late; it must NOT publish "connected".
+      await act(async () => {
+        releaseBody({ enabled: false });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(screen.getByTestId('connected').textContent).toBe('false');
+      expect(screen.getByTestId('error').textContent).toBe('null');
+    });
+
+    it('a superseded response whose HEADERS resolve late cannot disarm the replacement or publish state', async () => {
+      // Review round 2: the post-fetch guard is the ONLY protection when a
+      // superseded request's headers resolve after the replacement started. It
+      // must stop the watchdog clear (timeoutIdRef now holds the REPLACEMENT's
+      // timer) and the non-ok publish, which lives outside the response.ok
+      // branch.
+      vi.useFakeTimers();
+      let resolveFirst!: (value: Response) => void;
+      const signals: AbortSignal[] = [];
+      let call = 0;
+      fetchMock.mockImplementation((_url: string, init?: RequestInit) => {
+        call += 1;
+        const signal = init?.signal as AbortSignal;
+        signals.push(signal);
+        if (call === 1) {
+          return new Promise<Response>((resolve) => {
+            resolveFirst = resolve;
+          });
+        }
+        return new Promise<Response>((_resolve, reject) => {
+          signal.addEventListener('abort', () =>
+            reject(new DOMException('Aborted', 'AbortError'))
+          );
+        });
+      });
+
+      function TestComponent() {
+        const { checkServerConnectivity, modeError } = useInferenceMode();
+        return (
+          <div>
+            <button onClick={() => void checkServerConnectivity()}>Check</button>
+            <span data-testid="error">{modeError ?? 'null'}</span>
+          </div>
+        );
+      }
+
+      try {
+        render(
+          <InferenceModeProvider>
+            <TestComponent />
+          </InferenceModeProvider>
+        );
+
+        // #1 is in flight with NO headers yet.
+        act(() => {
+          fireEvent.click(screen.getByText('Check'));
+        });
+        // #2 supersedes #1.
+        act(() => {
+          fireEvent.click(screen.getByText('Check'));
+        });
+        // #1's headers now resolve late, with a non-ok status.
+        await act(async () => {
+          resolveFirst({ ok: false, status: 503 } as Response);
+          await vi.advanceTimersByTimeAsync(0);
+        });
+
+        // It must not publish `Server returned 503` over the live replacement.
+        expect(screen.getByTestId('error').textContent).toBe('null');
+
+        // The replacement's watchdog is still armed: it aborts at 5 s.
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(5000);
+        });
+        expect(signals[1].aborted).toBe(true);
+        expect(screen.getByTestId('error').textContent).toBe('Server unreachable');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('probes the stored serverUrl with X-Desktop-Token inside Electron (desktop leg)', async () => {
       installDesktopBridgeStub();
       localStorage.setItem(
