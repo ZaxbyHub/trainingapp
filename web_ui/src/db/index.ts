@@ -36,14 +36,14 @@ import type { Conversation } from './conversations';
  * migrationReady() below.
  */
 /**
- * `meta` rows: the clear `epoch` (number) and the legacy-adoption claim
- * ({target, phase, epoch?}) — see db/conv-protocol.ts. key 'epoch' → number;
- * key 'legacy-adopt-claim' → LegacyAdoptClaim-shaped object (the optional
- * `epoch` is the copy's epoch binding, reviewer round 2 F3).
+ * `meta` rows: the clear `epoch` (number), the legacy-adoption claim
+ * ({target, phase, epoch?}), and delete-post evidence ({preEpoch, at}) — see
+ * db/conv-protocol.ts. The pre-delete epoch distinguishes a legacy true clear
+ * from a skipped clear when the completion write was lost.
  */
 export type ConversationMetaRow = {
   key: string;
-  value: number | { target: string; phase: 'copying' | 'done'; epoch?: number };
+  value: number | string | { target: string; phase: 'copying' | 'done'; epoch?: number } | { preEpoch: number; at: number };
 };
 
 /**

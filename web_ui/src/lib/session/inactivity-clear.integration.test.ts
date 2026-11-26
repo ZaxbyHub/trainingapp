@@ -29,9 +29,11 @@ vi.mock('../../db/index', async (importOriginal) => {
 });
 
 import { readClearRecord, readConversationEpoch } from '../../db/conv-protocol';
+import * as convProtocol from '../../db/conv-protocol';
 import { createConversation } from '../../db/conversations';
 import { startInactivityWatch, type InactivityWatchOptions } from './inactivity';
 import { anyHandlerBusy, registerClearHandler, resetSessionClearBusForTests } from './session-clear';
+import * as sessionClear from './session-clear';
 import { conversationsOf, resetFakeDexie } from '../../test/fake-dexie';
 import { CONVERSATIONS_CLEARED_KEY, PROFILE_KEY } from '../storage/persisted-keys';
 import type { Conversation } from '../../db/conversations';
@@ -127,7 +129,7 @@ function activity(): void {
 }
 
 /** Start the real watch around the real bus. */
-function startWatch(hooks: { threshold(): number; onCleared(): void }): void {
+function startWatch(hooks: { threshold(): number; onCleared(): void }): ReturnType<typeof startInactivityWatch> {
   const options: InactivityWatchOptions = {
     getThresholdMin: hooks.threshold,
     isBusy: () => anyHandlerBusy(),
@@ -136,6 +138,7 @@ function startWatch(hooks: { threshold(): number; onCleared(): void }): void {
   };
   const watch = startInactivityWatch(options);
   watches.push(() => watch.stop());
+  return watch;
 }
 
 /** Hold the session-active lock in SHARED mode as if a colleague's tab. */
@@ -165,6 +168,7 @@ beforeEach(() => {
 
 afterEach(() => {
   for (const stop of watches.splice(0)) stop();
+  vi.restoreAllMocks();
   vi.useRealTimers();
   vi.unstubAllGlobals();
   resetSessionClearBusForTests();
@@ -346,5 +350,183 @@ describe('inactivity fire -> persisted clear through REAL locks (review F1)', ()
     // it stale beside a wiped store.
     expect(onClear.mock.calls.length).toBe(clearsAfterFirstFire + 1);
     expect(readClearRecord()).toEqual({ pending: null, completed: { [PREFIX]: 2 } });
+  });
+
+  it('re-arms without a destructive clear when repair replay remains deferred', async () => {
+    await createConversation(conv(99));
+    const replay = vi.spyOn(convProtocol, 'replayPendingConversationClear')
+      .mockResolvedValue({ replayed: false, deferred: true });
+    const requestClear = vi.spyOn(sessionClear, 'requestSessionClear');
+    const onCleared = vi.fn();
+    startWatch({ threshold: () => 15, onCleared });
+    activity();
+
+    await vi.advanceTimersByTimeAsync(15 * MIN);
+    expect(conversationsOf(DB_NAME)).toHaveLength(1);
+    expect(await readConversationEpoch()).toBe(0);
+    expect(requestClear).not.toHaveBeenCalled();
+    expect(onCleared).not.toHaveBeenCalled();
+    expect(replay).toHaveBeenCalledTimes(1);
+
+    // The deferred repair is re-armed rather than falling through to the
+    // destructive session-clear bus on the same idle tick.
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(replay).toHaveBeenCalledTimes(2);
+    expect(requestClear).not.toHaveBeenCalled();
+    expect(conversationsOf(DB_NAME)).toHaveLength(1);
+  });
+
+  it('catches an idle replay rejection, preserves rows, and retries on the re-arm poll', async () => {
+    await createConversation(conv(100));
+    const replay = vi.spyOn(convProtocol, 'replayPendingConversationClear')
+      .mockRejectedValueOnce(new Error('transient replay rejection'))
+      .mockResolvedValueOnce({ replayed: false, deferred: false });
+    const requestClear = vi.spyOn(sessionClear, 'requestSessionClear');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    startWatch({ threshold: () => 15, onCleared: () => {} });
+    activity();
+
+    await vi.advanceTimersByTimeAsync(15 * MIN);
+    expect(warn).toHaveBeenCalledWith('[inactivity] pending-clear replay failed:', expect.any(Error));
+    expect(requestClear).not.toHaveBeenCalled();
+    expect(conversationsOf(DB_NAME)).toHaveLength(1);
+    expect(await readConversationEpoch()).toBe(0);
+    expect(replay).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(replay).toHaveBeenCalledTimes(2);
+    expect(requestClear).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let an obsolete replay rejection replace a newer activity timer', async () => {
+    let rejectReplay!: (error: Error) => void;
+    const pendingReplay = new Promise<{ replayed: boolean; deferred: boolean }>((_resolve, reject) => {
+      rejectReplay = reject;
+    });
+    const replay = vi.spyOn(convProtocol, 'replayPendingConversationClear').mockReturnValueOnce(pendingReplay);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    startWatch({ threshold: () => 15, onCleared: () => {} });
+    activity();
+    await vi.advanceTimersByTimeAsync(15 * MIN);
+    expect(replay).toHaveBeenCalledTimes(1);
+
+    // Newer activity arms a fresh full-threshold decision while the old replay
+    // is still in flight. Its later rejection must not install a 30s poll.
+    activity();
+    expect(vi.getTimerCount()).toBe(1);
+    rejectReplay(new Error('obsolete replay rejection'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(warn).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(replay).toHaveBeenCalledTimes(1);
+  });
+
+  it('reconciles a successful replay after newer activity without replacing its timer', async () => {
+    let resolveReplay!: (value: { replayed: boolean; deferred: boolean }) => void;
+    const pendingReplay = new Promise<{ replayed: boolean; deferred: boolean }>((resolve) => {
+      resolveReplay = resolve;
+    });
+    const replay = vi.spyOn(convProtocol, 'replayPendingConversationClear').mockReturnValueOnce(pendingReplay);
+    const onCleared = vi.fn();
+    startWatch({ threshold: () => 15, onCleared });
+    activity();
+    await vi.advanceTimersByTimeAsync(15 * MIN);
+    expect(replay).toHaveBeenCalledTimes(1);
+
+    const timerSpy = vi.spyOn(globalThis, 'setTimeout');
+    activity();
+    expect(vi.getTimerCount()).toBe(1);
+    const timersAfterActivity = timerSpy.mock.calls.length;
+    // Resolve at a strictly later virtual instant. Without the generation
+    // guard, armThreshold would create a replacement timer here.
+    await vi.advanceTimersByTimeAsync(1_000);
+    resolveReplay({ replayed: true, deferred: false });
+    await vi.advanceTimersByTimeAsync(0);
+    await Promise.resolve();
+    expect(onCleared).toHaveBeenCalledTimes(1);
+    expect(timerSpy).toHaveBeenCalledTimes(timersAfterActivity);
+    expect(vi.getTimerCount()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(replay).toHaveBeenCalledTimes(1);
+  });
+
+  it('notifies after an ordinary clear succeeds following newer activity without replacing its timer', async () => {
+    await createConversation(conv(101));
+    let resolveClear!: (value: { cleared: true }) => void;
+    const pendingClear = new Promise<{ cleared: true }>((resolve) => {
+      resolveClear = resolve;
+    });
+    const requestClear = vi.spyOn(sessionClear, 'requestSessionClear').mockReturnValueOnce(pendingClear);
+    const onCleared = vi.fn();
+    startWatch({ threshold: () => 15, onCleared });
+    activity();
+    await vi.advanceTimersByTimeAsync(15 * MIN);
+    expect(requestClear).toHaveBeenCalledTimes(1);
+
+    // Newer activity owns the timer while the ordinary clear is still in
+    // flight. Its later commit must still surface the required notice.
+    const timerSpy = vi.spyOn(globalThis, 'setTimeout');
+    activity();
+    expect(vi.getTimerCount()).toBe(1);
+    const timersAfterActivity = timerSpy.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(1_000);
+    resolveClear({ cleared: true });
+    await vi.advanceTimersByTimeAsync(0);
+    await Promise.resolve();
+    expect(onCleared).toHaveBeenCalledTimes(1);
+    expect(timerSpy).toHaveBeenCalledTimes(timersAfterActivity);
+    expect(vi.getTimerCount()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(requestClear).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not install a poll when an obsolete replay resolves deferred', async () => {
+    let resolveReplay!: (value: { replayed: boolean; deferred: boolean }) => void;
+    const pendingReplay = new Promise<{ replayed: boolean; deferred: boolean }>((resolve) => {
+      resolveReplay = resolve;
+    });
+    const replay = vi.spyOn(convProtocol, 'replayPendingConversationClear').mockReturnValueOnce(pendingReplay);
+    const requestClear = vi.spyOn(sessionClear, 'requestSessionClear');
+    startWatch({ threshold: () => 15, onCleared: () => {} });
+    activity();
+    await vi.advanceTimersByTimeAsync(15 * MIN);
+    expect(replay).toHaveBeenCalledTimes(1);
+
+    const timerSpy = vi.spyOn(globalThis, 'setTimeout');
+    activity();
+    const timersAfterActivity = timerSpy.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(1_000);
+    resolveReplay({ replayed: false, deferred: true });
+    await vi.advanceTimersByTimeAsync(0);
+    await Promise.resolve();
+    expect(timerSpy).toHaveBeenCalledTimes(timersAfterActivity);
+    expect(vi.getTimerCount()).toBe(1);
+    expect(requestClear).not.toHaveBeenCalled();
+  });
+
+  it('does not notify when stopped before an in-flight ordinary clear succeeds', async () => {
+    await createConversation(conv(102));
+    let resolveClear!: (value: { cleared: true }) => void;
+    const pendingClear = new Promise<{ cleared: true }>((resolve) => {
+      resolveClear = resolve;
+    });
+    const requestClear = vi.spyOn(sessionClear, 'requestSessionClear').mockReturnValueOnce(pendingClear);
+    const onCleared = vi.fn();
+    const watch = startWatch({ threshold: () => 15, onCleared });
+    activity();
+    await vi.advanceTimersByTimeAsync(15 * MIN);
+    expect(requestClear).toHaveBeenCalledTimes(1);
+
+    watch.stop();
+    resolveClear({ cleared: true });
+    await vi.advanceTimersByTimeAsync(0);
+    await Promise.resolve();
+    expect(onCleared).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

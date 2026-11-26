@@ -159,6 +159,10 @@ export interface BackendHostConfig {
     secretStore?: import('../security/secret-store.js').SecretStore;
     airgap?: boolean;
   };
+  /** #373: commit-faithful pack governance sink (emit inside the pack tx). */
+  auditSink?: { emit(envelope: import('./audit-outbox.js').DesktopAuditEnvelope): void };
+  /** #373 test/main seam: fires when a settings commit section is entered. */
+  onSettingsSectionEntry?: (section: { patch: Record<string, unknown> }) => void;
   /** Node mode only (B6, issue #64): directory for store backups created by
    *  the recovery/backup surfaces. Defaults to <storeDir>/backups. */
   storeBackupsDir?: string;
@@ -456,7 +460,26 @@ export interface StatsShape {
   documents: string[];
 }
 
+export interface SettingsAuditEnvelope {
+  eventId: string;
+  event: 'settings_change';
+  subject: string;
+  occurredAt: number;
+}
+
+export interface SettingsAuditBatch {
+  capture(envelope: SettingsAuditEnvelope): void;
+  flush(): void | Promise<void>;
+  discard(): void;
+}
+
+export interface SettingsCommitContext {
+  auditBatch?: SettingsAuditBatch | null;
+}
+
 export interface EngineSurface {
+  /** #373: one custody batch per outer settings commit. */
+  beginSettingsRequest?(): SettingsAuditBatch | null;
   query(question: string, opts?: EngineQueryOptions): Promise<EngineQueryResult>;
   /**
    * B4 (issue #62): best-effort readiness check that throws BEFORE any
@@ -504,14 +527,14 @@ export interface EngineSurface {
   listDocuments(): Promise<{ documents: Array<{ id: string; chunk_count: number }>; total: number }>;
   clearDocuments(): Promise<void>;
   getStats(): Promise<StatsShape>;
-  applySettingsPatch(patch: Record<string, unknown>): { ok: true } | { ok: false; status: 400 | 422; detail: string; errors?: string[] };
+  applySettingsPatch(patch: Record<string, unknown>, context?: SettingsCommitContext): { ok: true } | { ok: false; status: 400 | 422; detail: string; errors?: string[] };
   /**
    * settings-wiring-honesty: the PUT /settings `reset` directive. Restores the
    * named rag_* keys to their defaults and drops them from the explicitly-set
    * key set, so they follow the env/profile defaults again. Optional: the
    * route answers 422 for engines without it (test doubles).
    */
-  resetSettings?(keys: unknown): { ok: true } | { ok: false; status: 400 | 422; detail: string; errors?: string[] };
+  resetSettings?(keys: unknown, context?: SettingsCommitContext): { ok: true } | { ok: false; status: 400 | 422; detail: string; errors?: string[] };
   /**
    * PR #140 review (FB140-001): an opaque copy of every value
    * applySettingsPatch / resetSettings can change, and its inverse. The host

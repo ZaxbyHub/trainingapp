@@ -15,11 +15,9 @@ import {
 import { subscribeLatestModelStatus } from './lib/desktop-models-events';
 import { isKnownUnsupportedBrowser } from './lib/browser/browser-compat';
 import { migrateLegacyProviderToDesktop } from './lib/llm/external-migration';
-import { INACTIVITY_TIMEOUT_KEY } from './lib/storage/persisted-keys';
 import { ensureCurrentProfileRegistered } from './lib/storage/profile';
 import { recordAuditEvent } from './db/audit';
-import { startInactivityWatch, INACTIVITY_DEFAULT_MIN } from './lib/session/inactivity';
-import { anyHandlerBusy } from './lib/session/session-clear';
+import { startAuditOutboxListener } from './db/audit-outbox-listener';
 import { AppLayout } from './layouts/AppLayout';
 import { FirstRunGate } from './components/FirstRunWizard';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -33,6 +31,7 @@ import type { PinnedSlide } from './components/PinnedSlideContext';
 import { resolveSlideDoc, type ResolvedSlideDoc } from './lib/training/slide-doc-resolver';
 import { useServiceInitialization } from './hooks/useServiceInitialization';
 import { useConversations } from './hooks/useConversations';
+import { useInactivityAutoClear } from './hooks/useInactivityAutoClear';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import '@fontsource/inter/400.css';
 import '@fontsource/inter/500.css';
@@ -276,18 +275,28 @@ function AppContent() {
     if (!isElectron()) ensureCurrentProfileRegistered();
   }, []);
 
+  // #373: desktop outbox subscriber. Browser runtime keeps its local audit
+  // producers; an older desktop main without the bridge is a safe no-op.
+  useEffect(() => {
+    if (!isElectron() || window.desktopApi === undefined) return;
+    return startAuditOutboxListener(window.desktopApi);
+  }, []);
+
   // Issue #366 (WI5): app_start / app_stop lifecycle audit. One app_start per
   // renderer page load (module-scoped guard above defeats StrictMode replay
   // and same-document remounts); app_stop is a BEST-EFFORT pagehide append
   // (pagehide cannot await; recordAuditEvent swallows write failures) with
   // the listener removed on cleanup so a remount never double-subscribes.
   useEffect(() => {
+    // A current desktop main owns lifecycle rows through the durable outbox.
+    // Browser and older desktop mains keep the renderer-local fallback.
+    const desktopAuditOwned = isElectron() && window.desktopApi?.getAuditBindingState !== undefined;
     if (!appStartRecordedThisLoad) {
       appStartRecordedThisLoad = true;
-      recordAuditEvent('app_start', null);
+      if (!desktopAuditOwned) recordAuditEvent('app_start', null);
     }
     const onPageHide = (): void => {
-      recordAuditEvent('app_stop', null);
+      if (!desktopAuditOwned) recordAuditEvent('app_stop', null);
     };
     window.addEventListener('pagehide', onPageHide);
     return () => {
@@ -295,29 +304,6 @@ function AppContent() {
     };
   }, []);
 
-  // Issue #34 item 6p (AC6): the workstation-wide inactivity auto-clear. The
-  // threshold is the workstation-level Settings value (default 15 min, 0
-  // disables); busy arbitration comes from the session-clear bus; a completed
-  // clear surfaces the notice banner below. startInactivityWatch disables
-  // itself (disclosed) where Web Locks are unavailable.
-  const [inactivityClearedNotice, setInactivityClearedNotice] = useState(false);
-  useEffect(() => {
-    const watch = startInactivityWatch({
-      getThresholdMin: () => {
-        try {
-          const raw = localStorage.getItem(INACTIVITY_TIMEOUT_KEY);
-          if (raw === null) return INACTIVITY_DEFAULT_MIN;
-          const parsed = Number(raw);
-          return Number.isFinite(parsed) ? parsed : INACTIVITY_DEFAULT_MIN;
-        } catch {
-          return INACTIVITY_DEFAULT_MIN;
-        }
-      },
-      isBusy: () => anyHandlerBusy(),
-      onCleared: () => setInactivityClearedNotice(true),
-    });
-    return () => watch.stop();
-  }, []);
   const showBrowserNotice = browserUnsupported && !browserNoticeDismissed;
   const browserNotice = (className?: string) => (
     <Banner
@@ -358,7 +344,15 @@ function AppContent() {
     searchResults,
     searchTruncated,
     isSearching,
+    isInitialized: conversationsInitialized,
+    historyReady: conversationsHistoryReady,
   } = useConversations();
+
+  // Issue #34 item 6p (AC6): the workstation-wide inactivity auto-clear starts
+  // only after boot replay settles. Starting it earlier holds this tab's shared
+  // session-active lock and blocks the exclusive pending-clear replay until idle.
+  const [inactivityClearedNotice, setInactivityClearedNotice] = useState(false);
+  useInactivityAutoClear(conversationsHistoryReady, () => setInactivityClearedNotice(true));
 
   const { isInitialized, initError, currentStep } = useServiceInitialization({
     setModelReady,
@@ -453,16 +447,18 @@ function AppContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage, trainingTarget]);
 
-  if (!isInitialized) {
+  if (!isInitialized || !conversationsInitialized) {
     // No onRetry: useServiceInitialization exposes no re-init, and it reports
     // initError together with isInitialized=true (see the init-error banner
     // below), so this overlay is the in-progress state in practice. A Retry
-    // here would have nothing honest to call.
+    // here would have nothing honest to call. Conversation replay is part of
+    // the boot fence too: service readiness alone must not expose sidebar
+    // search or history while an owed clear is still deferred.
     // The unsupported-browser notice is shown ON the boot surface (LOW-B): it must be seen
     // even while init is pending or hung, and nothing behind this modal dialog is visible.
     return (
       <LoadingOverlay
-        currentStep={currentStep}
+        currentStep={!isInitialized ? currentStep : 'Restoring conversation history…'}
         initError={initError}
         notice={showBrowserNotice ? browserNotice() : undefined}
       />

@@ -310,6 +310,21 @@ describe('profile (F1 stable namespace)', () => {
       ]);
     });
 
+    it('full namespace deletion revokes desktop custody before deleting databases', async () => {
+      const deleted = stubDeleteDatabase();
+      const deleteDatabase = globalThis.indexedDB.deleteDatabase as ReturnType<typeof vi.fn>;
+      const revoke = vi.fn(async (_prefix: string) => ({ prefix: null, generation: 0, senders: [], epoch: 1 }));
+      window.desktopApi = { revokeAuditNamespace: revoke } as unknown as Window['desktopApi'];
+      try {
+        await deleteNamespace('orphan01', { includeConversations: true });
+        expect(revoke).toHaveBeenCalledWith('orphan01');
+        expect(revoke.mock.invocationCallOrder[0]).toBeLessThan(deleteDatabase.mock.invocationCallOrder[0]);
+        expect(deleted).toContain('orphan01-doc-qa-audit');
+      } finally {
+        delete window.desktopApi;
+      }
+    });
+
     it('refuses an invalid prefix shape (nothing deleted)', async () => {
       const deleteDatabase = vi.fn(() => makeFiringRequest());
       Object.defineProperty(globalThis, 'indexedDB', {

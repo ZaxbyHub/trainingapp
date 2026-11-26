@@ -34,7 +34,8 @@
 // unreadable at migration), the destructive verbs refuse outright.
 import fs from 'node:fs';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { type DesktopAuditEnvelope } from '../audit-outbox.js';
 import { createRequire } from 'node:module';
 import type { StoreHandle } from './sqlite-store.js';
 import {
@@ -408,6 +409,8 @@ export interface PackManagerOptions {
    * with.
    */
   packsSecurity?: PacksSecurityOverrides;
+  /** #373: commit-faithful governance sink, invoked inside the same tx. */
+  auditSink?: { emit(envelope: DesktopAuditEnvelope): void };
 }
 
 export class PackManager {
@@ -421,6 +424,7 @@ export class PackManager {
   private readonly embedder: EmbeddingSurface;
   readonly packsRoot: string;
   private readonly repoRoot: string;
+  private readonly auditSink: PackManagerOptions['auditSink'];
   /**
    * Issue #75 (C8): the resolved pack-installation security config (public —
    * the packs surface passes the extraction limits from the SAME resolution,
@@ -443,6 +447,7 @@ export class PackManager {
     this.embedder = opts.embedder;
     this.packsRoot = opts.packsRoot;
     this.repoRoot = opts.repoRoot ?? findRepoRoot();
+    this.auditSink = opts.auditSink;
     this.packsSecurity = resolvePacksSecurity(process.env, opts.packsSecurity);
   }
 
@@ -633,6 +638,12 @@ export class PackManager {
       if (imported === null && storeDocIds.size > 0) {
         recomputeLinksForDocs(this.db, [...storeDocIds.values()]);
       }
+      this.auditSink?.emit({
+        eventId: randomUUID(),
+        event: 'pack_install',
+        subject: packId,
+        occurredAt: Date.now(),
+      });
     });
 
     for (const warning of warnings) {
@@ -749,6 +760,12 @@ export class PackManager {
         this.stmt('DELETE FROM packs WHERE id = ? AND version = ?').run(row.id, row.version);
       }
       pruneOrphanLinks(this.db);
+      this.auditSink?.emit({
+        eventId: randomUUID(),
+        event: 'pack_remove',
+        subject: packId,
+        occurredAt: Date.now(),
+      });
     });
     // Best-effort managed-dir removal AFTER the rows are gone: collect every
     // failure and throw ONE error listing them, disclosing the retry

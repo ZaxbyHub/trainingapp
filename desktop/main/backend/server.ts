@@ -98,7 +98,7 @@ export interface BackendServerOptions {
    * it). Called only after the engine accepted a patch/reset touching
    * external.* keys. The API key is never part of the snapshot.
    */
-  persistExternal?: (snapshot: Record<string, unknown>) => void;
+  persistExternal?: (snapshot: Record<string, unknown>) => void | Promise<void>;
   /**
    * Issue #280 (C4): post-commit settings observer, invoked after
    * commitSettingsChange returns ok on PUT /settings — for both a patch and
@@ -108,7 +108,11 @@ export interface BackendServerOptions {
    * persistence sinks already follow inside commitSettingsChange. Optional:
    * hosts without live-following settings keep working unwired.
    */
-  onSettingsApplied?: (patch: Record<string, unknown>) => void;
+  onSettingsApplied?: (patch: Record<string, unknown>) => void | Promise<void>;
+  /** #373: one mutex shared by HTTP settings commits and host apply seams. */
+  settingsCommitMutex?: <T>(work: () => Promise<T>) => Promise<T>;
+  /** #373 test/main seam fired after entering the serialized commit section. */
+  onSettingsSectionEntry?: (section: { patch: Record<string, unknown> }) => void;
 }
 
 // The 16 contract operations (contracts/api.openapi.yaml). Unknown paths get
@@ -377,28 +381,56 @@ type SettingsCommitResult =
  *      external.json was already written, re-write it from the restored
  *      engine, so neither memory nor a sidecar is left ahead of the other.
  */
-export function commitSettingsChange(
+export function createSettingsCommitMutex(): <T>(work: () => Promise<T>) => Promise<T> {
+  let tail: Promise<unknown> = Promise.resolve();
+  return <T>(work: () => Promise<T>): Promise<T> => {
+    const run = tail.then(work);
+    tail = run.then(() => undefined, () => undefined);
+    return run;
+  };
+}
+
+const engineSettingsMutexes = new WeakMap<EngineSurface, <T>(work: () => Promise<T>) => Promise<T>>();
+
+/** One mutex per engine, shared by every host/server seam around that engine. */
+export function settingsCommitMutexFor(engine: EngineSurface): <T>(work: () => Promise<T>) => Promise<T> {
+  let mutex = engineSettingsMutexes.get(engine);
+  if (mutex === undefined) {
+    mutex = createSettingsCommitMutex();
+    engineSettingsMutexes.set(engine, mutex);
+  }
+  return mutex;
+}
+
+export async function commitSettingsChange(
   engine: EngineSurface,
   kind: 'change' | 'reset',
-  apply: () => { ok: true } | { ok: false; status: 400 | 422; detail: string; errors?: string[] },
-  persist: { external?: () => void; settings?: () => void },
-): SettingsCommitResult {
+  apply: (context: { auditBatch: ReturnType<NonNullable<EngineSurface['beginSettingsRequest']>> | null }) => { ok: true } | { ok: false; status: 400 | 422; detail: string; errors?: string[] },
+  persist: { external?: () => void | Promise<void>; settings?: () => void | Promise<void> },
+): Promise<SettingsCommitResult> {
+  const batch = engine.beginSettingsRequest?.() ?? null;
   const before = engine.captureSettingsState?.();
   let applied: ReturnType<typeof apply>;
   try {
-    applied = apply();
+    applied = apply({ auditBatch: batch });
   } catch (err) {
+    batch?.discard();
     return { ok: false, status: 500, detail: rollBackUnsavedSettings(engine, before, kind, err) };
   }
-  if (!applied.ok) return applied;
+  if (!applied.ok) {
+    batch?.discard();
+    return applied;
+  }
   let externalWritten = false;
   try {
     if (persist.external !== undefined) {
-      persist.external();
+      await persist.external();
       externalWritten = true;
     }
-    persist.settings?.();
+    await persist.settings?.();
+    await batch?.flush();
   } catch (err) {
+    batch?.discard();
     return {
       ok: false,
       status: 500,
@@ -638,6 +670,7 @@ function proxyToUpstream(req: IncomingMessage, res: ServerResponse, upstreamPort
 export function createBackendServer(opts: BackendServerOptions): http.Server {
   const tokenHeaderName = opts.tokenHeaderName ?? DEFAULT_TOKEN_HEADER_NAME;
   const allowedOrigins = opts.allowedOrigins ?? DEFAULT_ALLOWED_ORIGINS;
+  const settingsCommitMutex = opts.settingsCommitMutex ?? (opts.engine === undefined ? createSettingsCommitMutex() : settingsCommitMutexFor(opts.engine));
 
   return http.createServer((req, res) => {
     // Guard adapter: the guard REQUIRES an absolute url (a bare path fails
@@ -950,83 +983,90 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
               validationError(res, ['body: invalid JSON'], cors);
               return;
             }
-            // settings-wiring-honesty: `reset` is a route directive, never a
-            // stored key — stripped here before applySettingsPatch, never
-            // persisted, never replayed at boot. It stands alone so a request
-            // is either a reset or a patch (all-or-nothing, no partial commit).
-            if (Object.prototype.hasOwnProperty.call(patch, 'reset')) {
-              if (Object.keys(patch).length !== 1) {
-                validationError(res, ['reset: cannot be combined with setting values'], cors);
+            await settingsCommitMutex(async () => {
+              // Feedback cluster C: the section-entry seam fires INSIDE the
+              // serialized commit section — after this request has ACQUIRED
+              // the settings-commit mutex, never before (a queued request no
+              // longer announces itself at route arrival).
+              opts.onSettingsSectionEntry?.({ patch });
+              // settings-wiring-honesty: `reset` is a route directive, never a
+              // stored key — stripped here before applySettingsPatch, never
+              // persisted, never replayed at boot. It stands alone so a request
+              // is either a reset or a patch (all-or-nothing, no partial commit).
+              if (Object.prototype.hasOwnProperty.call(patch, 'reset')) {
+                if (Object.keys(patch).length !== 1) {
+                  validationError(res, ['reset: cannot be combined with setting values'], cors);
+                  return;
+                }
+                if (typeof engine.resetSettings !== 'function') {
+                  validationError(res, ['reset: not supported by this engine'], cors);
+                  return;
+                }
+                // PR #140 review (FB140-001) + PR #142 RB-001: a failed save
+                // (or a SecretStore delete that fails) rolls the engine and the
+                // SecretStore back — memory never claims a change the sidecars
+                // did not record. resetSettings validates the array shape.
+                const resetEngine = engine as EngineSurface & { resetSettings: NonNullable<EngineSurface['resetSettings']> };
+                const resetKeys = Array.isArray(patch.reset) ? (patch.reset as unknown[]) : [];
+                const resetExternal = resetKeys.some((key) => typeof key === 'string' && isExternalKey(key));
+                const resetOther = resetKeys.filter((key): key is string => typeof key === 'string' && !isExternalKey(key));
+                const resetResult = await commitSettingsChange(engine, 'reset', (context) => resetEngine.resetSettings(patch.reset, context), {
+                  ...(opts.persistExternal && resetExternal && typeof engine.externalSnapshot === 'function'
+                    ? { external: () => opts.persistExternal?.(engine.externalSnapshot?.() ?? {}) }
+                    : {}),
+                  ...(opts.persistSettings && resetOther.length > 0
+                    ? { settings: () => opts.persistSettings?.({}, resetOther) }
+                    : {}),
+                });
+                if (!resetResult.ok) {
+                  if (resetResult.status === 500) sendJson(res, 500, { detail: resetResult.detail }, cors);
+                  else if (resetResult.status === 400) sendJson(res, 400, { detail: resetResult.detail }, cors);
+                  else validationError(res, resetResult.errors ?? [resetResult.detail], cors);
+                  return;
+                }
+                // Issue #280 (C4): the observer sees the reset-shaped payload
+                // (the original request object) after the commit succeeded.
+                await opts.onSettingsApplied?.(patch);
+                sendJson(res, 200, engine.responseSettings(), cors);
                 return;
               }
-              if (typeof engine.resetSettings !== 'function') {
-                validationError(res, ['reset: not supported by this engine'], cors);
-                return;
+              // B9 (issue #67): persistence is a post-validation side effect —
+              // only a patch the engine ACCEPTED is snapshotted (in PATCH form,
+              // i.e. the same key names applySettingsPatch validates), so the
+              // sidecar round-trips through the boot-time apply exactly. Hosts
+              // without a profile dir pass no sink and keep engine-memory only.
+              // universal-provider-settings-overhaul: external.* goes to its own
+              // sidecar (never settings.json); the key goes to neither.
+              const settingsPatch: Record<string, unknown> = {};
+              let touchesExternal = false;
+              for (const [key, value] of Object.entries(patch)) {
+                if (isExternalKey(key)) touchesExternal = true;
+                else settingsPatch[key] = value;
               }
-              // PR #140 review (FB140-001) + PR #142 RB-001: a failed save
-              // (or a SecretStore delete that fails) rolls the engine and the
-              // SecretStore back — memory never claims a change the sidecars
-              // did not record. resetSettings validates the array shape.
-              const resetEngine = engine as EngineSurface & { resetSettings: NonNullable<EngineSurface['resetSettings']> };
-              const resetKeys = Array.isArray(patch.reset) ? (patch.reset as unknown[]) : [];
-              const resetExternal = resetKeys.some((key) => typeof key === 'string' && isExternalKey(key));
-              const resetOther = resetKeys.filter((key): key is string => typeof key === 'string' && !isExternalKey(key));
-              const resetResult = commitSettingsChange(engine, 'reset', () => resetEngine.resetSettings(patch.reset), {
-                ...(opts.persistExternal && resetExternal && typeof engine.externalSnapshot === 'function'
+              // external.json is written FIRST and settings.json LAST; a failure
+              // anywhere rolls the engine, the SecretStore and (when already
+              // written) external.json back (commitSettingsChange).
+              const result = await commitSettingsChange(engine, 'change', (context) => engine.applySettingsPatch(patch, context), {
+                ...(opts.persistExternal && touchesExternal && typeof engine.externalSnapshot === 'function'
                   ? { external: () => opts.persistExternal?.(engine.externalSnapshot?.() ?? {}) }
                   : {}),
-                ...(opts.persistSettings && resetOther.length > 0
-                  ? { settings: () => opts.persistSettings?.({}, resetOther) }
+                ...(opts.persistSettings && Object.keys(settingsPatch).length > 0
+                  ? { settings: () => opts.persistSettings?.(settingsPatch) }
                   : {}),
               });
-              if (!resetResult.ok) {
-                if (resetResult.status === 500) sendJson(res, 500, { detail: resetResult.detail }, cors);
-                else if (resetResult.status === 400) sendJson(res, 400, { detail: resetResult.detail }, cors);
-                else validationError(res, resetResult.errors ?? [resetResult.detail], cors);
+              if (!result.ok) {
+                if (result.status === 500) sendJson(res, 500, { detail: result.detail }, cors);
+                else if (result.status === 400) sendJson(res, 400, { detail: result.detail }, cors);
+                else validationError(res, result.errors ?? [result.detail], cors);
                 return;
               }
-              // Issue #280 (C4): the observer sees the reset-shaped payload
-              // (the original request object) after the commit succeeded.
-              opts.onSettingsApplied?.(patch);
+              // Issue #280 (C4): post-commit observer — the ORIGINAL patch as
+              // received (same side-effect-then-response order the persistence
+              // sinks follow inside commitSettingsChange).
+              await opts.onSettingsApplied?.(patch);
               sendJson(res, 200, engine.responseSettings(), cors);
               return;
-            }
-            // B9 (issue #67): persistence is a post-validation side effect —
-            // only a patch the engine ACCEPTED is snapshotted (in PATCH form,
-            // i.e. the same key names applySettingsPatch validates), so the
-            // sidecar round-trips through the boot-time apply exactly. Hosts
-            // without a profile dir pass no sink and keep engine-memory only.
-            // universal-provider-settings-overhaul: external.* goes to its own
-            // sidecar (never settings.json); the key goes to neither.
-            const settingsPatch: Record<string, unknown> = {};
-            let touchesExternal = false;
-            for (const [key, value] of Object.entries(patch)) {
-              if (isExternalKey(key)) touchesExternal = true;
-              else settingsPatch[key] = value;
-            }
-            // external.json is written FIRST and settings.json LAST; a failure
-            // anywhere rolls the engine, the SecretStore and (when already
-            // written) external.json back (commitSettingsChange).
-            const result = commitSettingsChange(engine, 'change', () => engine.applySettingsPatch(patch), {
-              ...(opts.persistExternal && touchesExternal && typeof engine.externalSnapshot === 'function'
-                ? { external: () => opts.persistExternal?.(engine.externalSnapshot?.() ?? {}) }
-                : {}),
-              ...(opts.persistSettings && Object.keys(settingsPatch).length > 0
-                ? { settings: () => opts.persistSettings?.(settingsPatch) }
-                : {}),
             });
-            if (!result.ok) {
-              if (result.status === 500) sendJson(res, 500, { detail: result.detail }, cors);
-              else if (result.status === 400) sendJson(res, 400, { detail: result.detail }, cors);
-              else validationError(res, result.errors ?? [result.detail], cors);
-              return;
-            }
-            // Issue #280 (C4): post-commit observer — the ORIGINAL patch as
-            // received (same side-effect-then-response order the persistence
-            // sinks follow inside commitSettingsChange).
-            opts.onSettingsApplied?.(patch);
-            sendJson(res, 200, engine.responseSettings(), cors);
-            return;
           }
           case 'POST /settings/inference/gpu-test': {
             // issue #155: no body is read and nothing is persisted here; the

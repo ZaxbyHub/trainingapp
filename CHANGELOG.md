@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- **Crash-safe conversation deletes + durable desktop governance audit (issues #372/#373)**:
+  - #372: conversation deletion advances the profile epoch in the same transaction, writes permanent legacy-adoption tombstones and pending-clear repair evidence, and rebinds stale tabs. Clear repair uses profile/goal-scoped insert signals and execution-time supersession checks so mixed old/new tabs cannot resurrect or incorrectly wipe post-skip rows.
+  - #373: desktop pack commits and external API-key custody changes emit commit-faithful audit envelopes into a profile-bound SQLite outbox. The renderer deduplicates, adopts generations, compensates stale inserts, and acknowledges only after its IndexedDB commit. Clear/recovery/restore journal pending events before replacing store bytes; sender destruction invalidates empty bindings.
+  - Browser audit behavior remains renderer-observed. Sidecar/Python audit parity, staged-weight AC1 evidence, and published-argv ratification remain open owner decisions; this entry does not claim those scope closures.
 - **Citable chunk headers + real prompt-token diagnostics (issues #360/#364, frontier-audit ASK-9)**:
   The estimate covers the non-context channels reserved by the budget; the real count covers the evaluated prompt, including retrieved context and template tokens.
   - #360 (E5): every slide-document chunk produced by packtool now carries a

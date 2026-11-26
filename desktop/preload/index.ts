@@ -58,6 +58,37 @@ contextBridge.exposeInMainWorld('desktopApi', {
       ipcRenderer.removeListener('updates:available', listener);
     };
   },
+  // Governance audit outbox (#373): all calls carry the binding generation
+  // and sender; the main process rejects stale or unauthorized deliveries.
+  getAuditBindingState: () => ipcRenderer.invoke('desktop:audit:binding-state'),
+  subscribeAuditOutbox: (prefix: string, sender: number, expectedEpoch: number) =>
+    ipcRenderer.invoke('desktop:audit:subscribe', prefix, sender, expectedEpoch),
+  getAuditPending: (generation: number, sender: number) =>
+    ipcRenderer.invoke('desktop:audit:pending', generation, sender),
+  ackAuditEvent: (eventId: string, generation: number, sender: number) =>
+    ipcRenderer.invoke('desktop:audit:ack', eventId, generation, sender),
+  auditBeforeClear: (generation: number, sender: number) =>
+    ipcRenderer.invoke('desktop:audit:before-clear', generation, sender),
+  revokeAuditNamespace: (prefix: string) =>
+    ipcRenderer.invoke('desktop:audit:revoke-namespace', prefix),
+  onAuditPending: (callback: (payload: unknown) => void) => {
+    const listener = (_event: unknown, payload: unknown): void => callback(payload);
+    ipcRenderer.on('audit:pending', listener);
+    return () => ipcRenderer.removeListener('audit:pending', listener);
+  },
+  onAuditBindingInvalidated: (callback: (payload: unknown) => void) => {
+    const listener = (_event: unknown, payload: unknown): void => callback(payload);
+    ipcRenderer.on('audit:binding-invalidated', listener);
+    return () => ipcRenderer.removeListener('audit:binding-invalidated', listener);
+  },
+  onAuditNamespaceRevoked: (callback: (payload: unknown) => void) => {
+    const listener = (_event: unknown, payload: unknown): void => callback(payload);
+    ipcRenderer.on('audit:namespace-revoked', listener);
+    return () => ipcRenderer.removeListener('audit:namespace-revoked', listener);
+  },
+  ackAuditNamespaceRevoked: (prefix: string) => {
+    ipcRenderer.send('audit:namespace-revoked-ack', prefix);
+  },
   // Diagnostics logging (issue #248): the renderer logging core's ONLY IPC
   // surface — level state (main is the sole Electron persistence authority),
   // live level changes, stop-and-wait entry forwarding, and the export

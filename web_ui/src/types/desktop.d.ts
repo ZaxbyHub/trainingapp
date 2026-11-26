@@ -157,6 +157,21 @@ export interface DesktopDiagnosticsBridge {
   exportDiagnostics(): Promise<DiagnosticsExportReply>;
 }
 
+export interface AuditBindingState {
+  prefix: string | null;
+  generation: number;
+  senders: number[];
+  epoch: number;
+}
+
+export interface DesktopAuditEnvelope {
+  eventId: string;
+  event: string;
+  subject: string | null;
+  occurredAt: number;
+  seq?: number;
+}
+
 export interface DesktopApiBridge {
   /** Per-launch backend token (never persisted; rotates every app start). */
   getAuthToken(): Promise<string>;
@@ -198,6 +213,17 @@ export interface DesktopApiBridge {
   /** E5 (issue #88): open an allowlisted (GitHub Releases https) update URL
    *  in the OS browser. The shell deny-alls renderer-initiated navigation. */
   openUpdateExternal(url: string): Promise<{ ok: boolean; detail?: string }>;
+  /** #373 acknowledged governance outbox. Optional for older desktop mains. */
+  getAuditBindingState?(): Promise<AuditBindingState>;
+  subscribeAuditOutbox?(prefix: string, sender: number, expectedEpoch?: number): Promise<{ prefix: string; generation: number }>;
+  getAuditPending?(generation: number, sender: number): Promise<DesktopAuditEnvelope[]>;
+  ackAuditEvent?(eventId: string, generation: number, sender: number): Promise<void>;
+  auditBeforeClear?(generation: number, sender: number): Promise<{ clearSeq: number; clearGen: number }>;
+  revokeAuditNamespace?(prefix: string): Promise<AuditBindingState>;
+  onAuditPending?(callback: (payload: unknown) => void): () => void;
+  onAuditBindingInvalidated?(callback: (payload: unknown) => void): () => void;
+  onAuditNamespaceRevoked?(callback: (payload: unknown) => void): () => void;
+  ackAuditNamespaceRevoked?(prefix: string): void;
   /** Diagnostics logging (issue #248). Optional: an older main process does
    *  not expose it, and the renderer stays on browser-default behavior. */
   diagnostics?: DesktopDiagnosticsBridge;

@@ -39,6 +39,8 @@ vi.mock('./hooks/useConversations', () => ({
     searchResults: null,
     searchTruncated: false,
     isSearching: false,
+    isInitialized: true,
+    historyReady: true,
   }),
 }));
 vi.mock('./hooks/useServiceInitialization', () => ({

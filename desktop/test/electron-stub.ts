@@ -73,6 +73,7 @@ export const app = {
 
 export class BrowserWindow {
   static readonly windows: BrowserWindow[] = [];
+  static nextWebContentsId = 1;
   readonly webPreferences: Record<string, unknown> | undefined;
   // Real Electron loadURL/loadFile return promises; the production seam
   // attaches a .catch to surface failures via did-fail-load, so the stub
@@ -103,6 +104,7 @@ export class BrowserWindow {
     if (i >= 0) BrowserWindow.windows.splice(i, 1);
   });
   webContents = {
+    id: BrowserWindow.nextWebContentsId++,
     on: vi.fn(),
     send: vi.fn(),
     // The REAL surface for the window-open policy handler (Electron >= 12,
@@ -236,6 +238,7 @@ export function __resetElectronStub(): void {
   app.isPackaged = false;
   emitter.removeAllListeners();
   BrowserWindow.windows.length = 0;
+  BrowserWindow.nextWebContentsId = 1;
   protocol.handle.mockClear();
   protocol.registerSchemesAsPrivileged.mockClear();
   contextBridge.exposeInMainWorld.mockClear();

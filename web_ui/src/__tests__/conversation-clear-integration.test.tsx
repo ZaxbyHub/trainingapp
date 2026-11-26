@@ -14,6 +14,7 @@
  * two-tab storage-event reset; the cross-tab epoch gate.
  */
 import { act, renderHook, waitFor } from '@testing-library/react';
+import { StrictMode, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../db/index', async (importOriginal) => {
@@ -34,6 +35,7 @@ import {
   replayPendingConversationClear,
   withEpochGate,
 } from '../db/conv-protocol';
+import * as convProtocol from '../db/conv-protocol';
 import { createConversation, listConversations, updateConversation } from '../db/conversations';
 import { useConversations } from '../hooks/useConversations';
 import {
@@ -306,6 +308,32 @@ describe('epoch gate (cross-tab stale writes)', () => {
 });
 
 describe('useConversations against the clear protocol', () => {
+  it('boot retries a deferred replay before loading history', async () => {
+    await seed(1);
+    const replay = vi.spyOn(convProtocol, 'replayPendingConversationClear')
+      .mockResolvedValueOnce({ replayed: false, deferred: true })
+      .mockResolvedValueOnce({ replayed: false, deferred: true })
+      .mockResolvedValueOnce({ replayed: false, deferred: false });
+    const wrapper = ({ children }: { children: ReactNode }) => <StrictMode>{children}</StrictMode>;
+    const { result } = renderHook(() => useConversations(), { wrapper });
+    await waitFor(() => {
+      expect(result.current.conversations).toHaveLength(1);
+    });
+    expect(replay).toHaveBeenCalledTimes(3);
+  });
+
+  it('unmount during legacy migration does not start a pending-clear replay', async () => {
+    let resolveMigration!: () => void;
+    const migration = new Promise<void>((resolve) => { resolveMigration = resolve; });
+    vi.spyOn(convProtocol, 'maybeAutoMigrateLegacyConversations').mockReturnValueOnce(migration);
+    const replay = vi.spyOn(convProtocol, 'replayPendingConversationClear');
+    const { unmount } = renderHook(() => useConversations());
+    unmount();
+    resolveMigration();
+    await act(async () => { await Promise.resolve(); });
+    expect(replay).not.toHaveBeenCalled();
+  });
+
   it('clearAllConversations resets list/current/search state with a fresh epoch', async () => {
     await seed(55);
     const { result } = renderHook(() => useConversations());

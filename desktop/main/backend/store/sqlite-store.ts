@@ -18,6 +18,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { migrate } from './migrate.js';
+import { consumeAuditJournal, defaultAuditJournalPath, ensureAuditOutboxSchema, type AuditStoreLike } from '../audit-outbox.js';
 
 /** The authoritative schema file, relative to the repository root. */
 export const SCHEMA_RELATIVE_PATH = 'contracts/store.schema.sql';
@@ -44,14 +45,17 @@ const require = createRequire(import.meta.url);
 // unreachable: the suite died at import with MODULE_NOT_FOUND instead of
 // skipping with the staging instruction).
 let nativeAddons: {
-  Database: new (path: string) => BetterSqlite3Db;
+  Database: new (path: string, options?: { readonly?: boolean; fileMustExist?: boolean }) => BetterSqlite3Db;
   sqliteVec: { load(db: BetterSqlite3Db): void; getLoadablePath(): string };
 } | null = null;
 
 function loadNativeAddons(): NonNullable<typeof nativeAddons> {
   if (nativeAddons === null) {
     // eslint-disable-next-line @typescript-eslint/no-var-requires -- native addons resolved at runtime (see file header)
-    const Database = require('better-sqlite3') as new (path: string) => BetterSqlite3Db;
+    const Database = require('better-sqlite3') as new (
+      path: string,
+      options?: { readonly?: boolean; fileMustExist?: boolean },
+    ) => BetterSqlite3Db;
     // eslint-disable-next-line @typescript-eslint/no-var-requires -- see above
     const sqliteVec = require('sqlite-vec') as {
       load(db: BetterSqlite3Db): void;
@@ -74,6 +78,7 @@ interface BetterSqlite3Db {
   pragma(sql: string, options?: { simple?: boolean }): unknown;
   /** issue #100 item 5b: open-state probe used by the closeStore pin. */
   readonly open: boolean;
+  readonly inTransaction: boolean;
   loadExtension(path: string): void;
   close(): void;
 }
@@ -115,6 +120,32 @@ export interface StoreHandle {
   dims: number;
   schemaVersion: number;
   close(): void;
+}
+
+/** Live current handle used by production sinks across clear/recovery rebinds. */
+let currentStoreHandle: StoreHandle | null = null;
+export function getCurrentStore(): StoreHandle | null { return currentStoreHandle; }
+export function setCurrentStore(handle: StoreHandle | null): void { currentStoreHandle = handle; }
+
+/** Read-only audit snapshot for restore, reusing the module's native loader. */
+export function openReadOnlyAuditSnapshot(dbPath: string): (AuditStoreLike & { close(): void }) | null {
+  let db: BetterSqlite3Db | null = null;
+  try {
+    const { Database } = loadNativeAddons();
+    db = new Database(dbPath, { readonly: true, fileMustExist: true });
+    const hasOutbox = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'audit_outbox'",
+    ).get();
+    if (hasOutbox === undefined) {
+      db.close();
+      return null;
+    }
+    const opened = db;
+    return { db: opened, dbPath, close: () => opened.close() };
+  } catch {
+    db?.close();
+    return null;
+  }
 }
 
 /** Locate the repository root by walking up to the authoritative schema. */
@@ -242,13 +273,25 @@ export function openStore(options: StoreOptions): StoreHandle {
       }
     }
     const schemaVersion = migrate(db);
-    return {
+    // #373: additive outbox tables and open-time journal watermark install.
+    // This deliberately does not bump the authoritative schema_version.
+    ensureAuditOutboxSchema(db);
+    consumeAuditJournal({ db, dbPath: options.dbPath }, defaultAuditJournalPath(options.dbPath));
+    let closed = false;
+    const handle: StoreHandle = {
       db,
       dbPath: options.dbPath,
       dims,
       schemaVersion,
-      close: () => db.close(),
+      close: () => {
+        if (closed) return;
+        closed = true;
+        db.close();
+        if (currentStoreHandle === handle) currentStoreHandle = null;
+      },
     };
+    setCurrentStore(handle);
+    return handle;
   } catch (err) {
     db.close();
     throw err;

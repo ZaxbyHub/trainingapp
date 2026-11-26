@@ -244,12 +244,12 @@ describe('C18 legs c-e: the host wiring (PUT /settings -> monitor.setThreshold; 
     const spy = vi.spyOn(monitor, 'setThreshold');
     const apply = host.applyEngineSettings;
     expect(apply).toBeTypeOf('function');
-    const result = apply!({ 'inference.profileThresholdGb': 3.5 });
+    const result = await apply!({ 'inference.profileThresholdGb': 3.5 });
     expect(result.ok).toBe(true);
     expect(spy).toHaveBeenCalledWith(3.5);
     // A FAILED wizard patch must not move the threshold.
     spy.mockClear();
-    const rejected = apply!({ 'inference.profileThresholdGb': 0 });
+    const rejected = await apply!({ 'inference.profileThresholdGb': 0 });
     expect(rejected.ok).toBe(false);
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();

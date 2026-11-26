@@ -145,7 +145,7 @@ describe('settings persist failure: the engine is rolled back, nothing changes',
       expect(before['inference.profile']).toBe('quality');
       breakSidecar(sidecar);
 
-      const applied = host.applyEngineSettings?.({ 'inference.profile': 'fast' });
+      const applied = await host.applyEngineSettings?.({ 'inference.profile': 'fast' });
       expect(applied).toMatchObject({ ok: false, status: 500 });
 
       const after = await getSettings(handle);

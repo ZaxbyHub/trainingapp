@@ -12,12 +12,14 @@
 // console output is captured from the very first line.
 import { activateDiagnosticsLogging, attachRendererCapture } from './logging.js';
 import { existsSync, readFileSync, statSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, safeStorage, session, shell, utilityProcess } from 'electron';
 import { createSafeStorageSecretStore } from './security/secret-store.js';
 import { registerPermissionHandlers } from './security/permissions.js';
 import { registerAppProtocol, registerAppSchemePrivileges } from './protocol.js';
+import { createAuditCallerAssertion, assertSenderNotOwnedElsewhere } from './audit-caller.js';
 import {
   createBackendHost,
   NodeBackendHost,
@@ -60,6 +62,18 @@ import {
 } from './first-run/first-run-store.js';
 import { assertCanComplete, manifestCompletionState, WizardBlockError } from './first-run/wizard.js';
 import { ensureBundledPacksAtBoot, isBundledPackSatisfied } from './first-run/bundled-packs.js';
+import { registerFirstRunCompleteIpc } from './first-run/complete-handler.js';
+import { buildProductionStartup } from './backend-config.js';
+import { getCurrentStore } from './backend/store/sqlite-store.js';
+import {
+  ackOutboxEvent,
+  bindOutboxBinding,
+  captureClear,
+  readOutboxBindingState,
+  readOutboxPending,
+  removeOutboxSender,
+  revokeOutboxNamespace,
+} from './backend/audit-outbox.js';
 import { formatFailure, runStartupIntegrityCheck } from './integrity-check.js';
 import { migrateLegacyStoreLayout, resolveProfileLayout } from './backend/store/profiles.js';
 import {
@@ -86,6 +100,34 @@ import {
 } from './security/index.js';
 
 const DEV_URL = 'http://localhost:5173';
+
+/** Renderer lifetime is explicit: a destroyed sender can no longer acknowledge. */
+const auditSendersByWebContents = new Map<number, number>();
+const namespaceRevokeWaiters = new Map<string, {
+  targets: Set<number>;
+  timer: ReturnType<typeof setTimeout>;
+  resolve(): void;
+  reject(error: Error): void;
+}>();
+/**
+ * Feedback cluster C: a destroyed renderer can never acknowledge a namespace
+ * revocation — left in a waiter's target set it can only burn the 3s deadline
+ * and fail the destructive operation closed. Drop the destroyed webContents id
+ * from every pending revoke waiter; a waiter whose live targets are all gone
+ * settles RESOLVED, while one that still holds live renderers RETAINS them for
+ * their acknowledgments.
+ */
+const removeDestroyedRendererFromRevokeWaiters = (webContentsId: number): void => {
+  for (const [prefix, waiter] of namespaceRevokeWaiters) {
+    if (!waiter.targets.delete(webContentsId)) continue;
+    if (waiter.targets.size > 0) continue;
+    clearTimeout(waiter.timer);
+    namespaceRevokeWaiters.delete(prefix);
+    waiter.resolve();
+  }
+};
+const validAuditSender = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= 0xffffffff;
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -168,6 +210,25 @@ export function createMainWindow(): BrowserWindow {
     },
   });
   win.once('ready-to-show', () => win.show());
+  const webContentsId = win.webContents.id;
+  win.webContents.on('destroyed', () => {
+    const sender = auditSendersByWebContents.get(webContentsId);
+    auditSendersByWebContents.delete(webContentsId);
+    // Feedback cluster C: the destroyed renderer is removed from every pending
+    // namespace-revocation waiter; waiters left with no live targets settle.
+    removeDestroyedRendererFromRevokeWaiters(webContentsId);
+    const store = getCurrentStore();
+    if (sender === undefined || store === null) return;
+    try {
+      if (removeOutboxSender(store, sender)) {
+        for (const live of BrowserWindow.getAllWindows()) {
+          live.webContents.send('audit:binding-invalidated', readOutboxBindingState(store));
+        }
+      }
+    } catch (error) {
+      console.warn('[audit] sender cleanup failed:', error instanceof Error ? error.name : String(error));
+    }
+  });
   // Navigation lockdown (issue #60, AC4): the only renderer-initiated
   // navigations are app:// targets (plus the dev server origin in dev mode);
   // window.open is denied outright — no popups, no new windows, ever.
@@ -396,101 +457,236 @@ export function bootstrap(): void {
     // ciphertext only); the airgap flag comes from the installer resources
     // manifest (missing => false; TRAININGAPP_AIRGAP=1 can only tighten it).
     const externalAirgap = integrity.manifest?.airgap === true;
-    const engineOverrides: {
-      userDataPath: string;
-      models?: { quality?: string; fast?: string };
-      externalProvider: { secretStore: ReturnType<typeof createSafeStorageSecretStore>; airgap: boolean };
-      /** issue #155 review PRR-003: so the engine can persist its own automatic
-       *  GPU load-failure downgrade. It is constructed before any backend host
-       *  exists, so it cannot reach the host's `adoptGpuVerdict`. */
-      gpuVerdictDir?: string;
-    } = {
-      userDataPath,
-      gpuVerdictDir: path.dirname(storePath),
-      externalProvider: {
-        secretStore: createSafeStorageSecretStore({
-          safeStorage,
-          filePath: path.join(path.dirname(storePath), 'secrets.bin'),
-        }),
-        airgap: externalAirgap,
-      },
-    };
+    const models: { quality?: string; fast?: string } = {};
     if (integrity.decision === 'pass') {
-      const models: { quality?: string; fast?: string } = {};
       if (integrity.modelDirs.engineQuality !== undefined) models.quality = integrity.modelDirs.engineQuality;
       if (integrity.modelDirs.engineFast !== undefined) models.fast = integrity.modelDirs.engineFast;
-      if (models.quality !== undefined || models.fast !== undefined) engineOverrides.models = models;
     }
-    const engine = resolveNodeEngine(process.env, engineOverrides);
+    const startup = buildProductionStartup({
+      userDataPath,
+      storePath,
+      externalAirgap,
+      secretStore: createSafeStorageSecretStore({
+        safeStorage,
+        filePath: path.join(path.dirname(storePath), 'secrets.bin'),
+      }),
+      token: getLaunchToken(),
+      tokenHeaderName: securityConfig.tokenHeaderName,
+      allowedOrigins: securityConfig.allowedOrigins,
+      mode: resolveBackendMode({ env: process.env }),
+      models,
+      packsRoot: resolvePacksRoot(),
+      storeBackupsDir: backupsDir,
+      onIngestProgress: (event) => {
+        for (const win of BrowserWindow.getAllWindows()) win.webContents.send('ingest:progress', event);
+      },
+      onMemoryEvent: (event) => {
+        for (const win of BrowserWindow.getAllWindows()) win.webContents.send('memory:event', event);
+      },
+      onAuditPending: (payload) => {
+        for (const win of BrowserWindow.getAllWindows()) win.webContents.send('audit:pending', payload);
+      },
+      onStoreCorruption: async (info) => {
+        const choice = await dialog.showMessageBox({
+          type: 'error',
+          title: 'TrainingApp store corrupted',
+          message: 'Your local knowledge store is corrupted.',
+          detail: info.message,
+          buttons: ['Restore from backup', 'Start fresh'],
+          defaultId: 0,
+          cancelId: 1,
+        });
+        return choice.response === 0 ? 'restore' : 'fresh';
+      },
+      onGiveUp: (attempts) => {
+        console.error(`[trainingapp-desktop] backend sidecar exhausted its restart budget (${attempts}); requests will fail until restart`);
+        dialog.showErrorBox(
+          'TrainingApp backend stopped',
+          `The local answer engine exited repeatedly (${attempts} restarts) and gave up. Restart the app to try again.`,
+        );
+      },
+    });
+    const engine = resolveNodeEngine(process.env, startup.engineOverrides);
     try {
-      backendHost = createBackendHost({
-        token: getLaunchToken(),
-        tokenHeaderName: securityConfig.tokenHeaderName,
-        allowedOrigins: securityConfig.allowedOrigins,
-        mode: resolveBackendMode({ env: process.env }),
-        // B4 (issue #62): when backend.mode is "node", serve real llama.cpp
-        // inference with the model dir defaulting to <userData>/models.
-        engine,
-        // B6 (issue #64): open the per-profile SQLite store (ADR-0006 layout).
-        storePath,
-        // D6 (issue #82): packs root for learn-result slide metadata.
-        packsRoot: resolvePacksRoot(),
-        storeBackupsDir: backupsDir,
-        // B6: forward ingest progress to the renderer (B9 owns the bar UI).
-        onIngestProgress: (event) => {
-          for (const win of BrowserWindow.getAllWindows()) {
-            win.webContents.send('ingest:progress', event);
-          }
-        },
-        // B8 (issue #66): forward memory telemetry/downgrade events to the
-        // renderer as `memory:event` (B9 owns the UI; the channel name is the
-        // B9 contract, documented in docs/adr/0008-memory-budget.md).
-        onMemoryEvent: (event) => {
-          for (const win of BrowserWindow.getAllWindows()) {
-            win.webContents.send('memory:event', event);
-          }
-        },
-        // B6: corruption prompt — modal by design (ADR-0006): a store failing
-        // integrity cannot be served, so startup blocks on the user's choice.
-        onStoreCorruption: async (info) => {
-          const choice = await dialog.showMessageBox({
-            type: 'error',
-            title: 'TrainingApp store corrupted',
-            message: 'Your local knowledge store is corrupted.',
-            detail: info.message,
-            buttons: ['Restore from backup', 'Start fresh'],
-            defaultId: 0,
-            cancelId: 1,
-          });
-          return choice.response === 0 ? 'restore' : 'fresh';
-        },
-        // Fail-loud surfacing when the sidecar exhausts its restart budget
-        // (console.error alone is invisible in a packaged Electron app).
-        onGiveUp: (attempts) => {
-          console.error(`[trainingapp-desktop] backend sidecar exhausted its restart budget (${attempts}); requests will fail until restart`);
-          dialog.showErrorBox(
-            'TrainingApp backend stopped',
-            `The local answer engine exited repeatedly (${attempts} restarts) and gave up. Restart the app to try again.`,
-          );
-        },
-      });
+      backendHost = createBackendHost({ ...startup.hostConfig, engine });
       backendHandle = await backendHost.start();
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       console.error('[trainingapp-desktop] backend host failed to start:', detail);
-      // Fail-loud surfacing (console.error alone is invisible in a packaged
-      // Electron app) — issue #256: the fail-closed settings scrub can
-      // refuse to start, and that refusal must be visible, not a silent
-      // quit-to-desktop. PACKAGED ONLY (issue #256 review PRR-004): the box
-      // is a synchronous modal that would hang the Playwright-under-Electron
-      // specs and dev runs on a backend failure; dev fails fast through the
-      // console line and app.quit() below.
-      if (app.isPackaged) {
-        dialog.showErrorBox('TrainingApp could not start', detail);
-      }
+      if (app.isPackaged) dialog.showErrorBox('TrainingApp could not start', detail);
       app.quit();
       return;
     }
+    // Governance audit (#373): the main process owns durable sequence allocation
+    // and renderer custody. Every delivery call is generation + sender scoped;
+    // a foreign profile binding is never silently replaced by a stale tab.
+    const requireAuditStore = () => {
+      const store = getCurrentStore();
+      if (store === null) throw new Error('governance store is unavailable');
+      return store;
+    };
+    // PR #391 F-007: delivery/ack/clear must prove the calling webContents is
+    // the one that bound this sender, matching subscribe/revoked-ack. The
+    // claimed sender alone is enumerable through binding-state, so membership
+    // in the sender set is not caller identity.
+    const assertAuditCaller = createAuditCallerAssertion(auditSendersByWebContents);
+    ipcMain.handle('desktop:audit:binding-state', () => readOutboxBindingState(requireAuditStore()));
+    ipcMain.handle('desktop:audit:subscribe', async (event, prefix: unknown, sender: unknown, expectedEpoch: unknown) => {
+      // Feedback cluster C: the SAME canonical-prefix rule desktop:audit:
+      // revoke-namespace enforces gates the subscribe ingress. A prefix bound
+      // outside ^[a-z0-9]{3,8}$ could never be targeted by a revocation,
+      // stranding its custody rows with a renderer that never lets go.
+      if (typeof prefix !== 'string' || !/^[a-z0-9]{3,8}$/.test(prefix) || !validAuditSender(sender) ||
+          typeof expectedEpoch !== 'number' || !Number.isInteger(expectedEpoch) || expectedEpoch < 0) {
+        throw new Error('audit subscribe requires a canonical profile prefix (^[a-z0-9]{3,8}$), sender, and observed epoch');
+      }
+      const store = requireAuditStore();
+      const state = readOutboxBindingState(store);
+      let bindEpoch: number | undefined = expectedEpoch;
+      if (state.prefix !== null && state.prefix !== prefix) {
+        if (/^[a-z0-9]{3,8}$/.test(state.prefix)) {
+          throw new Error('audit outbox is bound to a different active profile');
+        }
+        // Feedback cluster F-004: the persisted lease is MALFORMED — bound
+        // before this ingress enforced ^[a-z0-9]{3,8}$, no canonical subscribe
+        // can ever match it and desktop:audit:revoke-namespace refuses a
+        // noncanonical argument, so NO renderer path can release it (custody
+        // wedged). Clear it here: revokeOutboxNamespace advances
+        // generation/binding_epoch and rewrites the restart journal while
+        // leaving the pending audit_outbox rows intact, then the valid profile
+        // binds fresh and can still read and deliver those events.
+        // F-004 closeout: the destructive revoke is a compare-and-swap on the
+        // caller's OBSERVATION, so expectedEpoch must equal the epoch just
+        // read in state — a caller acting on a stale observation (a concurrent
+        // sender removal or revocation advanced the epoch after it) is
+        // rejected BEFORE any binding or journal mutation; it re-reads and
+        // retries fresh. The recovery bind then checks against the freshly
+        // read post-revoke epoch (this revoke advances it) — a concurrent
+        // writer that took the lease in the interim still refuses the bind
+        // (or, if it bound a different canonical profile, is respected below).
+        if (expectedEpoch !== state.epoch) {
+          throw new Error('audit subscribe observed a stale epoch over the malformed lease');
+        }
+        revokeOutboxNamespace(store, state.prefix);
+        const recovered = readOutboxBindingState(store);
+        if (recovered.prefix !== null && recovered.prefix !== prefix && /^[a-z0-9]{3,8}$/.test(recovered.prefix)) {
+          throw new Error('audit outbox is bound to a different active profile');
+        }
+        bindEpoch = recovered.epoch;
+      }
+      assertSenderNotOwnedElsewhere(auditSendersByWebContents, event.sender.id, sender);
+      const bound = await bindOutboxBinding(store, prefix, sender, auditSendersByWebContents.get(event.sender.id), bindEpoch);
+      auditSendersByWebContents.set(event.sender.id, sender);
+      return bound;
+    });
+    ipcMain.handle('desktop:audit:pending', async (event, generation: unknown, sender: unknown) => {
+      if (typeof generation !== 'number' || !Number.isInteger(generation) || generation < 1 || !validAuditSender(sender)) {
+        throw new Error('audit delivery requires a binding generation and sender');
+      }
+      assertAuditCaller(event, sender);
+      return (await readOutboxPending(requireAuditStore(), generation, sender)).map((row) => ({
+        eventId: row.event_id,
+        event: row.event,
+        subject: row.subject,
+        occurredAt: row.occurred_at,
+        seq: row.seq,
+      }));
+    });
+    ipcMain.handle('desktop:audit:ack', async (event, eventId: unknown, generation: unknown, sender: unknown) => {
+      if (typeof eventId !== 'string' || eventId.length === 0 || eventId.length > 200 ||
+          typeof generation !== 'number' || !Number.isInteger(generation) || generation < 1 || !validAuditSender(sender)) {
+        throw new Error('audit acknowledgment requires an event id, generation, and sender');
+      }
+      assertAuditCaller(event, sender);
+      await ackOutboxEvent(requireAuditStore(), generation, sender, eventId);
+    });
+    ipcMain.handle('desktop:audit:before-clear', async (event, generation: unknown, sender: unknown) => {
+      if (typeof generation !== 'number' || !Number.isInteger(generation) || generation < 1 || !validAuditSender(sender)) {
+        throw new Error('audit clear requires a binding generation and sender');
+      }
+      assertAuditCaller(event, sender);
+      const store = requireAuditStore();
+      const state = readOutboxBindingState(store);
+      if (state.generation !== generation || !state.senders.includes(sender)) {
+        throw new Error('audit clear binding was superseded');
+      }
+      return captureClear(store);
+    });
+    ipcMain.on('audit:namespace-revoked-ack', (event, prefix: unknown) => {
+      if (typeof prefix !== 'string') return;
+      const waiter = namespaceRevokeWaiters.get(prefix);
+      if (waiter === undefined) return;
+      try {
+        const store = requireAuditStore();
+        const sender = auditSendersByWebContents.get(event.sender.id);
+        if (sender !== undefined && readOutboxBindingState(store).prefix === prefix) {
+          removeOutboxSender(store, sender);
+        }
+      } catch (error) {
+        clearTimeout(waiter.timer);
+        namespaceRevokeWaiters.delete(prefix);
+        waiter.reject(error instanceof Error ? error : new Error(String(error)));
+        return;
+      }
+      waiter.targets.delete(event.sender.id);
+      if (waiter.targets.size === 0) {
+        clearTimeout(waiter.timer);
+        namespaceRevokeWaiters.delete(prefix);
+        waiter.resolve();
+      }
+    });
+    ipcMain.handle('desktop:audit:revoke-namespace', async (_event, prefix: unknown) => {
+      if (typeof prefix !== 'string' || !/^[a-z0-9]{3,8}$/.test(prefix)) {
+        throw new Error('audit revoke requires a profile prefix');
+      }
+      const store = requireAuditStore();
+      const before = readOutboxBindingState(store);
+      const targets = new Set(
+        [...auditSendersByWebContents.entries()]
+          .filter(([, sender]) => before.prefix === prefix && before.senders.includes(sender))
+          .map(([webContentsId]) => webContentsId),
+      );
+      const state = revokeOutboxNamespace(store, prefix);
+      let acknowledged: Promise<void> | null = null;
+      if (targets.size > 0) {
+        acknowledged = new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            namespaceRevokeWaiters.delete(prefix);
+            reject(new Error(`audit namespace revocation timed out waiting for ${targets.size} renderer(s)`));
+          }, 3000);
+          namespaceRevokeWaiters.set(prefix, { targets, timer, resolve, reject });
+        });
+      }
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send('audit:namespace-revoked', { prefix, state });
+      }
+      // Deletion must not race a renderer that is still draining. A missing ack
+      // fails the destructive operation closed; the lease is already revoked.
+      await acknowledged;
+      return state;
+    });
+    try {
+      startup.hostConfig.auditSink?.emit({
+        eventId: randomUUID(),
+        event: 'app_start',
+        subject: path.basename(path.dirname(storePath)) || 'default',
+        occurredAt: Date.now(),
+      });
+    } catch (error) {
+      console.warn('[audit] app_start capture failed:', error instanceof Error ? error.name : String(error));
+    }
+    app.once('before-quit', () => {
+      try {
+        startup.hostConfig.auditSink?.emit({
+          eventId: randomUUID(),
+          event: 'app_stop',
+          subject: path.basename(path.dirname(storePath)) || 'default',
+          occurredAt: Date.now(),
+        });
+      } catch (error) {
+        console.warn('[audit] app_stop capture failed:', error instanceof Error ? error.name : String(error));
+      }
+    });
     // Port discovery for B9 (renderer integration): the ONLY channel the
     // backend address takes to the renderer — never web storage, never a URL.
     ipcMain.handle('desktop:get-backend', () => backendHandle);
@@ -1032,85 +1228,39 @@ export function bootstrap(): void {
       'desktop:first-run:activate-packs',
       async () => ensureBundledPacks(),
     );
-    ipcMain.handle(
-      'desktop:first-run:complete',
-      async (_event, payload: unknown) => {
-        try {
-          const request = (typeof payload === 'object' && payload !== null ? payload : {}) as {
-            selectedProfile?: unknown;
-            acknowledgedLicenses?: unknown;
-          };
-          const acknowledgedLicenses = request.acknowledgedLicenses === true;
-          const selectedProfile =
-            request.selectedProfile === 'quality' || request.selectedProfile === 'fast'
-              ? request.selectedProfile
-              : null;
-          if (selectedProfile === null) {
-            return {
-              ok: false as const,
-              detail: 'select-profile: no profile was selected',
-              reason: 'profile-not-selected' as const,
-            };
-          }
-          // Fresh verification (TOCTOU guard): the operator may have completed
-          // the wizard long after the status they saw was rendered. #131:
-          // {fresh: true} re-hashes even though the cache may hold a clean
-          // result; on a CLEAN pass the digest capture below then reads THIS
-          // pass from the cache instead of paying a second hash. A FAILING
-          // fresh pass is never cached (issue #175) and assertCanComplete
-          // below throws before any digest capture, so the eviction cannot
-          // affect completion.
-          const status = await buildFirstRunStatus({ fresh: true });
-          const manifestOk = manifestCompletionState({
-            packaged: status.manifest.packaged,
-            staged: status.manifest.staged,
-            failureCount: status.manifest.failures.length,
-          });
-          const inactiveRequiredPacks = status.packs.required
-            .filter((entry) => !isBundledPackSatisfied(entry, status.packs.installed))
-            .map((entry) => entry.id);
-          assertCanComplete({
+    registerFirstRunCompleteIpc(ipcMain, {
+      completeWizard: async ({ selectedProfile, acknowledgedLicenses }) => {
+        // Fresh verification (TOCTOU guard): the operator may have completed
+        // the wizard long after the status they saw was rendered.
+        const status = await buildFirstRunStatus({ fresh: true });
+        const manifestOk = manifestCompletionState({
+          packaged: status.manifest.packaged,
+          staged: status.manifest.staged,
+          failureCount: status.manifest.failures.length,
+        });
+        const inactiveRequiredPacks = status.packs.required
+          .filter((entry) => !isBundledPackSatisfied(entry, status.packs.installed))
+          .map((entry) => entry.id);
+        assertCanComplete({
+          selectedProfile,
+          acknowledgedLicenses,
+          manifestOk,
+          inactiveRequiredPacks,
+        });
+        const wm = wizardManifest();
+        saveFirstRunState(storePath, {
+          firstRun: {
+            completed: true,
             selectedProfile,
+            completedAt: new Date().toISOString(),
             acknowledgedLicenses,
-            manifestOk,
-            inactiveRequiredPacks,
-          });
-          const wm = wizardManifest();
-          saveFirstRunState(storePath, {
-            firstRun: {
-              completed: true,
-              selectedProfile: selectedProfile as 'quality' | 'fast',
-              completedAt: new Date().toISOString(),
-              acknowledgedLicenses,
-              manifestDigests: wm.verify?.digests ?? {},
-            },
-          });
-          // #133: the operator's profile choice must reach the ENGINE, not
-          // just first-run state — apply it through the validated settings
-          // seam (live reconfigure + sidecar persistence) so the first /ask
-          // loads the chosen model. Non-fatal on refusal (completion stands;
-          // Settings can still change it) but logged loudly by name.
-          const profileApplied = (backendHost as NodeBackendHost | null | undefined)?.applyEngineSettings?.({
-            'inference.profile': selectedProfile,
-          });
-          if (profileApplied !== undefined && !profileApplied.ok) {
-            console.error(
-              `[trainingapp-desktop] first-run profile could not be applied to the engine: ${profileApplied.detail}`,
-            );
-          } else {
-            // Review F-09: the boot warmup loaded the STARTUP default profile;
-            // the operator just chose (possibly) a different one — re-warm so
-            // the first /ask doesn't pay a switch-reload. Fire-and-forget, and
-            // a no-op when the chosen profile is already resident.
-            void engine.warmup?.().catch(() => {});
-          }
-          return { ok: true as const };
-        } catch (err) {
-          if (err instanceof WizardBlockError) return { ok: false as const, detail: err.message, reason: err.reason };
-          return { ok: false as const, detail: err instanceof Error ? err.message : String(err) };
-        }
+            manifestDigests: wm.verify?.digests ?? {},
+          },
+        });
       },
-    );
+      backendHost: backendHost as NodeBackendHost | null,
+      engine,
+    });
     ipcMain.handle('desktop:first-run:reset', () => {
       saveFirstRunState(storePath, EMPTY_FIRST_RUN_STATE());
       pushFirstRunRequired();

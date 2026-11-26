@@ -568,7 +568,7 @@ describe('host persistence: external.json sidecar, tolerant boot, downgrade-safe
   it('applyEngineSettings (first-run seam) never writes external.* or the key to settings.json', async () => {
     const profileDir = tmp('ext-host-');
     const { host } = await boot(profileDir);
-    const applied = host.applyEngineSettings({ ...enable('http://192.168.1.50:8000'), 'external.apiKey': KEY, rag_n_results: 7 });
+    const applied = await host.applyEngineSettings({ ...enable('http://192.168.1.50:8000'), 'external.apiKey': KEY, rag_n_results: 7 });
     expect(applied.ok).toBe(true);
     expect(JSON.parse(fs.readFileSync(path.join(profileDir, 'settings.json'), 'utf8'))).toEqual({ rag_n_results: 7 });
     const externalJson = JSON.parse(fs.readFileSync(path.join(profileDir, 'external.json'), 'utf8')) as Record<string, unknown>;

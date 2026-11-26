@@ -83,6 +83,7 @@ export function startInactivityWatch(options: InactivityWatchOptions): Inactivit
   }
 
   let stopped = false;
+  let decisionGeneration = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let sharedHeld: HeldLock | null = null;
   let acquireInFlight = false;
@@ -147,6 +148,7 @@ export function startInactivityWatch(options: InactivityWatchOptions): Inactivit
 
   const onIdle = (): void => {
     if (stopped) return;
+    const currentGeneration = ++decisionGeneration;
     if (options.isBusy()) {
       // AC6 streaming guard: defer and retry — a busy tab also holds the
       // shared lock so no other tab can clear under the stream.
@@ -172,8 +174,19 @@ export function startInactivityWatch(options: InactivityWatchOptions): Inactivit
         void runLocalClearCompletion().then(() => {
           if (stopped) return;
           options.onCleared();
-          armThreshold();
+          // A committed clear still owes local reconciliation after newer
+          // activity, but its obsolete timer decision must not replace the
+          // newer activity threshold.
+          if (currentGeneration === decisionGeneration) armThreshold();
         });
+        return;
+      }
+      if (currentGeneration !== decisionGeneration) return;
+      if (replay.deferred) {
+        // Repair could not authenticate current row bytes. Do not fall through
+        // to a destructive idle clear on the same tick; preserve rows/evidence
+        // and let the re-arm poll retry after the writer settles.
+        armPoll();
         return;
       }
       // NO exclusive lock is held here on purpose (review F1): Web Locks
@@ -187,18 +200,30 @@ export function startInactivityWatch(options: InactivityWatchOptions): Inactivit
       // workstation is quiet.
       void (async () => {
         const result = await requestSessionClear();
+        if (stopped) return;
         if ('cleared' in result && result.cleared) {
+          // A committed clear still owes its visible notice after newer
+          // activity, but the obsolete decision must not replace that timer.
           options.onCleared();
-          armThreshold();
-        } else {
+          if (currentGeneration === decisionGeneration) armThreshold();
+        } else if (currentGeneration === decisionGeneration) {
           armPoll();
         }
       })();
+    }).catch((error: unknown) => {
+      // A transient repair/replay rejection must not become an unhandled
+      // rejection or fall through to a destructive clear. Preserve state and
+      // let the normal re-arm poll retry after the database recovers, unless
+      // newer activity has already armed a different decision.
+      if (stopped || currentGeneration !== decisionGeneration) return;
+      console.warn('[inactivity] pending-clear replay failed:', error);
+      armPoll();
     });
   };
 
   const onActivity = (): void => {
     if (stopped) return;
+    decisionGeneration += 1;
     acquireSharedIfAbsent();
     armThreshold();
   };
