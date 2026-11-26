@@ -983,8 +983,12 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
               validationError(res, ['body: invalid JSON'], cors);
               return;
             }
-            opts.onSettingsSectionEntry?.({ patch });
             await settingsCommitMutex(async () => {
+              // Feedback cluster C: the section-entry seam fires INSIDE the
+              // serialized commit section — after this request has ACQUIRED
+              // the settings-commit mutex, never before (a queued request no
+              // longer announces itself at route arrival).
+              opts.onSettingsSectionEntry?.({ patch });
               // settings-wiring-honesty: `reset` is a route directive, never a
               // stored key — stripped here before applySettingsPatch, never
               // persisted, never replayed at boot. It stands alone so a request

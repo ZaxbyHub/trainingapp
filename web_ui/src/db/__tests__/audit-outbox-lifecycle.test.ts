@@ -22,14 +22,14 @@ async function load(prefix: string) {
   return { audit, listener };
 }
 
-function bridge(state: { prefix: string | null; generation: number }) {
+function bridge(state: { prefix: string | null; generation: number; epoch?: number }) {
   const pending: Array<Record<string, unknown>> = [];
   const acked: string[] = [];
   let invalidated: (() => void) | undefined;
   let notified: (() => void) | undefined;
   let revoked: ((payload: { prefix: string }) => void) | undefined;
   const api = {
-    getAuditBindingState: vi.fn(async () => ({ ...state, senders: [], epoch: state.generation })),
+    getAuditBindingState: vi.fn(async () => ({ ...state, senders: [], epoch: state.epoch ?? state.generation })),
     subscribeAuditOutbox: vi.fn(async (prefix: string) => {
       state.prefix = prefix;
       return { prefix, generation: state.generation };
@@ -49,6 +49,9 @@ function bridge(state: { prefix: string | null; generation: number }) {
 }
 
 describe('desktop audit bridge lifecycle', () => {
+  // Control for the malformed-lease recovery below: 'foreign0' matches the
+  // canonical mint shape ^[a-z0-9]{3,8}$, so it is a real foreign profile and
+  // must never be taken over.
   test('a foreign active profile stays idle and never drains', async () => {
     const prefix = nextPrefix();
     const { listener } = await load(prefix);
@@ -59,6 +62,25 @@ describe('desktop audit bridge lifecycle', () => {
     expect(channel.api.subscribeAuditOutbox).not.toHaveBeenCalled();
     expect(channel.api.getAuditPending).not.toHaveBeenCalled();
     expect(listener.getActiveAuditOutboxContext()).toBeNull();
+  });
+
+  test('a malformed persisted lease recovers via the listener subscribe and drains pending delivery', async () => {
+    const prefix = nextPrefix();
+    const { audit, listener } = await load(prefix);
+    // 'AL-0001!' cannot be a minted profile (uppercase/hyphen/bang) and is not
+    // the loaded prefix: a malformed persisted lease must not strand the
+    // namespace. The real listener path (startAuditOutboxListener) has to
+    // rebind with the valid loaded identity and drain the pending outbox.
+    const channel = bridge({ prefix: 'AL-0001!', generation: 5, epoch: 11 });
+    channel.pending.push({ eventId: 'recover-event', event: 'pack_install', subject: 'pack-b', occurredAt: Date.now(), seq: 4 });
+    stops.push(listener.startAuditOutboxListener(channel.api));
+    await vi.waitFor(() => expect(channel.acked).toEqual(['recover-event']));
+    expect(channel.api.subscribeAuditOutbox).toHaveBeenCalledTimes(1);
+    expect(channel.api.subscribeAuditOutbox).toHaveBeenCalledWith(prefix, expect.any(Number), 11);
+    expect(channel.api.getAuditPending).toHaveBeenCalledWith(5, expect.any(Number));
+    const rows = await audit.listAuditEvents();
+    expect(rows.filter((row) => row.eventId === 'recover-event')).toHaveLength(1);
+    expect(listener.getActiveAuditOutboxContext()).toMatchObject({ prefix, generation: 5 });
   });
 
   test('revocation during a pending state read prevents stale rebind', async () => {

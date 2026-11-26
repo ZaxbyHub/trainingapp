@@ -151,7 +151,7 @@ describe('App — F-KEYBOARD-REGRESSION: global Ctrl+, works from any page', () 
 
     // Leave the default Chat page for Documents — this unmounts ChatPage,
     // along with its own chat-scoped useKeyboardShortcuts registration.
-    const documentsNavButton = screen.getByRole('button', { name: 'Documents' });
+    const documentsNavButton = await screen.findByRole('button', { name: 'Documents' });
     fireEvent.click(documentsNavButton);
 
     await waitFor(() => {
@@ -174,7 +174,7 @@ describe('App — F-KEYBOARD-REGRESSION: global Ctrl+, works from any page', () 
   it('does not navigate on a plain "," keydown (no Ctrl/Cmd) while on Documents', async () => {
     render(<App />);
 
-    const documentsNavButton = screen.getByRole('button', { name: 'Documents' });
+    const documentsNavButton = await screen.findByRole('button', { name: 'Documents' });
     fireEvent.click(documentsNavButton);
 
     await waitFor(() => {

@@ -108,6 +108,23 @@ const namespaceRevokeWaiters = new Map<string, {
   resolve(): void;
   reject(error: Error): void;
 }>();
+/**
+ * Feedback cluster C: a destroyed renderer can never acknowledge a namespace
+ * revocation — left in a waiter's target set it can only burn the 3s deadline
+ * and fail the destructive operation closed. Drop the destroyed webContents id
+ * from every pending revoke waiter; a waiter whose live targets are all gone
+ * settles RESOLVED, while one that still holds live renderers RETAINS them for
+ * their acknowledgments.
+ */
+const removeDestroyedRendererFromRevokeWaiters = (webContentsId: number): void => {
+  for (const [prefix, waiter] of namespaceRevokeWaiters) {
+    if (!waiter.targets.delete(webContentsId)) continue;
+    if (waiter.targets.size > 0) continue;
+    clearTimeout(waiter.timer);
+    namespaceRevokeWaiters.delete(prefix);
+    waiter.resolve();
+  }
+};
 const validAuditSender = (value: unknown): value is number =>
   typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= 0xffffffff;
 
@@ -192,9 +209,13 @@ export function createMainWindow(): BrowserWindow {
     },
   });
   win.once('ready-to-show', () => win.show());
+  const webContentsId = win.webContents.id;
   win.webContents.on('destroyed', () => {
-    const sender = auditSendersByWebContents.get(win.webContents.id);
-    auditSendersByWebContents.delete(win.webContents.id);
+    const sender = auditSendersByWebContents.get(webContentsId);
+    auditSendersByWebContents.delete(webContentsId);
+    // Feedback cluster C: the destroyed renderer is removed from every pending
+    // namespace-revocation waiter; waiters left with no live targets settle.
+    removeDestroyedRendererFromRevokeWaiters(webContentsId);
     const store = getCurrentStore();
     if (sender === undefined || store === null) return;
     try {
@@ -504,17 +525,50 @@ export function bootstrap(): void {
       return store;
     };
     ipcMain.handle('desktop:audit:binding-state', () => readOutboxBindingState(requireAuditStore()));
-    ipcMain.handle('desktop:audit:subscribe', (event, prefix: unknown, sender: unknown, expectedEpoch: unknown) => {
-      if (typeof prefix !== 'string' || prefix.length === 0 || prefix.length > 200 || !validAuditSender(sender) ||
+    ipcMain.handle('desktop:audit:subscribe', async (event, prefix: unknown, sender: unknown, expectedEpoch: unknown) => {
+      // Feedback cluster C: the SAME canonical-prefix rule desktop:audit:
+      // revoke-namespace enforces gates the subscribe ingress. A prefix bound
+      // outside ^[a-z0-9]{3,8}$ could never be targeted by a revocation,
+      // stranding its custody rows with a renderer that never lets go.
+      if (typeof prefix !== 'string' || !/^[a-z0-9]{3,8}$/.test(prefix) || !validAuditSender(sender) ||
           typeof expectedEpoch !== 'number' || !Number.isInteger(expectedEpoch) || expectedEpoch < 0) {
-        throw new Error('audit subscribe requires a profile prefix, sender, and observed epoch');
+        throw new Error('audit subscribe requires a canonical profile prefix (^[a-z0-9]{3,8}$), sender, and observed epoch');
       }
       const store = requireAuditStore();
       const state = readOutboxBindingState(store);
+      let bindEpoch: number | undefined = expectedEpoch;
       if (state.prefix !== null && state.prefix !== prefix) {
-        throw new Error('audit outbox is bound to a different active profile');
+        if (/^[a-z0-9]{3,8}$/.test(state.prefix)) {
+          throw new Error('audit outbox is bound to a different active profile');
+        }
+        // Feedback cluster F-004: the persisted lease is MALFORMED — bound
+        // before this ingress enforced ^[a-z0-9]{3,8}$, no canonical subscribe
+        // can ever match it and desktop:audit:revoke-namespace refuses a
+        // noncanonical argument, so NO renderer path can release it (custody
+        // wedged). Clear it here: revokeOutboxNamespace advances
+        // generation/binding_epoch and rewrites the restart journal while
+        // leaving the pending audit_outbox rows intact, then the valid profile
+        // binds fresh and can still read and deliver those events.
+        // F-004 closeout: the destructive revoke is a compare-and-swap on the
+        // caller's OBSERVATION, so expectedEpoch must equal the epoch just
+        // read in state — a caller acting on a stale observation (a concurrent
+        // sender removal or revocation advanced the epoch after it) is
+        // rejected BEFORE any binding or journal mutation; it re-reads and
+        // retries fresh. The recovery bind then checks against the freshly
+        // read post-revoke epoch (this revoke advances it) — a concurrent
+        // writer that took the lease in the interim still refuses the bind
+        // (or, if it bound a different canonical profile, is respected below).
+        if (expectedEpoch !== state.epoch) {
+          throw new Error('audit subscribe observed a stale epoch over the malformed lease');
+        }
+        revokeOutboxNamespace(store, state.prefix);
+        const recovered = readOutboxBindingState(store);
+        if (recovered.prefix !== null && recovered.prefix !== prefix && /^[a-z0-9]{3,8}$/.test(recovered.prefix)) {
+          throw new Error('audit outbox is bound to a different active profile');
+        }
+        bindEpoch = recovered.epoch;
       }
-      const bound = bindOutboxBinding(store, prefix, sender, auditSendersByWebContents.get(event.sender.id), expectedEpoch);
+      const bound = await bindOutboxBinding(store, prefix, sender, auditSendersByWebContents.get(event.sender.id), bindEpoch);
       auditSendersByWebContents.set(event.sender.id, sender);
       return bound;
     });

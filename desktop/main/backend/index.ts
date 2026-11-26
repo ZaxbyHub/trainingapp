@@ -931,8 +931,12 @@ export class NodeBackendHost implements BackendHost {
     // property (getFirstRunPackTools precedent; prototypes stay start/stop).
     const settingsCommitMutex = settingsCommitMutexFor(this.engine);
     this.applyEngineSettings = async (patch: Record<string, unknown>) => {
-      this.config.onSettingsSectionEntry?.({ patch });
       return settingsCommitMutex(async () => {
+        // Feedback cluster C: the section-entry seam fires INSIDE the
+        // serialized commit section — after this call has ACQUIRED the
+        // settings-commit mutex, never before (a queued apply no longer
+        // announces itself at call time).
+        this.config.onSettingsSectionEntry?.({ patch });
         // Same all-or-nothing commit as PUT /settings: external.json first,
       // settings.json last; any failure restores the engine (incl. external.*
       // and the SecretStore) and re-writes an already-written external.json.

@@ -149,9 +149,25 @@ export async function bindOutboxBinding(
       // sender set and prevent last-window invalidation forever.
       const senders = current.senders.filter((value) => value !== previousSender);
       if (!senders.includes(sender)) senders.push(sender);
+      const retiredSender = previousSender !== undefined && previousSender !== sender && current.senders.includes(previousSender)
+        ? previousSender
+        : undefined;
       if (senders.length !== current.senders.length || senders.some((value, index) => value !== current.senders[index])) {
         db.prepare('UPDATE audit_outbox_binding SET senders = ? WHERE singleton = 1')
           .run(JSON.stringify(senders));
+      }
+      if (retiredSender !== undefined && store.dbPath !== undefined) {
+        // Renderer reload retires the previous sender at the SAME generation.
+        // Persist that retirement before COMMIT so restored pre-reload bytes
+        // cannot resurrect the retired identity on the next store open.
+        const journalPath = defaultAuditJournalPath(store.dbPath);
+        const journal = readJournal(journalPath);
+        if (!journal.removed_senders.some((delta) =>
+          delta.sender === retiredSender && delta.prefix === current.prefix && delta.generation === current.generation)) {
+          journal.removed_senders.push({ sender: retiredSender, prefix: current.prefix, generation: current.generation });
+          journal.gen_high = Math.max(journal.gen_high, current.generation);
+          writeJournal(journalPath, journal);
+        }
       }
       db.exec('COMMIT');
       return { prefix, generation: current.generation };
@@ -191,13 +207,34 @@ export function removeOutboxSender(store: StoreLike, sender: number): boolean {
     }
     const senders = current.senders.filter((value) => value !== sender);
     const nextBinding = senders.length === 0 ? null : { ...current, senders };
-    const nextEpoch = senders.length === 0 ? meta(db, 'binding_epoch') + 1 : meta(db, 'binding_epoch');
+    // Every committed sender removal (partial AND final) advances the epoch:
+    // a restart journal that witnessed a removal the database lost (failed
+    // COMMIT) reconciles by holding a strictly newer epoch, while a stale
+    // snapshot can never exceed the committed epoch and so can never erase a
+    // newer valid lease or shrink a live sender set.
+    const nextEpoch = meta(db, 'binding_epoch') + 1;
     // The journal is a restart carrier. Update it before COMMIT so a destroyed
     // sender cannot be resurrected from an older snapshot on the next launch.
+    // gen_high records the newest generation this removal applies to, so a
+    // binding allocated AFTER the journal write is never erased by it. The
+    // removal is journaled as a scoped DELTA (the destroyed sender id and the
+    // prefix/generation it applied to) so replay removes exactly that sender
+    // even when later senders bound the same prefix/generation after the
+    // failed COMMIT — and even when a later removal commits the SAME next
+    // epoch computed from the same rolled-back base. The delta PERSISTS past
+    // its own successful COMMIT: restored same-generation pre-removal bytes
+    // must replay the removal, and a re-bound sender id is fail-closed
+    // (refused at the delivery gate, re-subscribed by its reconcile loop).
     if (store.dbPath !== undefined) {
       const journal = readJournal(defaultAuditJournalPath(store.dbPath));
       journal.lease = nextBinding;
+      journal.gen_high = Math.max(journal.gen_high, current.generation);
       journal.binding_epoch = Math.max(journal.binding_epoch, nextEpoch);
+      if (!journal.removed_senders.some(
+        (delta) => delta.sender === sender && delta.prefix === current.prefix && delta.generation === current.generation,
+      )) {
+        journal.removed_senders.push({ sender, prefix: current.prefix, generation: current.generation });
+      }
       writeJournal(defaultAuditJournalPath(store.dbPath), journal);
     }
     if (senders.length === 0) {
@@ -207,6 +244,7 @@ export function removeOutboxSender(store: StoreLike, sender: number): boolean {
       return true;
     }
     db.prepare('UPDATE audit_outbox_binding SET senders = ? WHERE singleton = 1').run(JSON.stringify(senders));
+    setMeta(db, 'binding_epoch', nextEpoch);
     db.exec('COMMIT');
     return false;
   } catch (error) {
@@ -221,6 +259,7 @@ export function revokeOutboxNamespace(store: StoreLike, prefix: string): ReturnT
   db.exec('BEGIN IMMEDIATE');
   try {
     const current = readLease(db);
+    const revokedGeneration = current?.prefix === prefix ? current.generation : null;
     if (current?.prefix === prefix) db.prepare('DELETE FROM audit_outbox_binding WHERE singleton = 1').run();
     setMeta(db, 'gen_high', meta(db, 'gen_high') + 1);
     setMeta(db, 'binding_epoch', meta(db, 'binding_epoch') + 1);
@@ -231,6 +270,22 @@ export function revokeOutboxNamespace(store: StoreLike, prefix: string): ReturnT
       journal.lease = next;
       journal.gen_high = Math.max(journal.gen_high, meta(db, 'gen_high'));
       journal.binding_epoch = Math.max(journal.binding_epoch, meta(db, 'binding_epoch'));
+      // Revocation is a whole-prefix invalidation AT THE REVOKED GENERATION:
+      // it supersedes per-sender removal deltas scoped to exactly the
+      // (revoked prefix, revoked generation) being deleted outright. Deltas
+      // scoped to other prefixes — OR TO OTHER GENERATIONS of the same
+      // prefix — are removal evidence that must survive, so restored
+      // older-generation bytes still replay their removals.
+      journal.removed_senders = journal.removed_senders.filter(
+        (delta) => revokedGeneration === null || delta.prefix !== prefix || delta.generation !== revokedGeneration,
+      );
+      // The revocation itself is recorded as its OWN generation-scoped entry:
+      // journal.lease cannot carry it durably (a later committed sender
+      // removal overwrites the lease with the surviving post-state), and the
+      // entry reconciles by (prefix, generation) presence alone.
+      if (revokedGeneration !== null && !journal.revoked.some((entry) => entry.prefix === prefix && entry.generation === revokedGeneration)) {
+        journal.revoked.push({ prefix, generation: revokedGeneration });
+      }
       writeJournal(journalPath, journal);
     }
     db.exec('COMMIT');
@@ -258,10 +313,35 @@ export async function ackOutboxEvent(store: StoreLike, generation: number, sende
   db.exec('BEGIN IMMEDIATE');
   try {
     assertAuthorized(db, generation, sender);
+    // F-002 (renderer-commit contract): the renderer acks only AFTER its own
+    // IndexedDB delivery commit (web_ui/src/db/audit-outbox.ts), so an
+    // AUTHORIZED ack is itself the delivery commit point — the main-process
+    // DELETE below is cleanup. The tombstone is written before that cleanup,
+    // in the same write that strikes the journal's pending/fallback
+    // snapshots, and is NEVER withdrawn: a cleanup DELETE/COMMIT failure
+    // surfaces to the caller, but reopen must not redeliver an event the
+    // renderer already committed, and restored pre-ack bytes stay suppressed.
+    // Unauthorized repeats reject at assertAuthorized BEFORE any journal
+    // mutation, so they cannot disturb an existing tombstone.
+    if (store.dbPath !== undefined) {
+      const journalPath = defaultAuditJournalPath(store.dbPath);
+      const journal = readJournal(journalPath);
+      const pendingBefore = journal.pending.length;
+      const fallbackBefore = journal.fallback.length;
+      const ackedBefore = journal.acked.length;
+      journal.pending = journal.pending.filter((entry) => entry.envelope.eventId !== eventId);
+      journal.fallback = journal.fallback.filter((entry) => entry.envelope.eventId !== eventId);
+      if (!journal.acked.includes(eventId)) journal.acked.push(eventId);
+      if (journal.pending.length !== pendingBefore || journal.fallback.length !== fallbackBefore || journal.acked.length !== ackedBefore) {
+        writeJournal(journalPath, journal);
+      }
+    }
     const result = db.prepare('DELETE FROM audit_outbox WHERE event_id = ?').run(eventId);
     db.exec('COMMIT');
     return Number(result.changes) > 0;
   } catch (error) {
+    // The tombstone (if this call wrote one) STANDS: the renderer already
+    // committed delivery. Only the cleanup transaction is rolled back.
     try { db.exec('ROLLBACK'); } catch { /* preserve original */ }
     throw error;
   }
@@ -310,10 +390,38 @@ interface Journal {
   seq_high: number;
   gen_high: number;
   binding_epoch: number;
+  /**
+   * Outstanding sender-removal deltas (the destroyed sender ids, NOT a
+   * post-state), each scoped to the prefix/generation it applied to. They
+   * reconcile on PRESENCE against a matching live binding — independently of
+   * the epoch relation — because a later removal can commit the SAME next
+   * epoch computed from the same rolled-back base, which would hide the
+   * outstanding delta behind an epoch-equality gate.
+   */
+  removed_senders: Array<{ sender: number; prefix: string; generation: number }>;
+  /**
+   * Durable acknowledged-event tombstones (eventIds), written BEFORE the ack
+   * DELETE/COMMIT and NEVER withdrawn. Renderer-commit contract: the renderer
+   * acks only after its own IndexedDB delivery commit, so an authorized ack
+   * IS the delivery commit point and the main-process DELETE is cleanup — a
+   * cleanup failure surfaces to the caller but reopen must not redeliver,
+   * and restored pre-ack bytes stay suppressed. Unauthorized repeats reject
+   * before any journal mutation and cannot disturb an existing tombstone.
+   */
+  acked: string[];
+  /**
+   * Generation-scoped revocation entries: the (prefix, generation) pairs
+   * namespace revocation invalidated. They reconcile on PRESENCE against a
+   * matching live binding — independently of journal.lease (which a later
+   * committed sender removal overwrites with the surviving post-state) and of
+   * the epoch relation (a same-next-epoch commit hides it). A newer-generation
+   * rebind carries a different generation and is never touched.
+   */
+  revoked: Array<{ prefix: string; generation: number }>;
 }
 
 function emptyJournal(): Journal {
-  return { pending: [], fallback: [], clear_seq: 0, clear_at: 0, clear_gen: 0, lease: null, seq_high: 1, gen_high: 0, binding_epoch: 0 };
+  return { pending: [], fallback: [], clear_seq: 0, clear_at: 0, clear_gen: 0, lease: null, seq_high: 1, gen_high: 0, binding_epoch: 0, removed_senders: [], acked: [], revoked: [] };
 }
 
 function readJournal(journalPath: string): Journal {
@@ -388,21 +496,71 @@ export function consumeAuditJournal(store: StoreLike, journalPath: string): void
   ensureAuditOutboxSchema(db);
   db.exec('BEGIN IMMEDIATE');
   try {
+    // F-003: capture the live lease BEFORE max-merging. Sender-removal deltas
+    // and revocation entries reconcile on PRESENCE against the matching
+    // prefix/generation — a later removal or revocation can commit the SAME
+    // next epoch computed from the same rolled-back base, so an epoch
+    // comparison alone cannot gate either.
+    const live = readLease(db);
     maxMeta(db, 'clear_seq', journal.clear_seq);
     maxMeta(db, 'clear_gen', journal.clear_gen);
     maxMeta(db, 'gen_high', journal.gen_high);
     maxMeta(db, 'binding_epoch', journal.binding_epoch);
     const maxRow = db.prepare('SELECT COALESCE(MAX(seq), 0) AS value FROM audit_outbox').get() as { value: number };
     setMeta(db, 'next_seq', Math.max(meta(db, 'next_seq'), journal.seq_high, num(maxRow.value) + 1));
-    if (journal.lease !== null) {
-      maxMeta(db, 'gen_high', journal.lease.generation);
-      const current = readLease(db);
-      // Restore may start from a NEWER binding than the journal. Never drag
-      // ownership backward just because a journal file is present.
-      if (current === null || journal.lease.generation > current.generation) {
-        db.prepare(`INSERT INTO audit_outbox_binding(singleton, prefix, generation, senders) VALUES (1, ?, ?, ?)
-          ON CONFLICT(singleton) DO UPDATE SET prefix=excluded.prefix, generation=excluded.generation, senders=excluded.senders`)
-          .run(journal.lease.prefix, journal.lease.generation, JSON.stringify(journal.lease.senders));
+    const lease = journal.lease;
+    if (lease !== null) maxMeta(db, 'gen_high', lease.generation);
+    const leaseRevoked = lease !== null && journal.revoked.some((entry) => entry.prefix === lease.prefix && entry.generation === lease.generation);
+    // Restore may start from a NEWER binding than the journal. Never drag
+    // ownership backward just because a journal file is present, and never
+    // resurrect a lease whose (prefix, generation) a revocation entry killed.
+    if (lease !== null && !leaseRevoked && (live === null || lease.generation > live.generation)) {
+      db.prepare(`INSERT INTO audit_outbox_binding(singleton, prefix, generation, senders) VALUES (1, ?, ?, ?)
+        ON CONFLICT(singleton) DO UPDATE SET prefix=excluded.prefix, generation=excluded.generation, senders=excluded.senders`)
+        .run(lease.prefix, lease.generation, JSON.stringify(lease.senders));
+      // F-003: the installed lease is now the EFFECTIVE lease — outstanding
+      // sender-removal deltas scoped to ITS (prefix, generation) apply to it
+      // too, so a restored/empty database cannot resurrect a destroyed sender
+      // inside the installed lease.
+      const installScoped = journal.removed_senders.filter(
+        (delta) => delta.prefix === lease.prefix && delta.generation === lease.generation,
+      );
+      if (installScoped.length > 0) {
+        const survivors = lease.senders.filter((id) => !installScoped.some((delta) => delta.sender === id));
+        if (survivors.length === 0) {
+          db.prepare('DELETE FROM audit_outbox_binding WHERE singleton = 1').run();
+        } else {
+          db.prepare('UPDATE audit_outbox_binding SET senders = ? WHERE singleton = 1')
+            .run(JSON.stringify(survivors));
+        }
+      }
+    } else if (live !== null) {
+      if (journal.revoked.some((entry) => entry.prefix === live.prefix && entry.generation === live.generation)) {
+        // Namespace revocation, preserved independently of journal.lease (a
+        // later committed sender removal overwrites the lease) and of the
+        // epoch relation: the entry invalidates the binding at exactly its
+        // (prefix, generation). A newer-generation rebind carries a different
+        // generation and is never touched.
+        db.prepare('DELETE FROM audit_outbox_binding WHERE singleton = 1').run();
+      } else {
+        const scoped = journal.removed_senders.filter(
+          (delta) => delta.prefix === live.prefix && delta.generation === live.generation,
+        );
+        if (scoped.length > 0) {
+          // Outstanding sender-removal deltas reconcile on PRESENCE against
+          // the matching prefix/generation. Replay removes exactly the
+          // destroyed sender ids: senders bound to the same
+          // prefix/generation after the failed removal survive, and the
+          // binding clears only when none remain. Deltas scoped to other
+          // prefixes/generations never touch this binding.
+          const survivors = live.senders.filter((id) => !scoped.some((delta) => delta.sender === id));
+          if (survivors.length === 0) {
+            db.prepare('DELETE FROM audit_outbox_binding WHERE singleton = 1').run();
+          } else {
+            db.prepare('UPDATE audit_outbox_binding SET senders = ? WHERE singleton = 1')
+              .run(JSON.stringify(survivors));
+          }
+        }
       }
     }
     for (const entry of journal.pending) {
@@ -422,6 +580,14 @@ export function consumeAuditJournal(store: StoreLike, journalPath: string): void
     for (const entry of journal.fallback) {
       if (entry.gen < meta(db, 'clear_gen')) continue;
       appendInTx(db, entry.envelope);
+    }
+    // F-002: durable renderer-ack tombstones — the renderer writes its own
+    // IndexedDB row before sending the ack, so the main-process DELETE is only
+    // cleanup. Whatever bytes the database carries — the normal lineage or
+    // pre-ack bytes restored from a backup — rows whose eventId was
+    // acknowledged are deleted here; unacknowledged events keep replaying.
+    for (const eventId of journal.acked) {
+      db.prepare('DELETE FROM audit_outbox WHERE event_id = ?').run(eventId);
     }
     db.exec('COMMIT');
     // Keep the journal as an idempotent recovery snapshot. Replaying it is

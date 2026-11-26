@@ -256,6 +256,9 @@ describe('useConversations', () => {
 
       const { result } = renderHook(() => useConversations());
 
+      await waitFor(() => {
+        expect(result.current.isInitialized).toBe(true);
+      });
       await act(async () => {
         await result.current.selectConversation('conv-1');
       });

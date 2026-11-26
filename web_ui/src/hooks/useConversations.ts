@@ -85,6 +85,9 @@ export function useConversations() {
   const [hasMore, setHasMore] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [persistenceError, setPersistenceError] = useState<string | null>(null);
+  const [bootComplete, setBootComplete] = useState(false);
+  const [historyReady, setHistoryReady] = useState(false);
+  const historyReadyRef = useRef(false);
   const pageSize = 50;
   const isInitialized = useRef(false);
 
@@ -154,6 +157,16 @@ export function useConversations() {
     const seq = ++searchSeq.current;
     // This walk starts after any pending mutation, so it already sees it.
     rerunAfterFlight.current = false;
+    if (!historyReadyRef.current) {
+      // Search reads the whole persisted store. While an owed boot clear is
+      // deferred, publishing matches could expose history that replay will
+      // remove. The query remains in state and reruns once boot settles.
+      inFlightQuery.current = null;
+      setSearchResults(null);
+      setSearchTruncated(false);
+      setIsSearching(false);
+      return;
+    }
     if (query.trim() === '') {
       inFlightQuery.current = null;
       setSearchResults(null);
@@ -168,7 +181,7 @@ export function useConversations() {
       const { matches, truncated } = await searchConversations(query, {
         isCancelled: () => seq !== searchSeq.current,
       });
-      if (seq !== searchSeq.current) return;
+      if (!historyReadyRef.current || seq !== searchSeq.current) return;
       setSearchResults(matches.map(toSummary));
       setSearchTruncated(truncated);
     } catch (error) {
@@ -199,6 +212,10 @@ export function useConversations() {
   // shown results are stale from the first keystroke, so isSearching turns on
   // now, not when the query starts.
   useEffect(() => {
+    if (!bootComplete) {
+      void runSearch(searchQuery);
+      return undefined;
+    }
     if (searchQuery.trim() === '') {
       void runSearch('');
       return undefined;
@@ -213,7 +230,7 @@ export function useConversations() {
       clearTimeout(timer);
       if (debounceTimer.current === timer) debounceTimer.current = null;
     };
-  }, [searchQuery, runSearch]);
+  }, [searchQuery, runSearch, bootComplete]);
 
   /**
    * Keep an active search in step with a mutation (rename, delete, save):
@@ -243,6 +260,7 @@ export function useConversations() {
 
   // Load conversation list from Dexie on mount
   const refreshConversations = useCallback(async () => {
+    if (!historyReadyRef.current) return;
     const generation = ++listGeneration.current;
     try {
       const list = await listConversations(0, pageSize);
@@ -261,7 +279,7 @@ export function useConversations() {
 
   // Load more conversations for pagination
   const loadMore = useCallback(async () => {
-    if (isLoadingMore) return;
+    if (!historyReadyRef.current || isLoadingMore) return;
     try {
       setIsLoadingMore(true);
       const generation = listGeneration.current;
@@ -329,6 +347,8 @@ export function useConversations() {
   useEffect(() => {
     if (!isInitialized.current) {
       isInitialized.current = true;
+      let cancelled = false;
+      let replaySettled = false;
       (async () => {
         try {
           // Boot protocol (R4-2/R6-4): the automatic legacy-conversation
@@ -336,14 +356,29 @@ export function useConversations() {
           // conversation load. Both are self-arbitrating no-ops when nothing
           // is pending / Web Locks are unavailable.
           await maybeAutoMigrateLegacyConversations();
-          await replayPendingConversationClear();
+          if (cancelled) return;
+          let replay = await replayPendingConversationClear();
+          while (replay.deferred && !cancelled) {
+            // A transient writer/repair deferral must settle before history is
+            // exposed. Retry independently of inactivity auto-clear or another
+            // storage notification; unmount cancels the loop.
+            await new Promise<void>((resolve) => setTimeout(resolve, 100));
+            if (cancelled) return;
+            replay = await replayPendingConversationClear();
+          }
+          if (cancelled) return;
+          replaySettled = true;
+          historyReadyRef.current = true;
+          setHistoryReady(true);
           bindFreshEpoch();
           // Verify THIS load's own epoch binding at completion (a later
           // rebind by a select must not mask a stale init).
           const epochPromise = stateEpochRef.current;
           await refreshConversations();
+          if (cancelled) return;
           // Restore last conversation on load
           const list = await listConversations(0, 1);
+          if (cancelled) return;
           if (list.length > 0) {
             const last = list[0];
             if (!(await epochStillCurrent(epochPromise))) {
@@ -351,14 +386,32 @@ export function useConversations() {
               await refreshConversations();
               return;
             }
+            if (cancelled) return;
             setCurrentConversationIdBoth(last.id);
             setCurrentMessages(last.messages);
           }
         } catch (error) {
+          if (cancelled) return;
           console.error('[useConversations] Failed to initialize conversations:', error);
           setPersistenceError('Failed to load conversations');
+        } finally {
+          // Consumers that hold the session-active shared lock (notably the
+          // inactivity watcher) must wait until pending-clear replay settles.
+          if (!cancelled) {
+            // Finishing the boot attempt is not proof that history is safe to
+            // publish. A rejection before replay settles leaves the search
+            // fence closed while the persistence error is surfaced.
+            historyReadyRef.current = replaySettled;
+            setBootComplete(true);
+          }
         }
       })();
+      return () => {
+        cancelled = true;
+        // React StrictMode replays setup→cleanup→setup in development. Allow
+        // the second setup to initialize after the first async chain is cancelled.
+        isInitialized.current = false;
+      };
     }
   }, [refreshConversations, bindFreshEpoch, epochStillCurrent]);
 
@@ -369,6 +422,7 @@ export function useConversations() {
    * @param id - Conversation ID to load
    */
   const selectConversation = useCallback(async (id: string) => {
+    if (!historyReadyRef.current) return;
     bindFreshEpoch();
     const epochPromise = stateEpochRef.current;
     try {
@@ -635,5 +689,7 @@ export function useConversations() {
     searchResults,
     searchTruncated,
     isSearching,
+    isInitialized: bootComplete,
+    historyReady,
   };
 }

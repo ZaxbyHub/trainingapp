@@ -20,6 +20,13 @@ type AuditBridge = Required<Pick<DesktopApiBridge,
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * The only prefix shape a profile mint can produce (see getProfilePrefix's
+ * m1 guard). A persisted lease prefix outside this shape cannot be any tab's
+ * loaded identity — it is corruption, not a foreign profile.
+ */
+const CANONICAL_PREFIX = /^[a-z0-9]{3,8}$/;
+
 export interface ActiveAuditOutboxContext { generation: number; sender: number; prefix: string }
 let activeContext: ActiveAuditOutboxContext | null = null;
 
@@ -73,8 +80,13 @@ export function startAuditOutboxListener(bridge: DesktopApiBridge): () => void {
     try {
       const state = await api.getAuditBindingState();
       if (stopped) return;
-      if (state.prefix !== null && state.prefix !== loadedPrefix) {
-        // Foreign active binding: stay idle. Never silently rebind.
+      // A canonical stored prefix that differs from the loaded one is a real
+      // foreign active binding: stay idle. Never silently rebind. A
+      // NONCANONICAL stored prefix is a malformed persisted lease — no tab can
+      // hold it as its identity — so fall through and let the epoch-fenced
+      // subscribe below repair the binding with the valid loadedPrefix instead
+      // of wedging recovery behind corruption forever.
+      if (state.prefix !== null && state.prefix !== loadedPrefix && CANONICAL_PREFIX.test(state.prefix)) {
         generation = 0;
         activeContext = null;
         return;

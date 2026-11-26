@@ -7,7 +7,8 @@
 // a production-faithful engine injection, a hermetic fast→quality TRANSITION,
 // REAL pack install/remove through the captured manager, and the external.apiKey
 // custody commit), request-threaded custody under the settings-commit MUTEX in
-// both orders with request-arrival barriers, applyEngineSettings ordering, the
+// both orders with section-entry barriers (the seam fires INSIDE the mutex;
+// feedback cluster C), applyEngineSettings ordering, the
 // first-run AWAIT and REGISTRATION legs through the REAL Electron signature (the
 // inference-only patch re-scoped per R14-1), and the legacy-sink adapter with two
 // sequential real PUTs.
@@ -89,18 +90,23 @@
 //       preload's ipcRenderer.invoke(channel, payload) requests would all
 //       be refused profile-not-selected) and fails every
 //       captured(null, payload) leg below.
-//   26. (rev 3, R12-4) NEW-SURFACE optional TEST SEAM onSettingsSectionEntry:
-//       BOTH createBackendServer's options and createBackendHost's config
-//       accept onSettingsSectionEntry?: (section: { patch:
-//       Record<string, unknown> }) => void — a callback that fires
-//       SYNCHRONOUSLY the moment a settings commit section is ENTERED
-//       (before awaiting the settings-commit mutex), carrying the incoming
-//       patch so a test can identify WHICH request arrived. Production
-//       implements it as an optional callback with default undefined and
-//       ZERO behavior when absent — no logging, no persistence, nothing but
-//       the call. applyEngineSettings sections fire the SAME seam (the host
-//       config's copy), because the ONE settings-commit mutex covers every
-//       outer caller (PUT patch, PUT reset, applyEngineSettings, and the
+//   26. (rev 3, R12-4; feedback cluster C rework) NEW-SURFACE optional TEST
+//       SEAM onSettingsSectionEntry: BOTH createBackendServer's options and
+//       createBackendHost's config accept onSettingsSectionEntry?:
+//       (section: { patch: Record<string, unknown> }) => void — a callback
+//       that fires SYNCHRONOUSLY the moment a settings commit section is
+//       ENTERED, carrying the incoming patch so a test can identify WHICH
+//       request entered. Feedback cluster C moved the firing point INSIDE the
+//       serialized commit section: the seam now fires only AFTER the caller
+//       has ACQUIRED the settings-commit mutex (first statement of the
+//       mutex callback, before the commit itself) — never at route arrival
+//       or call time — so a queued section can no longer announce itself
+//       from outside the serialization boundary. Production implements it
+//       as an optional callback with default undefined and ZERO behavior
+//       when absent — no logging, no persistence, nothing but the call.
+//       applyEngineSettings sections fire the SAME seam (the host config's
+//       copy), because the ONE settings-commit mutex covers every outer
+//       caller (PUT patch, PUT reset, applyEngineSettings, and the
 //       first-run handler).
 //   27. (rev 5, R14-1 + R14-2 — plan Part 4 v15 item 3) the production
 //       first-run patch `{'inference.profile': selectedProfile}` NEVER
@@ -207,7 +213,7 @@ import ts from 'typescript';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
-import { app, ipcMain } from 'electron';
+import { app, ipcMain, BrowserWindow } from 'electron';
 import * as electronModule from 'electron';
 import { LlamaEngine } from '../../main/backend/inference/llama-engine.js';
 import { nativeDepsIt } from './fixtures/native-deps-gate.js';
@@ -347,9 +353,20 @@ interface CustodyProvider { beginRequest(): CustodyBatch }
 /** Declared NEW-SURFACE contract of desktop/main/backend/audit-outbox.ts (the companion production spec harness-contract item 2, and header item 22 of this file). */
 interface RoutesOutboxModule {
   createProductionCustodySink(getStore: () => { db: unknown } | null, notify?: (payload: { generation: number; pendingCount: number }) => void): CustodyProvider;
-  bindOutboxBinding(store: { db: unknown }, prefix: string, sender?: number): Promise<{ prefix: string; generation: number }>;
+  /** The production binder has NO ingress validation (the pre-canonical subscribe ingress called it with any 1..200-char string) — feedback cluster F-004 uses the full shape to persist the malformed-lease arrangement. */
+  bindOutboxBinding(store: { db: unknown }, prefix: string, sender?: number, previousSender?: number, expectedEpoch?: number): Promise<{ prefix: string; generation: number }>;
   /** Header item 22: the R10-4 LEGACY-SINK ADAPTER — accepts EITHER a beginRequest() provider OR a plain { capture, flush, discard } object wrapped as one-shot forwarding batches. */
   adaptLegacyCustodySink(sink: CustodyProvider | { capture(envelope: DesktopAuditEnvelope): void; flush(): void | Promise<void>; discard(): void }): CustodyProvider;
+  /** Feedback cluster F-004: standalone append (one immediate transaction) — parks a pending custody event under the malformed lease. */
+  appendStandalone(store: { db: unknown }, envelope: DesktopAuditEnvelope): OutboxRow;
+  /** Feedback cluster F-004: the delivery read (generation+sender authorized) — proves the surviving pending event is deliverable under the RECOVERED binding. */
+  readOutboxPending(store: { db: unknown }, generation: number, sender: number): Promise<OutboxRow[]>;
+  /** Feedback cluster F-004: the binding snapshot (prefix/generation/senders/epoch). */
+  readOutboxBindingState(store: { db: unknown }): { prefix: string | null; generation: number; senders: number[]; epoch: number };
+  /** F-004 closeout: sender removal — a PARTIAL removal on a multi-sender lease advances binding_epoch while KEEPING the lease (the concurrent activity that stales a caller's earlier observation). */
+  removeOutboxSender(store: { db: unknown; dbPath?: string }, sender: number): boolean;
+  /** F-004 closeout: the restart-journal path — byte-level evidence that a refused subscribe mutated nothing. */
+  defaultAuditJournalPath(dbPath: string): string;
 }
 
 /** The real first-run handler's result arm (index.ts:1049-1053, :1107-1111). */
@@ -462,13 +479,25 @@ async function openWorkspaceStore(prefix: string): Promise<{ root: string; dbPat
   openStores.push(store); return { root, dbPath, store };
 }
 
-/** The REAL node-mode server over the REAL engine — /settings only; persistExternal is the DECLARED deferred-persist seam (void | Promise<void>, awaited by the commit) and RECEIVES the external snapshot the route computed (server.ts:1011-1013). Rev 3 (R12-4): the optional onSettingsSectionEntry test seam (rev-3 header item 26) threads into the server options when given. */
-async function startSettingsServer(engine: unknown, persistExternal: (snapshot: Record<string, unknown>) => void | Promise<void>, onSettingsSectionEntry?: (section: { patch: Record<string, unknown> }) => void): Promise<{ port: number }> {
+/** The REAL node-mode server over the REAL engine — /settings only; persistExternal is the DECLARED deferred-persist seam (void | Promise<void>, awaited by the commit) and RECEIVES the external snapshot the route computed (server.ts:1011-1013). Rev 3 (R12-4): the optional onSettingsSectionEntry test seam (rev-3 header item 26) threads into the server options when given. Feedback cluster F-005: the server INSTANCE is returned alongside the port so a contention leg can attach its own transport-level pre-acquisition arrival signal (request body 'end') without touching production. */
+async function startSettingsServer(engine: unknown, persistExternal: (snapshot: Record<string, unknown>) => void | Promise<void>, onSettingsSectionEntry?: (section: { patch: Record<string, unknown> }) => void): Promise<{ port: number; server: http.Server }> {
   const serverMod = await import('../../main/backend/server.js');
   const guardMod = await import('../../main/security/loopback-guard.js');
   const server = serverMod.createBackendServer({ guard: guardMod.createLoopbackGuard({ token: TOKEN }), tokenHeaderName: 'X-Desktop-Token', engine: engine as never, persistExternal: persistExternal as (snapshot: Record<string, unknown>) => void, ...(onSettingsSectionEntry !== undefined ? { onSettingsSectionEntry } : {}) } as never);
   const port = await serverMod.listenOnRandomPort(server);
-  openServers.push(server); return { port };
+  openServers.push(server); return { port, server };
+}
+
+/** Feedback cluster F-005: the INDEPENDENT deterministic pre-acquisition arrival signal for the server contention legs — resolves on the request BODY 'end' of the Nth PUT /settings (N=2 identifies the queued request: the first PUT's body provably ended before the second was dispatched). Transport-level: it fires regardless of mutex state, so awaiting it can never deadlock, and the production handler cannot have reached the mutex before its own body read completed (readBody's 'end' listener resolves its promise in the same emission, its continuation queued ahead of this listener's). */
+function onNthPutBodyEnd(server: http.Server, nth: number, onArrived: () => void): void {
+  let bodyEnds = 0;
+  server.on('request', (req: http.IncomingMessage) => {
+    if (req.method !== 'PUT' || req.url !== '/settings') return;
+    req.on('end', () => {
+      bodyEnds += 1;
+      if (bodyEnds === nth) onArrived();
+    });
+  });
 }
 
 async function putSettings(port: number, patch: Record<string, unknown>): Promise<Response> {
@@ -591,7 +620,7 @@ function collectNameUsages(name: string, definingFile: string): Array<{ file: st
   return usages;
 }
 
-describe('audit-outbox-custody-routes (rev 17 — plan Part 4 v27): request-threaded custody under the settings-commit MUTEX with REQUEST-ARRIVAL barriers (onSettingsSectionEntry) — real concurrent PUT /settings routes in BOTH orders with FINAL-state assertions (responseSettings/SecretStore/external snapshot/own audit row) / per-request capture barriers / applyEngineSettings ordering through the same mutex / first-run AWAIT ordering through the REAL IPC handler (inference-only patch re-scoped to await/registration proofs — no custody-row assertion for that patch, R14-1) + REGISTRATION executed (registerFirstRunCompleteIpc, recording fake ipcMain, captured(null, payload) — the REAL Electron signature) + the shipped-caller BOOTSTRAP execution FIRST IN THE DESCRIBE carrying the PRODUCTION-FAITHFUL ENGINE INJECTION of header item 28 and the HERMETIC fast→quality TRANSITION of header item 29 ride the same leg — R13-3 + R14-1 + R14-2 + R15-1 + R16-2; REAL pack install/remove through the CAPTURED bootstrap-built manager, one durable envelope per commit, and the external.apiKey custody commit ok:true + one durable row through the CAPTURED bootstrap-built host) / the source-level pin (module-bound import existence + the source census, plan Part 4 v27)) / legacy-sink adapter with TWO sequential PUTs (#373 AC1 — R10-4, R11-3, R11-5, R12-2, R12-4, R13-2, R13-3, R14-1, R14-2, R15-1, R16-2)', () => {
+describe('audit-outbox-custody-routes (rev 17 — plan Part 4 v27): request-threaded custody under the settings-commit MUTEX with section-entry barriers (onSettingsSectionEntry, fired INSIDE the serialized commit section — feedback cluster C) — real concurrent PUT /settings routes in BOTH orders with FINAL-state assertions (responseSettings/SecretStore/external snapshot/own audit row) / per-request capture barriers / applyEngineSettings ordering through the same mutex / first-run AWAIT ordering through the REAL IPC handler (inference-only patch re-scoped to await/registration proofs — no custody-row assertion for that patch, R14-1) + REGISTRATION executed (registerFirstRunCompleteIpc, recording fake ipcMain, captured(null, payload) — the REAL Electron signature) + the shipped-caller BOOTSTRAP execution FIRST IN THE DESCRIBE carrying the PRODUCTION-FAITHFUL ENGINE INJECTION of header item 28 and the HERMETIC fast→quality TRANSITION of header item 29 ride the same leg — R13-3 + R14-1 + R14-2 + R15-1 + R16-2; REAL pack install/remove through the CAPTURED bootstrap-built manager, one durable envelope per commit, and the external.apiKey custody commit ok:true + one durable row through the CAPTURED bootstrap-built host) / the source-level pin (module-bound import existence + the source census, plan Part 4 v27)) / legacy-sink adapter with TWO sequential PUTs (#373 AC1 — R10-4, R11-3, R11-5, R12-2, R12-4, R13-2, R13-3, R14-1, R14-2, R15-1, R16-2)', () => {
   it('shipped-caller BOOTSTRAP execution (rev 17 — plan Part 4 v27; FIRST in the describe; rev 7, R13-1 + R13-3 + R14-1 + R14-2 + R15-1 + R16-2 — the FUNDAMENTAL shipped-caller proof, plan Part 4 v17 item 3; the separately tested correct builder/registration functions do not prove that index reaches them): import bootstrap from the REAL desktop/main/index.ts and execute the actual registered app.whenReady callback under the desktop electron stub with injected env (the e1-packaged-glue-hardening recipe) and the PRODUCTION-FAITHFUL ENGINE INJECTION of header item 28 — the leg\'s vi.mock of backend/index.js intercepts resolveNodeEngine so the TRAININGAPP_DESKTOP_ENGINE=\'stub\' short-circuit (which returns StubEngine, ignores the externalProvider overrides incl. the custody sink, and rejects both \'inference.profile\' and \'external.apiKey\' as unknown settings — the executed UNGREENABLE shape of 06 :1234-1240, zero captures) is bypassed and a REAL LlamaEngine is constructed from the SAME index-supplied options (mirroring llama-engine.ts:847-857; TEST-SIDE ONLY — production engine-selection semantics, StubEngine, and resolveNodeEngine UNCHANGED; the instance\'s warmup is SPIED so no model-load side effect occurs), then (i) capture the ACTUAL registered desktop:first-run:complete callback from the stub ipcMain.handle recorder — exactly ONE registration, the callback is NOT the factory — and invoke it as captured(null, payload), the REAL Electron (event, payload) dispatch, asserting result.ok === true AND that the engine ACTUALLY ACCEPTED the inference patch (the constructed instance\'s captureSettingsState() shows inference.profile === selectedProfile — genuine acceptance through the INDEX-SUPPLIED dependencies, never the nonfatal-masking path that made the rev-5 ok:true non-evidentiary — proven as a HERMETIC BEFORE/AFTER TRANSITION per header item 29, R16-2: the env roster saves/clears/restores TRAININGAPP_DESKTOP_INFERENCE_PROFILE with the other keys and arranges the NON-quality startup profile \'fast\', the constructed engine is asserted NOT already \'quality\' BEFORE the callback, and the exact TRANSITION fast → quality is required AFTER it plus warmup — a dropped/ignored inference patch that still returns ok:true cannot satisfy the transition) AND that warmup was invoked (spy; never test-supplied valid deps; the inference-only first-run patch emits NO custody envelope by design — R14-1 — so the index-supplied custody chain is proven separately in (iv) with an EXTERNAL key); and (ii) assert the startup reachability observable — the createBackendHost config captured during the bootstrap execution carries the startup-built auditSink (at base the R5-6 seam does not exist: RED right-reason at the NAMED assertion, never an import error or unhandled rejection — bootstrap itself exists at base and its whenReady chain carries a .catch; presence of an emit function alone is NOT evidence — R14-2) — plus (ii-b) the R15-1 injection is load-bearing: EXACTLY ONE engine was constructed, it IS a LlamaEngine and NOT StubEngine, and the stub short-circuit it bypassed is recorded; and (iii) execute a REAL pack install and a REAL pack remove through the CAPTURED bootstrap-built PackManager, asserting EXACTLY ONE durable envelope per commit (pack_install, then pack_remove) with the packs-registry row on the SAME ONE fresh connection of the bootstrap host\'s OWN store (manager and sink aligned BY CONSTRUCTION — both are the host store; the index-level no-op-override shape `{ ...startup.hostConfig, auditSink: { emit() {} } }` produces ZERO envelopes and is a REQUIRED RED mutant — 06 :1193-1199); and (iv) commit an external.apiKey custody change through the CAPTURED bootstrap-built host — ok:true (REAL acceptance through the injected LlamaEngine carrying the index-supplied externalProvider, not a StubEngine 422) AND exactly one durable settings_change row through the index-supplied sink on a fresh connection (the R14-1 + R15-1 index-supplied custody-chain proof) (audit-outbox-custody-routes)', async () => {
     // The e1 env recipe: save/clear the desktop env seams, inject a temp
     // store + packs dir and the stub engine; restore in finally. Dev mode
@@ -773,12 +802,16 @@ describe('audit-outbox-custody-routes (rev 17 — plan Part 4 v27): request-thre
     // call #2 (request B) rejects. The mutex must hold B's WHOLE section (not
     // just its batch) until A's section completed.
     const gateA = makeGate();
-    // R12-4 REQUEST-ARRIVAL BARRIER (rev 3): the onSettingsSectionEntry seam
-    // (rev-3 header item 26) fires SYNCHRONOUSLY when a request ENTERS the
-    // commit section, BEFORE it awaits the mutex — the leg resolves B's
-    // arrival signal and only THEN releases A, so B provably reached the
-    // route while A still held the section (natural sequencing can no longer
-    // masquerade as serialization).
+    // R12-4 SECTION-ENTRY BARRIER (rev 3; feedback cluster C rework): the
+    // onSettingsSectionEntry seam (rev-3 header item 26) now fires INSIDE the
+    // serialized commit section — AFTER the request has ACQUIRED the mutex —
+    // so B's entry signal can no longer be awaited while A parks (that would
+    // deadlock). The leg instead launches B while A holds the section,
+    // asserts B has NOT begun (deterministic under the mutex), releases A,
+    // and only THEN awaits B's entry — which post-fix proves B acquired the
+    // mutex strictly after A's completed section (natural sequencing can no
+    // longer masquerade as serialization; the dedicated after-acquisition
+    // regressions in the cluster-C block pin the seam timing itself).
     let bArrived!: () => void;
     const bArrival = new Promise<void>((resolve) => { bArrived = resolve; });
     let sectionEntries = 0;
@@ -793,19 +826,29 @@ describe('audit-outbox-custody-routes (rev 17 — plan Part 4 v27): request-thre
       sectionEntries += 1;
       if (section.patch['external.apiKey'] === 'sk-route-b-1') bArrived();
     });
+    // F-005: the pre-acquisition arrival signal is RESTORED — but INDEPENDENT
+    // of the seam (which now fires only INSIDE the mutex). The second PUT
+    // /settings request BODY 'end' is B's (A's body provably ended first:
+    // awaitCapture(1) below proves A's body was consumed before putB was even
+    // dispatched); it fires at the transport level regardless of mutex state,
+    // so awaiting it cannot deadlock.
+    let bBodyArrived!: () => void;
+    const bBodyEnd = new Promise<void>((resolve) => { bBodyArrived = resolve; });
+    onNthPutBodyEnd(srv.server, 2, () => bBodyArrived());
     const putA = putSettings(srv.port, { 'external.apiKey': 'sk-route-a-1', 'external.baseUrl': 'https://route-a.example.test' });
     await obs.awaitCapture(1); // A's OWN capture — the R11-5 per-count barrier
     expect(obs.events.filter((e) => e === 'flush').length, 'request A has NOT flushed — it is parked at the deferred persist gate (capture alone never delivers)').toBe(0);
     expect(readOutboxOnFreshConnection(ws.dbPath).rows.length, 'no durable row while A is parked').toBe(0);
     const putB = putSettings(srv.port, { 'external.apiKey': 'sk-route-b-1', 'external.baseUrl': 'https://route-b.example.test' });
-    await bArrival; // R12-4: B ENTERED the commit section while A still holds it — A is released only now
-    expect(obs.events.filter((e) => e === 'begin').length, 'B has ENTERED but NOT begun — it is QUEUED at the settings-commit mutex while A is parked at the persist gate (the R12-4 request-arrival barrier; under the no-mutex mutant B begins immediately and the serialization assertions below go RED; plan Part 4 v13 item 3)').toBe(1);
+    await bBodyEnd; // F-005: B's request BODY is fully received while A still holds the mutex — B provably reached the route BEFORE A was released (natural sequencing can no longer masquerade as serialization; the seam is not involved)
+    expect(obs.events.filter((e) => e === 'begin').length, 'B ARRIVED (request body fully received) but has NOT begun — it is QUEUED at the settings-commit mutex while A is parked at the persist gate (the R12-4 request-arrival barrier, restored on the transport-level signal; under the no-mutex mutant B begins before this assertion and it goes RED; post-fix B\'s section-entry has not fired either — the seam lives inside the mutex; plan Part 4 v13 item 3, feedback cluster C + F-005)').toBe(1);
     expect(readOutboxOnFreshConnection(ws.dbPath).rows.length, 'still no durable row while A is parked and B is queued behind the mutex').toBe(0);
     gateA.open(); // A's section completes only now — B contends with A's tail from the queue, never interleaves into it
     const resA = await putA;
     expect(resA.status, 'request A committed ok after its persist gate opened').toBe(200);
     const settingsA = (await resA.json()) as Record<string, unknown>;
     expect(settingsA['external.baseUrl'], "A's FINAL responseSettings reflect A's own commit (the winner's settings)").toBe('https://route-a.example.test');
+    await bArrival; // cluster C: B's section-entry fired INSIDE the mutex — only after A's section completed and released it
     const resB = await putB;
     expect(resB.status, "request B's persist failure surfaces as a 500 (the outer rollback)").toBe(500);
     // THE SERIALIZATION OBSERVABLE (R11-3): B's first recorder event strictly
@@ -842,9 +885,12 @@ describe('audit-outbox-custody-routes (rev 17 — plan Part 4 v27): request-thre
     let rejectA!: (err: Error) => void;
     const aPersist = new Promise<void>((_, reject) => { rejectA = reject; });
     const gateB = makeGate();
-    // R12-4 REQUEST-ARRIVAL BARRIER (rev 3): B's entry is awaited BEFORE A
-    // is failed — B provably reached the route and is queued at the mutex
-    // while A still holds the section.
+    // R12-4 SECTION-ENTRY BARRIER (rev 3; feedback cluster C rework): B's
+    // section-entry seam now fires INSIDE the mutex, so it can no longer be
+    // awaited while A parks (deadlock). B is launched queued, proven not to
+    // have begun, A is failed, and B's entry signal is awaited only AFTER
+    // A's section completed (see the order-1 leg and the cluster-C
+    // after-acquisition regressions for the seam-timing pins).
     let bArrived!: () => void;
     const bArrival = new Promise<void>((resolve) => { bArrived = resolve; });
     let sectionEntries = 0;
@@ -859,11 +905,17 @@ describe('audit-outbox-custody-routes (rev 17 — plan Part 4 v27): request-thre
       sectionEntries += 1;
       if (section.patch['external.apiKey'] === 'sk-route-b2-1') bArrived();
     });
+    // F-005: same transport-level pre-acquisition arrival signal as order 1 —
+    // the second PUT /settings body 'end' IS B's (A's body provably ended
+    // first), and it fires regardless of mutex state (no deadlock).
+    let bBodyArrived!: () => void;
+    const bBodyEnd = new Promise<void>((resolve) => { bBodyArrived = resolve; });
+    onNthPutBodyEnd(srv.server, 2, () => bBodyArrived());
     const putA = putSettings(srv.port, { 'external.apiKey': 'sk-route-a2-1', 'external.baseUrl': 'https://route-a2.example.test' });
     await obs.awaitCapture(1); // A's OWN capture — A is parked inside its section
     const putB = putSettings(srv.port, { 'external.apiKey': 'sk-route-b2-1', 'external.baseUrl': 'https://route-b2.example.test' });
-    await bArrival; // R12-4: B ENTERED the commit section while A still holds it — A is failed only now
-    expect(obs.events.filter((e) => e === 'begin').length, 'B has ENTERED but NOT begun — it is QUEUED at the settings-commit mutex while A is parked at its persist step (the R12-4 request-arrival barrier; under the no-mutex mutant B begins (and applies) before A\'s discard and the serialization + final-state assertions below go RED; plan Part 4 v13 item 3)').toBe(1);
+    await bBodyEnd; // F-005: B's body is fully received while A still holds the section — B provably reached the route BEFORE A was failed
+    expect(obs.events.filter((e) => e === 'begin').length, 'B ARRIVED (request body fully received) but is QUEUED at the settings-commit mutex while A is parked at its persist step — under the no-mutex mutant B begins (and applies) before A\'s discard and the serialization + final-state assertions below go RED; post-fix B\'s section-entry has not fired either (the seam lives inside the mutex; plan Part 4 v13 item 3, feedback cluster C + F-005)').toBe(1);
     // Fail A: its rollback (and discard) must COMPLETE before B's section may
     // BEGIN — the exact point the unserialized schedule erases B's apply.
     rejectA(new Error('external.json write failed (A2 probe)'));
@@ -871,6 +923,7 @@ describe('audit-outbox-custody-routes (rev 17 — plan Part 4 v27): request-thre
     expect(resA.status, "A's persist failure rolls back (500)").toBe(500);
     expect(readOutboxOnFreshConnection(ws.dbPath).rows.length, 'A\'s discard left ZERO durable rows (the no-row rollback assertion, retained)').toBe(0);
     expect(obs.events.filter((e) => e === 'discard').length, 'A\'s captured batch was DISCARDED').toBe(1);
+    await bArrival; // cluster C: B's section-entry fired INSIDE the mutex — strictly after A's completed (rolled-back) section
     await obs.awaitCapture(2); // B's OWN capture — the count barrier (under the mutex it can only happen after A's discard)
     const bBeginIndex = obs.events.indexOf('begin', 1);
     expect(bBeginIndex, "B's commit section did not BEGIN until A's section COMPLETED — B's beginRequest comes strictly AFTER A's discard (the serialization that makes the challenge schedule safe; plan Part 4 v12 item 3, R11-3)").toBeGreaterThan(obs.events.indexOf('discard'));
@@ -934,9 +987,12 @@ describe('audit-outbox-custody-routes (rev 17 — plan Part 4 v27): request-thre
     const secretStore3 = makeFakeSecretStore();
     const obs3 = makeObservedProvider(outboxMod!.createProductionCustodySink(() => ws3.store));
     const engine3 = new LlamaEngine({ externalProvider: { secretStore: secretStore3, airgap: true, auditSink: obs3.provider } } as never);
-    // R12-4 REQUEST-ARRIVAL BARRIER (rev 3): the HOST's onSettingsSectionEntry
-    // seam fires when the applyEngineSettings section ENTERS — the apply's
-    // arrival is awaited BEFORE the parked PUT is released.
+    // R12-4 SECTION-ENTRY BARRIER (rev 3; feedback cluster C rework): the
+    // HOST's onSettingsSectionEntry seam now fires INSIDE the mutex, so the
+    // apply's entry can no longer be awaited while the PUT parks (deadlock).
+    // The apply is launched queued, proven not to have begun, the PUT is
+    // released, and the apply's entry signal is awaited only AFTER the PUT's
+    // section completed (the cluster-C regressions pin the seam timing).
     let applyArrived!: () => void;
     const applyArrival = new Promise<void>((resolve) => { applyArrived = resolve; });
     const host3 = await startCustodyHost(engine3, (section) => {
@@ -946,11 +1002,16 @@ describe('audit-outbox-custody-routes (rev 17 — plan Part 4 v27): request-thre
     const srv3 = await startSettingsServer(engine3, () => gatePut.promise);
     const put = putSettings(srv3.port, { 'external.apiKey': 'sk-mutex-put' });
     await obs3.awaitCapture(1); // the PUT's OWN capture — its section is parked at the persist gate
-    const applyCall = host3.applyEngineSettings!({ 'external.apiKey': 'sk-mutex-apply' }); // launched while the PUT's section is in flight
-    await applyArrival; // R12-4: the apply ENTERED its commit section while the PUT still holds the mutex
-    expect(obs3.events.filter((e) => e === 'begin').length, 'the applyEngineSettings section has ENTERED but NOT begun — it is QUEUED at the settings-commit mutex while the PUT is parked at its persist gate (the R12-4 request-arrival barrier extends to the applyEngineSettings contention leg; under the no-mutex mutant the apply begins before the PUT\'s flush and the serialization assertion below goes RED; plan Part 4 v13 item 3)').toBe(1);
+    const applyCall = host3.applyEngineSettings!({ 'external.apiKey': 'sk-mutex-apply' }); // F-005: CALL INVOCATION before the mutex release — the apply is invoked while the PUT's section is in flight (in-process analog of the body-'end' signal; the invocation itself is deterministic)
+    // F-005: one deterministic macrotask settles the invocation's enqueue.
+    // Under a no-mutex mutant the apply's beginRequest has already fired by
+    // this boundary (work starts in a microtask); under the REAL mutex the
+    // apply is still queued behind the parked PUT.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(obs3.events.filter((e) => e === 'begin').length, 'the applyEngineSettings call was INVOKED (and its enqueue settled) while the PUT is parked at its persist gate, yet has NOT begun — it is QUEUED at the settings-commit mutex (the R12-4 request-arrival barrier, restored on the call-invocation signal; under the no-mutex mutant the apply begins before this assertion and it goes RED; post-fix the apply\'s section-entry has not fired either — the seam lives inside the mutex; plan Part 4 v13 item 3, feedback cluster C + F-005)').toBe(1);
     gatePut.open();
     expect((await put).status, 'the parked PUT committed ok after its gate opened').toBe(200);
+    await applyArrival; // cluster C: the apply's section-entry fired INSIDE the mutex — strictly after the PUT's completed section
     const applyResult = await applyCall;
     expect(applyResult.ok, 'the queued applyEngineSettings committed ok once the mutex released').toBe(true);
     expect(obs3.events.indexOf('begin', 1), 'the applyEngineSettings commit section did not BEGIN until the PUT\'s section COMPLETED — its beginRequest comes strictly AFTER the PUT\'s flush (ONE settings-commit mutex for every outer caller: PUT patch, PUT reset, applyEngineSettings, and the first-run handler; plan Part 4 v12 item 3, R11-3)').toBeGreaterThan(obs3.events.indexOf('flush'));
@@ -1221,5 +1282,335 @@ describe('audit-outbox-custody-routes (rev 17 — plan Part 4 v27): request-thre
     const finalLegacyRows = readOutboxOnFreshConnection(ws.dbPath).rows.filter((r) => r.event_id !== 'legacy-adapter-passthrough');
     expect(finalLegacyRows.length, 'TWO sequential legacy PUTs = EXACTLY TWO durable rows — one per committed outer call (no batch reuse across requests, no lost second row; plan Part 4 v12 item 3, R11-5)').toBe(2);
     expect(new Set(finalLegacyRows.map((r) => r.event_id)).size, 'each request\'s row carries its own eventId').toBe(2);
+  });
+
+  // ---- FEEDBACK CLUSTER C (PR #391 review): four focused regressions. The
+  // onSettingsSectionEntry seam (header item 26) moves INSIDE the serialized
+  // commit section in BOTH backend hosts (server.ts PUT /settings and
+  // backend/index.ts applyEngineSettings): it fires only AFTER the
+  // settings-commit mutex is acquired, never before — the pre-fix firing
+  // order let a queued section ANNOUNCE itself at route arrival, the wrong
+  // side of the serialization boundary. The two mutex legs pin the post-fix
+  // firing order (RED pre-fix, deterministic in both directions); the two
+  // shipped-bootstrap legs pin the desktop:audit:subscribe ingress
+  // canonical-prefix gate (^[a-z0-9]{3,8}$ — the rule desktop:audit:
+  // revoke-namespace already enforces) and the destroyed-renderer settlement
+  // of namespace-revocation waiters in desktop/main/index.ts.
+  const CUSTODY_ENV_KEYS = ['ELECTRON_START_URL', 'TRAININGAPP_DESKTOP_MANIFEST', 'TRAININGAPP_DESKTOP_STORE_PATH', 'TRAININGAPP_DESKTOP_PACKS_DIR', 'TRAININGAPP_DESKTOP_ENGINE', 'TRAININGAPP_DESKTOP_EMBEDDER', 'TRAININGAPP_PACKS_EMBEDDING_MODEL_ID', 'TRAININGAPP_EMBEDDING_MODEL_DIR', 'TRAININGAPP_RERANKER_MODEL_DIR', 'TRAININGAPP_DESKTOP_INFERENCE_PROFILE'] as const;
+
+  /** Feedback cluster C: one light shipped-bootstrap execution — the REAL desktop/main/index.ts whenReady callback under the desktop electron stub with the e1 env recipe (stub engine, hash embedder, temp store; no packs staged, no first-run payload). ELECTRON_START_URL selects the DEV load path so createMainWindow runs (the production path early-returns on a missing packaged renderer before any window exists). Resolves once the audit custody IPC handlers are registered AND the main window exists (the destroyed listener is the callback's last work). The returned cleanup() runs the shipped-caller BOOTSTRAP leg's quit recipe (the shipped will-quit handler stops the bootstrap-built host, releasing the store handle BEFORE the file-wide afterEach removes the temp dir — a leaked sqlite handle turns the rmSync into EPERM on Windows) and restores the env roster; the caller MUST run it in its finally. */
+  async function runCustodyBootstrap(): Promise<{
+    subscribe: (event: unknown, prefix: unknown, sender: unknown, expectedEpoch: unknown) => Promise<unknown>;
+    revokeNamespace: (event: unknown, prefix: unknown) => Promise<unknown>;
+    revokedAck: ((event: unknown, prefix: unknown) => void) | null;
+    window: InstanceType<typeof BrowserWindow>;
+    cleanup(): Promise<void>;
+  }> {
+    const savedEnv: Record<string, string | undefined> = {};
+    for (const key of CUSTODY_ENV_KEYS) { savedEnv[key] = process.env[key]; delete process.env[key]; }
+    const iso = makeTempDir('audit-custody-bootstrap-');
+    process.env.TRAININGAPP_DESKTOP_STORE_PATH = path.join(iso, 'profiles', 'default', 'store.sqlite');
+    process.env.TRAININGAPP_DESKTOP_PACKS_DIR = path.join(iso, 'packs');
+    process.env.TRAININGAPP_DESKTOP_ENGINE = 'stub';
+    process.env.TRAININGAPP_DESKTOP_EMBEDDER = 'hash';
+    process.env.TRAININGAPP_PACKS_EMBEDDING_MODEL_ID = 'hash-test';
+    process.env.ELECTRON_START_URL = 'http://localhost:5173'; // dev load path: skips the packaged-renderer early return so createMainWindow runs
+    let cleaned = false;
+    let settledOk = false;
+    const cleanupOnce = async (): Promise<void> => {
+      if (cleaned) return;
+      cleaned = true;
+      await boundedPoll(() => (app.on as ReturnType<typeof vi.fn>).mock.calls.some((c) => c[0] === 'will-quit'), 8000);
+      app.emit('will-quit');
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      for (const key of CUSTODY_ENV_KEYS) {
+        const value = savedEnv[key];
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    };
+    resetElectronStub!();
+    (BrowserWindow as unknown as { nextWebContentsId: number }).nextWebContentsId = 61;
+    try {
+      bootstrap();
+      // The audit handlers register AFTER the host start (so getCurrentStore()
+      // answers the host's own store the moment the subscribe handler exists);
+      // createMainWindow is the whenReady callback's LAST statement, so the
+      // destroyed-listener registration below proves the callback finished.
+      const settled = await boundedPoll(() =>
+        (ipcMain.handle as ReturnType<typeof vi.fn>).mock.calls.some((c) => c[0] === 'desktop:audit:subscribe') &&
+        BrowserWindow.getAllWindows().length > 0 &&
+        (BrowserWindow.getAllWindows()[0]!.webContents.on as ReturnType<typeof vi.fn>).mock.calls.some((c) => c[0] === 'destroyed'), 8000);
+      expect(settled, 'the ACTUAL shipped whenReady callback registered the audit custody IPC surface and created the main window (the subscribe registration follows the host start, the destroyed registration follows createMainWindow — the callback\'s last work)').toBe(true);
+      const handleCalls = (ipcMain.handle as ReturnType<typeof vi.fn>).mock.calls as Array<[string, unknown]>;
+      const onCalls = (ipcMain.on as ReturnType<typeof vi.fn>).mock.calls as Array<[string, unknown]>;
+      const subscribe = handleCalls.filter((c) => c[0] === 'desktop:audit:subscribe').at(-1)![1] as (event: unknown, prefix: unknown, sender: unknown, expectedEpoch: unknown) => Promise<unknown>;
+      const revokeNamespace = handleCalls.filter((c) => c[0] === 'desktop:audit:revoke-namespace').at(-1)![1] as (event: unknown, prefix: unknown) => Promise<unknown>;
+      const revokedAckEntry = onCalls.filter((c) => c[0] === 'audit:namespace-revoked-ack').at(-1);
+      const result = {
+        subscribe,
+        revokeNamespace,
+        revokedAck: revokedAckEntry !== undefined ? revokedAckEntry[1] as (event: unknown, prefix: unknown) => void : null,
+        window: BrowserWindow.getAllWindows()[0]!,
+        cleanup: cleanupOnce,
+      };
+      settledOk = true;
+      return result;
+    } finally {
+      // The success path hands cleanup() to the CALLER (the test's finally) —
+      // running it here would stop the host and close the store BEFORE the
+      // test ever invokes the captured handlers. Only a poll failure cleans
+      // up inline, so the failure surfaces after the host has stopped.
+      if (!settledOk) await cleanupOnce();
+    }
+  }
+
+  itReal('desktop:audit:subscribe ingress rejects NONCANONICAL profile prefixes (feedback cluster C, desktop/main/index.ts): a prefix outside ^[a-z0-9]{3,8}$ — the canonical shape desktop:audit:revoke-namespace already enforces — is refused at the subscribe ingress (pre-fix the ingress accepted any 1..200-char string, so a renderer could bind a custody namespace NO revoke could ever target, stranding its custody rows); a CANONICAL prefix still binds through the same captured handler (the rejection is prefix-shape-scoped, never a blanket refusal) (audit-outbox-custody-routes)', async () => {
+    let boot: Awaited<ReturnType<typeof runCustodyBootstrap>> | null = null;
+    try {
+      boot = await runCustodyBootstrap();
+      expect(typeof boot.subscribe, 'the shipped desktop:audit:subscribe handler was captured from the recording ipcMain').toBe('function');
+      // The captured handler is async so it can await the custody bind before
+      // publishing sender identity. Ingress refusals therefore reject the raw
+      // invoke promise with the message-specific canonical-prefix error.
+      await expect(boot.subscribe({ sender: { id: 71 } }, 'BadPre', 1, 0), 'a mixed-case noncanonical prefix is REFUSED at the subscribe ingress (feedback cluster C: the ingress enforces ^[a-z0-9]{3,8}$; pre-fix it resolved a binding for any short string)').rejects.toThrow(/canonical profile prefix/);
+      await expect(boot.subscribe({ sender: { id: 71 } }, 'toolong9x', 1, 0), 'a 9-character prefix is likewise refused (canonical prefixes are 3..8 chars)').rejects.toThrow(/canonical profile prefix/);
+      await expect(boot.subscribe({ sender: { id: 71 } }, 'prof123', 1, 0), 'a CANONICAL prefix still binds through the same captured ingress — the rejection never degraded into a blanket subscribe refusal').resolves.toBeDefined();
+    } finally {
+      if (boot !== null) await boot.cleanup();
+    }
+  }, 30000);
+
+  itReal('a failed renderer-reload bind preserves the committed sender identity used on retry (F-003 closeout)', async () => {
+    let boot: Awaited<ReturnType<typeof runCustodyBootstrap>> | null = null;
+    try {
+      boot = await runCustodyBootstrap();
+      const outboxMod = (await import('../../main/backend/audit-outbox.js').catch(() => null)) as unknown as RoutesOutboxModule | null;
+      const storeMod = await import('../../main/backend/store/sqlite-store.js');
+      expect(outboxMod).not.toBeNull();
+      const store = storeMod.getCurrentStore();
+      expect(store).not.toBeNull();
+      await expect(boot.subscribe({ sender: { id: 61 } }, 'prof123', 11, 0)).resolves.toBeDefined();
+      const journalPath = outboxMod!.defaultAuditJournalPath(store!.dbPath);
+      fs.rmSync(journalPath, { recursive: true, force: true });
+      // A directory at the journal file path deterministically fails the new
+      // pre-COMMIT retirement-journal write on Windows and POSIX.
+      fs.mkdirSync(journalPath, { recursive: true });
+      await expect(boot.subscribe({ sender: { id: 61 } }, 'prof123', 12, 0)).rejects.toThrow();
+      expect(outboxMod!.readOutboxBindingState(store!)).toMatchObject({ prefix: 'prof123', senders: [11] });
+
+      fs.rmSync(journalPath, { recursive: true, force: true });
+      await expect(boot.subscribe({ sender: { id: 61 } }, 'prof123', 12, 0)).resolves.toBeDefined();
+      expect(outboxMod!.readOutboxBindingState(store!)).toMatchObject({ prefix: 'prof123', senders: [12] });
+    } finally {
+      if (boot !== null) await boot.cleanup();
+    }
+  }, 30000);
+
+  itReal('namespace-revocation waiters settle when a targeted renderer is DESTROYED (feedback cluster C, desktop/main/index.ts): revoke-namespace parks on acknowledgments from EVERY targeted live webContents; a destroyed renderer can never acknowledge, so the destroyed handler must drop its id from every pending revoke waiter — a waiter whose live targets are all gone settles RESOLVED (the destructive operation proceeds; the lease is already revoked) and one that still holds live targets RETAINS them for their acknowledgments (the surviving renderer\'s revoked-ack then settles it). Pre-fix the destroyed handler never touched the waiters and the revoke rejected on its 3s deadline (audit-outbox-custody-routes)', async () => {
+    let boot: Awaited<ReturnType<typeof runCustodyBootstrap>> | null = null;
+    try {
+      boot = await runCustodyBootstrap();
+      expect(typeof boot.revokeNamespace, 'the shipped desktop:audit:revoke-namespace handler was captured').toBe('function');
+      expect(boot.revokedAck, 'the shipped audit:namespace-revoked-ack listener was captured').not.toBeNull();
+      // Two targeted renderers on the SAME canonical namespace, under sender
+      // ids unique to THIS leg: the module-level auditSendersByWebContents map
+      // persists across the file's bootstrap legs, so a sender value shared
+      // with an earlier leg's (still unmapped-in-this-store) webContents would
+      // phantom-target this waiter. Both subscribe with the boot-epoch 0
+      // (binding_epoch advances only on removal/revocation).
+      await expect(boot.subscribe({ sender: { id: 61 } }, 'prof123', 11, 0), 'renderer 61 subscribed to the canonical namespace').resolves.toBeDefined();
+      await expect(boot.subscribe({ sender: { id: 62 } }, 'prof123', 12, 0), 'renderer 62 subscribed to the SAME namespace (both are now revoke targets)').resolves.toBeDefined();
+      const destroyedListener = (boot.window.webContents.on as ReturnType<typeof vi.fn>).mock.calls.filter((c) => c[0] === 'destroyed').at(-1)![1] as () => void;
+      const revokePromise = boot.revokeNamespace(null, 'prof123') as Promise<{ prefix: string | null }>;
+      // Electron 45 clears the native WebContents wrapper before emitting
+      // destroyed. Simulate the native id accessor becoming unusable; the
+      // production callback must use the identity captured while it was live.
+      Object.defineProperty(boot.window.webContents, 'id', {
+        configurable: true,
+        get: () => { throw new Error('native WebContents wrapper cleared'); },
+      });
+      destroyedListener(); // renderer 61 is destroyed BEFORE it can acknowledge
+      let settledEarly = false;
+      void revokePromise.then(() => { settledEarly = true; }, () => { settledEarly = true; });
+      await new Promise((resolve) => setTimeout(resolve, 50)); // a real macrotask boundary: any settle-on-any-destroy mutant resolves inside it
+      expect(settledEarly, 'the waiter did NOT settle while renderer 62 is still live — destroying 61 dropped ONLY 61 from the waiter targets; the live-target acknowledgment is RETAINED (a resolve-on-any-destroy mutant settles here and fails this assertion)').toBe(false);
+      boot.revokedAck!({ sender: { id: 62 } }, 'prof123'); // the surviving renderer acknowledges
+      const state = await revokePromise;
+      expect(state.prefix, 'the revoke settled RESOLVED (never its 3s timeout rejection): destroying the unacknowledgeable renderer 61 emptied the waiter once the LAST live renderer acknowledged — the destructive operation proceeded over the already-revoked lease').toBeNull();
+    } finally {
+      if (boot !== null) await boot.cleanup();
+    }
+  }, 30000);
+
+  itReal('namespace-revocation waiter settles when the LAST targeted renderer is destroyed without an acknowledgment (F-006 closeout): the prior two-target regression proved live-target retention but settled through the survivor\'s ack; this leg removes the only target and requires the destroyed handler itself to resolve the zero-target waiter before the 3s deadline. A mutant that removes the id but forgets to settle an empty target set must fail here (audit-outbox-custody-routes)', async () => {
+    let boot: Awaited<ReturnType<typeof runCustodyBootstrap>> | null = null;
+    try {
+      boot = await runCustodyBootstrap();
+      await expect(boot.subscribe({ sender: { id: 61 } }, 'prof123', 11, 0)).resolves.toBeDefined();
+      const destroyedListener = (boot.window.webContents.on as ReturnType<typeof vi.fn>).mock.calls.filter((c) => c[0] === 'destroyed').at(-1)![1] as () => void;
+      const revokePromise = boot.revokeNamespace(null, 'prof123') as Promise<{ prefix: string | null }>;
+      destroyedListener();
+
+      const settledPromptly = await Promise.race([
+        revokePromise.then(() => true, () => false),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 100)),
+      ]);
+      expect(settledPromptly, 'destroying the only target settled the waiter without an ack or deadline expiry').toBe(true);
+      await expect(revokePromise).resolves.toMatchObject({ prefix: null });
+    } finally {
+      if (boot !== null) await boot.cleanup();
+    }
+  }, 30000);
+
+  itReal('malformed persisted lease recovered at the VALID subscribe ingress (feedback cluster F-004, desktop/main/index.ts): a binding persisted OUTSIDE ^[a-z0-9]{3,8}$ — the pre-canonical-ingress shape, arranged here through the SAME production binder the old loose ingress called — can never be matched by a canonical subscribe, and desktop:audit:revoke-namespace refuses a noncanonical argument outright, so NO renderer path can release it: custody is wedged and every subsequent subscribe is refused "bound to a different active profile". A VALID subscribe must then RECOVER: the malformed lease is revoked (generation/binding_epoch advanced, restart journal rewritten) WITHOUT dropping the pending audit_outbox rows, and the valid profile binds fresh — able to read and deliver the events captured under the malformed lease (audit-outbox-custody-routes)', async () => {
+    let boot: Awaited<ReturnType<typeof runCustodyBootstrap>> | null = null;
+    try {
+      boot = await runCustodyBootstrap();
+      const outboxMod = (await import('../../main/backend/audit-outbox.js').catch(() => null)) as unknown as RoutesOutboxModule | null;
+      expect(outboxMod, 'the production outbox module desktop/main/backend/audit-outbox.ts must exist').not.toBeNull();
+      const storeMod = await import('../../main/backend/store/sqlite-store.js');
+      const store = storeMod.getCurrentStore();
+      expect(store, 'the bootstrap-built host opened its own store — the malformed lease is persisted through the production binder, never raw SQL').not.toBeNull();
+      // Arrange the pre-canonical shape: the OLD loose ingress bound any
+      // 1..200-char string through this same binder, and a custody event was
+      // captured under that lease.
+      await outboxMod!.bindOutboxBinding(store, 'BadPre', 1);
+      outboxMod!.appendStandalone(store, { eventId: 'pending-malformed-1', event: 'settings_change', subject: 'external.apiKey', occurredAt: Date.now() });
+      // The wedge, proven: the revoke IPC refuses the noncanonical argument
+      // outright (the handler throws before any store access), so the malformed
+      // lease is unreachable through the revoke surface.
+      await expect(boot.revokeNamespace(null, 'BadPre'), 'desktop:audit:revoke-namespace refuses a noncanonical prefix argument — the malformed lease cannot be released through the revoke surface (why ingress recovery is the only renderer path)').rejects.toThrow();
+      // Recovery: a VALID canonical subscribe clears the malformed lease and binds.
+      const bound = await boot.subscribe({ sender: { id: 81 } }, 'prof123', 21, 0) as { prefix: string; generation: number };
+      expect(bound.prefix, 'the VALID subscribe succeeded over the previously persisted malformed lease (pre-fix it was refused "audit outbox is bound to a different active profile" — feedback cluster F-004)').toBe('prof123');
+      expect(bound.generation, 'the recovered binding carries a FRESH generation — the malformed lease was revoked (gen_high advanced), never silently reused').toBeGreaterThan(1);
+      // Pending events NOT dropped: the event captured under the malformed
+      // lease survives the recovery revoke...
+      expect(readOutboxOnFreshConnection(store.dbPath).rows.filter((r) => r.event_id === 'pending-malformed-1').length, 'the pending event captured under the malformed lease was NOT dropped — the recovery clears only the binding/journal (revokeOutboxNamespace), never the audit_outbox rows').toBe(1);
+      // ...and stays deliverable under the RECOVERED binding's generation+sender.
+      expect((await outboxMod!.readOutboxPending(store, bound.generation, 21)).filter((r) => r.event_id === 'pending-malformed-1').length, 'the surviving pending event is DELIVERABLE under the recovered binding (generation+sender authorized) — clearing the malformed lease never cost the renderer its pending custody events').toBe(1);
+      const recoveredState = outboxMod!.readOutboxBindingState(store);
+      expect(recoveredState.prefix, 'the store binding is now the valid profile').toBe('prof123');
+      expect(recoveredState.senders, 'the recovered binding carries the subscribing renderer\'s sender').toContain(21);
+    } finally {
+      if (boot !== null) await boot.cleanup();
+    }
+  }, 30000);
+
+  itReal('stale-epoch subscribe over a malformed persisted lease is REJECTED without touching the binding or journal; a fresh-observation subscribe still recovers (feedback cluster F-004 closeout, desktop/main/index.ts): the malformed-lease recovery revoke is a compare-and-swap on the CALLER\'S OBSERVATION — desktop:audit:subscribe must verify expectedEpoch equals the epoch of the state it just read BEFORE revokeOutboxNamespace runs, so a caller acting on a stale observation (a committed PARTIAL sender removal on the malformed lease advanced binding_epoch after it) is refused with the lease and the restart journal left BYTE-IDENTICAL and semantically unchanged, and only a FRESH re-read subscribe performs the recovery (binding repaired, pending custody rows preserved and deliverable) (audit-outbox-custody-routes)', async () => {
+    let boot: Awaited<ReturnType<typeof runCustodyBootstrap>> | null = null;
+    try {
+      boot = await runCustodyBootstrap();
+      const outboxMod = (await import('../../main/backend/audit-outbox.js').catch(() => null)) as unknown as RoutesOutboxModule | null;
+      expect(outboxMod, 'the production outbox module desktop/main/backend/audit-outbox.ts must exist').not.toBeNull();
+      const storeMod = await import('../../main/backend/store/sqlite-store.js');
+      const store = storeMod.getCurrentStore();
+      expect(store, 'the bootstrap-built host opened its own store — the malformed lease is persisted through the production binder, never raw SQL').not.toBeNull();
+      // The pre-canonical malformed lease carrying TWO senders, with a pending
+      // custody event parked under it: a PARTIAL removal can then advance
+      // binding_epoch without releasing the lease (the concurrent activity
+      // that stales an earlier observation).
+      await outboxMod!.bindOutboxBinding(store, 'BadPre', 1);
+      await outboxMod!.bindOutboxBinding(store, 'BadPre', 2);
+      outboxMod!.appendStandalone(store, { eventId: 'pending-stale-1', event: 'settings_change', subject: 'external.apiKey', occurredAt: Date.now() });
+      // The caller's OBSERVATION: malformed lease at epoch 0 (binds never
+      // advance the epoch — only removals/revocations do).
+      const observed = outboxMod!.readOutboxBindingState(store);
+      expect(observed, 'the observation holds the malformed lease at the boot epoch').toMatchObject({ prefix: 'BadPre', epoch: 0 });
+      // Concurrent activity AFTER the observation: sender 1's committed
+      // removal keeps sender 2's lease (prefix unchanged) but advances
+      // binding_epoch 0 -> 1 and rewrites the restart journal.
+      outboxMod!.removeOutboxSender(store, 1);
+      const journalPath = outboxMod!.defaultAuditJournalPath(store.dbPath);
+      const journalBefore = fs.readFileSync(journalPath, 'utf8');
+      const leaseBefore = outboxMod!.readOutboxBindingState(store);
+      expect(leaseBefore, 'the concurrent PARTIAL removal advanced the epoch while KEEPING the malformed lease — the caller\'s epoch-0 observation is now stale').toEqual({ prefix: 'BadPre', generation: observed.generation, senders: [2], epoch: 1 });
+      // The stale subscribe: refused BEFORE the revoke, so the binding and the
+      // journal it would have rewritten are untouched.
+      await expect(boot.subscribe({ sender: { id: 91 } }, 'prof123', 31, observed.epoch), 'the STALE-epoch subscribe over the malformed lease was REFUSED (F-004 closeout: the recovery revoke is fenced on the just-observed epoch — a stale caller must re-read and retry, never destroy)').rejects.toThrow(/stale epoch/);
+      expect(fs.readFileSync(journalPath, 'utf8'), 'the restart journal is BYTE-IDENTICAL after the refused subscribe — the stale path mutated nothing durable').toBe(journalBefore);
+      expect(outboxMod!.readOutboxBindingState(store), 'the lease is SEMANTICALLY UNCHANGED after the refused subscribe (same prefix/generation/senders/epoch)').toEqual(leaseBefore);
+      // Fresh observation: the same renderer re-reads the state and its
+      // subscribe now carries the current epoch — the recovery proceeds.
+      const bound = await boot.subscribe({ sender: { id: 91 } }, 'prof123', 31, outboxMod!.readOutboxBindingState(store).epoch) as { prefix: string; generation: number };
+      expect(bound.prefix, 'the FRESH-observation subscribe recovered the namespace over the same malformed lease').toBe('prof123');
+      expect(bound.generation, 'the recovered binding carries a FRESH generation — the malformed lease was revoked, never silently reused').toBeGreaterThan(leaseBefore.generation);
+      expect(readOutboxOnFreshConnection(store.dbPath).rows.filter((r) => r.event_id === 'pending-stale-1').length, 'the pending event survived the fresh recovery — the revoke clears only the binding/journal, never the audit_outbox rows').toBe(1);
+      expect((await outboxMod!.readOutboxPending(store, bound.generation, 31)).filter((r) => r.event_id === 'pending-stale-1').length, 'the surviving pending event is DELIVERABLE under the recovered binding (generation+sender authorized)').toBe(1);
+    } finally {
+      if (boot !== null) await boot.cleanup();
+    }
+  }, 30000);
+
+  itReal('settings section-entry AFTER mutex acquisition (server.ts PUT /settings — feedback cluster C + F-005 follow-up): while request A holds the settings-commit mutex parked at its persist gate, the leg AWAITS B\'s independent transport-level arrival (the second PUT /settings request BODY \'end\' — the Nth-PUT signal, deadlock-free) while A remains parked, then asserts B\'s onSettingsSectionEntry has NOT fired at that arrival moment (the seam lives INSIDE the serialized commit section — pre-fix it fired at route arrival and this assertion is RED), THEN releases A (the gate is the primary release path — no watchdog) and asserts the ordering: B\'s seam runs only after A\'s section COMPLETED (A\'s custody flush already recorded at B\'s seam — flush-at-entry >= 1), and both requests commit 200 (audit-outbox-custody-routes)', async () => {
+    const outboxMod = (await import('../../main/backend/audit-outbox.js').catch(() => null)) as unknown as RoutesOutboxModule | null;
+    expect(outboxMod, 'the production outbox module desktop/main/backend/audit-outbox.ts must exist').not.toBeNull();
+    const ws = await openWorkspaceStore('audit-entry-order-srv-');
+    await outboxMod!.bindOutboxBinding(ws.store, 'audit-entry-order-srv');
+    const obs = makeObservedProvider(outboxMod!.createProductionCustodySink(() => ws.store));
+    const engine = new LlamaEngine({ externalProvider: { secretStore: makeFakeSecretStore(), airgap: true, auditSink: obs.provider } } as never);
+    const gateA = makeGate();
+    let bSeamFired = false;
+    let flushAtBEntry = -1;
+    let bEntryResolve!: () => void;
+    const bEntry = new Promise<void>((resolve) => { bEntryResolve = resolve; });
+    const srv = await startSettingsServer(engine, () => gateA.promise, (section) => {
+      if (section.patch['external.apiKey'] === 'sk-entry-b') {
+        bSeamFired = true;
+        flushAtBEntry = obs.events.filter((e) => e === 'flush').length; // the flush count AT the seam — the discriminator
+        bEntryResolve();
+      }
+    });
+    // F-005 follow-up: the independent pre-acquisition arrival signal — the
+    // second PUT /settings request BODY 'end' is B's (A's body provably ended
+    // first: awaitCapture(1) below proves A's body was consumed before putB
+    // was even dispatched). Transport-level: it fires regardless of mutex
+    // state, so awaiting it while A parks can never deadlock.
+    let bBodyArrived!: () => void;
+    const bBodyEnd = new Promise<void>((resolve) => { bBodyArrived = resolve; });
+    onNthPutBodyEnd(srv.server, 2, () => bBodyArrived());
+    const putA = putSettings(srv.port, { 'external.apiKey': 'sk-entry-a' });
+    await obs.awaitCapture(1); // A parked INSIDE the mutex at its persist gate
+    const putB = putSettings(srv.port, { 'external.apiKey': 'sk-entry-b' });
+    await bBodyEnd; // F-005: B's request BODY is fully received while A still holds the mutex — B provably reached the route BEFORE A was released
+    expect(bSeamFired, `B's onSettingsSectionEntry ALREADY fired by the time its request body ended (while A was still parked) — the seam ran BEFORE the settings-commit mutex was acquired (pre-fix shape; feedback cluster C + F-005 follow-up: the seam fires only AFTER acquisition, inside the serialized commit section)`).toBe(false);
+    expect(obs.events.filter((e) => e === 'begin').length, 'B ARRIVED (request body fully received) but has NOT begun — it is QUEUED at the settings-commit mutex while A is parked at the persist gate (under the no-mutex mutant B begins before this assertion and it goes RED; feedback cluster C + F-005 follow-up)').toBe(1);
+    gateA.open(); // PRIMARY release path — no watchdog: awaiting bBodyEnd is deadlock-free, and bEntry is awaited only AFTER this synchronous release, so no circular wait exists (a product defect that never fires B's seam fails the test at its timeout instead)
+    expect((await putA).status, 'request A committed ok after its persist gate opened').toBe(200);
+    await bEntry; // B's section-entry fired INSIDE the mutex — strictly after A's completed section
+    expect(flushAtBEntry, `B's onSettingsSectionEntry fired while A's commit section was still in flight (A had NOT flushed: flush-at-entry ${String(flushAtBEntry)}) — the seam ran BEFORE the settings-commit mutex was acquired (pre-fix shape; feedback cluster C: the seam fires only AFTER acquisition, inside the serialized commit section)`).toBeGreaterThanOrEqual(1);
+    expect((await putB).status, 'request B committed ok once it acquired the mutex after A').toBe(200);
+    expect(obs.events.filter((e) => e === 'flush').length, 'both serialized commits flushed exactly once each').toBe(2);
+  });
+
+  itReal('settings section-entry AFTER mutex acquisition (backend/index.ts applyEngineSettings — feedback cluster C): the host\'s onSettingsSectionEntry seam for a queued applyEngineSettings call fires INSIDE the serialized commit section — while a PUT /settings holds the SAME (engine-shared) settings-commit mutex parked at its persist gate, the apply\'s seam must not fire at call time; post-fix the apply\'s seam runs only after the PUT\'s section COMPLETED (the PUT\'s custody flush recorded at apply-entry) and the apply then commits ok. Pre-fix the host fired the seam before the mutex await and flush-at-entry was 0 (audit-outbox-custody-routes)', async () => {
+    const outboxMod = (await import('../../main/backend/audit-outbox.js').catch(() => null)) as unknown as RoutesOutboxModule | null;
+    expect(outboxMod, 'the production outbox module desktop/main/backend/audit-outbox.ts must exist').not.toBeNull();
+    const ws = await openWorkspaceStore('audit-entry-order-host-');
+    await outboxMod!.bindOutboxBinding(ws.store, 'audit-entry-order-host');
+    const obs = makeObservedProvider(outboxMod!.createProductionCustodySink(() => ws.store));
+    const engine = new LlamaEngine({ externalProvider: { secretStore: makeFakeSecretStore(), airgap: true, auditSink: obs.provider } } as never);
+    let flushAtApplyEntry = -1;
+    let applyEntryResolve!: () => void;
+    const applyEntry = new Promise<void>((resolve) => { applyEntryResolve = resolve; });
+    const host = await startCustodyHost(engine, (section) => {
+      if (section.patch['external.apiKey'] === 'sk-entry-apply') {
+        flushAtApplyEntry = obs.events.filter((e) => e === 'flush').length; // the flush count AT the seam — the discriminator
+        applyEntryResolve();
+      }
+    });
+    const gatePut = makeGate();
+    const srv = await startSettingsServer(engine, () => gatePut.promise);
+    const put = putSettings(srv.port, { 'external.apiKey': 'sk-entry-put' });
+    await obs.awaitCapture(1); // the PUT parked INSIDE the (engine-shared) mutex at its persist gate
+    const applyCall = host.applyEngineSettings!({ 'external.apiKey': 'sk-entry-apply' }); // launched while the PUT's section is in flight
+    gatePut.open(); // release the PUT before awaiting the apply's entry — the post-fix seam fires only under the mutex (no deadlock)
+    expect((await put).status, 'the parked PUT committed ok after its gate opened').toBe(200);
+    await applyEntry;
+    expect(flushAtApplyEntry, `the apply's onSettingsSectionEntry fired while the PUT's commit section was still in flight (the PUT had NOT flushed: flush-at-entry ${String(flushAtApplyEntry)}) — the host seam ran BEFORE the settings-commit mutex was acquired (pre-fix shape; feedback cluster C)`).toBeGreaterThanOrEqual(1);
+    const applyResult = await applyCall;
+    expect(applyResult.ok, 'the queued applyEngineSettings committed ok once the mutex released').toBe(true);
+    expect(obs.events.filter((e) => e === 'flush').length, 'both serialized commits flushed exactly once each').toBe(2);
   });
 });

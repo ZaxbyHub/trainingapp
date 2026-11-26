@@ -1401,12 +1401,54 @@ non-exportable is the default policy.
 **Retention (PROPOSED): 90 days.** Rows older than the window are purged at
 the next audit write (purge-on-write). The audit log SURVIVES Clear Cache
 (its lifecycle is its own retention + the viewer's Clear button; a
-full-profile/orphan Delete removes it with the namespace).
+full-profile/orphan Delete removes it with the namespace). That window and
+purge apply ONLY to these renderer IndexedDB rows.
+
+**Desktop restart journal (separate recovery records).** Desktop custody also
+persists a separate restart journal beside the SQLite store file
+(`{db path}.audit-journal.json`). It carries two kinds of recovery records,
+alongside sequence, clear, generation, and binding-epoch watermarks and the
+outbox binding lease:
+
+- **Recoverable payload snapshots.** A pending array snapshots the
+  outstanding outbox rows (refreshed from the live store at each journaled
+  destructive transition) and a fallback array records one capture-time
+  envelope per destructive transition. Each entry is a FULL envelope - event
+  class, subject id, timestamp, event id - not just an id, so a restored
+  store re-delivers the actual event. These entries are retained and
+  replayed into the outbox on every store open (deduplicated by event id)
+  until acknowledged or fenced from replay by a clear: the acknowledgment
+  write strikes that event's pending and fallback entries, while a recorded
+  clear advances the sequence/generation watermarks so replay skips pending
+  entries at or below the clear sequence and fallback entries below the clear
+  generation. Clear does not physically scrub those full envelope payloads
+  from the JSON journal; fenced payloads can therefore remain on disk even
+  though they are no longer replayed. The clear fence itself lives in SQLite:
+  if the store cannot be opened and recovery reuses an older journal, or a
+  pre-Clear backup is restored without the newer fence metadata, fenced
+  payloads can replay or survive from the restored bytes. Even when the newer
+  fence metadata survives, rows already physically present in restored SQLite
+  are not purged by journal replay and can still be delivered; Clear is not a
+  backup scrub.
+- **Permanent reconciliation metadata.** Durable acknowledged-event
+  tombstones (event ids, never withdrawn), generation-scoped
+  namespace-revocation entries (a revoked prefix/generation pair), and
+  sender-removal deltas (a removed sender id scoped to the prefix/generation
+  it applied to). Those records are retained INDEFINITELY - nothing purges
+  them on the 90-day window.
+
+The journal is kept as an idempotent recovery snapshot: Clear Cache, fresh
+recovery, and backup restore preserve it, and several restore arms reuse one
+journal.
 
 **Event roster (PROPOSED).** Browser producers emit where the renderer
 truthfully observes a commit. Desktop main-process producers emit into a
-profile-bound durable SQLite outbox; the renderer acknowledges an event only
-after its local IndexedDB commit. Pending events survive reloads and are
+profile-bound durable SQLite outbox. Delivery is commit-before-ack: the
+renderer commits its local IndexedDB row first and only then acknowledges -
+an authorized ack is itself the delivery commit point, and the main-process
+DELETE of the delivered outbox row is cleanup, not the commit point. A
+failed delivery or acknowledgment leaves the event pending, and the renderer
+retries unacknowledged events; pending events survive reloads and are
 delivered in source-sequence order. No claim of complete audit coverage is made:
 
 - `app_start` - once per browser renderer lifecycle. On desktop, the main
@@ -1442,9 +1484,12 @@ mode/engine/profile, rag presets, and pack-recency tuning. The first desktop
 external-settings PUT in a session first AWAITS an authoritative baseline GET
 of the persisted settings (no timeout); if that GET FAILS the PUT still commits
 and NO settings row is emitted (disclosed boundary - the before-state is
-unknown). A renderer that has not acknowledged a desktop outbox event shows no
-local row yet; the durable pending event remains in SQLite until a later
-successful commit/acknowledgment.
+unknown). A desktop outbox event gains its local renderer row at the
+renderer's own IndexedDB delivery commit, which precedes the acknowledgment:
+a committed local row can therefore exist while main-process
+acknowledgment/cleanup is still pending. An event the renderer has not yet
+committed has no local row, and the durable pending event remains in SQLite
+until a later successful commit/acknowledgment.
 
 Desktop custody flush failure returns an error and rolls the settings change back;
 it never leaves a phantom audit row. Process death after settings persistence but
@@ -1453,6 +1498,14 @@ its audit row. Sidecar/Python mode is not connected to this main-process outbox,
 its pack commits remain outside this coverage claim pending the open sidecar scope
 decision. For Clear Cache, fresh recovery, and backup restore, a journal-write
 failure refuses the destructive operation when pending rows cannot be preserved.
+The acknowledgment path fails closed the same way: the acknowledged-event
+tombstone is written to the journal BEFORE the outbox DELETE, so a failed
+journal write refuses the acknowledgment and the event stays pending for the
+renderer's next retry. Journal-record restore suppression applies ONLY when
+that journal was successfully persisted and remains available: it is read at
+store open, and a missing or never-written journal suppresses nothing, so a
+restored pre-acknowledgment outbox row can redeliver (deduplicated by event
+id in the renderer's audit database).
 If the store itself is unopenable or integrity-failed, its pending rows are
 unrecoverable and the corruption-recovery exclusion applies (`desktop/main/backend/store/recovery.ts`).
 Full profile/orphan deletion revokes desktop custody first and waits for bound renderers to
