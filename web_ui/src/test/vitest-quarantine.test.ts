@@ -271,6 +271,17 @@ describe('vitest quarantine honesty (issue #271 AC5)', () => {
     expect(offenders).toEqual([]);
   });
 
+  test('the config declares exactly one exclude array, opened on its own line', () => {
+    // A textual allowlist is only sound if it sees the WHOLE exclusion surface.
+    // A second `exclude:` (a project override) or entries sharing the opener's
+    // line would be invisible, so both shapes fail closed here.
+    const declarations = (configText.match(/\bexclude\s*:/g) ?? []).length;
+    expect(declarations, 'expected exactly one exclude declaration').toBe(1);
+    expect(configText, 'exclude array must open on its own line').not.toMatch(
+      /exclude:\s*\[[^\s]/
+    );
+  });
+
   test('the exclude region contains only the three allowlisted globs', () => {
     // Strongest form of the pin: every non-comment line in the region must be
     // one of the three permitted literals. A new glob, a spread/variable entry
