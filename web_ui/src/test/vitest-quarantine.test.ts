@@ -271,6 +271,27 @@ describe('vitest quarantine honesty (issue #271 AC5)', () => {
     expect(offenders).toEqual([]);
   });
 
+  test('the exclude region contains only the three allowlisted globs', () => {
+    // Strongest form of the pin: every non-comment line in the region must be
+    // one of the three permitted literals. A new glob, a spread/variable entry
+    // (`...EXTRA`, `EXCLUDES`), a template literal or a comment-only trick all
+    // fail here, because they are neither parseable as a quoted literal nor in
+    // the allowlist.
+    const ALLOWED = ['**/node_modules/**', '**/dist/**', 'e2e/**'];
+    const offenders: string[] = [];
+    for (const line of excludeRegionText(configText).split(/\r?\n/)) {
+      const code = (line.split('//')[0] ?? '').trim();
+      if (code === '' || code === ',') continue;
+      const m = code.match(/^['"]([^'"]+)['"],?$/);
+      if (!m) {
+        offenders.push(`non-literal exclude entry: ${code}`);
+        continue;
+      }
+      if (!ALLOWED.includes(m[1])) offenders.push(`unexpected exclusion: ${m[1]}`);
+    }
+    expect(offenders).toEqual([]);
+  });
+
   test('rewritten extractor specs value-import the real extractor and never mock it', () => {
     for (const [path, symbol] of [
       [DOCX_SPEC_PATH, 'extractDocxText'],
