@@ -28,6 +28,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { resolveConfig } from 'vitest/node';
+import { spawnSync } from 'node:child_process';
+import vitestConfig from '../../vitest.config';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..');
@@ -287,12 +289,43 @@ describe('vitest quarantine honesty (issue #271 AC5)', () => {
       exclude?: unknown;
       include?: unknown;
       projects?: unknown;
+      dir?: unknown;
+      root?: unknown;
+      workspace?: unknown;
     };
     expect(resolved?.projects, 'no per-project exclusion surface').toBeUndefined();
     expect(resolved?.include, 'the default include pattern must not be narrowed').toEqual([
       '**/*.{test,spec}.?(c|m)[jt]s?(x)',
     ]);
     expect(resolved?.exclude).toEqual(['**/node_modules/**', '**/dist/**', 'e2e/**']);
+    // Discovery walks `dir ?? root` (Vitest's globTestFiles), so narrowing either
+    // hides specs while include/exclude stay default. `root` is pinned to this
+    // package and `dir` must not be set.
+    expect(resolved?.dir, 'test.dir must not narrow discovery').toBeUndefined();
+    expect(resolved?.root).toBe(ROOT.replace(/\\/g, '/') === String(resolved?.root)
+      ? resolved?.root
+      : resolved?.root);
+    expect(String(resolved?.root).replace(/\\/g, '/').toLowerCase()).toBe(
+      ROOT.replace(/\\/g, '/').toLowerCase()
+    );
+    // Workspace auto-detection would swap discovery for per-project runs.
+    expect(resolved?.workspace, 'no legacy workspace option').toBeUndefined();
+  });
+
+  test('default discovery still finds every discharged spec (authoritative)', () => {
+    // THE outcome guard. Config-shape pins (exclude/include/dir/root/plugins)
+    // are fast feedback; this one asks the default entrypoint what it actually
+    // discovers, in a subprocess with a scrubbed worker environment. It catches
+    // any mechanism the shape pins cannot model — plugin hooks, workspace
+    // auto-detection, a `VITEST_WORKER_ID` branch — and it runs in CI because
+    // it is wired into `npm test` (web_ui/package.json).
+    const res = spawnSync(process.execPath, [join(ROOT, '..', 'scripts', 'check-quarantine-discovery.mjs')], {
+      encoding: 'utf8',
+      timeout: 240_000,
+    });
+    const out = `${res.stdout ?? ''}${res.stderr ?? ''}`;
+    expect(res.status, out).toBe(0);
+    expect(out).toContain('quarantine-discovery: PASS');
   });
 
   test('the config declares exactly one exclude array, opened on its own line', () => {

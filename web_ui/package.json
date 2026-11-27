@@ -20,7 +20,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "typecheck:all": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
-    "test": "vitest run",
+    "test": "node ../scripts/check-quarantine-discovery.mjs && vitest run",
     "test:watch": "vitest",
     "test:e2e": "npm run build && playwright test --config playwright.config.ts",
     "test:visual": "npm run build && playwright test --config playwright.visual.config.ts",
