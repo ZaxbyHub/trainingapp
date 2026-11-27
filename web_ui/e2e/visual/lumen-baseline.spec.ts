@@ -248,9 +248,19 @@ async function seedPopulated(page: Page): Promise<void> {
   expect(prefix, 'profile id is minted at boot').toBeTruthy();
   await page.evaluate(
     async ({ prefix, now }) => {
-      const open = (name: string) =>
+      // Mirror the application's documents schema (document-store.ts): a bare
+      // open on a cold profile creates an empty v1 db and the put below throws.
+      const openDocuments = (name: string) =>
         new Promise<IDBDatabase>((res, rej) => {
-          const r = indexedDB.open(name);
+          const r = indexedDB.open(name, 1);
+          r.onupgradeneeded = () => {
+            const database = r.result;
+            if (!database.objectStoreNames.contains('documents')) {
+              const store = database.createObjectStore('documents', { keyPath: 'id' });
+              store.createIndex('uploadedAt', 'uploadedAt', { unique: false });
+              store.createIndex('status', 'status', { unique: false });
+            }
+          };
           r.onsuccess = () => res(r.result);
           r.onerror = () => rej(r.error);
         });
@@ -279,7 +289,7 @@ async function seedPopulated(page: Page): Promise<void> {
           r.onsuccess = () => res(r.result);
           r.onerror = () => rej(r.error);
         });
-      const docs = await open(`${prefix}-doc-qa-documents`);
+      const docs = await openDocuments(`${prefix}-doc-qa-documents`);
       const doc = (id: string, fileName: string, status: string, extra: object = {}) => ({
         id,
         fileName,
