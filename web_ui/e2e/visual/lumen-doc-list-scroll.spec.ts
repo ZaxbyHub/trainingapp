@@ -37,10 +37,21 @@ async function boot(page: Page): Promise<void> {
   await page.goto('/');
   await expect(page.getByText('Initializing search services', { exact: false })).toHaveCount(0, { timeout: 60_000 });
   const prefix = await page.evaluate(() => localStorage.getItem('doc-qa-profile-id'));
+  expect(prefix, 'profile id is minted at boot').toBeTruthy();
   await page.evaluate(
     async ({ prefix, now, count }) => {
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
-        const request = indexedDB.open(`${prefix}-doc-qa-documents`);
+        // Open with the application's version and schema so a cold profile
+        // never creates an empty v1 database for the seeder to trip over.
+        const request = indexedDB.open(`${prefix}-doc-qa-documents`, 1);
+        request.onupgradeneeded = () => {
+          const database = request.result;
+          if (!database.objectStoreNames.contains('documents')) {
+            const store = database.createObjectStore('documents', { keyPath: 'id' });
+            store.createIndex('uploadedAt', 'uploadedAt', { unique: false });
+            store.createIndex('status', 'status', { unique: false });
+          }
+        };
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
       });
