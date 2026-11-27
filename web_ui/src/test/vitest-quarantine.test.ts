@@ -76,6 +76,70 @@ interface QuarantineEntry {
  * source lines; an entry is a quoted 'src/...' string line; a trailing
  * inline comment (code before //) overrides the block owner for that entry.
  */
+/** The lines between `exclude: [` and its closing `],` (line-oriented, so a
+ * comment or string containing `],` cannot truncate the region). */
+export function excludeRegionText(configText: string): string {
+  const lines = configText.split(/\r?\n/);
+  const start = lines.findIndex((l) => /^\s*exclude:\s*\[/.test(l));
+  if (start < 0) return '';
+  const out: string[] = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^\s*\],?\s*$/.test(lines[i])) break;
+    out.push(lines[i]);
+  }
+  return out.join('\n');
+}
+
+/** Exclusion patterns declared in the region, ignoring comments and strings
+ * that merely contain quotes (an apostrophe in prose must not start an entry). */
+export function exclusionPatterns(regionText: string): string[] {
+  const patterns: string[] = [];
+  for (const line of regionText.split(/\r?\n/)) {
+    const code = line.split('//')[0];
+    const m = code.match(/^\s*['"]([^'"]+)['"]\s*,?\s*$/);
+    if (m) patterns.push(m[1]);
+  }
+  return patterns;
+}
+
+/**
+ * Translate a vitest/minimatch-style glob into an anchored RegExp suitable for
+ * matching repo-relative paths, so a durable pin can reject a GLOB exclusion
+ * (e.g. `**\/DocumentsPage.test.tsx`) as well as a literal one.
+ */
+export function globToRegExp(glob: string): RegExp {
+  let out = '';
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === '*' && glob[i + 1] === '*') {
+      i += 1;
+      if (glob[i + 1] === '/') {
+        i += 1;
+        out += '(?:[^/]+/)*';
+      } else {
+        out += '.*';
+      }
+    } else if (c === '*') {
+      out += '[^/]*';
+    } else if (c === '?') {
+      out += '[^/]';
+    } else if (c === '[') {
+      const close = glob.indexOf(']', i + 1);
+      if (close > i) {
+        out += glob.slice(i, close + 1);
+        i = close;
+      } else {
+        out += '\\[';
+      }
+    } else if ('.+^$(){}|\\'.includes(c)) {
+      out += '\\' + c;
+    } else {
+      out += c;
+    }
+  }
+  return new RegExp('^' + out + '$');
+}
+
 export function parseQuarantine(configText: string): QuarantineEntry[] {
   const entries: QuarantineEntry[] = [];
   const lines = configText.split('\n');
@@ -185,6 +249,26 @@ describe('vitest quarantine honesty (issue #271 AC5)', () => {
     for (const path of DISCHARGED_PATHS) {
       expect(excluded, `${path} is quarantined again`).not.toContain(path);
     }
+  });
+
+  test('no exclusion PATTERN (literal or glob) can match a discharged spec', () => {
+    // Final-critic finding: the literal pin above only sees quoted `src/...`
+    // entries. `--exclude '**/DocumentsPage.test.tsx'` removes the spec from
+    // discovery while tripping neither pin. Every quoted string in the exclude
+    // region is therefore interpreted as a glob and matched against the seven.
+    const region = excludeRegionText(configText);
+    const patterns = exclusionPatterns(region);
+    const offenders: string[] = [];
+    for (const pattern of patterns) {
+      if (!/[*?[\]]/.test(pattern) && !pattern.startsWith('src/') && !pattern.includes('/')) {
+        continue; // plain non-glob, non-path tokens (e.g. 'node_modules')
+      }
+      const rx = globToRegExp(pattern);
+      for (const path of DISCHARGED_PATHS) {
+        if (rx.test(path)) offenders.push(`${pattern} matches ${path}`);
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 
   test('rewritten extractor specs value-import the real extractor and never mock it', () => {

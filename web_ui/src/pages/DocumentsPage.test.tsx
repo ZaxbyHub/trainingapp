@@ -225,6 +225,16 @@ describe('DocumentsPage', () => {
         expect(screen.getByText(/no documents uploaded yet/i)).toBeInTheDocument();
       });
     });
+
+    it('does not render a count badge when no supported documents exist', async () => {
+      // Restores the assertion lost when the old badge test was retired: the
+      // check is on the ELEMENT, not its text, so a rendered-but-empty badge
+      // fails (the sibling count-boundaries helper discards empty text and
+      // would let that through).
+      const { container } = renderPage();
+      await waitForLoaded();
+      expect(container.querySelector('.ui-page-header__actions .ui-badge')).toBeNull();
+    });
   });
 
   describe('Header', () => {
