@@ -12,7 +12,10 @@
  *     the next comment block starts, and a trailing inline comment on an
  *     entry overrides it;
  *  3. the two rewritten extractor specs show a value (non-`import type`)
- *     import of the real extractor and zero `vi.mock` of the extractor module.
+ *     import of the real extractor and zero `vi.mock` of the extractor module;
+ *  4. none of the seven specs discharged by issue #348 reappear as exclusions
+ *     (the end state is zero src/ exclusions; the owner rule above governs any
+ *     future entry).
  *
  * Controls 4 runs the SAME validator over synthetic texts: ownerless fails,
  * fully-owned passes, inline-override associates the inline owner.
@@ -24,6 +27,9 @@ import { describe, test, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { resolveConfig } from 'vitest/node';
+import { spawnSync } from 'node:child_process';
+import vitestConfig from '../../vitest.config';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..');
@@ -32,12 +38,27 @@ const CONFIG_PATH = join(ROOT, 'vitest.config.ts');
 const DOCX_SPEC_PATH = join(ROOT, 'src', 'lib', 'processing', 'docx-extractor.test.ts');
 const XLSX_SPEC_PATH = join(ROOT, 'src', 'lib', 'processing', 'xlsx-extractor.test.ts');
 
-/** Live follow-up owner(s) of the remaining quarantined specs. */
-const QUARANTINE_OWNERS: readonly number[] = [348];
+/** Live follow-up owner(s) of the remaining quarantined specs.
+ *
+ * Empty by design after issue #348 discharged the last seven entries: a new
+ * quarantine is a deliberate act that must add its own live owner id here, so
+ * this suite fails until it does. Never re-add a closed #20-#26 owner. */
+const QUARANTINE_OWNERS: readonly number[] = [];
 /** Owner ids that are closed work items and must never reappear. */
 const FORBIDDEN_OWNERS = /#2[0-6]\b/;
 /** This issue's own number is not a live owner for the quarantine. */
 const SELF_NUMBER = 271;
+
+/** Specs discharged by issue #348 — they may NEVER reappear as exclusions. */
+const DISCHARGED_PATHS = [
+  'src/components/InferenceModeToggle.test.tsx',
+  'src/pages/ChatPage.test.tsx',
+  'src/pages/ChatPage.verification-3.3.test.tsx',
+  'src/pages/DocumentsPage.test.tsx',
+  'src/pages/ChatPage.rag.test.tsx',
+  'src/lib/inference/InferenceModeContext.test.tsx',
+  'src/test/verification/text-chunker.task44.test.ts',
+];
 
 const UN_QUARANTINED_SPECS = [
   'src/lib/processing/docx-extractor.test.ts',
@@ -58,6 +79,70 @@ interface QuarantineEntry {
  * source lines; an entry is a quoted 'src/...' string line; a trailing
  * inline comment (code before //) overrides the block owner for that entry.
  */
+/** The lines between `exclude: [` and its closing `],` (line-oriented, so a
+ * comment or string containing `],` cannot truncate the region). */
+export function excludeRegionText(configText: string): string {
+  const lines = configText.split(/\r?\n/);
+  const start = lines.findIndex((l) => /^\s*exclude:\s*\[/.test(l));
+  if (start < 0) return '';
+  const out: string[] = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^\s*\],?\s*$/.test(lines[i])) break;
+    out.push(lines[i]);
+  }
+  return out.join('\n');
+}
+
+/** Exclusion patterns declared in the region, ignoring comments and strings
+ * that merely contain quotes (an apostrophe in prose must not start an entry). */
+export function exclusionPatterns(regionText: string): string[] {
+  const patterns: string[] = [];
+  for (const line of regionText.split(/\r?\n/)) {
+    const code = line.split('//')[0];
+    const m = code.match(/^\s*['"]([^'"]+)['"]\s*,?\s*$/);
+    if (m) patterns.push(m[1]);
+  }
+  return patterns;
+}
+
+/**
+ * Translate a vitest/minimatch-style glob into an anchored RegExp suitable for
+ * matching repo-relative paths, so a durable pin can reject a GLOB exclusion
+ * (e.g. `**\/DocumentsPage.test.tsx`) as well as a literal one.
+ */
+export function globToRegExp(glob: string): RegExp {
+  let out = '';
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === '*' && glob[i + 1] === '*') {
+      i += 1;
+      if (glob[i + 1] === '/') {
+        i += 1;
+        out += '(?:[^/]+/)*';
+      } else {
+        out += '.*';
+      }
+    } else if (c === '*') {
+      out += '[^/]*';
+    } else if (c === '?') {
+      out += '[^/]';
+    } else if (c === '[') {
+      const close = glob.indexOf(']', i + 1);
+      if (close > i) {
+        out += glob.slice(i, close + 1);
+        i = close;
+      } else {
+        out += '\\[';
+      }
+    } else if ('.+^$(){}|\\'.includes(c)) {
+      out += '\\' + c;
+    } else {
+      out += c;
+    }
+  }
+  return new RegExp('^' + out + '$');
+}
+
 export function parseQuarantine(configText: string): QuarantineEntry[] {
   const entries: QuarantineEntry[] = [];
   const lines = configText.split('\n');
@@ -155,9 +240,121 @@ describe('vitest quarantine honesty (issue #271 AC5)', () => {
 
   test('every remaining src/ exclusion carries a live #N owner (validator on the real config)', () => {
     const entries = parseQuarantine(configText).filter((e) => e.path.startsWith('src/'));
-    expect(entries.length).toBeGreaterThanOrEqual(1);
+    // Zero entries is the correct end state (issue #348). The invariant is not
+    // "some spec is quarantined"; it is "anything quarantined has a live owner".
     const problems = validateQuarantine(entries, QUARANTINE_OWNERS, FORBIDDEN_OWNERS, SELF_NUMBER);
     expect(problems).toEqual([]);
+  });
+
+  test('the seven specs discharged by issue #348 never reappear as exclusions', () => {
+    const entries = parseQuarantine(configText).filter((e) => e.path.startsWith('src/'));
+    const excluded = entries.map((e) => e.path);
+    for (const path of DISCHARGED_PATHS) {
+      expect(excluded, `${path} is quarantined again`).not.toContain(path);
+    }
+  });
+
+  test('no exclusion PATTERN (literal or glob) can match a discharged spec', () => {
+    // Final-critic finding: the literal pin above only sees quoted `src/...`
+    // entries. `--exclude '**/DocumentsPage.test.tsx'` removes the spec from
+    // discovery while tripping neither pin. Every quoted string in the exclude
+    // region is therefore interpreted as a glob and matched against the seven.
+    const region = excludeRegionText(configText);
+    const patterns = exclusionPatterns(region);
+    const offenders: string[] = [];
+    for (const pattern of patterns) {
+      if (!/[*?[\]]/.test(pattern) && !pattern.startsWith('src/') && !pattern.includes('/')) {
+        continue; // plain non-glob, non-path tokens (e.g. 'node_modules')
+      }
+      const rx = globToRegExp(pattern);
+      for (const path of DISCHARGED_PATHS) {
+        if (rx.test(path)) offenders.push(`${pattern} matches ${path}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test('the RESOLVED vitest config excludes exactly the three allowlisted globs', async () => {
+    // Authoritative form: `resolveConfig` applies plugin `config` hooks and the
+    // test-option merge, so this is the option object Vitest's discovery reads —
+    // including anything a plugin injects (a plain module import cannot see
+    // that). A narrowed `include` hides specs just as effectively, so it is
+    // pinned too.
+    const resolve = resolveConfig as unknown as (
+      options: { config: string },
+      mode: string
+    ) => Promise<{ vitestConfig?: unknown }>;
+    const resolved = (await resolve({ config: './vitest.config.ts' }, 'serve'))
+      .vitestConfig as unknown as {
+      exclude?: unknown;
+      include?: unknown;
+      projects?: unknown;
+      dir?: unknown;
+      root?: unknown;
+      workspace?: unknown;
+    };
+    expect(resolved?.projects, 'no per-project exclusion surface').toBeUndefined();
+    expect(resolved?.include, 'the default include pattern must not be narrowed').toEqual([
+      '**/*.{test,spec}.?(c|m)[jt]s?(x)',
+    ]);
+    expect(resolved?.exclude).toEqual(['**/node_modules/**', '**/dist/**', 'e2e/**']);
+    // Discovery walks `dir ?? root` (Vitest's globTestFiles), so narrowing either
+    // hides specs while include/exclude stay default. `root` is pinned to this
+    // package and `dir` must not be set.
+    expect(resolved?.dir, 'test.dir must not narrow discovery').toBeUndefined();
+    expect(String(resolved?.root).replace(/\\/g, '/').toLowerCase()).toBe(
+      ROOT.replace(/\\/g, '/').toLowerCase()
+    );
+    // Workspace auto-detection would swap discovery for per-project runs.
+    expect(resolved?.workspace, 'no legacy workspace option').toBeUndefined();
+  });
+
+  test('default discovery still finds every discharged spec (authoritative)', () => {
+    // THE outcome guard. Config-shape pins (exclude/include/dir/root/plugins)
+    // are fast feedback; this one asks the default entrypoint what it actually
+    // discovers, in a subprocess with a scrubbed worker environment. It catches
+    // any mechanism the shape pins cannot model — plugin hooks, workspace
+    // auto-detection, a `VITEST_WORKER_ID` branch — and it runs in CI because
+    // it is wired into `npm test` (web_ui/package.json).
+    const res = spawnSync(process.execPath, [join(ROOT, '..', 'scripts', 'check-quarantine-discovery.mjs')], {
+      encoding: 'utf8',
+      timeout: 240_000,
+    });
+    const out = `${res.stdout ?? ''}${res.stderr ?? ''}`;
+    expect(res.status, out).toBe(0);
+    expect(out).toContain('quarantine-discovery: PASS');
+  });
+
+  test('the config declares exactly one exclude array, opened on its own line', () => {
+    // A textual allowlist is only sound if it sees the WHOLE exclusion surface.
+    // A second `exclude:` (a project override) or entries sharing the opener's
+    // line would be invisible, so both shapes fail closed here.
+    const declarations = (configText.match(/\bexclude\s*:/g) ?? []).length;
+    expect(declarations, 'expected exactly one exclude declaration').toBe(1);
+    expect(configText, 'exclude array must open on its own line').not.toMatch(
+      /exclude:\s*\[[^\s]/
+    );
+  });
+
+  test('the exclude region contains only the three allowlisted globs', () => {
+    // Strongest form of the pin: every non-comment line in the region must be
+    // one of the three permitted literals. A new glob, a spread/variable entry
+    // (`...EXTRA`, `EXCLUDES`), a template literal or a comment-only trick all
+    // fail here, because they are neither parseable as a quoted literal nor in
+    // the allowlist.
+    const ALLOWED = ['**/node_modules/**', '**/dist/**', 'e2e/**'];
+    const offenders: string[] = [];
+    for (const line of excludeRegionText(configText).split(/\r?\n/)) {
+      const code = (line.split('//')[0] ?? '').trim();
+      if (code === '' || code === ',') continue;
+      const m = code.match(/^['"]([^'"]+)['"],?$/);
+      if (!m) {
+        offenders.push(`non-literal exclude entry: ${code}`);
+        continue;
+      }
+      if (!ALLOWED.includes(m[1])) offenders.push(`unexpected exclusion: ${m[1]}`);
+    }
+    expect(offenders).toEqual([]);
   });
 
   test('rewritten extractor specs value-import the real extractor and never mock it', () => {
@@ -191,7 +388,10 @@ describe('vitest quarantine honesty (issue #271 AC5)', () => {
     ],`;
 
     const ownedEntries = parseQuarantine(owned).filter((e) => e.path.startsWith('src/'));
-    expect(validateQuarantine(ownedEntries, QUARANTINE_OWNERS, FORBIDDEN_OWNERS, SELF_NUMBER)).toEqual([]);
+    // The LIVE allowlist is empty now (issue #348 discharged the last entry), so
+    // the controls supply a synthetic owner to exercise the accept path.
+    const CONTROL_OWNERS: readonly number[] = [348];
+    expect(validateQuarantine(ownedEntries, CONTROL_OWNERS, FORBIDDEN_OWNERS, SELF_NUMBER)).toEqual([]);
 
     const ownerlessEntries = parseQuarantine(ownerless).filter((e) => e.path.startsWith('src/'));
     const ownerlessProblems = validateQuarantine(ownerlessEntries, QUARANTINE_OWNERS, FORBIDDEN_OWNERS, SELF_NUMBER);

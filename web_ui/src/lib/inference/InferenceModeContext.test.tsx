@@ -1,26 +1,59 @@
 /**
- * Tests for InferenceModeContext
+ * Tests for InferenceModeContext (issue #348: quarantine discharge).
+ *
+ * Current contract (settings-wiring-honesty AC4 / #265): 'api' is the desktop
+ * app's built-in backend ONLY. Outside Electron `setMode('api')` is a no-op,
+ * and a legacy stored `{mode:'api',serverUrl}` blob is migrated once to
+ * browser-local with `serverUrl` deleted. The connectivity probe uses
+ * `state.serverUrl` (absolute URL inside Electron plus the per-launch
+ * `X-Desktop-Token` header), arms a 5 s AbortController timeout, and a second
+ * check aborts the previous in-flight request.
+ *
+ * Migration edge cases (corrupt blob, non-object JSON, storage disabled,
+ * migration-write quota) are pinned green in
+ * InferenceModeContext.migration.test.tsx; this file pins the live context
+ * behavior on top of the REAL provider.
  */
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup, act } from '@testing-library/react';
 import { InferenceModeProvider, useInferenceMode } from './InferenceModeContext';
+import { installDesktopBridgeStub, removeDesktopBridgeStub } from '../../test/desktop-bridge-stub';
+import { resetDesktopSessionForTests } from '../desktop-session';
 
-// Mock fetch
-const mockFetch = vi.fn();
-global.fetch = mockFetch;
+const fetchMock = vi.fn();
+
+/** Mirrors real fetch abort semantics: rejects with an AbortError when the
+ * request's signal aborts, so the 5 s timeout path actually resolves. */
+function fetchPendingUntilAbort(_url: unknown, init?: RequestInit): Promise<Response> {
+  return new Promise((_resolve, reject) => {
+    init?.signal?.addEventListener('abort', () => {
+      reject(new DOMException('Aborted', 'AbortError'));
+    });
+  });
+}
+
+const okStatusResponse = () => ({ ok: true, status: 200, json: async () => ({ enabled: false }) });
 
 describe('InferenceModeContext', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    fetchMock.mockReset();
     cleanup();
-    // Clear localStorage mock
     localStorage.clear();
+    sessionStorage.clear();
+    vi.stubGlobal('fetch', fetchMock);
   });
 
   afterEach(() => {
     cleanup();
+    vi.unstubAllGlobals();
+    removeDesktopBridgeStub();
+    resetDesktopSessionForTests();
+    localStorage.clear();
+    sessionStorage.clear();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   describe('Initial State', () => {
@@ -100,8 +133,8 @@ describe('InferenceModeContext', () => {
     });
   });
 
-  describe('setMode', () => {
-    it('updates mode state', async () => {
+  describe('setMode (browser app: no API-server mode)', () => {
+    it('setMode("api") is a no-op outside Electron: mode stays browser-local and nothing is persisted', () => {
       function TestComponent() {
         const { mode, setMode } = useInferenceMode();
         return (
@@ -118,20 +151,28 @@ describe('InferenceModeContext', () => {
         </InferenceModeProvider>
       );
 
-      fireEvent.click(screen.getByText('Set API'));
-
-      await waitFor(() => {
-        expect(screen.getByTestId('mode').textContent).toBe('api');
+      act(() => {
+        fireEvent.click(screen.getByText('Set API'));
       });
+
+      // The early return (InferenceModeContext.tsx setMode) keeps the current
+      // mode AND skips the persist entirely.
+      expect(screen.getByTestId('mode').textContent).toBe('browser-local');
+      expect(localStorage.getItem('inference-mode')).toBeNull();
     });
 
-    it('persists mode to localStorage', async () => {
+    it('a legacy stored {mode:"api",serverUrl} blob boots as browser-local with serverUrl removed', () => {
+      localStorage.setItem(
+        'inference-mode',
+        JSON.stringify({ mode: 'api', serverUrl: 'http://127.0.0.1:8000' })
+      );
+
       function TestComponent() {
-        const { mode, setMode } = useInferenceMode();
+        const { mode, serverUrl } = useInferenceMode();
         return (
           <div>
             <span data-testid="mode">{mode}</span>
-            <button onClick={() => setMode('api')}>Set API</button>
+            <span data-testid="url">{serverUrl}</span>
           </div>
         );
       }
@@ -142,23 +183,24 @@ describe('InferenceModeContext', () => {
         </InferenceModeProvider>
       );
 
-      fireEvent.click(screen.getByText('Set API'));
-
-      await waitFor(() => {
-        const stored = localStorage.getItem('inference-mode');
-        expect(stored).toBeTruthy();
-        const parsed = JSON.parse(stored!);
-        expect(parsed.mode).toBe('api');
-      });
+      expect(screen.getByTestId('mode').textContent).toBe('browser-local');
+      expect(screen.getByTestId('url').textContent).toBe('');
+      const stored = JSON.parse(localStorage.getItem('inference-mode')!);
+      expect(stored.mode).toBe('browser-local');
+      expect(stored).not.toHaveProperty('serverUrl');
     });
 
     it('clears modeError when switching modes', async () => {
+      // Seed a REAL error first: an unreachable server sets modeError.
+      fetchMock.mockRejectedValueOnce(new Error('Network error'));
+
       function TestComponent() {
-        const { modeError, setMode } = useInferenceMode();
+        const { modeError, setMode, checkServerConnectivity } = useInferenceMode();
         return (
           <div>
             <span data-testid="error">{modeError ?? 'null'}</span>
-            <button onClick={() => setMode('api')}>Set API</button>
+            <button onClick={() => void checkServerConnectivity()}>Check</button>
+            <button onClick={() => setMode('browser-local')}>Set Local</button>
           </div>
         );
       }
@@ -169,83 +211,32 @@ describe('InferenceModeContext', () => {
         </InferenceModeProvider>
       );
 
-      // Error starts as null
-      expect(screen.getByTestId('error').textContent).toBe('null');
-
-      fireEvent.click(screen.getByText('Set API'));
+      await act(async () => {
+        fireEvent.click(screen.getByText('Check'));
+      });
 
       await waitFor(() => {
-        expect(screen.getByTestId('error').textContent).toBe('null');
+        expect(screen.getByTestId('error').textContent).toBe('Server unreachable');
       });
+
+      // A mode switch clears the error (setMode resets modeError to null).
+      act(() => {
+        fireEvent.click(screen.getByText('Set Local'));
+      });
+
+      expect(screen.getByTestId('error').textContent).toBe('null');
     });
-  });
-
-  describe('localStorage Persistence', () => {
-    it('loads persisted mode from localStorage', () => {
-      localStorage.setItem('inference-mode', JSON.stringify({ mode: 'api', serverUrl: '' }));
-
-      function TestComponent() {
-        const { mode } = useInferenceMode();
-        return <div data-testid="mode">{mode}</div>;
-      }
-
-      render(
-        <InferenceModeProvider>
-          <TestComponent />
-        </InferenceModeProvider>
-      );
-
-      expect(screen.getByTestId('mode').textContent).toBe('api');
-    });
-
-    // The corrupt / unavailable / quota cases moved to
-    // InferenceModeContext.migration.test.tsx (PR #140 review FB140-005), which runs in CI.
   });
 
   describe('checkServerConnectivity', () => {
-    it('returns true when server responds with ok', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-      });
-
-      function TestComponent() {
-        const { checkServerConnectivity } = useInferenceMode();
-        return (
-          <button onClick={() => checkServerConnectivity()}>Check</button>
-        );
-      }
-
-      render(
-        <InferenceModeProvider>
-          <TestComponent />
-        </InferenceModeProvider>
-      );
-
-      let result: boolean | void = false;
-      await act(async () => {
-        result = await screen.getByText('Check').click();
-      });
-
-      await waitFor(() => {
-        expect(mockFetch).toHaveBeenCalledWith(
-          expect.stringContaining('/auth/status'),
-          expect.objectContaining({ method: 'GET' })
-        );
-      });
-    });
-
-    it('returns false when server returns error status', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 401,
-      });
+    it('marks the server connected when /auth/status responds ok', async () => {
+      fetchMock.mockImplementation(() => Promise.resolve(okStatusResponse()));
 
       function TestComponent() {
         const { checkServerConnectivity, isServerConnected, modeError } = useInferenceMode();
         return (
           <div>
-            <button onClick={() => checkServerConnectivity()}>Check</button>
+            <button onClick={() => void checkServerConnectivity()}>Check</button>
             <span data-testid="connected">{String(isServerConnected)}</span>
             <span data-testid="error">{modeError ?? 'null'}</span>
           </div>
@@ -259,23 +250,58 @@ describe('InferenceModeContext', () => {
       );
 
       await act(async () => {
-        await screen.getByText('Check').click();
+        fireEvent.click(screen.getByText('Check'));
+      });
+
+      // Browser app: no stored serverUrl, so the probe is the relative endpoint.
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/auth/status',
+        expect.objectContaining({ method: 'GET', credentials: 'include' })
+      );
+      await waitFor(() => {
+        expect(screen.getByTestId('connected').textContent).toBe('true');
+        expect(screen.getByTestId('error').textContent).toBe('null');
+      });
+    });
+
+    it('reports Server returned <status> for an error status', async () => {
+      fetchMock.mockImplementation(() => Promise.resolve({ ok: false, status: 401 }));
+
+      function TestComponent() {
+        const { checkServerConnectivity, isServerConnected, modeError } = useInferenceMode();
+        return (
+          <div>
+            <button onClick={() => void checkServerConnectivity()}>Check</button>
+            <span data-testid="connected">{String(isServerConnected)}</span>
+            <span data-testid="error">{modeError ?? 'null'}</span>
+          </div>
+        );
+      }
+
+      render(
+        <InferenceModeProvider>
+          <TestComponent />
+        </InferenceModeProvider>
+      );
+
+      await act(async () => {
+        fireEvent.click(screen.getByText('Check'));
       });
 
       await waitFor(() => {
         expect(screen.getByTestId('connected').textContent).toBe('false');
-        expect(screen.getByTestId('error').textContent).toContain('401');
+        expect(screen.getByTestId('error').textContent).toBe('Server returned 401');
       });
     });
 
-    it('returns false when server is unreachable', async () => {
-      mockFetch.mockRejectedValueOnce(new Error('Network error'));
+    it('reports Server unreachable when the request rejects', async () => {
+      fetchMock.mockRejectedValueOnce(new Error('Network error'));
 
       function TestComponent() {
         const { checkServerConnectivity, isServerConnected, modeError } = useInferenceMode();
         return (
           <div>
-            <button onClick={() => checkServerConnectivity()}>Check</button>
+            <button onClick={() => void checkServerConnectivity()}>Check</button>
             <span data-testid="connected">{String(isServerConnected)}</span>
             <span data-testid="error">{modeError ?? 'null'}</span>
           </div>
@@ -289,7 +315,7 @@ describe('InferenceModeContext', () => {
       );
 
       await act(async () => {
-        await screen.getByText('Check').click();
+        fireEvent.click(screen.getByText('Check'));
       });
 
       await waitFor(() => {
@@ -298,52 +324,72 @@ describe('InferenceModeContext', () => {
       });
     });
 
-    it('has 5 second timeout', async () => {
+    it('aborts the probe and reports Server unreachable after 5 seconds', async () => {
       vi.useFakeTimers();
+      const abortSpy = vi.spyOn(AbortController.prototype, 'abort');
 
-      mockFetch.mockImplementation(
-        () =>
-          new Promise((resolve) => {
-            setTimeout(() => resolve({ ok: true, status: 200 }), 10000);
-          })
-      );
+      try {
+        // The request never settles on its own; only the abort can end it.
+        fetchMock.mockImplementation(fetchPendingUntilAbort);
 
-      function TestComponent() {
-        const { checkServerConnectivity } = useInferenceMode();
-        return <button onClick={() => checkServerConnectivity()}>Check</button>;
+        function TestComponent() {
+          const { checkServerConnectivity, isServerConnected, modeError } = useInferenceMode();
+          return (
+            <div>
+              <button onClick={() => void checkServerConnectivity()}>Check</button>
+              <span data-testid="connected">{String(isServerConnected)}</span>
+              <span data-testid="error">{modeError ?? 'null'}</span>
+            </div>
+          );
+        }
+
+        render(
+          <InferenceModeProvider>
+            <TestComponent />
+          </InferenceModeProvider>
+        );
+
+        await act(async () => {
+          fireEvent.click(screen.getByText('Check'));
+        });
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(4000);
+        });
+        // Still pending at 4 s: no abort, no state change.
+        expect(abortSpy).not.toHaveBeenCalled();
+        expect(screen.getByTestId('error').textContent).toBe('null');
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1000);
+        });
+
+        // The 5 s timeout aborted the in-flight request and the catch path
+        // reported it (never just "fetch was called").
+        expect(abortSpy).toHaveBeenCalledTimes(1);
+        expect(screen.getByTestId('connected').textContent).toBe('false');
+        expect(screen.getByTestId('error').textContent).toBe('Server unreachable');
+      } finally {
+        abortSpy.mockRestore();
+        vi.useRealTimers();
       }
-
-      render(
-        <InferenceModeProvider>
-          <TestComponent />
-        </InferenceModeProvider>
-      );
-
-      await act(async () => {
-        screen.getByText('Check').click();
-        vi.advanceTimersByTime(5000);
-      });
-
-      // Should have aborted
-      await waitFor(() => {
-        expect(mockFetch).toHaveBeenCalled();
-      });
-
-      vi.useRealTimers();
     });
 
-    it('uses serverUrl from state', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-      });
+    it('probes the stored serverUrl with X-Desktop-Token inside Electron (desktop leg)', async () => {
+      installDesktopBridgeStub();
+      localStorage.setItem(
+        'inference-mode',
+        JSON.stringify({ mode: 'api', serverUrl: 'http://127.0.0.1:9999' })
+      );
+      fetchMock.mockImplementation(() => Promise.resolve(okStatusResponse()));
 
       function TestComponent() {
-        const { checkServerConnectivity, serverUrl } = useInferenceMode();
+        const { mode, serverUrl, checkServerConnectivity } = useInferenceMode();
         return (
           <div>
+            <span data-testid="mode">{mode}</span>
             <span data-testid="url">{serverUrl}</span>
-            <button onClick={() => checkServerConnectivity()}>Check</button>
+            <button onClick={() => void checkServerConnectivity()}>Check</button>
           </div>
         );
       }
@@ -354,16 +400,23 @@ describe('InferenceModeContext', () => {
         </InferenceModeProvider>
       );
 
+      // The desktop default mode is 'api' and the stored serverUrl survives.
+      expect(screen.getByTestId('mode').textContent).toBe('api');
+      expect(screen.getByTestId('url').textContent).toBe('http://127.0.0.1:9999');
+
       await act(async () => {
-        screen.getByText('Check').click();
+        fireEvent.click(screen.getByText('Check'));
       });
 
-      await waitFor(() => {
-        expect(mockFetch).toHaveBeenCalledWith(
-          expect.stringContaining('/auth/status'),
-          expect.any(Object)
-        );
-      });
+      // Exact endpoint: the stored serverUrl makes the probe ABSOLUTE, and the
+      // per-launch desktop token rides the request (issue #67 B9).
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://127.0.0.1:9999/auth/status',
+        expect.objectContaining({
+          method: 'GET',
+          headers: expect.objectContaining({ 'X-Desktop-Token': 'test-token' }),
+        })
+      );
     });
   });
 
@@ -393,11 +446,15 @@ describe('InferenceModeContext', () => {
     });
 
     it('clears modeError when model becomes ready', async () => {
+      // Seed a REAL error first, then clear it via setModelReady(true).
+      fetchMock.mockRejectedValueOnce(new Error('Network error'));
+
       function TestComponent() {
-        const { setModelReady, modeError } = useInferenceMode();
+        const { setModelReady, modeError, checkServerConnectivity } = useInferenceMode();
         return (
           <div>
             <span data-testid="error">{modeError ?? 'null'}</span>
+            <button onClick={() => void checkServerConnectivity()}>Check</button>
             <button onClick={() => setModelReady(true)}>Set Ready</button>
           </div>
         );
@@ -409,7 +466,13 @@ describe('InferenceModeContext', () => {
         </InferenceModeProvider>
       );
 
-      expect(screen.getByTestId('error').textContent).toBe('null');
+      await act(async () => {
+        fireEvent.click(screen.getByText('Check'));
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId('error').textContent).toBe('Server unreachable');
+      });
 
       fireEvent.click(screen.getByText('Set Ready'));
 
@@ -475,30 +538,13 @@ describe('InferenceModeContext', () => {
   });
 
   describe('Cleanup on Unmount', () => {
-    it('clears abort controller on unmount', () => {
+    it('aborts an in-flight connectivity check on unmount', () => {
       const abortSpy = vi.spyOn(AbortController.prototype, 'abort');
-
-      function TestComponent() {
-        return <div>Test</div>;
-      }
-
-      const { unmount } = render(
-        <InferenceModeProvider>
-          <TestComponent />
-        </InferenceModeProvider>
-      );
-
-      unmount();
-
-      expect(abortSpy).toHaveBeenCalled();
-    });
-
-    it('clears timeout on unmount', () => {
-      vi.useFakeTimers();
+      fetchMock.mockImplementation(fetchPendingUntilAbort);
 
       function TestComponent() {
         const { checkServerConnectivity } = useInferenceMode();
-        return <button onClick={() => checkServerConnectivity()}>Check</button>;
+        return <button onClick={() => void checkServerConnectivity()}>Check</button>;
       }
 
       const { unmount } = render(
@@ -508,16 +554,51 @@ describe('InferenceModeContext', () => {
       );
 
       act(() => {
-        screen.getByText('Check').click();
-        vi.advanceTimersByTime(1000);
+        fireEvent.click(screen.getByText('Check'));
       });
 
-      const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
+      // The check is in flight; nothing has aborted yet.
+      expect(abortSpy).not.toHaveBeenCalled();
+
       unmount();
 
-      expect(clearTimeoutSpy).toHaveBeenCalled();
+      // The unmount cleanup aborts the in-flight request (the current code
+      // only aborts when a request is actually in flight).
+      expect(abortSpy).toHaveBeenCalledTimes(1);
 
-      vi.useRealTimers();
+      abortSpy.mockRestore();
+    });
+
+    it('clears the pending timeout on unmount', () => {
+      vi.useFakeTimers();
+      fetchMock.mockImplementation(fetchPendingUntilAbort);
+
+      try {
+        function TestComponent() {
+          const { checkServerConnectivity } = useInferenceMode();
+          return <button onClick={() => void checkServerConnectivity()}>Check</button>;
+        }
+
+        const { unmount } = render(
+          <InferenceModeProvider>
+            <TestComponent />
+          </InferenceModeProvider>
+        );
+
+        act(() => {
+          fireEvent.click(screen.getByText('Check'));
+          vi.advanceTimersByTime(1000);
+        });
+
+        const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
+        unmount();
+
+        expect(clearTimeoutSpy).toHaveBeenCalled();
+
+        clearTimeoutSpy.mockRestore();
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
