@@ -30,7 +30,7 @@
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
-    "@huggingface/transformers": "^3.0.0",
+    "@huggingface/transformers": "^4.3.2",
     "@wllama/wllama": "^3.5.1",
     "@wllama/wllama-compat": "^3.8.1",
     "dexie": "^4.4.4",
