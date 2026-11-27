@@ -18,7 +18,12 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
+// Every spec whose discovery this guard protects. The seven below are the ones
+// issue #348 discharged; the guard ITSELF and the earlier #271 protected set are
+// included so that excluding the guard (or the pin that enforces the owner rule)
+// cannot silently remove the only check of this invariant.
 const REQUIRED = [
+  // issue #348 — the seven discharged specs
   'src/components/InferenceModeToggle.test.tsx',
   'src/pages/ChatPage.test.tsx',
   'src/pages/ChatPage.verification-3.3.test.tsx',
@@ -26,6 +31,15 @@ const REQUIRED = [
   'src/pages/ChatPage.rag.test.tsx',
   'src/lib/inference/InferenceModeContext.test.tsx',
   'src/test/verification/text-chunker.task44.test.ts',
+  // the guard itself — never discoverable-but-unprotected
+  'src/test/vitest-quarantine.test.ts',
+  // issue #271 — the four specs whose discharge installed the owner rule
+  'src/lib/processing/docx-extractor.test.ts',
+  'src/lib/processing/xlsx-extractor.test.ts',
+  'src/lib/processing/pptx-extractor.test.ts',
+  'src/lib/llm/webgpu-watchdog.test.ts',
+  // this trace's config pin for the edgevec stub + inline setting
+  'src/lib/search/edgevec-import-resolution.test.ts',
 ]
 
 const argv = process.argv.slice(2)
