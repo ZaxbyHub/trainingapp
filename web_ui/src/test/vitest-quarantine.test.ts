@@ -278,7 +278,11 @@ describe('vitest quarantine honesty (issue #271 AC5)', () => {
     // including anything a plugin injects (a plain module import cannot see
     // that). A narrowed `include` hides specs just as effectively, so it is
     // pinned too.
-    const resolved = (await resolveConfig({ config: './vitest.config.ts' }, 'serve'))
+    const resolve = resolveConfig as unknown as (
+      options: { config: string },
+      mode: string
+    ) => Promise<{ vitestConfig?: unknown }>;
+    const resolved = (await resolve({ config: './vitest.config.ts' }, 'serve'))
       .vitestConfig as unknown as {
       exclude?: unknown;
       include?: unknown;
