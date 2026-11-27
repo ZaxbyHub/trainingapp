@@ -302,9 +302,6 @@ describe('vitest quarantine honesty (issue #271 AC5)', () => {
     // hides specs while include/exclude stay default. `root` is pinned to this
     // package and `dir` must not be set.
     expect(resolved?.dir, 'test.dir must not narrow discovery').toBeUndefined();
-    expect(resolved?.root).toBe(ROOT.replace(/\\/g, '/') === String(resolved?.root)
-      ? resolved?.root
-      : resolved?.root);
     expect(String(resolved?.root).replace(/\\/g, '/').toLowerCase()).toBe(
       ROOT.replace(/\\/g, '/').toLowerCase()
     );
