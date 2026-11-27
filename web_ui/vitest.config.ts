@@ -37,8 +37,12 @@ export default defineConfig({
       forks: {
         maxForks: 2,
         minForks: 1,
-        memoryLimit: '3GB',
         isolate: true,
+        // vitest 3's ForksOptions type omits memoryLimit even though tinypool
+        // reads it when pool/isolate change (see the comment above). Spread so
+        // the documented value survives now that this file is type-checked (the
+        // quarantine pin imports it) without an excess-property error.
+        ...({ memoryLimit: '3GB' } as Record<string, unknown>),
       },
     },
     // Generous timeout for tests that load mocked WASM/model pipelines.

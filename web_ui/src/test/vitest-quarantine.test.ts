@@ -27,7 +27,7 @@ import { describe, test, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import vitestConfig from '../../vitest.config';
+import { resolveConfig } from 'vitest/node';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..');
@@ -272,14 +272,22 @@ describe('vitest quarantine honesty (issue #271 AC5)', () => {
     expect(offenders).toEqual([]);
   });
 
-  test('the RESOLVED vitest config excludes exactly the three allowlisted globs', () => {
-    // Authoritative form: whatever the file computes (spreads, overrides, a
-    // declaration split across lines), the value Vitest actually uses must be
-    // exactly the allowlist. This is what closes shapes a text scan cannot see.
-    const resolved = (vitestConfig as unknown as {
-      test?: { exclude?: unknown; projects?: unknown };
-    }).test;
+  test('the RESOLVED vitest config excludes exactly the three allowlisted globs', async () => {
+    // Authoritative form: `resolveConfig` applies plugin `config` hooks and the
+    // test-option merge, so this is the option object Vitest's discovery reads —
+    // including anything a plugin injects (a plain module import cannot see
+    // that). A narrowed `include` hides specs just as effectively, so it is
+    // pinned too.
+    const resolved = (await resolveConfig({ config: './vitest.config.ts' }, 'serve'))
+      .vitestConfig as unknown as {
+      exclude?: unknown;
+      include?: unknown;
+      projects?: unknown;
+    };
     expect(resolved?.projects, 'no per-project exclusion surface').toBeUndefined();
+    expect(resolved?.include, 'the default include pattern must not be narrowed').toEqual([
+      '**/*.{test,spec}.?(c|m)[jt]s?(x)',
+    ]);
     expect(resolved?.exclude).toEqual(['**/node_modules/**', '**/dist/**', 'e2e/**']);
   });
 
