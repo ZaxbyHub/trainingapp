@@ -8,7 +8,7 @@
 // branch cannot behave differently here than in a plain CLI run).
 //
 // It performs discovery only (`vitest list --filesOnly --json`) — no test runs.
-// Fails if any of the seven specs discharged by issue #348 is not discovered.
+// Fails if any protected spec (the 13 in REQUIRED below) is not discovered.
 //
 // Usage: node scripts/check-quarantine-discovery.mjs [--web-ui <dir>]
 
@@ -58,6 +58,9 @@ const res = spawnSync(process.execPath, [vitest, 'list', '--filesOnly', '--json'
   env,
   encoding: 'utf8',
   maxBuffer: 256 * 1024 * 1024,
+  // Bounded: a config-time plugin hook that never resolves would otherwise hang
+  // `npm test` (this guard runs before vitest on the test entrypoint).
+  timeout: 240_000,
 })
 
 if (res.error) {
@@ -65,7 +68,10 @@ if (res.error) {
   process.exit(1)
 }
 if (res.status !== 0) {
-  console.error(`quarantine-discovery: FAIL — vitest list exited ${res.status}`)
+  // A signal-killed child reports `status: null` with `signal` set (an OOM kill
+  // is the case this guard most needs to name clearly).
+  const how = res.signal ? `was killed by ${res.signal}` : `exited ${res.status}`
+  console.error(`quarantine-discovery: FAIL — vitest list ${how}`)
   console.error((res.stderr || '').slice(0, 2000))
   process.exit(1)
 }
@@ -99,5 +105,5 @@ if (missing.length > 0) {
 }
 
 console.log(
-  `quarantine-discovery: PASS — all ${REQUIRED.length} discharged specs discovered (${found.size} files total)`
+  `quarantine-discovery: PASS — all ${REQUIRED.length} protected specs discovered (${found.size} files total)`
 )
