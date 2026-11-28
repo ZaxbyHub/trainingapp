@@ -153,6 +153,7 @@ This section covers work found during a PR review or a PR-feedback round that th
 - **Contract triplication**: any issue that adds or changes a REST route touches the frozen three-way contract (contracts/api.openapi.yaml + desktop Node CONTRACT_ROUTES + FastAPI) and fans out to four CI workflows — such issues MUST say so in Scope and budget the parity work.
 - **CI is path-scoped with fail-open buckets** — a new top-level tree runs everything on first touch.
 - A `NEW-SURFACE` argv naming a spec absent at base fails with vitest's `No test files found` or pytest's file-not-found — write the real signature verbatim in `expect`.
+- **Testers releases are full offline bundles, not notes or CI ZIPs** (maintainer rule 2026-11-27). Use the canonical recipe in [docs/releases/offline-bundle-contract.md](docs/releases/offline-bundle-contract.md): `node scripts/build-portable-release.mjs`, then `node scripts/check-portable-bundle.mjs <win-unpacked>` and upload every split part plus both checksum files and `README-portable.txt`. The `build.yml` ZIP and a notes-only release are not usable by testers; `tests/test_release_bundle_contract.py` guards the recipe/asset contract.
 
 ## Dependency currency policy
 
