@@ -164,9 +164,7 @@ describe('ChatPage #269 AC2: New Chat mid-stream keeps the cleared view empty an
     const PARTIAL_TOKEN = 'PARTIAL-A-';
 
     const orchestrator = { query: vi.fn() };
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
-      () => orchestrator as unknown as ragModule.RAGOrchestrator
-    );
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return orchestrator as unknown as ragModule.RAGOrchestrator; });
     orchestrator.query.mockImplementation(makeParkingStream(gate, PARTIAL_TOKEN));
 
     const onSaveConversation = vi.fn();

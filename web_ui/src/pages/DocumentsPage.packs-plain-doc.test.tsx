@@ -49,10 +49,10 @@ vi.mock('../lib/storage/profile', () => ({
     getStorageDbNames: () => ({ documents: 'testprfx-doc-qa-documents', vectorMapping: 'testprfx-doc-qa-indexes', vector: 'testprfx-doc-qa-index', keyword: 'testprfx-doc-qa-keywords', conversations: 'testprfx-doc-qa-conversations', audit: 'testprfx-doc-qa-audit' }),
   }));
 vi.mock('../lib/search/vector-index', () => ({
-  getVectorIndex: vi.fn(() => ({ initialize: async () => {}, isReady: () => false })),
+  getVectorIndex: vi.fn(function () { return ({ initialize: async () => {}, isReady: () => false }); }),
 }));
 vi.mock('../lib/search/keyword-index', () => ({
-  getKeywordIndex: vi.fn(() => ({ addDocuments: () => {}, save: async () => {} })),
+  getKeywordIndex: vi.fn(function () { return ({ addDocuments: () => {}, save: async () => {} }); }),
 }));
 vi.mock('../lib/embeddings/embedding-service', () => ({
   getEmbeddingService: vi.fn(() => ({ isReady: () => false })),

@@ -148,14 +148,44 @@ def test_unlisted_high_advisory_exits_one():
 
 
 def test_expired_allowlist_entry_exits_one():
+    # Synthetic report + synthetic expired entry: the shipped allowlist is
+    # empty after remediation, but the expiry rule must still fail closed.
+    report = {
+        "vulnerabilities": {
+            "sharp": {
+                "name": "sharp",
+                "severity": "high",
+                "isDirect": True,
+                "range": "0.x",
+                "via": [
+                    {
+                        "source": 2,
+                        "name": "sharp",
+                        "severity": "high",
+                        "url": "https://github.com/advisories/GHSA-f88m-g3jw-g9cj",
+                    }
+                ],
+            }
+        }
+    }
+    allowlist = {
+        "entries": [
+            {
+                "id": "GHSA-f88m-g3jw-g9cj",
+                "package": "sharp",
+                "owner": "zaxbysauce",
+                "expiry": "2027-02-04",
+            }
+        ]
+    }
     rc = audit_gate.main(
         [
             "--package-dir",
             "web_ui",
             "--allowlist",
-            str(ALLOWLIST),
+            json_dump_tmp(allowlist),
             "--report-file",
-            str(FIXTURES / "web_ui-post-g-audit.json"),
+            json_dump_tmp(report),
             "--today",
             "2028-01-01",
         ]
@@ -191,7 +221,11 @@ def test_inherited_via_string_cleared_by_parent_entry_only():
             },
         }
     }
-    allowlisted = audit_gate.load_allowlist(ALLOWLIST, _today())
+    # The shipped allowlist is empty after the sharp/tinypool remediation, so
+    # exercise the inherited-via rule against a synthetic allowlist entry. The
+    # invariant under test is the (id, package) closure, not the live exception
+    # set (which must stay empty for the required gate to be green).
+    allowlisted = {("GHSA-F88M-G3JW-G9CJ", "sharp"): "synthetic-owner"}
     assert audit_gate.evaluate_report(report, allowlisted) == []
     pruned = {k: v for k, v in allowlisted.items() if k[1] != "sharp"}
     offenders = audit_gate.evaluate_report(report, pruned)
@@ -199,8 +233,17 @@ def test_inherited_via_string_cleared_by_parent_entry_only():
 
 
 def test_missing_via_target_fails_closed():
-    report = _fixture_report("desktop")
-    report["vulnerabilities"]["@huggingface/transformers"]["via"] = ["ghost-package"]
+    report = {
+        "vulnerabilities": {
+            "parent": {
+                "name": "parent",
+                "severity": "high",
+                "isDirect": True,
+                "range": "1.x",
+                "via": ["ghost-package"],
+            }
+        }
+    }
     rc = audit_gate.main(
         [
             "--package-dir",
@@ -219,10 +262,18 @@ def test_missing_via_target_fails_closed():
 
 
 def test_malformed_advisory_record_fails_closed():
-    report = _fixture_report("desktop")
-    via0 = report["vulnerabilities"]["sharp"]["via"][0]
-    via0.pop("url", None)
-    via0.pop("source", None)
+    report = {
+        "vulnerabilities": {
+            "sharp": {
+                "name": "sharp",
+                "severity": "high",
+                "isDirect": True,
+                "range": "0.x",
+                # An advisory object with neither url nor source is unresolvable.
+                "via": [{"name": "sharp", "severity": "high"}],
+            }
+        }
+    }
     rc = audit_gate.main(
         [
             "--package-dir",

@@ -14,11 +14,11 @@ const mockSearch = vi.fn();
 
 vi.mock('flexsearch', () => {
   return {
-    Index: vi.fn().mockImplementation(() => ({
+    Index: vi.fn().mockImplementation(function () { return ({
       add: mockAdd,
       remove: mockRemove,
       search: mockSearch,
-    })),
+    }); }),
   };
 });
 

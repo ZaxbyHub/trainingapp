@@ -104,7 +104,6 @@ def test_ignore_entries_owned_dated_and_packages_present():
         packages.add(entry["package"].lower())
     expected = {
         "sentence-transformers",
-        "pypdf",
         "pillow",
         "chromadb",
         "transformers",
@@ -128,7 +127,11 @@ GATE = REPO_ROOT / "scripts" / "pip_audit_gate.py"
 def _fixture_report():
     return {
         "dependencies": [
-            {"name": "pypdf", "version": "4.3.1", "vulns": [{"id": "PYSEC-2026-3911"}]},
+            {
+                "name": "chromadb",
+                "version": "0.5.0",
+                "vulns": [{"id": "PYSEC-2026-3911"}],
+            },
             {
                 "name": "some-unknown-package",
                 "version": "1.0",
@@ -181,7 +184,11 @@ def test_gate_expired_entry_resurfaces_findings(tmp_path):
     expired.write_text(json.dumps(data), encoding="utf-8")
     owned_only = {
         "dependencies": [
-            {"name": "pypdf", "version": "4.3.1", "vulns": [{"id": "PYSEC-2026-3911"}]},
+            {
+                "name": "chromadb",
+                "version": "0.5.0",
+                "vulns": [{"id": "PYSEC-2026-3911"}],
+            },
         ]
     }
     fixture = tmp_path / "audit.json"

@@ -141,9 +141,7 @@ describe('D7 C1 (banner): ChatPage pinned-slide banner (issue #83 AC1)', () => {
     mockOrchestratorInstance = {
       query: vi.fn(),
     };
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
-      () => mockOrchestratorInstance as unknown as ragModule.RAGOrchestrator
-    );
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return mockOrchestratorInstance as unknown as ragModule.RAGOrchestrator; });
 
     vi.mocked(getLLMService).mockReturnValue(
       fakeLlmService as unknown as ReturnType<typeof getLLMService>

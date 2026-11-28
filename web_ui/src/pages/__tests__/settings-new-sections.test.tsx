@@ -73,10 +73,10 @@ vi.mock('../../lib/theme', () => ({
   useTheme: () => ({ theme: 'light', themePreference: 'system', setTheme: () => undefined, isDark: false }),
 }));
 vi.mock('../../lib/llm/model-download', () => ({
-  ModelDownloadManager: vi.fn().mockImplementation(() => ({ downloadModel: vi.fn(), cancelDownload: vi.fn() })),
+  ModelDownloadManager: vi.fn().mockImplementation(function () { return ({ downloadModel: vi.fn(), cancelDownload: vi.fn() }); }),
 }));
 vi.mock('../../lib/llm/model-readiness', () => ({
-  ModelReadinessGate: vi.fn().mockImplementation(() => ({ checkModelCached: vi.fn(() => Promise.resolve(true)) })),
+  ModelReadinessGate: vi.fn().mockImplementation(function () { return ({ checkModelCached: vi.fn(() => Promise.resolve(true)) }); }),
 }));
 vi.mock('../../lib/embeddings/memory-aware', () => ({
   getMemoryBudget: vi.fn(() => ({ availableMB: 8192, totalMB: 16384 })),

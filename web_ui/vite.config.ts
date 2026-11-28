@@ -6,14 +6,19 @@ import path from 'path';
 /**
  * Vite plugin to handle edgevec WASM package internal imports.
  * edgevec's JS bundle imports from ./snippets/ which may not resolve
- * during Rollup production builds (edgevec 0.6.0 ships without its snippets/
- * directory), so we stub the storage backend it imports.
+ * during Rollup production builds. edgevec 0.6.0 shipped without snippets/;
+ * edgevec 0.9.0 ships its OWN snippets backend with a different IndexedDB
+ * schema. The stub below is kept intentionally so the app's Clear-Cache and
+ * profile code keep one storage contract; the divergence is pinned by
+ * src/lib/search/edgevec-backend-parity.test.ts and is an owner decision
+ * (ASK-D3), not a claimed parity with the shipped 0.9 backend.
  *
  * Contract note (F17): the stub must match the real edgevec backend's miss
  * behavior. The real IndexedDbBackend lives at the content-addressed snippet
- * path `edgevec-98e271a617b3aceb` (the hash edgevec.js:1 imports). That exact
- * directory is shipped in edgevec 0.9.0 on npm; its `read(name)` REJECTS with
- * "File <name> not found" when there is no saved index, and resolves with the
+ * path `edgevec-98e271a617b3aceb` in the 0.6 tarball. edgevec 0.9.0's shipped
+ * snippet uses a different hash (`edgevec-d2ba0e32c31531f9`) and DB schema;
+ * the miss contract pinned here is still `read(name)` REJECTING with
+ * "File <name> not found" when there is no saved index, and resolving with the
  * Uint8Array data on hit. The previous stub resolved `null` on miss, which the
  * Rust `edgevec_load` deserializer treated as truncated/corrupt data and
  * rejected with ERR_CORRUPTION on every fresh boot. Rejecting on miss makes
@@ -45,8 +50,7 @@ export class IndexedDbBackend {
           if (getReq.result) {
             resolve(getReq.result);
           } else {
-            // Match the real edgevec backend contract (content-addressed
-            // snippet edgevec-98e271a617b3aceb, shipped in 0.9.0): reject on
+            // Match the real edgevec backend miss contract: reject on
             // miss so the Rust edgevec_load surfaces a Promise rejection
             // (clean "no index" path) rather than resolving null, which the
             // WASM deserializer treats as corrupt data (ERR_CORRUPTION).

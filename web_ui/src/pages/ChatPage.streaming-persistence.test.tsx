@@ -170,9 +170,7 @@ describe('ChatPage S1: switch-mid-stream does not corrupt conversation history',
     const gate = makeDeferred();
 
     const orchestrator = { query: vi.fn() };
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
-      () => orchestrator as unknown as ragModule.RAGOrchestrator
-    );
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return orchestrator as unknown as ragModule.RAGOrchestrator; });
     orchestrator.query.mockImplementation(makeDeferredStream(gate));
 
     const onSaveConversation = vi.fn();
@@ -406,9 +404,7 @@ describe('ChatPage F1: first-turn fast-complete does not create a duplicate conv
     // creating a duplicate. Under the fix, handleSend AWAITS the send-time save
     // (with its synchronous onCreate), so the ref is set before runGeneration.
     const orchestrator = { query: vi.fn() };
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
-      () => orchestrator as unknown as ragModule.RAGOrchestrator
-    );
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return orchestrator as unknown as ragModule.RAGOrchestrator; });
     orchestrator.query.mockImplementation(async function* (): AsyncGenerator<RAGEvent> {
       yield { type: 'token', data: 'FAST-' };
       yield {
@@ -629,12 +625,14 @@ function flushRafFrames(frames = 3): Promise<void> {
 async function waitForPartialContent(
   getMessages: () => ChatMessage[],
   partialToken: string,
-  maxIters = 40
+  // jsdom 31 schedules requestAnimationFrame on a slower cadence than jsdom 25.
+  maxIters = 160
 ): Promise<void> {
   for (let i = 0; i < maxIters; i++) {
     await Promise.resolve();
     await Promise.resolve();
     await flushRafFrames(2);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     const msgs = getMessages();
     const has = msgs.some(
       (m) => m.role === 'assistant' && typeof m.content === 'string' && m.content.includes(partialToken)
@@ -703,9 +701,7 @@ describe('ChatPage PRR-001: switch mid-stream PERSISTS the partial turn to the o
     const PARTIAL_TOKEN = 'PARTIAL-A-';
 
     const orchestrator = { query: vi.fn() };
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
-      () => orchestrator as unknown as ragModule.RAGOrchestrator
-    );
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return orchestrator as unknown as ragModule.RAGOrchestrator; });
     orchestrator.query.mockImplementation(makeParkingStream(gate, PARTIAL_TOKEN));
 
     const onSaveConversation = vi.fn();
@@ -886,9 +882,7 @@ describe('ChatPage PRR-005: handleCancel preserves cancel-flushed tail tokens', 
     const FULL = TOKENS.join('');
 
     const orchestrator = { query: vi.fn() };
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
-      () => orchestrator as unknown as ragModule.RAGOrchestrator
-    );
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return orchestrator as unknown as ragModule.RAGOrchestrator; });
     orchestrator.query.mockImplementation(async function* (): AsyncGenerator<RAGEvent> {
       for (const t of TOKENS) {
         yield { type: 'token', data: t };
@@ -1044,9 +1038,7 @@ describe('ChatPage PRR-006a: unmount mid-stream PERSISTS the finalized partial t
     const PARTIAL_TOKEN = 'UNMOUNT-PARTIAL-';
 
     const orchestrator = { query: vi.fn() };
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
-      () => orchestrator as unknown as ragModule.RAGOrchestrator
-    );
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return orchestrator as unknown as ragModule.RAGOrchestrator; });
     orchestrator.query.mockImplementation(makeParkingStream(gate, PARTIAL_TOKEN));
 
     const onSaveConversation = vi.fn();
@@ -1171,9 +1163,7 @@ describe('ChatPage PRR-006b: engine switch mid-stream PERSISTS the finalized par
     const PARTIAL_TOKEN = 'ENGINE-SWITCH-PARTIAL-';
 
     const orchestrator = { query: vi.fn() };
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
-      () => orchestrator as unknown as ragModule.RAGOrchestrator
-    );
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return orchestrator as unknown as ragModule.RAGOrchestrator; });
     orchestrator.query.mockImplementation(makeParkingStream(gate, PARTIAL_TOKEN));
 
     const onSaveConversation = vi.fn();
@@ -1337,9 +1327,7 @@ describe('ChatPage #269 AC1 (C1): mid-stream switch keeps B\'s view and record i
     const PARTIAL_TOKEN = 'PARTIAL-A-';
 
     const orchestrator = { query: vi.fn() };
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
-      () => orchestrator as unknown as ragModule.RAGOrchestrator
-    );
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return orchestrator as unknown as ragModule.RAGOrchestrator; });
     orchestrator.query.mockImplementation(makeParkingStream(gate, PARTIAL_TOKEN));
 
     // Fake store: seeded with B's own record; every defined-id save overwrites

@@ -91,10 +91,10 @@ vi.mock('../../storage/profile', () => ({
   }),
 }));
 vi.mock('../model-download', () => ({
-  ModelDownloadManager: vi.fn().mockImplementation(() => ({
+  ModelDownloadManager: vi.fn().mockImplementation(function () { return ({
     downloadModel: vi.fn(),
     cancelDownload: vi.fn(),
-  })),
+  }); }),
 }));
 vi.mock('../../embeddings/memory-aware', () => ({
   getMemoryBudget: vi.fn(() => ({ availableMB: 8192, totalMB: 16384, browserOverheadMB: 2048 })),

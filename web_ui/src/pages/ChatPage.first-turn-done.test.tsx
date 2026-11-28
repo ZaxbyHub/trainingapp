@@ -35,7 +35,7 @@ const mockOnError = vi.fn();
 const mockStartSSEStream = vi.fn();
 
 vi.mock('../lib/streaming', () => ({
-  TokenStreamManager: vi.fn().mockImplementation(() => ({
+  TokenStreamManager: vi.fn().mockImplementation(function () { return ({
     onToken: mockOnToken,
     onDone: mockOnDone,
     onError: mockOnError,
@@ -45,14 +45,14 @@ vi.mock('../lib/streaming', () => ({
     cancel: mockCancel,
     dispose: vi.fn(),
     startSSEStream: mockStartSSEStream,
-  })),
+  }); }),
 }));
 
 vi.mock('../lib/rag/rag-orchestrator', () => ({
-  RAGOrchestrator: vi.fn().mockImplementation(() => ({
+  RAGOrchestrator: vi.fn().mockImplementation(function () { return ({
     query: vi.fn(),
     dispose: vi.fn(),
-  })),
+  }); }),
 }));
 
 vi.mock('../lib/llm/llm-factory', () => ({

@@ -100,11 +100,11 @@ vi.mock('../lib/llm/llm-factory', () => ({
   getPreferredBrowserEngine: () => 'wllama',
 }));
 vi.mock('../lib/rag/rag-orchestrator', () => ({
-  RAGOrchestrator: vi.fn().mockImplementation(() => ({
+  RAGOrchestrator: vi.fn().mockImplementation(function () { return ({
     query: async function* () {
       yield { type: 'complete', data: { answer: 'ok', sources: [], chunks: [] } };
     },
-  })),
+  }); }),
 }));
 vi.mock('../components/StreamingIndicator', () => ({
   StreamingIndicator: () => null,
@@ -113,7 +113,7 @@ vi.mock('../components/InferenceModeToggle', () => ({
   InferenceModeToggle: () => null,
 }));
 vi.mock('../lib/streaming', () => ({
-  TokenStreamManager: vi.fn().mockImplementation(() => ({
+  TokenStreamManager: vi.fn().mockImplementation(function () { return ({
     onToken: vi.fn(),
     onDone: vi.fn(),
     onError: vi.fn(),
@@ -122,7 +122,7 @@ vi.mock('../lib/streaming', () => ({
     error: vi.fn(),
     cancel: vi.fn(),
     dispose: vi.fn(),
-  })),
+  }); }),
 }));
 
 function makeReadinessResult(overrides: Partial<ReadinessResult> = {}): ReadinessResult {

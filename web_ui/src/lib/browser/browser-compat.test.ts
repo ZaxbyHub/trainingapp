@@ -9,8 +9,14 @@ import {
   isKnownUnsupportedBrowser,
 } from './browser-compat';
 
-// Mock global navigator
+// Mock global navigator. jsdom 31 exposes it as getter-only, so make the
+// property writable for this spec's UA overrides (jsdom 25 allowed assignment).
 const originalNavigator = globalThis.navigator;
+Object.defineProperty(globalThis, 'navigator', {
+  configurable: true,
+  writable: true,
+  value: originalNavigator,
+});
 
 function createMockNavigator(overrides: Record<string, unknown> = {}): Navigator {
   return {

@@ -117,9 +117,7 @@ describe('ChatPage #269 AC4: Regenerate after a conversation switch re-runs the 
 
   test('Regenerate on B after switching from A re-runs B-QUESTION, not A-QUESTION (#269 AC4)', async () => {
     const orchestrator = { query: vi.fn() };
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
-      () => orchestrator as unknown as ragModule.RAGOrchestrator
-    );
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return orchestrator as unknown as ragModule.RAGOrchestrator; });
     // First call (A's turn) completes; every later call (the regenerate) parks.
     orchestrator.query.mockImplementationOnce(completingStream).mockImplementation(parkedStream);
 

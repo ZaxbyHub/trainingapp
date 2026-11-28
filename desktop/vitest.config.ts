@@ -27,6 +27,11 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/__tests__/**/*.test.ts'],
+    // vitest 5 defaults clearMocks to true, which wipes the one-time preload
+    // side effect's recorded bridge calls between specs. Pin vitest 3 semantics.
+    clearMocks: false,
+    mockReset: false,
+    restoreMocks: false,
     // F-AC6 (issue #282): compile packtool before the suite runs so a clean
     // checkout passes `npm test` without reading CI. Compile-only, no network.
     globalSetup: path.join(here, 'test', 'global-setup.ts'),

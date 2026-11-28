@@ -180,9 +180,7 @@ describe('ChatPage keyboard-shortcut live wiring (#267, TST-2/TST-3)', () => {
         },
       ),
     };
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
-      () => orchestrator as unknown as ragModule.RAGOrchestrator,
-    );
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return orchestrator as unknown as ragModule.RAGOrchestrator; });
     render(<Page initialMessages={[]} onNewChat={() => {}} />);
 
     await act(async () => {

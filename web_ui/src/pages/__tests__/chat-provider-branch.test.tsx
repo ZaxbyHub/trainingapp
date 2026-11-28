@@ -360,9 +360,7 @@ describe('F-004: grounded external answers use the desktop prompt text', () => {
       );
     }
     const captured: Array<Record<string, unknown>> = [];
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
-      () =>
-        ({
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return ({
           query: async function* (_q: string, options: Record<string, unknown>) {
             captured.push(options);
             yield { type: 'token', data: 'ok' };
@@ -371,8 +369,7 @@ describe('F-004: grounded external answers use the desktop prompt text', () => {
               data: { answer: 'ok', sources: [], chunks: [], grounding: 'general', learn: [] },
             };
           },
-        }) as unknown as ragModule.RAGOrchestrator
-    );
+        }) as unknown as ragModule.RAGOrchestrator; });
     renderChat({});
     const input = screen.getByLabelText('Message input');
     fireEvent.change(input, { target: { value: 'grounded question' } });

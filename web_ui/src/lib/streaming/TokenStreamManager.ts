@@ -50,6 +50,7 @@ export class TokenStreamManager {
 
   private tokenBuffer: string[];
   private flushTimer: number | null;
+  private flushTimerKind: "raf" | "timeout" | null;
   private tokenCallback: TokenCallback | null;
   private doneCallback: DoneCallback | null;
   private errorCallback: ErrorCallback | null;
@@ -68,6 +69,7 @@ export class TokenStreamManager {
     this.firstByteTimeoutMs = firstByteTimeoutMs;
     this.tokenBuffer = [];
     this.flushTimer = null;
+    this.flushTimerKind = null;
     this.tokenCallback = null;
     this.doneCallback = null;
     this.errorCallback = null;
@@ -146,11 +148,14 @@ export class TokenStreamManager {
     if (useTimeoutFallback) {
       this.flushTimer = window.setTimeout(() => {
         this.flushTimer = null;
+        this.flushTimerKind = null;
         this.flushBuffer();
       }, 100) as unknown as number;
+      this.flushTimerKind = "timeout";
     } else {
       this.flushTimer = requestAnimationFrame(() => {
         this.flushTimer = null;
+        this.flushTimerKind = null;
         this.flushBuffer();
       });
     }
@@ -317,11 +322,12 @@ export class TokenStreamManager {
    */
   private clearFlushTimer(): void {
     if (this.flushTimer !== null) {
-      // The timer may be either a RAF handle or a setTimeout handle. Use both
-      // cancellers defensively (each is a no-op for the wrong type).
-      cancelAnimationFrame(this.flushTimer);
-      clearTimeout(this.flushTimer);
+      // jsdom 31 rejects clearing a RAF handle with clearTimeout (and vice
+      // versa), so cancel through the canceller matching how it was scheduled.
+      if (this.flushTimerKind === "timeout") clearTimeout(this.flushTimer);
+      else cancelAnimationFrame(this.flushTimer);
       this.flushTimer = null;
+      this.flushTimerKind = null;
     }
   }
 

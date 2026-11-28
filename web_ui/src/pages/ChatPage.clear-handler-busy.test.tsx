@@ -119,9 +119,7 @@ describe('ChatPage session-clear handler isBusy lifecycle (PRR-102)', () => {
   async function mountAndSend(terminal: 'complete' | 'generation-error') {
     const gate = makeDeferred();
     const orchestrator = { query: vi.fn() };
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
-      () => orchestrator as unknown as ragModule.RAGOrchestrator
-    );
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return orchestrator as unknown as ragModule.RAGOrchestrator; });
     orchestrator.query.mockImplementation(makeDeferredStream(gate, terminal));
 
     const onSaveConversation = vi.fn();
@@ -186,9 +184,7 @@ describe('ChatPage session-clear handler isBusy lifecycle (PRR-102)', () => {
     // A fresh deferred stream for the second send.
     const gate2 = makeDeferred();
     const orchestrator = { query: vi.fn() };
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
-      () => orchestrator as unknown as ragModule.RAGOrchestrator
-    );
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return orchestrator as unknown as ragModule.RAGOrchestrator; });
     orchestrator.query.mockImplementation(makeDeferredStream(gate2, 'complete'));
     const textarea = screen.getByRole('textbox');
     const sendButton = screen.getByRole('button', { name: /send message/i });
