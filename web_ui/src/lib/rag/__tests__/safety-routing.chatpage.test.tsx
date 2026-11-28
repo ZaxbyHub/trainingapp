@@ -245,9 +245,7 @@ describe('safety-routing: ChatPage pre-route branch (issue #365 AC1)', () => {
     route.externalUngrounded = false;
 
     orchestratorQuery = vi.fn();
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
-      () => ({ query: orchestratorQuery }) as unknown as ragModule.RAGOrchestrator,
-    );
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return ({ query: orchestratorQuery }) as unknown as ragModule.RAGOrchestrator; });
     vi.mocked(llmFactoryModule.getLLMService).mockImplementation(() => ({
       initialize: vi.fn().mockResolvedValue(undefined),
       interrupt: vi.fn(),

@@ -91,7 +91,10 @@ export async function extractPptxText(file: File): Promise<ExtractionResult> {
       }
 
       // Extract all <a:t> text elements
-      const textElements = doc.querySelectorAll('a\\:t');
+      // jsdom 31's selector engine no longer resolves the escaped namespace
+      // prefix used by jsdom 25; getElementsByTagName is namespace-stable for
+      // XML documents and keeps the same `a:t` extraction contract.
+      const textElements = doc.getElementsByTagName('a:t');
       const slideTextParts: string[] = [];
 
       for (const element of textElements) {

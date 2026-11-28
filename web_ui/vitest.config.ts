@@ -33,18 +33,18 @@ export default defineConfig({
     // bytes per tinypool) so that if `pool` or `isolate` changes, the limit
     // becomes active at the intended size rather than ~3KB.
     pool: 'forks',
-    poolOptions: {
-      forks: {
-        maxForks: 2,
-        minForks: 1,
-        isolate: true,
-        // vitest 3's ForksOptions type omits memoryLimit even though tinypool
-        // reads it when pool/isolate change (see the comment above). Spread so
-        // the documented value survives now that this file is type-checked (the
-        // quarantine pin imports it) without an excess-property error.
-        ...({ memoryLimit: '3GB' } as Record<string, unknown>),
-      },
-    },
+    // vitest 5 removed poolOptions; the fork cap and isolation are top-level
+    // options now. Keep the same OOM-protection contract at the new surface.
+    maxWorkers: 2,
+    isolate: true,
+    // vitest 5 flipped clearMocks to true and changed mockReset to restore the
+    // original implementation. The suite was written under vitest 3 semantics
+    // (class mocks constructed with `new`, call histories observed in later
+    // tests), so pin the old semantics explicitly instead of rewriting 300+
+    // specs to accommodate a default that is not part of the migration.
+    clearMocks: false,
+    mockReset: false,
+    restoreMocks: false,
     // Generous timeout for tests that load mocked WASM/model pipelines.
     testTimeout: 30000,
     // No src/ spec is quarantined (issue #348 discharged the last seven: the

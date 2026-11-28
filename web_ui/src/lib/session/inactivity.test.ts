@@ -1,3 +1,4 @@
+import type { Mock } from 'vitest';
 /**
  * inactivity (issue #34 item 6p, AC6, check C6): the workstation-wide
  * inactivity auto-clear, with FAKE TIMERS. One behavior per test:
@@ -80,9 +81,9 @@ afterEach(() => {
 interface WatchHarness {
   threshold: { value: number | null };
   busy: { value: boolean };
-  clearedNotice: ReturnType<typeof vi.fn>;
-  onClear: ReturnType<typeof vi.fn>;
-  persistedClear: ReturnType<typeof vi.fn>;
+  clearedNotice: Mock<() => void>;
+  onClear: Mock<() => void>;
+  persistedClear: Mock<() => Promise<{ cleared: boolean } | { deferred: true }>>;
   activeProfileAtClear: string[];
   stop(): void;
 }
@@ -93,8 +94,8 @@ function makeWatch(): WatchHarness {
   const harness: WatchHarness = {
     threshold: { value: null },
     busy: { value: false },
-    clearedNotice: vi.fn(),
-    onClear: vi.fn(),
+    clearedNotice: vi.fn(() => {}),
+    onClear: vi.fn(() => {}),
     persistedClear: vi.fn(async () => {
       harness.activeProfileAtClear.push(getProfilePrefix());
       // The persisted clear's OWN exclusive-ifAvailable arbitration is the

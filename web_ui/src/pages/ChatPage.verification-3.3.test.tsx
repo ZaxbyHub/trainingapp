@@ -56,10 +56,10 @@ vi.mock('../lib/llm/llm-factory', () => ({
   disposeBrowserEngine: vi.fn(),
 }));
 vi.mock('../lib/rag/rag-orchestrator', () => ({
-  RAGOrchestrator: vi.fn().mockImplementation(() => ({ query: vi.fn() })),
+  RAGOrchestrator: vi.fn().mockImplementation(function () { return ({ query: vi.fn() }); }),
 }));
 vi.mock('../lib/streaming', () => ({
-  TokenStreamManager: vi.fn().mockImplementation(() => ({
+  TokenStreamManager: vi.fn().mockImplementation(function () { return ({
     start: vi.fn(),
     cancel: vi.fn(),
     onToken: vi.fn(),
@@ -68,7 +68,7 @@ vi.mock('../lib/streaming', () => ({
     pushToken: vi.fn(),
     complete: vi.fn(),
     dispose: vi.fn(),
-  })),
+  }); }),
 }));
 // Keeps the blocked overlay on its stable "Preparing the model…" state instead
 // of racing a real readiness probe (ChatPage.overlay.test.tsx convention).

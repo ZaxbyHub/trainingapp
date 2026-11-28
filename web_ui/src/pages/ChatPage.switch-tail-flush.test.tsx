@@ -113,9 +113,7 @@ describe('ChatPage #269 AC11: a mid-stream switch lands the buffered tail in the
     const yielded: string[] = [];
 
     const orchestrator = { query: vi.fn() };
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
-      () => orchestrator as unknown as ragModule.RAGOrchestrator
-    );
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return orchestrator as unknown as ragModule.RAGOrchestrator; });
     orchestrator.query.mockImplementation(async function* (): AsyncGenerator<RAGEvent> {
       for (const t of TOKENS) {
         yielded.push(t);

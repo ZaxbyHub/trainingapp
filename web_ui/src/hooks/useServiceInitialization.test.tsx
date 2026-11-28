@@ -145,14 +145,14 @@ describe('useServiceInitialization', () => {
     });
 
     it('sets modelReady=true when model is cached (via lazy ensureReadinessGateChecked, not on boot)', async () => {
-      vi.mocked(ModelReadinessGate).mockImplementation(() => ({
+      vi.mocked(ModelReadinessGate).mockImplementation(function () { return ({
         checkReadiness: vi.fn().mockResolvedValue({
           ready: true,
           checks: { webgpu: true, memory: { sufficient: true }, modelCached: true },
           failures: [],
           recommendations: [],
         }),
-      } as any));
+      } as any); });
 
       function TestComponent() {
         useServiceInitialization({
@@ -183,7 +183,7 @@ describe('useServiceInitialization', () => {
         failures: [],
         recommendations: [],
       });
-      vi.mocked(ModelReadinessGate).mockImplementation(() => ({ checkReadiness } as any));
+      vi.mocked(ModelReadinessGate).mockImplementation(function () { return ({ checkReadiness } as any); });
 
       function TestComponent() {
         useServiceInitialization({
@@ -298,14 +298,14 @@ describe('useServiceInitialization', () => {
 
   describe('Model readiness check', () => {
     it('sets modelReady=false when model is not cached (via lazy ensureReadinessGateChecked, not on boot)', async () => {
-      vi.mocked(ModelReadinessGate).mockImplementation(() => ({
+      vi.mocked(ModelReadinessGate).mockImplementation(function () { return ({
         checkReadiness: vi.fn().mockResolvedValue({
           ready: true,
           checks: { webgpu: true, memory: { sufficient: true }, modelCached: false },
           failures: [],
           recommendations: ['Model not cached, will download'],
         }),
-      } as any));
+      } as any); });
 
       function TestComponent() {
         useServiceInitialization({
@@ -329,14 +329,14 @@ describe('useServiceInitialization', () => {
     });
 
     it('stores webgpuAvailable in servicesReady based on navigator.gpu (via lazy ensureReadinessGateChecked)', async () => {
-      vi.mocked(ModelReadinessGate).mockImplementation(() => ({
+      vi.mocked(ModelReadinessGate).mockImplementation(function () { return ({
         checkReadiness: vi.fn().mockResolvedValue({
           ready: true,
           checks: { webgpu: true, memory: { sufficient: true }, modelCached: true },
           failures: [],
           recommendations: [],
         }),
-      } as any));
+      } as any); });
 
       function TestComponent() {
         const { servicesReady } = useServiceInitialization({
@@ -474,14 +474,14 @@ describe('useServiceInitialization', () => {
 
   describe('Services ready state', () => {
     it('updates servicesReady when services initialize (search on boot; embeddings + modelCached are lazy)', async () => {
-      vi.mocked(ModelReadinessGate).mockImplementation(() => ({
+      vi.mocked(ModelReadinessGate).mockImplementation(function () { return ({
         checkReadiness: vi.fn().mockResolvedValue({
           ready: true,
           checks: { webgpu: true, memory: { sufficient: true }, modelCached: true },
           failures: [],
           recommendations: [],
         }),
-      } as any));
+      } as any); });
 
       function TestComponent() {
         const { servicesReady } = useServiceInitialization({
@@ -600,14 +600,14 @@ describe('useServiceInitialization', () => {
     });
 
     it('ensureReadinessGateChecked() initializes readiness on first call, updates servicesReady + calls setModelReady via event', async () => {
-      vi.mocked(ModelReadinessGate).mockImplementation(() => ({
+      vi.mocked(ModelReadinessGate).mockImplementation(function () { return ({
         checkReadiness: vi.fn().mockResolvedValue({
           ready: true,
           checks: { webgpu: true, memory: { sufficient: true }, modelCached: true },
           failures: [],
           recommendations: [],
         }),
-      } as any));
+      } as any); });
 
       function TestComponent() {
         const { servicesReady } = useServiceInitialization({

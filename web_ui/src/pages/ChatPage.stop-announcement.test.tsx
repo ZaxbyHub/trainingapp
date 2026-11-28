@@ -127,7 +127,7 @@ describe('ChatPage live-region announcement on Stop (PRE-2)', () => {
   }
   async function startTurn(gate: Promise<void>, finish: boolean, onSaveConversation?: React.ComponentProps<typeof ChatPage>['onSaveConversation']) {
     orchestrator = { query: vi.fn().mockImplementation(parkedStream(gate, finish)) };
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(() => orchestrator as unknown as ragModule.RAGOrchestrator);
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return orchestrator as unknown as ragModule.RAGOrchestrator; });
     const view = render(<Page onSaveConversation={onSaveConversation} />);
     await send('Question');
     return view;

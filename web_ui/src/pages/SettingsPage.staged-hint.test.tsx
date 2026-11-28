@@ -37,13 +37,13 @@ vi.mock('../lib/storage/profile', () => ({
   }),
 }));
 vi.mock('../lib/llm/model-download', () => ({
-  ModelDownloadManager: vi.fn().mockImplementation(() => ({ downloadModel: vi.fn(), cancelDownload: vi.fn() })),
+  ModelDownloadManager: vi.fn().mockImplementation(function () { return ({ downloadModel: vi.fn(), cancelDownload: vi.fn() }); }),
 }));
 const readinessMock = vi.hoisted(() => ({ cached: false }));
 vi.mock('../lib/llm/model-readiness', () => ({
-  ModelReadinessGate: vi.fn().mockImplementation(() => ({
+  ModelReadinessGate: vi.fn().mockImplementation(function () { return ({
     checkModelCached: vi.fn(() => Promise.resolve(readinessMock.cached)),
-  })),
+  }); }),
 }));
 vi.mock('../lib/embeddings/memory-aware', () => ({
   getMemoryBudget: vi.fn(() => ({ availableMB: 8192, totalMB: 16384 })),

@@ -29,5 +29,8 @@ export default defineConfig({
     include,
     // SheetJS ESM file I/O needs XLSX.set_fs(fs) (issue #276; see the file).
     setupFiles: ['./vitest.setup.ts'],
+    // vitest 5's isolated worker startup is slower on this host; the frozen
+    // 5s default timed out four otherwise-passing specs at the migration head.
+    testTimeout: 30000,
   },
 });

@@ -12,9 +12,9 @@ import type { ReadinessResult } from './model-readiness';
 const mockCheckReadiness = vi.fn<(modelId: string, deviceSuffix: string) => Promise<ReadinessResult>>();
 
 vi.mock('./model-readiness', () => ({
-  ModelReadinessGate: vi.fn(() => ({
+  ModelReadinessGate: vi.fn(function () { return ({
     checkReadiness: mockCheckReadiness,
-  })),
+  }); }),
 }));
 
 vi.mock('./llm-factory', () => ({

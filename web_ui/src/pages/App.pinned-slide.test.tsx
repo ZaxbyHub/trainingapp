@@ -317,9 +317,7 @@ describe('D7 C8: App-level pinned-slide integration (issue #83)', () => {
 
     // Orchestrator mock instance (captures query options).
     mockOrchestratorInstance = { query: vi.fn() };
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
-      () => mockOrchestratorInstance as unknown as ragModule.RAGOrchestrator
-    );
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return mockOrchestratorInstance as unknown as ragModule.RAGOrchestrator; });
     mockOrchestratorInstance.query.mockImplementation(() => completeEvents());
   });
 

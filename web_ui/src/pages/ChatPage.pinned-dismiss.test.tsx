@@ -117,9 +117,7 @@ describe('D7 C4: dismissing the pinned slide clears the context (issue #83 AC4)'
     mockOrchestratorInstance = {
       query: vi.fn(),
     };
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
-      () => mockOrchestratorInstance as unknown as ragModule.RAGOrchestrator
-    );
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return mockOrchestratorInstance as unknown as ragModule.RAGOrchestrator; });
 
     vi.mocked(getLLMService).mockReturnValue(
       fakeLlmService as unknown as ReturnType<typeof getLLMService>

@@ -208,7 +208,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
     mockOrchestratorInstance = {
       query: vi.fn(),
     };
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(() => mockOrchestratorInstance as unknown as ragModule.RAGOrchestrator);
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return mockOrchestratorInstance as unknown as ragModule.RAGOrchestrator; });
 
     // Setup useInferenceMode mock — every field ChatPage destructures
     // (ChatPage.tsx:193: mode, browserEngine, ragPreset, isModelReady,

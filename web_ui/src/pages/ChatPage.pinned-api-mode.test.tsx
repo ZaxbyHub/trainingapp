@@ -142,9 +142,7 @@ describe('D7 C10: api-mode invariant — banner renders, nothing pinned reaches 
       return mockStreamManagerInstance as unknown as streamingModule.TokenStreamManager;
     });
 
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
-      () => ({ query: vi.fn() }) as unknown as ragModule.RAGOrchestrator
-    );
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return ({ query: vi.fn() }) as unknown as ragModule.RAGOrchestrator; });
 
     // API-mode inference context (real timers; the api send path calls
     // startSSEStream synchronously after the awaited send-time save).

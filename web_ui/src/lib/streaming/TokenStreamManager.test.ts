@@ -19,13 +19,13 @@ vi.mock('../api/streaming', () => ({
   // watchdog default — the explicit-shape mock must provide them.
   DEFAULT_FIRST_BYTE_TIMEOUT_MS: 30_000,
   DESKTOP_FIRST_BYTE_TIMEOUT_MS: 600_000,
-  SSEStreamConsumer: vi.fn().mockImplementation(() => ({
+  SSEStreamConsumer: vi.fn().mockImplementation(function () { return ({
     onToken: vi.fn(),
     onDone: vi.fn(),
     onError: vi.fn(),
     start: vi.fn(),
     stop: vi.fn().mockResolvedValue(undefined),
-  })),
+  }); }),
 }));
 
 describe('TokenStreamManager', () => {

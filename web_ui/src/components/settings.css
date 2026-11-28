@@ -1,5 +1,6 @@
 /* Settings page body (Lumen phase 4, docs/design/design-language.md sections 5 and 6).
-   Lumen tokens only (no legacy --color-*/--spacing-*, no color literals); enforced by
+   Lumen tokens only (no legacy --color-* or --spacing-* tokens, no color literals); Vite 8's
+   LightningCSS minifier rejects a literal terminator inside a CSS comment; enforced by
    components/settings-hygiene.test.ts. Section, radio-card, field, badge and banner
    looks come from ui/ui.css; this file only lays them out for Settings.
 

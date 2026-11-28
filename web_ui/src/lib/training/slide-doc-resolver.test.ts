@@ -13,7 +13,7 @@ const mockKeywordIndex = {
 };
 
 vi.mock('../search/keyword-index', () => ({
-  getKeywordIndex: vi.fn(() => mockKeywordIndex),
+  getKeywordIndex: vi.fn(function () { return mockKeywordIndex; }),
 }));
 
 import { resolveSlideDoc, MAX_SLIDE_TEXT_CHARS } from './slide-doc-resolver';

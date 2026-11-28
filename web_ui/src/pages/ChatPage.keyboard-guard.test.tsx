@@ -28,9 +28,9 @@ const mockQuery = vi.fn(async function* () {
 });
 
 vi.mock('../lib/rag/rag-orchestrator', () => ({
-  RAGOrchestrator: vi.fn().mockImplementation(() => ({
+  RAGOrchestrator: vi.fn().mockImplementation(function () { return ({
     query: mockQuery,
-  })),
+  }); }),
 }));
 
 vi.mock('../lib/llm/llm-factory', () => ({
@@ -86,7 +86,7 @@ vi.mock('../components/InferenceModeToggle', () => ({
   InferenceModeToggle: () => null,
 }));
 vi.mock('../lib/streaming', () => ({
-  TokenStreamManager: vi.fn().mockImplementation(() => ({
+  TokenStreamManager: vi.fn().mockImplementation(function () { return ({
     onToken: vi.fn(),
     onDone: vi.fn(),
     onError: vi.fn(),
@@ -95,7 +95,7 @@ vi.mock('../lib/streaming', () => ({
     error: vi.fn(),
     cancel: vi.fn(),
     dispose: vi.fn(),
-  })),
+  }); }),
 }));
 
 describe('ChatPage — Ctrl+Enter guard while model-blocked (F-CTRL-ENTER-BYPASS)', () => {

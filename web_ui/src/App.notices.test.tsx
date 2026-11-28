@@ -101,11 +101,11 @@ vi.mock('./lib/llm/llm-factory', () => ({
 }));
 
 vi.mock('./lib/rag/rag-orchestrator', () => ({
-  RAGOrchestrator: vi.fn().mockImplementation(() => ({
+  RAGOrchestrator: vi.fn().mockImplementation(function () { return ({
     query: async function* () {
       yield { type: 'complete', data: { answer: 'Assistant reply', sources: [], chunks: [] } };
     },
-  })),
+  }); }),
 }));
 
 vi.mock('./components/StreamingIndicator', () => ({
@@ -115,7 +115,7 @@ vi.mock('./components/InferenceModeToggle', () => ({
   InferenceModeToggle: () => null,
 }));
 vi.mock('./lib/streaming', () => ({
-  TokenStreamManager: vi.fn().mockImplementation(() => ({
+  TokenStreamManager: vi.fn().mockImplementation(function () { return ({
     onToken: vi.fn(),
     onDone: vi.fn(),
     onError: vi.fn(),
@@ -124,7 +124,7 @@ vi.mock('./lib/streaming', () => ({
     error: vi.fn(),
     cancel: vi.fn(),
     dispose: vi.fn(),
-  })),
+  }); }),
 }));
 
 // --- Documents/Settings pages: irrelevant to the AC2 regression under test

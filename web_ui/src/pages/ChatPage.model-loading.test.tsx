@@ -37,20 +37,20 @@ vi.mock('../hooks/useServiceInitialization', () => ({
   useServiceInitialization: () => ({ isInitialized: true, error: null }),
 }));
 vi.mock('../lib/rag/rag-orchestrator', () => ({
-  RAGOrchestrator: vi.fn().mockImplementation(() => ({ query: vi.fn() })),
+  RAGOrchestrator: vi.fn().mockImplementation(function () { return ({ query: vi.fn() }); }),
 }));
 vi.mock('../lib/llm/llm-factory', () => ({
   getLLMService: vi.fn().mockReturnValue({ streamQuery: vi.fn() }),
 }));
 vi.mock('../lib/streaming', () => {
-  const TokenStreamManager = vi.fn().mockImplementation(() => ({
+  const TokenStreamManager = vi.fn().mockImplementation(function () { return ({
     start: vi.fn(),
     cancel: vi.fn(),
     onToken: vi.fn(),
     onDone: vi.fn(),
     onError: vi.fn(),
     complete: vi.fn(),
-  }));
+  }); });
   return { TokenStreamManager };
 });
 vi.mock('../lib/api/client');

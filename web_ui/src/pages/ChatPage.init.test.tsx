@@ -79,13 +79,13 @@ vi.mock('../lib/llm/llm-factory', () => ({
 }));
 
 vi.mock('../lib/rag/rag-orchestrator', () => ({
-  RAGOrchestrator: vi.fn().mockImplementation(() => ({
+  RAGOrchestrator: vi.fn().mockImplementation(function () { return ({
     query: async function* () {
       callOrder.push('query');
       initCompletedAtQueryTime = initCompleted;
       yield { type: 'complete', data: { answer: 'ok', sources: [], chunks: [] } };
     },
-  })),
+  }); }),
 }));
 
 vi.mock('../lib/inference', () => ({
@@ -116,7 +116,7 @@ vi.mock('../components/InferenceModeToggle', () => ({
   InferenceModeToggle: () => null,
 }));
 vi.mock('../lib/streaming', () => ({
-  TokenStreamManager: vi.fn().mockImplementation(() => {
+  TokenStreamManager: vi.fn().mockImplementation(function () {
     const instance: FakeStreamManager = {
       onToken: vi.fn(),
       onDone: vi.fn(),

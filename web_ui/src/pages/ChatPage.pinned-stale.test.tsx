@@ -120,9 +120,7 @@ describe('D7 C5: a stale pin is never silently reused (issue #83 AC5)', () => {
     mockOrchestratorInstance = {
       query: vi.fn(),
     };
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
-      () => mockOrchestratorInstance as unknown as ragModule.RAGOrchestrator
-    );
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return mockOrchestratorInstance as unknown as ragModule.RAGOrchestrator; });
 
     vi.mocked(getLLMService).mockReturnValue(
       fakeLlmService as unknown as ReturnType<typeof getLLMService>

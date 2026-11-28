@@ -17,7 +17,7 @@ const mockKeywordIndex = {
   ),
 };
 
-vi.mock('../search/keyword-index', () => ({ getKeywordIndex: vi.fn(() => mockKeywordIndex) }));
+vi.mock('../search/keyword-index', () => ({ getKeywordIndex: vi.fn(function () { return mockKeywordIndex; }) }));
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';

@@ -13,10 +13,10 @@ const mockCheckReadiness = vi.fn<(modelId: string, engine: string) => Promise<Re
 const mockCheckWebGPU = vi.fn<() => Promise<boolean>>();
 
 vi.mock('./model-readiness', () => ({
-  ModelReadinessGate: vi.fn(() => ({
+  ModelReadinessGate: vi.fn(function () { return ({
     checkReadiness: mockCheckReadiness,
     checkWebGPU: mockCheckWebGPU,
-  })),
+  }); }),
 }));
 
 vi.mock('./llm-factory', () => ({

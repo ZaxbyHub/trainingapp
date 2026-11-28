@@ -232,9 +232,7 @@ describe('ChatPage #269 AC5: partial-answer checkpoint', () => {
     });
 
     const orchestrator = { query: vi.fn() };
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
-      () => orchestrator as unknown as ragModule.RAGOrchestrator
-    );
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return orchestrator as unknown as ragModule.RAGOrchestrator; });
     orchestrator.query.mockImplementation(async function* (): AsyncGenerator<RAGEvent> {
       // Batch 1 arrives at the start of the stream...
       yield { type: 'token', data: TOKENS[0] };
@@ -426,9 +424,7 @@ describe('ChatPage #269 AC5: partial-answer checkpoint', () => {
     });
 
     const orchestrator = { query: vi.fn() };
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
-      () => orchestrator as unknown as ragModule.RAGOrchestrator
-    );
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return orchestrator as unknown as ragModule.RAGOrchestrator; });
     orchestrator.query.mockImplementation(async function* (): AsyncGenerator<RAGEvent> {
       yield { type: 'token', data: TOKENS[0] };
       yield { type: 'token', data: TOKENS[1] };
@@ -608,9 +604,7 @@ describe('ChatPage #269 AC5: partial-answer checkpoint', () => {
     const S1_TOKENS = ['S1-a-', 'S1-b-'];
     const S1_FULL = S1_TOKENS.join('');
     const orchestrator = { query: vi.fn() };
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
-      () => orchestrator as unknown as ragModule.RAGOrchestrator
-    );
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return orchestrator as unknown as ragModule.RAGOrchestrator; });
     orchestrator.query.mockImplementation(async function* (): AsyncGenerator<RAGEvent> {
       yield { type: 'token', data: S1_TOKENS[0] };
       yield { type: 'token', data: S1_TOKENS[1] };
@@ -777,9 +771,7 @@ describe('ChatPage #269 AC5: partial-answer checkpoint', () => {
     // distinguishable in the store.
     let queryCalls = 0;
     const orchestrator = { query: vi.fn() };
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
-      () => orchestrator as unknown as ragModule.RAGOrchestrator
-    );
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return orchestrator as unknown as ragModule.RAGOrchestrator; });
     orchestrator.query.mockImplementation(async function* (): AsyncGenerator<RAGEvent> {
       queryCalls += 1;
       if (queryCalls === 1) {
@@ -945,9 +937,7 @@ describe('ChatPage #269 AC5: partial-answer checkpoint', () => {
     // to the assertions below.
     const S1_TOKENS = ['U1-a-', 'U1-b-'];
     const orchestrator = { query: vi.fn() };
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
-      () => orchestrator as unknown as ragModule.RAGOrchestrator
-    );
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(function () { return orchestrator as unknown as ragModule.RAGOrchestrator; });
     orchestrator.query.mockImplementation(async function* (): AsyncGenerator<RAGEvent> {
       yield { type: 'token', data: S1_TOKENS[0] };
       yield { type: 'token', data: S1_TOKENS[1] };

@@ -28,7 +28,7 @@ const mockOnError = vi.fn();
 const mockStartSSEStream = vi.fn();
 
 vi.mock('../lib/streaming', () => ({
-  TokenStreamManager: vi.fn().mockImplementation(() => ({
+  TokenStreamManager: vi.fn().mockImplementation(function () { return ({
     onToken: mockOnToken,
     onDone: mockOnDone,
     onError: mockOnError,
@@ -39,14 +39,14 @@ vi.mock('../lib/streaming', () => ({
     dispose: vi.fn(),
     startSSEStream: mockStartSSEStream,
     setFirstByteTimeoutMs: vi.fn(),
-  })),
+  }); }),
 }));
 
 vi.mock('../lib/rag/rag-orchestrator', () => ({
-  RAGOrchestrator: vi.fn().mockImplementation(() => ({
+  RAGOrchestrator: vi.fn().mockImplementation(function () { return ({
     query: vi.fn(),
     dispose: vi.fn(),
-  })),
+  }); }),
 }));
 
 vi.mock('../lib/llm/llm-factory', () => ({
@@ -490,7 +490,7 @@ describe('ChatPage', () => {
       expect(screen.queryByText('Confirm Clear?')).not.toBeInTheDocument();
       // The thread survived: only the confirm state reset.
       expect(screen.getByText('Hello')).toBeInTheDocument();
-    }, { timeout: 15000 });
+    }, 15000);
 
     it('clearTimeout is called when timer is no longer needed — second click clears instead of re-arming', async () => {
       // Confirm within the 3s window must CLEAR the thread and cancel the
